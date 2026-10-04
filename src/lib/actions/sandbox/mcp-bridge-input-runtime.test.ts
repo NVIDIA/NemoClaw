@@ -1,0 +1,180 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
+
+import {
+  addMcpBridge,
+  dispatchMcpBridgeCommand,
+  redactCredentialValuesForDisplay,
+  removeMcpBridge,
+  restartMcpBridge,
+  resolveCredentialEnv,
+  updateMcpBridgeDenyTools,
+} from "./mcp-bridge";
+
+describe("MCP input runtime boundaries", () => {
+  it("rejects schema-5 MCP mutations inside their lifecycle fences (#9203)", async ({
+    onTestFinished,
+  }) => {
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementation(() => {
+        throw new Error("schema-5 rejected");
+      });
+    onTestFinished(() => guard.mockRestore());
+
+    await expect(
+      addMcpBridge("missing-sandbox", {
+        server: "github",
+        url: "https://mcp.example.test/mcp",
+        env: [{ name: "TOKEN" }],
+      }),
+    ).rejects.toThrow("schema-5 rejected");
+    await expect(removeMcpBridge("missing-sandbox", "github")).rejects.toThrow("schema-5 rejected");
+    await expect(restartMcpBridge("missing-sandbox", "github")).rejects.toThrow(
+      "schema-5 rejected",
+    );
+    await expect(
+      updateMcpBridgeDenyTools("missing-sandbox", "github", ["delete_*"]),
+    ).rejects.toThrow("schema-5 rejected");
+    expect(guard.mock.calls.map((call) => call[1])).toEqual([
+      "sandbox:mcp:add",
+      "sandbox:mcp:remove",
+      "sandbox:mcp:restart",
+      "sandbox:mcp:update",
+    ]);
+  });
+
+  it("rejects unauthenticated direct add callers before sandbox or network side effects", async () => {
+    await expect(
+      addMcpBridge("missing-sandbox", {
+        server: "github",
+        url: "https://mcp.example.test/mcp",
+        env: [],
+      }),
+    ).rejects.toThrow(/requires exactly one --env KEY/);
+    await expect(
+      addMcpBridge("missing-sandbox", {
+        server: "github",
+        url: "https://mcp.example.test/mcp",
+        env: [{ name: "GCP_PROJECT_ID", value: "host-only-secret" }],
+      }),
+    ).rejects.toThrow(/materialized as a raw child-process value/);
+  });
+
+  it("resolves host env values without requiring them for provider reuse", () => {
+    const prior = process.env.MCP_BRIDGE_TEST_TOKEN;
+    process.env.MCP_BRIDGE_TEST_TOKEN = "secret-value";
+    try {
+      expect(resolveCredentialEnv([{ name: "MCP_BRIDGE_TEST_TOKEN" }])).toEqual({
+        MCP_BRIDGE_TEST_TOKEN: "secret-value",
+      });
+    } finally {
+      prior === undefined
+        ? delete process.env.MCP_BRIDGE_TEST_TOKEN
+        : (process.env.MCP_BRIDGE_TEST_TOKEN = prior);
+    }
+    expect(resolveCredentialEnv([{ name: "MCP_BRIDGE_TEST_TOKEN_NOT_SET" }])).toEqual({});
+  });
+
+  it("redacts inline credential values from provider failure output", () => {
+    const output = redactCredentialValuesForDisplay(
+      "provider failed for --credential TOKEN=inline-secret-value",
+      { TOKEN: "inline-secret-value" },
+    );
+    expect(output).toContain("provider failed for --credential");
+    expect(output).not.toContain("inline-secret-value");
+  });
+
+  it("passes MCP provider credentials by environment name, not argv value", async () => {
+    const run = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await adapter.createProvider({
+      name: "alpha-mcp-github",
+      type: "nemoclaw-mcp-v1",
+      credentials: [{ name: "TOKEN", value: "inline-secret-value" }],
+      config: [],
+      fromExisting: false,
+      target: selectedOpenShellGateway(),
+    });
+
+    const args = run.mock.calls[0]?.[0] ?? [];
+    expect(args).toEqual([
+      "provider",
+      "create",
+      "--name",
+      "alpha-mcp-github",
+      "--type",
+      "nemoclaw-mcp-v1",
+      "--credential",
+      "TOKEN",
+    ]);
+    expect(args.join(" ")).not.toContain("inline-secret-value");
+    expect(args.join(" ")).not.toContain("TOKEN=inline-secret-value");
+  });
+
+  it("rejects surplus positional arguments before sandbox side effects", async () => {
+    const priorExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      process.exitCode = undefined;
+      await dispatchMcpBridgeCommand("missing-sandbox", ["list", "extra"]);
+      expect(process.exitCode).toBe(2);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Usage: nemoclaw <sandbox> mcp list [--json]"),
+      );
+
+      process.exitCode = undefined;
+      await dispatchMcpBridgeCommand("missing-sandbox", ["remove", "one", "two"]);
+      expect(process.exitCode).toBe(2);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Usage: nemoclaw <sandbox> mcp remove <server> [--force]"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  it("rejects the redundant undocumented --probe flag for add (#6379)", async () => {
+    const priorExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      process.exitCode = undefined;
+      await dispatchMcpBridgeCommand("missing-sandbox", [
+        "add",
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--probe",
+      ]);
+      expect(process.exitCode).toBe(2);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Usage: nemoclaw <sandbox> mcp add"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  it("documents force cleanup without promising residual registry removal", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await dispatchMcpBridgeCommand("missing-sandbox", ["remove", "--help"]);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Best-effort source cleanup; preserves ambiguous providers"),
+      );
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("stale registry removal"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

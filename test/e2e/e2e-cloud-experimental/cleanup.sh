@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Shared teardown for e2e-cloud-experimental (extracted from test-e2e-cloud-experimental.sh Phase 0 + Phase 6).
+# Shared teardown for e2e-cloud-experimental sandboxes.
 #
 # Destroys nemoclaw sandbox, OpenShell sandbox, port 18789 forward, and nemoclaw gateway.
 #
@@ -38,7 +38,7 @@ fi
 if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
   openshell forward stop 18789 2>/dev/null || true
-  openshell gateway destroy -g nemoclaw 2>/dev/null || true
+  openshell gateway remove nemoclaw 2>/dev/null || openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
 
 if [ "$VERIFY" != "1" ]; then

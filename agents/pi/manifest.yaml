@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: pi
+display_name: "Pi"
+description: "Terminal coding agent with read, bash, edit, and write tools, plus session management"
+version_constraint: ">=0.84.1"
+language: nodejs
+license: MIT
+homepage: "https://pi.dev"
+install_method: npm
+binary_path: /usr/local/bin/pi
+version_command: "pi --version"
+expected_version: "0.84.1"
+version_scheme: semver
+managed_image:
+  architectures:
+    - linux/amd64
+    - linux/arm64
+  startup_profile_contract_version: 1
+runtime:
+  kind: terminal
+  interactive_command: "pi"
+  headless_command: "pi --no-approve --print"
+  smoke_commands:
+    - "pi --version"
+    - "test -s /sandbox/.pi/agent/models.json && echo NEMOCLAW_PI_MODELS_OK"
+    - 'test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600 && echo NEMOCLAW_PI_MODE_OK'
+config:
+  dir: /sandbox/.pi/agent
+  config_file: models.json
+  format: json
+device_pairing: false
+inference:
+  provider_type: openai_compatible
+  default_model: nvidia/nemotron-3-super-120b-a12b
+  base_url_config_key: "providers.openshell.baseUrl"
+  model_config_key: "defaultModel"
+  proxy_support: implicit
+mcp:
+  support: disabled
+package_registry:
+  hosts:
+    - registry.npmjs.org
+  binary: /usr/local/bin/npm

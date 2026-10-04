@@ -1,0 +1,8 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "producer": "OpenShell",
+  "openshellVersion": "0.0.99",
+  "command": "openshell status",
+  "connectionRefusal": "Error:   × client error (Connect)\n  ├─▶ tcp connect error\n  ╰─▶ Connection refused (os error 61)\n",
+  "nonLifecycleError": "Error:   × authentication failed\n"
+}

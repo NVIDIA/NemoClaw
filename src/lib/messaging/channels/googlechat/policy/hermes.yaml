@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: googlechat
+  description: "Hermes Google Chat: Pub/Sub REST pull for inbound events + Chat REST reply; the bot token is minted gateway-side (chat.bot + pubsub), never in the sandbox"
+
+network_policies:
+  googlechat_hermes:
+    name: googlechat_hermes
+    endpoints:
+      # Inbound: REST :pull / :acknowledge, not gRPC StreamingPull — REST keeps
+      # the egress inspectable so the proxy can inject the minted token.
+      - host: pubsub.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          # The L7 matcher is `glob.match(pattern, ["/"], path)`, so `*` spans the
+          # `:verb` suffix. Allow only the two operations the adapter issues: a
+          # broader `/v1/**` would also permit publish and subscription admin.
+          - allow: { method: POST, path: "/v1/projects/*/subscriptions/*:pull" }
+          - allow: { method: POST, path: "/v1/projects/*/subscriptions/*:acknowledge" }
+      # Outbound reply: same rule shape as the OpenClaw preset — writes scoped to
+      # the Chat `spaces` tree, reads across the v1 tree.
+      - host: chat.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+          - allow: { method: POST, path: "/v1/spaces/**" }
+          - allow: { method: PATCH, path: "/v1/spaces/**" }
+          - allow: { method: DELETE, path: "/v1/spaces/**" }
+    # OpenShell matches the resolved realpath EXACTLY, and Hermes' venv python
+    # resolves to /usr/bin/python3.13, so the concrete path must be listed.
+    # Revisit when the base image bumps Python.
+    binaries:
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

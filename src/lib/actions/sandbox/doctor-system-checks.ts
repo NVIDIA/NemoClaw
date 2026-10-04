@@ -1,0 +1,230 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+import { stripAnsi } from "../../adapters/openshell/client";
+import { CLI_NAME } from "../../cli/branding";
+import { GATEWAY_PORT } from "../../core/ports";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
+import {
+  type OllamaHostInventoryProbeOptions,
+  probeOllamaHostInventory,
+} from "../../inference/health";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveCurrentRuntimeProviderBundle,
+  resolveRuntimeProviderBundle,
+} from "../../onboard/runtime-provider/access";
+import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
+import type { SandboxEntry } from "../../state/registry";
+import { readCloudflaredState } from "../../tunnel/services";
+import {
+  buildGatewayInspectFailureChecks,
+  type GatewayInspectOptions,
+} from "./doctor-gateway-fallback";
+import { captureHostCommand } from "./doctor-host-command";
+import type { DoctorCheck } from "./doctor-report";
+
+export const withSandboxDoctorLifecycleLock = withSandboxLifecycleLock;
+
+export function gatewayDoctorStartHint(gatewayName: string): string {
+  return `${gatewayStartGuidance(gatewayName)} Then retry this command.`;
+}
+
+export function inspectSandboxDoctorPortableAuthority(
+  sandboxName: string,
+  readRegistry: (sandboxName: string) => SandboxEntry | null,
+) {
+  return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+}
+
+export function oneLine(value = ""): string {
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function gatewayContainerCheck(
+  containerName: string,
+  output: string,
+  options: GatewayInspectOptions,
+): DoctorCheck {
+  const [runningRaw, healthRaw, imageRaw] = output.trim().split("\t");
+  const running = runningRaw === "true";
+  const health = healthRaw || "none";
+  const image = imageRaw || "unknown";
+  const healthy = health === "healthy" || health === "none";
+  return {
+    group: "Gateway",
+    label: "Docker container",
+    status: running && healthy ? "ok" : "fail",
+    detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
+    hint: running ? undefined : gatewayStartGuidance(options.gatewayName ?? "nemoclaw"),
+  };
+}
+
+function gatewayPortCheck(containerName: string, expectedHostPort: number): DoctorCheck {
+  const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
+  if (port.status !== 0 || !port.stdout.trim()) {
+    return {
+      group: "Gateway",
+      label: "Port mapping",
+      status: "fail",
+      detail: "30051/tcp is not published on the host",
+      hint: "gateway traffic will not reach OpenShell until the container is recreated with a host port",
+    };
+  }
+  const mapping = oneLine(port.stdout);
+  const expected = new RegExp(`:${expectedHostPort}(?:\\s|$)`).test(mapping);
+  return {
+    group: "Gateway",
+    label: "Port mapping",
+    status: expected ? "ok" : "warn",
+    detail: mapping,
+    hint: expected ? undefined : `expected host port ${expectedHostPort} for this sandbox gateway`,
+  };
+}
+
+export function dockerInspectGateway(
+  containerName: string,
+  options: GatewayInspectOptions = {},
+  expectedHostPort = GATEWAY_PORT,
+): DoctorCheck[] {
+  const inspect = captureHostCommand(
+    "docker",
+    [
+      "inspect",
+      "--format",
+      "{{.State.Running}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.Config.Image}}",
+      containerName,
+    ],
+    5000,
+  );
+  if (inspect.status !== 0) {
+    return buildGatewayInspectFailureChecks(containerName, options);
+  }
+  return [
+    gatewayContainerCheck(containerName, inspect.stdout, options),
+    gatewayPortCheck(containerName, expectedHostPort),
+  ];
+}
+
+export function findSandboxListLine(output: string, sandboxName: string): string | null {
+  const lines = stripAnsi(output).split(/\r?\n/);
+  return (
+    lines.find((line: string) => {
+      const columns = line.trim().split(/\s+/);
+      return columns.includes(sandboxName);
+    }) || null
+  );
+}
+
+export function inferSandboxReadyFromLine(line: string | null): boolean | null {
+  if (!line) return null;
+  if (/\bReady\b/i.test(line)) return true;
+  if (/\b(Failed|Error|CrashLoopBackOff|ImagePullBackOff|Unknown|Evicted)\b/i.test(line)) {
+    return false;
+  }
+  return null;
+}
+
+function stoppedCloudflaredCheck(): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "info",
+    detail: "stopped",
+    hint: `no cloudflared process; run \`${CLI_NAME} tunnel start\` to start it`,
+  };
+}
+
+function staleCloudflaredPidFileCheck(): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: "stale PID file",
+    hint: `no cloudflared process (stored PID is invalid); run \`${CLI_NAME} tunnel start\` to restart it`,
+  };
+}
+
+function staleCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `stale PID ${pid}`,
+    hint: `no cloudflared process (PID ${pid} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
+  };
+}
+
+function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `PID ${pid}, identity unavailable`,
+    hint: "process identity is unavailable; restore process inspection access, then retry",
+  };
+}
+
+export function cloudflaredDoctorCheck(
+  sandboxName: string,
+  readState: typeof readCloudflaredState = readCloudflaredState,
+): DoctorCheck {
+  const state = readState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+  switch (state.kind) {
+    case "stopped":
+      return stoppedCloudflaredCheck();
+    case "stale-pid-file":
+      return staleCloudflaredPidFileCheck();
+    case "stale-pid-process":
+      return staleCloudflaredPidCheck(state.pid);
+    case "unverified-pid-process":
+      return unverifiedCloudflaredPidCheck(state.pid);
+    case "running":
+      return {
+        group: "Local services",
+        label: "cloudflared",
+        status: "ok",
+        detail: `running (PID ${state.pid})`,
+      };
+  }
+}
+
+export type OllamaDoctorCheckDeps = OllamaHostInventoryProbeOptions;
+
+export function ollamaDoctorCheck(
+  currentProvider: string,
+  deps: OllamaDoctorCheckDeps = {},
+): DoctorCheck {
+  const { endpoint, inventory } = probeOllamaHostInventory(deps);
+  const required = currentProvider === "ollama-local";
+  if (inventory === null) {
+    return {
+      group: "Local services",
+      label: "Ollama",
+      status: required ? "fail" : "info",
+      detail: `not reachable or invalid response at ${endpoint}`,
+      hint: required ? "start Ollama or change the sandbox inference provider" : undefined,
+    };
+  }
+
+  return {
+    group: "Local services",
+    label: "Ollama",
+    status: "ok",
+    detail: `reachable at ${endpoint} (${inventory.length} model(s))`,
+  };
+}
+
+/**
+ * The legacy k3s gateway container only exists for the Kubernetes driver.
+ * Prefer the recorded driver and use platform detection for older entries.
+ */
+export function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
+  const recorded = sb?.openshellDriver?.trim();
+  const provider = recorded
+    ? resolveRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
+    : resolveCurrentRuntimeProviderBundle();
+  return provider?.gateway.inspectLegacyContainer === true;
+}

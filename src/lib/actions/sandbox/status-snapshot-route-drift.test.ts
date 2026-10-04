@@ -1,0 +1,472 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../adapters/openshell/runtime")>();
+  return { ...actual, captureOpenshellForStatus: vi.fn() };
+});
+
+import { captureOpenshellForStatus } from "../../adapters/openshell/runtime";
+import {
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "../../inference/llama-cpp/managed-state";
+import type { SandboxEntry } from "../../state/registry";
+import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
+
+const capture = vi.mocked(captureOpenshellForStatus);
+
+function liveGatewayInference(provider: string, model: string, gatewayName = "nemoclaw"): void {
+  capture.mockImplementation(async (args) =>
+    args.join("\0") === ["inference", "get", "-g", gatewayName].join("\0")
+      ? ({
+          status: 0,
+          output: `Gateway inference:\n  Provider: ${provider}\n  Model: ${model}\n`,
+        } as Awaited<ReturnType<typeof captureOpenshellForStatus>>)
+      : ({ status: 1, output: "" } as Awaited<ReturnType<typeof captureOpenshellForStatus>>),
+  );
+}
+
+function snapshotDeps(entry: Partial<SandboxEntry> | null) {
+  const sandbox = entry
+    ? ({ name: "alpha", agent: "openclaw", policies: [], ...entry } as SandboxEntry)
+    : null;
+  return {
+    suppressInferenceProbe: true,
+    deps: {
+      getSandbox: () => sandbox,
+      listPublishedSandboxesAcrossGatewayRoots: () => (sandbox ? [sandbox] : []),
+      reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+    },
+  };
+}
+
+describe("collectSandboxStatusSnapshot route drift", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reports drift when the live gateway route differs from the recorded route (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({ provider: "nvidia", model: "nvidia/nemotron" }),
+    );
+
+    expect(snapshot.routeDrift).toEqual({
+      live: { provider: "openai", model: "gpt-5.2" },
+      recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      canConnect: true,
+    });
+    expect(snapshot.liveRoute).toEqual({ provider: "openai", model: "gpt-5.2" });
+    expect(snapshot.recordedRoute).toEqual({ provider: "nvidia", model: "nvidia/nemotron" });
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.llamaCpp).toBeNull();
+  });
+
+  it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2", "nemoclaw-9090");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        gatewayPort: 9090,
+        provider: "nvidia",
+        model: "nvidia/nemotron",
+      }),
+    );
+
+    expect(snapshot.routeDrift).toEqual({
+      live: { provider: "openai", model: "gpt-5.2" },
+      recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      canConnect: true,
+    });
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+  });
+
+  it("does not fall back to the default gateway for an invalid persisted binding (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        gatewayPort: 0,
+        provider: "nvidia",
+        model: "nvidia/nemotron",
+      }),
+    );
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+  });
+
+  it("reports no drift when the live route matches the recorded route (#6315)", async () => {
+    liveGatewayInference("nvidia", "nvidia/nemotron");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({ provider: "nvidia", model: "nvidia/nemotron" }),
+    );
+
+    expect(snapshot.routeDrift).toBeNull();
+  });
+
+  it("omits llama.cpp attribution when the live route is unreadable (#10256)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
+    );
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("llama-cpp-local");
+    expect(snapshot.currentModel).toBe("muse-glimmer");
+    expect(snapshot.llamaCpp).toBeNull();
+  });
+
+  it("omits llama.cpp attribution when a failed route lookup returns parsable output (#10256)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
+    );
+
+    expect(snapshot.liveRoute).toBeNull();
+    expect(snapshot.llamaCpp).toBeNull();
+  });
+
+  it("reports no drift when the registry entry has no recorded route (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps({}));
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("unknown");
+    expect(snapshot.currentModel).toBe("unknown");
+  });
+
+  it("does not mix partial recorded metadata with the live route (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({ provider: "nvidia" }),
+    );
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("unknown");
+  });
+
+  it("does not advertise connect for a legacy custom-provider identity conflict (#6315)", async () => {
+    liveGatewayInference("compatible-endpoint", "live/model");
+    const target = {
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+      endpointUrl: "https://target.example/v1",
+      credentialEnv: "TARGET_KEY",
+      preferredInferenceApi: "openai-completions",
+    } satisfies Partial<SandboxEntry>;
+    const peer: SandboxEntry = {
+      name: "peer",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      model: "peer/model",
+      endpointUrl: "https://peer.example/v1",
+      credentialEnv: "PEER_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const options = snapshotDeps(target);
+    options.deps.listPublishedSandboxesAcrossGatewayRoots = () => [
+      options.deps.getSandbox() as SandboxEntry,
+      peer,
+    ];
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", options);
+
+    expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
+  });
+
+  it("does not advertise connect when a cross-root gateway peer has a conflicting route", async () => {
+    liveGatewayInference("openai", "live/model", "nemoclaw-9090");
+    const target: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+      endpointUrl: "https://target.example/v1",
+      credentialEnv: "TARGET_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const peer: SandboxEntry = {
+      name: "peer",
+      agent: "openclaw",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "peer/model",
+      endpointUrl: "https://peer.example/v1",
+      credentialEnv: "PEER_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const options = snapshotDeps(target);
+    const { getSandbox: _getSandbox, ...deps } = options.deps;
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...deps,
+      findSandboxAcrossGatewayRoots: () => ({
+        entry: target,
+        gatewayPort: 9090,
+        registryFile: "/test/.nemoclaw/gateways/9090/sandboxes.json",
+      }),
+      listPublishedSandboxesAcrossGatewayRoots: () => [target, peer],
+      getGatewayPresets: async () => [],
+    });
+
+    expect(report.routeDrift).toMatchObject({ canConnect: false });
+  });
+
+  it("reads policies with the sandbox entry resolved from its owning gateway root", async () => {
+    const target: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+    };
+    const options = snapshotDeps(target);
+    const { getSandbox: _getSandbox, ...deps } = options.deps;
+    const getGatewayPresets = vi.fn(async () => ["npm"]);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...deps,
+      findSandboxAcrossGatewayRoots: () => ({
+        entry: target,
+        gatewayPort: 9090,
+        registryGatewayPort: 9090,
+        registryFile: "/test/.nemoclaw/gateways/9090/sandboxes.json",
+      }),
+      getGatewayPresets,
+    });
+
+    expect(report.policies).toEqual(["npm"]);
+    expect(report.policiesAvailable).toBe(true);
+    expect(getGatewayPresets).toHaveBeenCalledWith("alpha", undefined, target);
+  });
+});
+
+describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("suppresses llamaCpp when the live gateway route has drifted away from a recorded llama-cpp-local route", async () => {
+    liveGatewayInference("nvidia-prod", "nvidia/nemotron-3-super-120b-a12b");
+
+    const report = await getSandboxStatusReport(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }).deps,
+    );
+
+    expect(report.routeDrift).not.toBeNull();
+    expect(report.llamaCpp).toBeNull();
+  });
+
+  it.each([
+    {},
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("reports unavailable ownership from an aligned live route %# (#10256)", async (provenance) => {
+    liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      ...provenance,
+    } as Partial<SandboxEntry>);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: () => "unknown",
+    });
+
+    expect(report.llamaCpp).toEqual({
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery:
+        "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    });
+  });
+
+  it("reads a private owner receipt before reporting managed JSON status (#10256)", async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-status-owner-`));
+    vi.stubEnv("HOME", home);
+    try {
+      const paths = managedLlamaCppStatePaths(home);
+      fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+      reserveManagedLlamaCppOwner(paths, {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        presetDigest: `sha256:${"2".repeat(64)}`,
+        recipeDigest: `sha256:${"3".repeat(64)}`,
+        recipeId: "llama-cpp.managed",
+      });
+      liveGatewayInference("llama-cpp-local", "muse-glimmer");
+      const options = snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      });
+
+      const report = await getSandboxStatusReport("alpha", options.deps);
+
+      expect(report.llamaCpp).toEqual({ kind: "managed" });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
+    liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+    const inspectOwnership = vi.fn().mockReturnValueOnce("absent").mockReturnValue("unknown");
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: inspectOwnership,
+    });
+
+    expect(report.routeDrift).toBeNull();
+    expect(report.llamaCpp).toEqual({
+      kind: "attached",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+    expect(inspectOwnership).toHaveBeenCalledOnce();
+  });
+});
+
+describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The probe stub rejects a request that does not contain every expected route field.
+   */
+  async function collectInferenceHealth(
+    entry: Partial<SandboxEntry>,
+    expectedRoute: Record<string, unknown>,
+  ) {
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      ...entry,
+    } as SandboxEntry;
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: async () => ({
+          ok: true,
+          endpoint: "https://inference.local/v1/models",
+          detail: "reachable",
+          httpStatus: 200,
+        }),
+        probeSandboxInferenceInvocationImpl: (input: Record<string, unknown>) => {
+          const accepted = Object.entries(expectedRoute).every(
+            ([key, value]) => input[key] === value,
+          );
+          return accepted ? { ok: true } : { ok: false, reason: "unexpected invocation route" };
+        },
+      },
+    } as never);
+    return snapshot.inferenceHealth;
+  }
+
+  const recorded = {
+    provider: "compatible-endpoint",
+    model: "recorded/model",
+    endpointUrl: "https://target.example/v1",
+    credentialEnv: "TARGET_KEY",
+    preferredInferenceApi: "openai-responses",
+  } satisfies Partial<SandboxEntry>;
+
+  it("keeps the recorded API family when only the model drifted", async () => {
+    // The recorded API family describes the provider, which has not changed, so
+    // dropping it would probe /v1/chat/completions against a responses-only
+    // endpoint and report a healthy route as unhealthy.
+    liveGatewayInference("compatible-endpoint", "live/model");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "live/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("keeps the recorded API family when the route is aligned", async () => {
+    liveGatewayInference("compatible-endpoint", "recorded/model");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "recorded/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("drops the recorded API family when the provider itself drifted", async () => {
+    // A provider change must remove the recorded API family because the live
+    // provider might not implement it.
+    liveGatewayInference("nvidia-prod", "nvidia/nemotron");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: null,
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+});

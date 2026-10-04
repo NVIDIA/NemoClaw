@@ -1,0 +1,264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { ChannelManifest } from "../../manifest";
+import { WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT } from "./contract.ts";
+
+export const wechatManifest = {
+  schemaVersion: 1,
+  id: "wechat",
+  displayName: "WeChat",
+  description: "WeChat (personal) bot messaging",
+  enrollmentHelp:
+    "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+  supportedAgents: ["openclaw", "hermes"],
+  auth: {
+    mode: "host-qr",
+  },
+  inputs: [
+    {
+      id: "botToken",
+      kind: "secret",
+      required: true,
+      envKey: "WECHAT_BOT_TOKEN",
+      prompt: {
+        label: "WeChat Bot Token",
+        help: "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+      },
+    },
+    {
+      id: "accountId",
+      kind: "config",
+      required: true,
+      envKey: "WECHAT_ACCOUNT_ID",
+      statePath: "wechatConfig.accountId",
+    },
+    {
+      id: "baseUrl",
+      kind: "config",
+      required: false,
+      envKey: "WECHAT_BASE_URL",
+      statePath: "wechatConfig.baseUrl",
+    },
+    {
+      id: "userId",
+      kind: "config",
+      required: false,
+      envKey: "WECHAT_USER_ID",
+      statePath: "wechatConfig.userId",
+    },
+    {
+      id: "allowedIds",
+      kind: "config",
+      required: false,
+      envKey: "WECHAT_ALLOWED_IDS",
+      statePath: "allowedIds.wechat",
+      prompt: {
+        label: "WeChat User ID(s) (DM allowlist)",
+        help: "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+        emptyValueMessage: "bot will require manual pairing",
+      },
+    },
+  ],
+  credentials: [
+    {
+      id: "wechatBotToken",
+      sourceInput: "botToken",
+      providerName: "{sandboxName}-wechat-bridge",
+      providerEnvKey: "WECHAT_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+    },
+  ],
+  state: {
+    openclaw: ["wechat", "openclaw-weixin"],
+    hermes: ["platforms/wechat"],
+  },
+  // Both agent policies bind the endpointless provider. Apply it before boot
+  // so OpenShell injects WECHAT_BOT_TOKEN into the agent process environment.
+  policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"], requiredAtCreate: true }],
+  render: [
+    {
+      id: "wechat-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.openclaw-weixin",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+    {
+      id: "wechat-openclaw-channel",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "channels.openclaw-weixin",
+        value: { enabled: true },
+      },
+    },
+    {
+      id: "wechat-hermes-env",
+      kind: "env-lines",
+      agent: "hermes",
+      target: "~/.hermes/.env",
+      lines: [
+        "WEIXIN_ACCOUNT_ID={{wechatConfig.accountId}}",
+        "WEIXIN_BASE_URL={{wechatConfig.baseUrl}}",
+        "WEIXIN_ALLOWED_USERS={{allowedIds.wechat.csv}}",
+      ],
+    },
+    {
+      id: "wechat-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.weixin",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+  ],
+  runtime: {
+    openclaw: {
+      channelName: "openclaw-weixin",
+      visibility: {
+        configKeys: ["openclaw-weixin"],
+        logPatterns: ["wechat", "openclaw-weixin"],
+      },
+      nodePreloads: [
+        {
+          module: "wechat-account-placeholder",
+          injectInto: ["boot"],
+          optional: false,
+        },
+        {
+          module: "wechat-diagnostics",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing WeChat diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] WeChat diagnostics installed (NODE_OPTIONS updated)",
+        },
+      ],
+    },
+    hermes: {
+      envAliases: [
+        {
+          envKey: "WECHAT_BOT_TOKEN",
+          targetEnvKey: "WEIXIN_TOKEN",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
+          value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+        },
+      ],
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
+      pin: true,
+      integrity:
+        "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
+      runtimeLock: {
+        cachePath: "/usr/local/share/nemoclaw/wechat-npm-cache",
+        installCacheEnvKey: "NEMOCLAW_WECHAT_NPM_INSTALL_CACHE",
+        lockFile: "/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
+        projectsRoot: "/sandbox/.openclaw/npm/projects",
+        verifierPath: "/usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts",
+        offline: true,
+        legacyPeerDeps: true,
+      },
+      required: true,
+    },
+  ],
+  hooks: [
+    {
+      id: "wechat-host-qr",
+      phase: "enroll",
+      handler: "wechat.ilinkLogin",
+      inputs: ["allowedIds"],
+      outputs: [
+        {
+          id: "botToken",
+          kind: "secret",
+          required: true,
+        },
+        {
+          id: "accountId",
+          kind: "config",
+          required: true,
+        },
+        {
+          id: "baseUrl",
+          kind: "config",
+        },
+        {
+          id: "userId",
+          kind: "config",
+        },
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+      onFailure: "skip-channel",
+    },
+    {
+      id: "wechat-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.planHookId,
+      phase: "post-agent-install",
+      handler: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.handlerId,
+      agents: ["openclaw"],
+      inputs: [
+        "wechatConfig.accountId",
+        "wechatConfig.baseUrl",
+        "wechatConfig.userId",
+        "credential.wechatBotToken.placeholder",
+      ],
+      outputs: [
+        {
+          id: "openclawWeixinAccountsIndex",
+          kind: "build-file",
+          required: true,
+        },
+        {
+          id: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.outputId,
+          kind: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.kind,
+          required: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.required,
+        },
+        {
+          id: "openclawConfigPatch",
+          kind: "build-file",
+          required: true,
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
+      id: "wechat-health-check",
+      phase: "health-check",
+      handler: "wechat.healthCheck",
+      inputs: ["wechatConfig.accountId"],
+      onFailure: "abort",
+    },
+  ],
+} as const satisfies ChannelManifest;

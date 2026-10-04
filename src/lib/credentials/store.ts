@@ -1,0 +1,950 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Host-side credential helpers.
+//
+// The OpenShell gateway is the system of record for provider credentials.
+// This module exposes staged process-environment values and asynchronous
+// in-process overrides. Callers pass the selected value explicitly to
+// `openshell provider create/update --credential KEY`. Nothing is written to disk.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+
+import { isErrnoException } from "../core/errno";
+import { GATEWAY_PORT } from "../core/ports";
+import { createPromptActivityCleanup } from "../core/prompt-activity";
+import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { rejectSymlinksOnPath } from "../state/config-io";
+import { nemoclawStateRoot } from "../state/state-root";
+import { legacyCredentialAliases } from "./legacy-env-aliases";
+import { getScopedCredentialOverride } from "./scoped-overrides";
+
+export { withCredentialOverrides } from "./scoped-overrides";
+
+const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
+
+type CredentialInput = string | null | undefined;
+export type CredentialPromptIntent =
+  | { kind: "credential"; value: string }
+  | { kind: "back" }
+  | { kind: "exit" }
+  | { kind: "help" };
+
+// Credential env keys NemoClaw knows how to round-trip. listCredentialKeys()
+// projects the in-process env through this set; entries not in the set are
+// invisible to `nemoclaw credentials list` even if exported.
+// Exported so tests can import the same source-of-truth list and stay in
+// sync without a second hand-maintained copy.
+export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
+  "NVIDIA_INFERENCE_API_KEY",
+  "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+  "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
+  "GITHUB_TOKEN",
+  "HF_TOKEN",
+  "HUGGING_FACE_HUB_TOKEN",
+  ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
+];
+
+// Hard upper bound on the legacy credentials.json size we are willing to
+// read into memory. The largest realistic credential set NemoClaw has ever
+// shipped is well under 1 KiB; the cap exists purely so an attacker who
+// can write to ~/.nemoclaw/ cannot OOM the next onboard by planting a
+// huge file. 1 MiB leaves plenty of headroom over any plausible mutation.
+const LEGACY_CREDS_FILE_MAX_BYTES = 1 * 1024 * 1024;
+
+function noFollowFlag(): number | undefined {
+  return typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
+}
+
+function openNoFollow(filePath: string, access = fs.constants.O_RDONLY): number {
+  const flag = noFollowFlag();
+  if (flag === undefined) {
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      const error = new Error(`Refusing to follow symlink: ${filePath}`) as NodeJS.ErrnoException;
+      error.code = "ELOOP";
+      throw error;
+    }
+  }
+  return fs.openSync(filePath, access | (flag ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+}
+
+/**
+ * Resolve the user's home directory and reject obviously unsafe choices
+ * (e.g. `/tmp`, `/`) so we never use a world-readable path for state.
+ * Throws if `HOME` cannot be determined or resolves to an unsafe location.
+ */
+export function resolveHomeDir(): string {
+  const raw = process.env.HOME || os.homedir();
+  if (!raw) {
+    throw new Error(
+      "Cannot determine safe home directory. " +
+        "Set the HOME environment variable to a user-owned directory.",
+    );
+  }
+  const home = path.resolve(raw);
+  try {
+    const real = fs.realpathSync(home);
+    if (UNSAFE_HOME_PATHS.has(real)) {
+      throw new Error(
+        "Cannot use HOME='" +
+          real +
+          "': resolves to a world-readable path. " +
+          "Set HOME to a user-owned directory.",
+      );
+    }
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (UNSAFE_HOME_PATHS.has(home)) {
+    throw new Error(
+      "Cannot use HOME='" +
+        home +
+        "': resolves to a world-readable path. " +
+        "Set HOME to a user-owned directory.",
+    );
+  }
+  return home;
+}
+
+let _cachedHome: string | null = null;
+let _credsDir: string | null = null;
+let _legacyCredsFile: string | null = null;
+
+/** Return `~/.nemoclaw`, resolving and validating `HOME` once per process. */
+export function getCredsDir(): string {
+  const home = resolveHomeDir();
+  if (_cachedHome !== home) {
+    _cachedHome = home;
+    _credsDir = nemoclawStateRoot(home, GATEWAY_PORT);
+    _legacyCredsFile = null;
+  }
+  return _credsDir || nemoclawStateRoot(home, GATEWAY_PORT);
+}
+
+/**
+ * Path of the pre-migration plaintext credentials file. Retained only so
+ * stageLegacyCredentialsToEnv() / removeLegacyCredentialsFile() can find it.
+ * Only verified-migration cleanup may rewrite retained entries here; the gateway owns new credentials.
+ */
+export function getCredsFile(): string {
+  const dir = getCredsDir();
+  if (!_legacyCredsFile) _legacyCredsFile = path.join(dir, "credentials.json");
+  return _legacyCredsFile;
+}
+
+/** Trim whitespace and strip CR characters that shells often append on paste. */
+export function normalizeCredentialValue(value: CredentialInput): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\r/g, "").trim();
+}
+
+export function getCredentialPromptIntent(value: CredentialInput): CredentialPromptIntent {
+  const normalized = normalizeCredentialValue(value);
+  const navigation = normalized.toLowerCase();
+  if (navigation === "back") return { kind: "back" };
+  if (navigation === "exit" || navigation === "quit") return { kind: "exit" };
+  if (navigation === "?" || navigation === "help") return { kind: "help" };
+  return { kind: "credential", value: normalized };
+}
+
+/**
+ * Stage a credential for the current process. The OpenShell upsert that
+ * follows in onboarding (`openshell provider create/update --credential KEY`)
+ * reads the value from this env entry. Nothing is persisted to disk.
+ * An empty/whitespace value clears the env entry instead of staging blanks.
+ *
+ * NOTE for tests: this mutates `process.env` directly (not via vitest's
+ * `vi.stubEnv`), so callers that pollute the env in a unit test must
+ * clean up themselves — see the credentials tests for the
+ * `clearTrackedEnv` pattern.
+ */
+export function saveCredential(key: string, value: CredentialInput): void {
+  const normalized = normalizeCredentialValue(value);
+  if (normalized) {
+    process.env[key] = normalized;
+  } else {
+    delete process.env[key];
+  }
+}
+
+/** Return the scoped or staged value for `key`, or null. */
+export function getCredential(key: string): string | null {
+  const scoped = getScopedCredentialOverride(key);
+  if (scoped) return scoped;
+  const raw = process.env[key];
+  if (!raw) return null;
+  const normalized = normalizeCredentialValue(raw);
+  return normalized || null;
+}
+
+function getLegacyCredentialAlias(envName: string): string | null {
+  for (const alias of legacyCredentialAliases(envName)) {
+    const value = getCredential(alias);
+    if (value) return value;
+  }
+  return null;
+}
+
+/**
+ * Canonical entry point for provider credential resolution (PR #2306).
+ * Resolves an asynchronous in-process override before `process.env`.
+ * Without an override, falls back to a one-time on-demand stage of any
+ * pre-fix `~/.nemoclaw/credentials.json` and writes the resolved value back
+ * into `process.env` for downstream compatibility. A scoped override never
+ * enters `process.env` through this function.
+ *
+ * Returns the resolved value, or `null` if neither env nor the legacy
+ * file produced one.
+ *
+ * Note: this used to read the credentials file directly via
+ * `loadCredentials()` after #2306 landed on main, but that path is
+ * incompatible with the env-only contract introduced for the
+ * credentials-gateway-only security fix. The legacy file is now
+ * accessed only through `stageLegacyCredentialsToEnv()`, which
+ * allowlists keys, refuses ancestor symlinks, fstats by descriptor,
+ * caps file size, and is gated by the per-key fill-only-if-missing
+ * guard inside the staging helper itself.
+ */
+export function resolveProviderCredential(envName: string): string | null {
+  const scoped = getScopedCredentialOverride(envName);
+  if (scoped) return scoped;
+  let value = getCredential(envName) || getLegacyCredentialAlias(envName);
+  if (!value) {
+    stageLegacyCredentialsToEnv();
+    value = getCredential(envName) || getLegacyCredentialAlias(envName);
+  }
+  if (value) {
+    process.env[envName] = value;
+  }
+  return value || null;
+}
+
+/** Clear the staged credential from the current process env. */
+export function deleteCredential(key: string): boolean {
+  if (!(key in process.env)) return false;
+  delete process.env[key];
+  return true;
+}
+
+/**
+ * Snapshot of credentials currently staged in `process.env`, projected
+ * through `KNOWN_CREDENTIAL_ENV_KEYS`. Unrelated env entries are not exposed.
+ */
+export function loadCredentials(): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of KNOWN_CREDENTIAL_ENV_KEYS) {
+    const raw = process.env[key];
+    if (!raw) continue;
+    const normalized = normalizeCredentialValue(raw);
+    if (normalized) result[key] = normalized;
+  }
+  return result;
+}
+
+/** Sorted list of credential env-var names currently staged in this process. */
+export function listCredentialKeys(): string[] {
+  return Object.keys(loadCredentials()).sort();
+}
+
+/** Wipe the opened inode, including after its directory entry was replaced. */
+function zeroFillCredentialFile(fd: number, size: number): void {
+  if (size === 0) return;
+  const zeros = Buffer.alloc(Math.min(size, 64 * 1024));
+  let written = 0;
+  while (written < size) {
+    const count = fs.writeSync(fd, zeros, 0, Math.min(zeros.length, size - written), written);
+    if (count === 0) throw new Error("Could not overwrite retired credential bytes");
+    written += count;
+  }
+  fs.fsyncSync(fd);
+}
+
+/**
+ * Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
+ * Refuses to follow symlinks (lstat + O_NOFOLLOW) so a planted symlink
+ * cannot redirect the zero-fill onto an unrelated file. Does not defeat
+ * copy-on-write filesystems or prior backup snapshots, but removes the
+ * cleartext from the typical ext4/HFS+/APFS-without-snapshot path that
+ * backup tools and same-user processes tend to read.
+ */
+function secureUnlink(filePath: string): void {
+  let opened = false;
+  try {
+    const flag = noFollowFlag();
+    if (flag === undefined) {
+      const stat = fs.lstatSync(filePath);
+      if (stat.isFile() || stat.isSymbolicLink()) fs.unlinkSync(filePath);
+      return;
+    }
+    const fd = fs.openSync(filePath, fs.constants.O_RDWR | flag);
+    opened = true;
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) return;
+      zeroFillCredentialFile(fd, stat.size);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // best effort; a final-component symlink either fails O_NOFOLLOW or is
+    // handled by the no-O_NOFOLLOW lstat fallback without touching its target.
+  }
+  try {
+    if (opened || fs.lstatSync(filePath).isSymbolicLink()) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {
+    // best effort
+  }
+}
+
+/**
+ * Stage credential values from a pre-fix plaintext credentials.json into
+ * `process.env` (non-destructive). Restricted to `KNOWN_CREDENTIAL_ENV_KEYS`
+ * so a stale or tampered file cannot inject unrelated variables (`PATH`,
+ * `NODE_OPTIONS`, `OPENSHELL_GATEWAY`, etc.) into later child processes.
+ *
+ * The file is intentionally NOT removed here. The unlink runs only after
+ * onboarding successfully registers the credentials with the OpenShell
+ * gateway — see {@link removeLegacyCredentialsFile}.
+ *
+ * @returns Sorted list of credential keys that were staged, or `[]`.
+ */
+export function stageLegacyCredentialsToEnv(): string[] {
+  const legacyFile = getCredsFile();
+
+  // O_NOFOLLOW only protects the *final* path component. Walk every
+  // ancestor between HOME and ~/.nemoclaw and refuse if any of them is
+  // a symlink — otherwise a planted directory symlink at ~/.nemoclaw/
+  // would redirect the read into an attacker-controlled location even
+  // though the credentials.json open itself looks safe. config-io's
+  // rejectSymlinksOnPath throws when a planted link is found; treat
+  // that the same as "no migratable file" and bail.
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch (error) {
+    console.error(
+      `  Refusing to migrate legacy credentials: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return [];
+  }
+
+  // Pin the file by descriptor before doing any checks. O_NOFOLLOW makes
+  // the open() itself fail when the final path component is a symlink,
+  // and fstat/read both target the same inode, so an attacker cannot
+  // swap the file between checks (TOCTOU) or redirect us through a
+  // symlink planted at the credentials path.
+  let fd: number;
+  try {
+    fd = openNoFollow(legacyFile);
+  } catch {
+    return [];
+  }
+
+  let raw: string;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return [];
+    if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) {
+      console.error(
+        `  Refusing to migrate ${legacyFile}: file is ${String(stat.size)} bytes, ` +
+          `exceeding the ${String(LEGACY_CREDS_FILE_MAX_BYTES)}-byte sanity cap. ` +
+          `Inspect the file manually and remove it if it does not contain credentials.`,
+      );
+      return [];
+    }
+    raw = fs.readFileSync(fd, "utf-8");
+  } catch {
+    return [];
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd already closed; ignore */
+    }
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return [];
+  }
+
+  const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
+  const staged: string[] = [];
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!allowed.has(key)) continue;
+    if (typeof value !== "string") continue;
+    const normalized = normalizeCredentialValue(value);
+    if (!normalized) continue;
+    // Defer to env values that were already set (e.g. by the user) so the
+    // file cannot silently override an explicit override. Use getCredential
+    // for the existence check so a blank or whitespace-only env entry —
+    // which `getCredential` normalizes to null — counts as unset and the
+    // legacy value is staged. Track only the keys we actually imported
+    // from the file — `staged.length > 0` is the signal callers use to
+    // decide it is safe to delete the legacy file.
+    if (!getCredential(key)) {
+      process.env[key] = normalized;
+      staged.push(key);
+    }
+  }
+  return staged.sort();
+}
+
+/** Refuse stale snapshots and renamed, linked, or concurrently edited files before mutation. */
+function assertLegacyCredentialSnapshot(
+  file: string,
+  fd: number,
+  original: fs.Stats,
+  bytes: Buffer,
+): void {
+  rejectSymlinksOnPath(path.dirname(file));
+  const current = fs.lstatSync(file);
+  const opened = fs.fstatSync(fd);
+  const currentBytes = Buffer.alloc(bytes.length);
+  if (
+    !current.isFile() ||
+    current.nlink !== 1 ||
+    opened.nlink !== 1 ||
+    current.dev !== original.dev ||
+    current.ino !== original.ino ||
+    opened.size !== bytes.length ||
+    opened.mtimeMs !== original.mtimeMs ||
+    opened.ctimeMs !== original.ctimeMs ||
+    fs.readSync(fd, currentBytes, 0, currentBytes.length, 0) !== bytes.length ||
+    !bytes.equals(currentBytes)
+  ) {
+    throw new Error(
+      "Legacy credential file changed during cleanup; inspect it and retry onboarding",
+    );
+  }
+}
+
+/** Stage only retained entries; do not create a rollback copy of removed credential entries. */
+function replaceLegacyCredentialEntries(
+  file: string,
+  retained: Record<string, unknown>,
+  validateOriginal: () => void,
+): void {
+  const directory = path.dirname(file);
+  const staging = fs.mkdtempSync(path.join(directory, ".credentials-retirement-"));
+  const temporary = path.join(staging, "credentials.json");
+  try {
+    fs.chmodSync(staging, 0o700);
+    fs.writeFileSync(temporary, JSON.stringify(retained, null, 2) + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.chmodSync(temporary, 0o600);
+    const stagedFd = openNoFollow(temporary);
+    try {
+      fs.fsyncSync(stagedFd);
+    } finally {
+      fs.closeSync(stagedFd);
+    }
+    validateOriginal();
+    fs.renameSync(temporary, file);
+    const directoryFd = fs.openSync(directory, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/** Retire only values verified by the caller's completed migration; preserve every other entry. */
+export function removeLegacyCredentialsFile(migratedValues: ReadonlyMap<string, string>): void {
+  if (migratedValues.size === 0) return;
+  const legacyFile = getCredsFile();
+  let fd: number | undefined;
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+    fd = openNoFollow(legacyFile, fs.constants.O_RDWR);
+    const original = fs.fstatSync(fd);
+    if (!original.isFile() || original.nlink !== 1 || original.size > LEGACY_CREDS_FILE_MAX_BYTES) {
+      throw new Error(
+        "Refusing a non-regular, multiply linked, or oversized legacy credential file",
+      );
+    }
+    const bytes = Buffer.alloc(original.size);
+    if (fs.readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) {
+      throw new Error("Could not read the complete legacy credential file");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      throw new Error("Legacy credential file is not valid JSON");
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("Legacy credential file is not a JSON object");
+    }
+    const entries = Object.entries(parsed);
+    const retained = entries.filter(
+      ([key, value]) =>
+        !KNOWN_CREDENTIAL_ENV_KEYS.includes(key) ||
+        typeof value !== "string" ||
+        migratedValues.get(key) !== normalizeCredentialValue(value),
+    );
+    if (retained.length === entries.length) return;
+    const openedFd = fd;
+    const validateOriginal = () =>
+      assertLegacyCredentialSnapshot(legacyFile, openedFd, original, bytes);
+    validateOriginal();
+    if (retained.length === 0) {
+      zeroFillCredentialFile(fd, original.size);
+      assertLegacyCredentialSnapshot(legacyFile, fd, fs.fstatSync(fd), Buffer.alloc(original.size));
+      fs.unlinkSync(legacyFile);
+    } else {
+      replaceLegacyCredentialEntries(legacyFile, Object.fromEntries(retained), validateOriginal);
+      zeroFillCredentialFile(fd, original.size);
+    }
+  } catch (error) {
+    if (fd !== undefined || !isErrnoException(error) || error.code !== "ENOENT") {
+      console.error(
+        `  Legacy credential cleanup incomplete: ${error instanceof Error ? error.message : "filesystem failure"}`,
+      );
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Securely remove the legacy plaintext credentials.json *iff* it carries
+ * no payload at all — i.e. it's empty, whitespace-only, an empty `{}`, or
+ * every value is a blank string. Used by the onboard completion path to
+ * clean up the stale empty file left behind on upgrades from pre-gateway
+ * NemoClaw versions (#3105).
+ *
+ * Refuses to act on a missing/symlinked/oversized/non-JSON/non-object
+ * file — those are either nothing-to-do or "leave for inspection" cases
+ * that the regular migration path already handles. Returns `true` only
+ * if the file was actually removed.
+ */
+export function removeLegacyCredentialsFileIfEmpty(): boolean {
+  const legacyFile = getCredsFile();
+
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch {
+    return false;
+  }
+
+  let fd: number;
+  try {
+    fd = openNoFollow(legacyFile);
+  } catch {
+    return false;
+  }
+
+  let raw: string;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return false;
+    if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) return false;
+    raw = fs.readFileSync(fd, "utf-8");
+  } catch {
+    return false;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd already closed; ignore */
+    }
+  }
+
+  // A 0-byte or whitespace-only file is functionally identical to an
+  // empty {} — there's no migratable payload, so skip JSON.parse (which
+  // would throw on the empty input) and fall through to the unlink.
+  if (raw.trim() !== "") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return false;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+
+    // Any surviving value is payload this sweep did not migrate, whether or
+    // not NemoClaw recognizes its key. Keys outside KNOWN_CREDENTIAL_ENV_KEYS
+    // used to be treated as absent, so a file holding only unrecognized
+    // secrets was destroyed without ever being read (#10373).
+    for (const value of Object.values(parsed as Record<string, unknown>)) {
+      if (typeof value !== "string" || normalizeCredentialValue(value)) {
+        return false;
+      }
+    }
+  }
+
+  // secureUnlink is best-effort and swallows errors. Verify the file is
+  // actually gone before claiming a successful removal — otherwise the
+  // runner would log "Removed stale ..." on a permission-denied unlink.
+  secureUnlink(legacyFile);
+  try {
+    fs.lstatSync(legacyFile);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Read a secret value from a TTY without echoing typed characters
+ * (asterisks are written instead). Resolves to the trimmed answer or
+ * rejects with `code: "SIGINT"` on Ctrl-C.
+ */
+export function promptSecret(question: string, maskCap?: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    const output = process.stderr;
+    // Re-attach stdin to the event loop. cleanup() below unrefs after the
+    // read completes (so a wizard ending here exits naturally), and unref()
+    // is sticky — without this the next direct promptSecret() call would
+    // listen on a detached handle. Idempotent when prompt() already ref'd.
+    if (typeof input.ref === "function") {
+      input.ref();
+    }
+    let answer = "";
+    let rawModeEnabled = false;
+    let finished = false;
+    let drawnStars = 0;
+    let drawnSuffix = "";
+
+    const cleanup = createPromptActivityCleanup(() => {
+      input.removeListener("data", onData);
+      input.removeListener("end", onInputClosed);
+      input.removeListener("close", onInputClosed);
+      if (rawModeEnabled && typeof input.setRawMode === "function") {
+        input.setRawMode(false);
+      }
+      // pause+unref so a wizard ending on a secret prompt exits naturally.
+      // The matching ref() in prompt() (and any direct caller) restores the
+      // event-loop ref before the next read.
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+      if (typeof input.unref === "function") {
+        input.unref();
+      }
+    });
+
+    function resolvePrompt(value: string) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      resolve(value);
+    }
+
+    function rejectPrompt(error: Error) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      reject(error);
+    }
+
+    function onInputClosed() {
+      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+    }
+
+    // With maskCap set, cap the asterisks and add an "(and N more characters)"
+    // tail so a huge paste (a ~2 KB SA JSON) doesn't flood the line; the full
+    // value stays in `answer`. maskCap unset → the plain per-char echo, unchanged.
+    function renderMask() {
+      const cap = maskCap ?? Number.POSITIVE_INFINITY;
+      const targetStars = Math.min(answer.length, cap);
+      const targetSuffix =
+        answer.length > targetStars ? ` (and ${answer.length - targetStars} more characters)` : "";
+      if (targetStars === drawnStars && targetSuffix === drawnSuffix) return;
+      if (drawnSuffix.length > 0) {
+        const back = "\b".repeat(drawnSuffix.length);
+        output.write(`${back}${" ".repeat(drawnSuffix.length)}${back}`);
+      }
+      if (targetStars > drawnStars) {
+        output.write("*".repeat(targetStars - drawnStars));
+      } else if (targetStars < drawnStars) {
+        output.write("\b \b".repeat(drawnStars - targetStars));
+      }
+      if (targetSuffix.length > 0) output.write(targetSuffix);
+      drawnStars = targetStars;
+      drawnSuffix = targetSuffix;
+    }
+
+    // Word-delete (Meta-Backspace / Ctrl-W) so Option/Alt+Delete works here too:
+    // drop trailing spaces, then the last word (a minified secret clears at once).
+    function wordDeleteBackward() {
+      const before = answer.length;
+      let end = answer.length;
+      while (end > 0 && answer[end - 1] <= " ") end -= 1;
+      while (end > 0 && answer[end - 1] > " ") end -= 1;
+      answer = answer.slice(0, end);
+      const removed = before - answer.length;
+      if (removed <= 0) return;
+      if (maskCap === undefined) {
+        output.write("\b \b".repeat(removed));
+      } else {
+        renderMask();
+      }
+    }
+
+    function onData(chunk: Buffer | string) {
+      const text = chunk.toString();
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (ch === "\u0003") {
+          rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+          return;
+        }
+
+        if (ch.charCodeAt(0) === 0x17) {
+          wordDeleteBackward();
+          continue;
+        }
+
+        if (ch === "\r" || ch === "\n") {
+          if (maskCap !== undefined) renderMask();
+          resolvePrompt(answer.trim());
+          return;
+        }
+
+        if (ch === "\u0008" || ch === "\u007f") {
+          if (answer.length > 0) {
+            answer = answer.slice(0, -1);
+            if (maskCap === undefined) output.write("\b \b");
+          }
+          continue;
+        }
+
+        if (ch === "\u001b") {
+          const rest = text.slice(i);
+          if (rest.charCodeAt(1) === 0x7f || rest.charCodeAt(1) === 0x08) {
+            i += 1;
+            wordDeleteBackward();
+            continue;
+          }
+          const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
+          if (match) {
+            i += match[0].length - 1;
+          }
+          continue;
+        }
+
+        if (ch >= " ") {
+          answer += ch;
+          if (maskCap === undefined) output.write("*");
+        }
+      }
+      if (!finished && maskCap !== undefined) renderMask();
+    }
+
+    try {
+      output.write(question);
+      input.setEncoding("utf8");
+      if (typeof input.resume === "function") {
+        input.resume();
+      }
+      if (typeof input.setRawMode === "function") {
+        input.setRawMode(true);
+        rawModeEnabled = true;
+      }
+      input.on("data", onData);
+      input.on("end", onInputClosed);
+      input.on("close", onInputClosed);
+    } catch (error) {
+      rejectPrompt(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+export function isSecureCredentialPromptAvailable(
+  stdinIsTty: boolean = Boolean(process.stdin.isTTY),
+  stderrIsTty: boolean = Boolean(process.stderr.isTTY),
+): boolean {
+  return stdinIsTty && stderrIsTty;
+}
+
+/**
+ * Prompt the user on stderr and resolve to their trimmed answer. Pass
+ * `{ secret: true }` to mask input on a TTY (falls back to plain readline
+ * when stdin/stderr is non-interactive, e.g. in CI).
+ */
+export function prompt(
+  question: string,
+  opts: { secret?: boolean; maskCap?: number } = {},
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // Re-attach stdin to the event loop before any prompt path. unref() in
+    // cleanup (below, and in the secret path) is sticky — neither
+    // readline.createInterface() nor the secret reader re-ref stdin on
+    // their own, so a follow-up prompt of either kind would otherwise see
+    // a detached handle and the process could exit before the user answers.
+    if (typeof process.stdin.ref === "function") {
+      process.stdin.ref();
+    }
+    const silent = opts.secret === true && isSecureCredentialPromptAvailable();
+    if (silent) {
+      promptSecret(question, opts.maskCap)
+        .then(resolve)
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error && error.code === "SIGINT") {
+            reject(error);
+            process.kill(process.pid, "SIGINT");
+            return;
+          }
+          reject(error);
+        });
+      return;
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    let finished = false;
+
+    const cleanup = createPromptActivityCleanup(() => {
+      rl.close();
+      // pause+unref so the process exits naturally after the last prompt
+      // resolves. The matching ref() above keeps subsequent prompts working;
+      // unref()-ing a TTY ReadStream only releases the event-loop reference,
+      // cooked/raw mode and any subsequent reads remain unaffected.
+      if (typeof process.stdin.pause === "function") {
+        process.stdin.pause();
+      }
+      if (typeof process.stdin.unref === "function") {
+        process.stdin.unref();
+      }
+    });
+
+    function resolvePrompt(value: string) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve(value);
+    }
+
+    function rejectPrompt(error: Error) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(error);
+    }
+
+    try {
+      rl.on("SIGINT", () => {
+        const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+        rejectPrompt(error);
+        process.kill(process.pid, "SIGINT");
+      });
+      // Treat readline closing before the question is answered as cancellation.
+      // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
+      // `question` callback never fires; without this the prompt promise would
+      // hang or the process would exit 0 silently. resolvePrompt/rejectPrompt set
+      // `finished` before calling cleanup() (which itself closes rl), so the
+      // post-answer close is ignored and only a premature EOF rejects here.
+      rl.on("close", () => {
+        if (finished) return;
+        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      });
+      rl.question(question, (answer) => {
+        resolvePrompt(answer.trim());
+      });
+    } catch (error) {
+      rejectPrompt(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+export async function readCredentialPrompt(
+  question: string,
+  promptImpl: typeof prompt = prompt,
+): Promise<CredentialPromptIntent> {
+  return getCredentialPromptIntent(await promptImpl(question, { secret: true }));
+}
+
+/**
+ * Ensure `NVIDIA_INFERENCE_API_KEY` is staged for this process. Returns immediately
+ * if it is already in env, otherwise prompts interactively (validating
+ * the `nvapi-` prefix) and stages the result. Onboarding registers the
+ * value with the OpenShell gateway later in the flow.
+ */
+export async function ensureApiKey(): Promise<CredentialPromptIntent> {
+  let key =
+    getCredential("NVIDIA_INFERENCE_API_KEY") ||
+    getLegacyCredentialAlias("NVIDIA_INFERENCE_API_KEY");
+  if (key) {
+    process.env.NVIDIA_INFERENCE_API_KEY = key;
+    return { kind: "credential", value: key };
+  }
+
+  console.log("");
+  console.log("  ┌─────────────────────────────────────────────────────────────────┐");
+  console.log("  │  NVIDIA API Key required                                        │");
+  console.log("  │                                                                 │");
+  console.log("  │  1. Go to https://build.nvidia.com/settings/api-keys            │");
+  console.log("  │  2. Sign in with your NVIDIA account                            │");
+  console.log("  │  3. Click 'Generate API Key' button                             │");
+  console.log("  │  4. Paste the key below (starts with nvapi-)                    │");
+  console.log("  └─────────────────────────────────────────────────────────────────┘");
+  console.log("");
+
+  while (true) {
+    const input = getCredentialPromptIntent(await prompt("  NVIDIA API Key: ", { secret: true }));
+    if (input.kind === "help") {
+      console.log("  Type back to choose a different provider, or exit to quit.");
+      continue;
+    }
+    if (input.kind !== "credential") return input;
+    key = input.value;
+
+    if (!key) {
+      console.error("  NVIDIA API Key is required.");
+      continue;
+    }
+
+    if (!key.startsWith("nvapi-")) {
+      console.error("  Invalid NVIDIA API key. Must start with nvapi-");
+      continue;
+    }
+
+    break;
+  }
+
+  saveCredential("NVIDIA_INFERENCE_API_KEY", key);
+  process.env.NVIDIA_INFERENCE_API_KEY = key;
+  console.log("");
+  console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
+  console.log("  onboarding registers it with the gateway and nothing is written to disk.");
+  console.log("");
+  return { kind: "credential", value: key };
+}

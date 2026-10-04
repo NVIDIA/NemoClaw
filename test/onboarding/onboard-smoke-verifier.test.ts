@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+import { shouldSmokeOpenAiLikeOnboardRoute } from "../../src/lib/inference/onboard-probes";
+import { runVerifyOnboardSmokeHarness } from "../helpers/onboard-smoke-verifier-harness";
+
+describe("Hermes onboard smoke verification", () => {
+  it("does not host-smoke Hermes Provider with the ambient OPENAI_API_KEY", () => {
+    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider", "OPENAI_API_KEY")).toBe(false);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider", "NOUS_API_KEY")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("openai-api")).toBe(true);
+  });
+
+  it("host-smokes every NVIDIA Endpoints route like its siblings (#10879)", () => {
+    // nvidia-prod registers as OpenShell provider type "nvidia", which the
+    // providerType allowlist does not match, so it used to onboard without a
+    // single Chat Completions request and first failed at `status`.
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-prod")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-nim")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-router")).toBe(true);
+  });
+
+  it("sends the NVIDIA Endpoints host smoke through Chat Completions (#10879)", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+    ]);
+
+    // Before #10879 the runtime verifier returned before any probe, so a model
+    // the credential cannot invoke onboarded clean and first failed at `status`.
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toEqual([
+      [
+        "runCurlProbe",
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "Authorization: Bearer resolved-NVIDIA_INFERENCE_API_KEY",
+      ],
+    ]);
+  });
+
+  it("skips only the Hermes OAuth smoke path in the runtime verifier", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      { credentialEnv: "OPENAI_API_KEY" },
+      { credentialEnv: "NOUS_API_KEY" },
+      { credentialEnv: "OPENAI_API_KEY", forceOpenAiLike: true },
+    ]);
+    expect(
+      calls.filter((call) =>
+        ["resolveProviderCredential", "getCredential", "runCurlProbe"].includes(call[0]),
+      ),
+    ).toEqual([
+      ["resolveProviderCredential", "NOUS_API_KEY"],
+      [
+        "runCurlProbe",
+        "https://api.example.com/v1/chat/completions",
+        "Authorization: Bearer resolved-NOUS_API_KEY",
+      ],
+      ["resolveProviderCredential", "OPENAI_API_KEY"],
+      [
+        "runCurlProbe",
+        "https://api.example.com/v1/chat/completions",
+        "Authorization: Bearer resolved-OPENAI_API_KEY",
+      ],
+    ]);
+  });
+
+  it("does not send a duplicate smoke request for a matching selected Chat Completions capability", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        credentialEnv: "NOUS_API_KEY",
+        endpointUrl: "https://override.example/v1",
+        model: "override/model",
+        provider: "hermes-provider",
+        selectedChatCapability: true,
+      },
+    ]);
+
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toHaveLength(0);
+    expect(calls).toContainEqual([
+      "log",
+      "  ✓ Reusing selected Chat Completions validation: hermes-provider / override/model",
+    ]);
+  });
+
+  it("reuses a matching DNS-pinned Chat Completions validation without another request", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        credentialEnv: "NOUS_API_KEY",
+        endpointUrl: "https://pinned.example/v1",
+        model: "pinned/model",
+        pinnedAddresses: ["93.184.216.34"],
+        provider: "hermes-provider",
+        selectedChatCapability: true,
+      },
+    ]);
+
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toHaveLength(0);
+    expect(calls).toContainEqual([
+      "log",
+      "  ✓ Reusing selected Chat Completions validation: hermes-provider / pinned/model",
+    ]);
+  });
+
+  it("fails when the selected capability cannot be safely cached", async () => {
+    await expect(
+      runVerifyOnboardSmokeHarness([
+        {
+          credentialEnv: "NOUS_API_KEY",
+          endpointUrl: "https://api.example.com/v1?credential-bearing=true",
+          selectedChatCapability: true,
+        },
+      ]),
+    ).rejects.toThrow("failed to prime selected Chat Completions capability");
+  });
+});

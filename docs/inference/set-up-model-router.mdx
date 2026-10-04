@@ -1,0 +1,149 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Model Router"
+sidebar-title: "Set Up Model Router"
+description: "Configure the NemoClaw host-side model router and its model pool."
+description-agent: "Sets up the NemoClaw Model Router. Use when routing requests across a configured model pool or tuning the router tolerance."
+keywords: ["NemoClaw Model Router", "model routing", "router pool"]
+content:
+  type: "how_to"
+---
+Model Router runs on the host and selects a model from a configured pool for each request.
+OpenShell registers it as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+
+## How the Router Fits
+
+The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
+During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and registers the `nvidia-router` provider with OpenShell.
+The sandbox does not call port `4000` directly.
+On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
+NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
+NemoClaw tries to append router process output to `~/.nemoclaw/state/model-router.log`.
+A nondefault gateway port uses `~/.nemoclaw/gateways/<port>/state/model-router.log`.
+NemoClaw creates or reopens the log with owner-only permissions.
+Each Model Router start appends to the same file.
+NemoClaw does not truncate or rotate the file.
+If output capture fails, router startup continues without captured output.
+NemoClaw sends one semantic health request at a time so slow upstream checks do not overlap.
+Each request uses only the time that remains in the 10-minute startup limit.
+If a semantic health response completed before startup failed, the error identifies the last request outcome, HTTP status, duration, and captured body size.
+When a completed response returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
+When output capture succeeded, the startup error also includes the log path.
+When the log contains readable output from this run, the error includes a redacted excerpt.
+The owner-only log contains unredacted router output.
+Review the log before you share it.
+NemoClaw does not provide log-only cleanup.
+
+## Router and Sandbox Lifecycle Locks
+
+Routed onboarding already holds the onboarding session lock when it acquires the selected gateway route lock, then the current-user lock for the selected Model Router port.
+The port lock is shared across the current user's NemoClaw gateways.
+Onboarding holds all three locks through router setup and sandbox registry publication.
+Before sandbox deletion, `destroy` captures the current onboarding session identity.
+Model Router destruction takes the gateway route lock, then the current-user Model Router port lock, and then tries the onboarding session lock without waiting.
+After acquiring the session lock, `destroy` rechecks the captured identity before the peer check or process stop.
+If another onboarding run owns the session lock, or the identity changed, `destroy` skips Model Router teardown and warns.
+It leaves the Model Router process and current onboarding session unchanged.
+When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
+If no same-port peer remains, NemoClaw stops only a process whose command line still identifies the Model Router on that port.
+NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and liveness probe confirm that the router is absent.
+The final sandbox-name cleanup also checks the captured session identity.
+Other sandbox destroy paths use a non-blocking session update.
+If onboarding owns the lock or the captured session identity changed, `destroy` leaves the current session unchanged.
+If the captured session still names the destroyed sandbox but uses another router port, `destroy` clears only the sandbox association and preserves the router process and credential recovery identity.
+If the process inventory is unavailable, the completed scan finds no matching process while the port remains responsive, or the stop fails, `destroy` still completes and keeps the recovery identity.
+If `destroy` warns that it could not identify or stop a listener for the deleted sandbox, follow these steps:
+
+1. Inspect the current listener process immediately before you stop anything.
+2. Stop it only if its command line identifies the Model Router on the named port.
+3. Do not stop the router recorded by a preserved session for another port.
+4. Do not stop a previously reported process ID if its command line no longer matches.
+
+While another registered Model Router sandbox in any host gateway registry uses the same port, destroying one Model Router sandbox keeps the process running.
+A Model Router sandbox on another port does not keep the process running.
+A successful [uninstall](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) stops the selected Model Router and removes its log with the selected gateway's operational state.
+Review the uninstall scope before you use it for log removal.
+
+```text
+Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API
+```
+
+Credentials flow through the OpenShell provider system.
+The sandbox never sees raw API keys.
+
+## Configure the Model Pool
+
+The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
+Edit that file to define the model names that the router can select.
+
+The default pool routes between models available through NVIDIA Endpoints.
+It uses `tolerance` to select the lowest-cost model whose predicted quality stays within the configured threshold.
+
+```yaml
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+  encoder_backend: transformers
+
+models:
+  - name: gpt-oss-20b-high
+    display_name: "GPT-OSS 20B High"
+    litellm_model: "openai/openai/gpt-oss-20b"
+    cost_per_m_input_tokens: 0.052
+    cost_per_m_output_tokens: 0.245
+    api_base: "https://integrate.api.nvidia.com/v1"
+
+  - name: nemotron-3-super
+    display_name: "Nemotron 3 Super 120B"
+    litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
+    cost_per_m_input_tokens: 0.10
+    cost_per_m_output_tokens: 0.40
+    api_base: "https://integrate.api.nvidia.com/v1"
+```
+
+Use these values to tune the accuracy and cost tradeoff.
+
+| Value | Behavior |
+|---|---|
+| `0.0` | Always select the most accurate model. |
+| `0.20` | Allow up to 20 percentage points below the best result for a cheaper model. |
+| `1.0` | Always select the cheapest model. |
+
+## Meet the Python Requirement
+
+NemoClaw creates a host-side virtual environment for Model Router during onboarding.
+It probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and `python3` in that order.
+The selected interpreter must have a version in the range `[3.10, 3.14)` and must import `ensurepip`, `pyexpat`, `ssl`, and `venv` without error.
+
+Before creating the environment, NemoClaw checks for at least 3 GiB of free or reclaimable capacity on its filesystem.
+This capacity covers the installed Python packages and download staging.
+When NemoClaw replaces a NemoClaw-managed environment, storage that removal can reclaim counts toward the requirement.
+If capacity is below the requirement, onboarding stops before creating the environment and reports how much space to free.
+Free the reported capacity, then run `$$nemoclaw onboard --resume`.
+If the filesystem does not report capacity, onboarding prints the reason and continues.
+
+If no candidate qualifies, onboarding stops and prints the failure for each candidate.
+Set `NEMOCLAW_MODEL_ROUTER_PYTHON` to an absolute path to probe only one interpreter.
+
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 $$nemoclaw onboard
+```
+
+The pin is strict.
+NemoClaw rejects relative command names and stops with the failure reason if the selected interpreter does not qualify.
+
+## Onboard Non-Interactively
+
+Set the routed provider and NVIDIA credential before running onboarding.
+
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_INFERENCE_API_KEY=<your-key> $$nemoclaw onboard --non-interactive
+```
+
+## Related Topics
+
+- [About Inference Routing](../about-inference-routing) explains the host and sandbox boundary.
+- [View the Active Inference Route](../manage-inference/view-active-inference-route) shows the active provider and model.

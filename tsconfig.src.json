@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
+    "rewriteRelativeImportExtensions": true,
     "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
@@ -16,5 +17,10 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "nemoclaw", "src/**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "nemoclaw",
+    "src/**/*.test.ts",
+    "src/**/*-test-fixture.ts"
+  ]
 }

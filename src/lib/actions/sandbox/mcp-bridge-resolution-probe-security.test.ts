@@ -1,0 +1,261 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import {
+  buildCredentialResolutionProbeCommand,
+  classifyCredentialResolutionProbe,
+  MCP_PROBE_CONTROL_BEARER,
+  MCP_PROBE_CONTROL_EXIT_MARKER,
+  MCP_PROBE_CONTROL_HTTP_MARKER,
+  MCP_PROBE_EXIT_MARKER,
+  MCP_PROBE_HTTP_MARKER,
+  PROBE_SANITIZED_ENV_VARS,
+} from "./mcp-bridge-resolution-probe";
+
+const baseEntry: McpSourceEntry = {
+  server: "github",
+  agent: "openclaw",
+  adapter: "openclaw-config",
+  url: "https://api.githubcopilot.com/mcp/",
+  env: ["GITHUB_TOKEN"],
+  providerName: "alpha-mcp-github",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-github",
+};
+
+function probeStdout(
+  parts: {
+    httpStatus?: number;
+    curlExit: number;
+    controlHttpStatus?: number;
+    controlExit?: number;
+  },
+  resultMarker?: string,
+): string {
+  const nonce = resultMarker ? `${resultMarker}:` : "";
+  return [
+    ...(parts.httpStatus === undefined
+      ? []
+      : [`${MCP_PROBE_HTTP_MARKER}${nonce}${parts.httpStatus}`]),
+    `${MCP_PROBE_EXIT_MARKER}${nonce}${parts.curlExit}`,
+    ...(parts.controlHttpStatus === undefined
+      ? []
+      : [`${MCP_PROBE_CONTROL_HTTP_MARKER}${nonce}${parts.controlHttpStatus}`]),
+    ...(parts.controlExit === undefined
+      ? []
+      : [`${MCP_PROBE_CONTROL_EXIT_MARKER}${nonce}${parts.controlExit}`]),
+  ].join("\n");
+}
+
+describe("MCP credential-resolution probe command security", () => {
+  it("validates and silences proxy env before framing nonce-bound adapter HTTP (#6379)", () => {
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "openclaw-config", "v11");
+    expect(built).not.toBeNull();
+    const command = built?.command ?? "";
+    const validationIndex = command.indexOf('[ -L "$proxy_env" ]');
+    const sourceIndex = command.indexOf('. "$proxy_env"');
+    const unsetIndex = command.indexOf(`unset ${PROBE_SANITIZED_ENV_VARS.join(" ")}`);
+    const frameIndex = command.indexOf(built?.resultMarker ?? "missing-result-marker");
+    const runtimeIndex = command.indexOf("nemoclaw-start node -e");
+
+    expect(command).toContain("expected regular root-owned mode 444 file");
+    expect(command).toContain('. "$proxy_env" >/dev/null 2>&1');
+    expect(validationIndex).toBeGreaterThan(-1);
+    expect(sourceIndex).toBeGreaterThan(validationIndex);
+    expect(unsetIndex).toBeGreaterThan(sourceIndex);
+    expect(frameIndex).toBeGreaterThan(unsetIndex);
+    expect(runtimeIndex).toBeGreaterThan(frameIndex);
+    expect(command).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(command).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
+    expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
+    expect(command).toContain('\\"method\\":\\"initialize\\"');
+    expect(command).toContain(`${MCP_PROBE_HTTP_MARKER}${built?.resultMarker}:`);
+    expect(command).toContain(`${MCP_PROBE_CONTROL_HTTP_MARKER}${built?.resultMarker}:`);
+    expect(command.trimEnd().endsWith("exit 0")).toBe(true);
+  });
+
+  it.each([
+    {
+      adapter: "openclaw-config" as const,
+      runtime: "nemoclaw-start node -e",
+      client: "fetch(url",
+    },
+    {
+      adapter: "hermes-config" as const,
+      runtime: "/opt/hermes/.venv/bin/python -I -c",
+      client: "urllib.request.Request",
+    },
+    {
+      adapter: "deepagents-config" as const,
+      runtime: "/opt/venv/bin/python3 -I -c",
+      client: "urllib.request.Request",
+    },
+  ])(
+    "uses the $adapter runtime as the socket-owning HTTP client without capturing bodies (#6379)",
+    ({ adapter, runtime, client }) => {
+      const command =
+        buildCredentialResolutionProbeCommand(baseEntry, adapter, "v11")?.command ?? "";
+
+      expect(command).toContain(runtime);
+      expect(command).toContain(client);
+      expect(command).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
+      expect(command).not.toContain("arrayBuffer");
+      expect(command).not.toContain("resp.read()");
+      expect(command).not.toContain("err.read()");
+      expect(command).not.toContain("head -c");
+      expect(command).not.toContain("mktemp");
+    },
+  );
+
+  it("refuses missing credentials and unsafe persisted endpoints (#6379)", () => {
+    expect(
+      buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "openclaw-config", "v11"),
+    ).toBeNull();
+    expect(
+      buildCredentialResolutionProbeCommand(
+        { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
+        "openclaw-config",
+        "v11",
+      ),
+    ).toBeNull();
+    expect(
+      buildCredentialResolutionProbeCommand(
+        { ...baseEntry, url: "https://host.openshell.internal:31337/mcp" },
+        "openclaw-config",
+        "v11",
+      ),
+    ).toBeNull();
+  });
+
+  it("probes a recorded trusted private endpoint and still refuses an unrecorded one (#11377)", () => {
+    const unrecordedPrivateEntry: McpSourceEntry = {
+      ...baseEntry,
+      url: "https://172.17.0.2:8443/mcp",
+      env: ["MCP_KEY"],
+    };
+    const trustedPrivateEntry: McpSourceEntry = {
+      ...unrecordedPrivateEntry,
+      trustedPrivateHost: "172.17.0.2",
+      allowedIps: ["172.17.0.2"],
+    };
+
+    const built = buildCredentialResolutionProbeCommand(
+      trustedPrivateEntry,
+      "openclaw-config",
+      "v11",
+    );
+    expect(built).not.toBeNull();
+    expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
+    expect(built?.command).toContain("openshell:resolve:env:v11_MCP_KEY");
+    expect(
+      buildCredentialResolutionProbeCommand(unrecordedPrivateEntry, "openclaw-config", "v11"),
+    ).toBeNull();
+  });
+
+  it("rejects duplicate and out-of-order result markers (#6379)", () => {
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "openclaw-config", "v11");
+    expect(built).not.toBeNull();
+    const resultMarker = built?.resultMarker ?? "missing-result-marker";
+    const duplicated = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+          probeStdout(
+            { httpStatus: 401, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      },
+      baseEntry,
+      resultMarker,
+    );
+    expect(duplicated.ok).toBeNull();
+
+    const outOfOrder = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: [
+          resultMarker,
+          `${MCP_PROBE_EXIT_MARKER}${resultMarker}:0`,
+          `${MCP_PROBE_HTTP_MARKER}${resultMarker}:200`,
+          `${MCP_PROBE_CONTROL_HTTP_MARKER}${resultMarker}:401`,
+          `${MCP_PROBE_CONTROL_EXIT_MARKER}${resultMarker}:0`,
+        ].join("\n"),
+        stderr: "",
+      },
+      baseEntry,
+      resultMarker,
+    );
+    expect(outOfOrder).toEqual({ ok: null, detail: "probe output markers were out of order" });
+  });
+
+  it("accepts only fresh nonce-bound markers after the trusted result frame (#6379)", () => {
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "openclaw-config", "v11");
+    expect(built).not.toBeNull();
+    const resultMarker = built?.resultMarker ?? "missing-result-marker";
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: [
+          probeStdout({ httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 }),
+          resultMarker,
+          probeStdout(
+            { httpStatus: 401, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      },
+      baseEntry,
+      resultMarker,
+    );
+    expect(probe.ok).toBeNull();
+    expect(probe.httpStatus).toBe(401);
+
+    const staleOnly = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout({ httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 }),
+        ].join("\n"),
+        stderr: "",
+      },
+      baseEntry,
+      resultMarker,
+    );
+    expect(staleOnly).toEqual({
+      ok: null,
+      detail: "probe output missing or ambiguous markers",
+    });
+
+    const duplicatedFrame = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: resultMarker,
+      },
+      baseEntry,
+      resultMarker,
+    );
+    expect(duplicatedFrame).toEqual({
+      ok: null,
+      detail: "probe output missing trusted result frame",
+    });
+  });
+});

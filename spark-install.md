@@ -5,4 +5,13 @@
 
 # NemoClaw on DGX Spark
 
-The guide for setting up NemoClaw on DGX Spark is available on the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). DGX Spark needs no platform-specific pre-setup as Docker is pre-installed. So the standard [Quickstart](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html) works directly. Refer to the playbook for detailed instructions.
+The guide for setting up NemoClaw on DGX Spark is available on the [NVIDIA Spark playbook instructions](https://build.nvidia.com/spark/nemoclaw/instructions).
+DGX Spark needs no platform-specific pre-setup because Docker is pre-installed, so the standard [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.html) works directly.
+Use the hosted installer without a version override.
+It follows the last-known-good (`lkg`) release tag by default.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Refer to the playbook for detailed instructions.

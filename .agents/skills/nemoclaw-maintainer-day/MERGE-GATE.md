@@ -1,48 +1,96 @@
-# Merge Gate Workflow
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Run the last maintainer check before approval. Never merge automatically.
+# Decide Whether to Approve a Pull Request
 
-## Gates
+Approve only when the trusted checker and maintainer judgments pass for the same PR commit and observed base branch tip.
+A stable older PR base does not block approval. GitHub must report no conflict, and no active rule can require an up-to-date branch.
+This workflow never merges.
 
-For the full priority list see [PR-REVIEW-PRIORITIES.md](PR-REVIEW-PRIORITIES.md). A PR is approval-ready only when **all** hard gates pass:
+## Stabilize the commit under review
 
-1. **CI green** — all required checks in `statusCheckRollup`.
-2. **No conflicts** — `mergeStateStatus` clean.
-3. **No major CodeRabbit** — ignore style nits; block on correctness/security bugs.
-4. **Risky code tested** — see [RISKY-AREAS.md](RISKY-AREAS.md). Confirm tests exist (added or pre-existing).
+Complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit
+before manual review or the trusted checker. A first-time fork check-approval review is the only exception.
 
-## Step 1: Run the Gate Checker
+Do not integrate the base branch while this evidence is pending. After every finding settles,
+integrate the base only for a conflict, a required merged dependency, or an active up-to-date rule.
+Then restart PR follow-up and review the new candidate.
+
+## Apply the approval rule
+
+See [PR Review Priorities](PR-REVIEW-PRIORITIES.md). Require all conditions:
+
+- An accepted issue or design decision establishes product scope. For a new product surface, it also defines ownership, lifecycle, compatibility, security, and validation expectations.
+- The PR body has the contributor's `Signed-off-by:` declaration.
+- GitHub marks every commit as `Verified`.
+- Required CI passes for the recorded PR commit and base commit.
+- The PR remains open, not draft, `MERGEABLE`, and in a permitted merge state.
+- No unresolved correctness or security finding remains.
+- Risky code has applicable tests from [Risky Areas](RISKY-AREAS.md).
+
+Dependabot does not need the PR-body declaration. Its login must be `dependabot[bot]` or `app/dependabot`. Its commits must still be verified.
+
+## Run the trusted checker
+
+From the clean candidate checkout, refresh canonical `origin/main`, then execute the wrapper source from that ref. The trusted ref—not the candidate checkout—selects the wrapper. It compares the gate source with the candidate checkout, executes the trusted copy, and removes its temporary worktree:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
+git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-trusted-check-gates.sh) <pr-number>
 ```
 
-This checks all 4 gates programmatically and returns structured JSON with `allPass` and per-gate `pass`/`details`.
+Read the effective rules for `main` before approval:
 
-## Step 2: Interpret Results
+```bash
+gh api --paginate "repos/NVIDIA/NemoClaw/rules/branches/main"
+```
 
-The script handles the deterministic checks. You handle judgment calls:
+Require every active status and review rule to pass for the recorded PR commit and base commit.
 
-- **Missing required checks:** The script verifies that `checks`, `commit-lint`, and `dco-check` are present in the status rollup. If any are missing, **workflows have not been triggered** — this happens on fork PRs from first-time contributors that need "Approve and run" clicked in the Actions tab. Go to the PR's Checks tab, approve the workflows, wait for all checks to complete, then re-run the gate checker. **Never approve a PR with missing checks.**
-- **Conflicts (DIRTY):** Do NOT approve — GitHub invalidates approvals when new commits are pushed. Salvage first (rebase), wait for CI, then re-run the gate checker. Follow [SALVAGE-PR.md](SALVAGE-PR.md).
-- **CI failing but narrow:** Follow the salvage workflow in [SALVAGE-PR.md](SALVAGE-PR.md).
-- **CI pending:** Wait and re-check. Do not approve while checks are still running.
-- **CodeRabbit:** Script flags unresolved major/critical threads. Review the `snippet` to confirm it's a real issue vs style nit. If doubt, leave unapproved.
-- **Tests:** If `riskyCodeTested.pass` is false, follow [TEST-GAPS.md](TEST-GAPS.md).
+The checker returns `allPass`, gate results, and advisories. It does not decide product scope. The contributor-and-approver overlap advisory does not change `allPass`.
 
-## Step 3: Approve or Report
+Fail closed when the PR commit, observed base state, timing, or required evidence is missing,
+malformed, stale, contradictory, or changes during evaluation.
 
-**Approve only when:** `allPass` is true AND `mergeStateStatus` is not DIRTY. Approving a PR with conflicts is wasted effort — the rebase will invalidate the approval.
+## Complete maintainer judgments
 
-The correct sequence for a conflicted PR: **salvage (rebase) → CI green → approve → report ready for merge.**
+### Product scope
 
-**All pass + no conflicts:** Approve and summarize why.
+Stop when no accepted issue or design decision establishes a new product surface. Tests and successful CI do not establish product approval. Ask for a maintainer decision or route an independent solution through [Community Solutions](../../../docs/resources/community-contributions.mdx).
 
-**Any fail:**
+### CI and review evidence
 
-| Gate | Status | What is needed |
-|------|--------|----------------|
-| CI | Failing | Fix flaky timeout test |
-| Conflicts | DIRTY | Rebase onto main first — approval would be invalidated |
+Use [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) to collect and classify CI and review evidence. Treat PR Review Advisor output as review input, not approval authority. Deduplicate repeated findings and separate candidate-owned failures from failures that reproduce on the base.
 
-Use full GitHub links.
+A first-time fork contributor can require an **Approve and run** decision before PR checks appear. Review the complete diff before that approval. Do not expose repository secrets or privileged credentials to candidate code.
+
+### Live E2E
+
+Live E2E is not a default PR merge gate. When a maintainer requires it, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md), then evaluate its result for this PR.
+
+### Contributor and approver overlap
+
+Report `advisories.contributorApprovalOverlap`. The advisory does not prove independent approval and does not change `allPass`.
+
+The contributor set includes the PR opener, commit authors, and co-authors. Use each account's most recent opinionated review. Warn when pagination or review timestamps are incomplete or conflicting.
+
+## Decide
+
+| Result | Action |
+|---|---|
+| Product scope is not approved | Stop and request a maintainer decision. |
+| Contributor declaration or verification fails | Ask the contributor to correct the body or commit history. Do not amend, sign, or force-push for them. |
+| PR revision or base branch tip changed during evaluation | Do not approve. Restart the gate for the new state. |
+| CI or review is pending | Wait. |
+| A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md) after collection completes for the same commit. |
+| An active rule requires the current base | Integrate the base once, then restart PR follow-up for the new candidate. |
+| A required test is missing | Follow [Test Gaps](TEST-GAPS.md). |
+| All checker gates and maintainer judgments pass | Approve the commit under review. |
+
+Do not approve a conflicted PR. A branch refresh invalidates the prior approval evidence.
+
+## Recheck and report
+
+After approval, run the trusted checker and read the effective rules again. Confirm that no rule, PR commit, base commit, required check, review decision, or merge state changed.
+
+Report the gate result, required action, advisory output, and PR URL. Report that the PR can proceed to a separate merge decision. Never merge in this workflow.

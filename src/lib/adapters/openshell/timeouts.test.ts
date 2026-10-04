@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./timeouts";
+
+describe("openshell-timeouts", () => {
+  it.each([
+    { name: "probe timeout", value: OPENSHELL_PROBE_TIMEOUT_MS },
+    { name: "operation timeout", value: OPENSHELL_OPERATION_TIMEOUT_MS },
+    { name: "heavy timeout", value: OPENSHELL_HEAVY_TIMEOUT_MS },
+    { name: "policy activation timeout", value: OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS },
+    { name: "download timeout", value: OPENSHELL_DOWNLOAD_TIMEOUT_MS },
+  ])("exports a positive integer $name", ({ value }) => {
+    expect(value).toBeTypeOf("number");
+    expect(value).toBeGreaterThan(0);
+    expect(Number.isInteger(value)).toBe(true);
+  });
+
+  it("maintains expected ordering: PROBE < OPERATION <= DOWNLOAD < HEAVY < POLICY_ACTIVATION", () => {
+    expect(OPENSHELL_PROBE_TIMEOUT_MS).toBeLessThan(OPENSHELL_OPERATION_TIMEOUT_MS);
+    expect(OPENSHELL_OPERATION_TIMEOUT_MS).toBeLessThanOrEqual(OPENSHELL_DOWNLOAD_TIMEOUT_MS);
+    expect(OPENSHELL_DOWNLOAD_TIMEOUT_MS).toBeLessThan(OPENSHELL_HEAVY_TIMEOUT_MS);
+    expect(OPENSHELL_HEAVY_TIMEOUT_MS).toBeLessThan(OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS);
+  });
+
+  it("allows policy activation to outlast the OpenShell wait window (#11798)", () => {
+    expect(OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS).toBe(65_000);
+  });
+
+  it("uses the same probe constant name for forward compatibility (#2454)", () => {
+    // PR #2454 introduces OPENSHELL_PROBE_TIMEOUT_MS = 15_000 locally.
+    // This ensures the shared module stays aligned so #2454 can import it after rebase.
+    expect(OPENSHELL_PROBE_TIMEOUT_MS).toBe(15_000);
+  });
+});

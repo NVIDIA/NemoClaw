@@ -1,0 +1,153 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Filesystem Controls"
+sidebar-title: "Filesystem Controls"
+description: "Review NemoClaw filesystem defaults, writable paths, and Landlock enforcement."
+description-agent: "Explains NemoClaw filesystem controls and their security trade-offs. Use when reviewing writable paths or Landlock enforcement."
+keywords: ["nemoclaw filesystem controls", "landlock", "sandbox writable paths"]
+content:
+  type: "concept"
+---
+NemoClaw uses OpenShell filesystem policy to restrict access outside the writable agent state tree.
+
+OpenShell covers additional filesystem enforcement details, including `hard_requirement` compatibility mode for Landlock and policy path validation rules.
+Refer to the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices.
+
+## Read-Only System Paths
+
+The container mounts system directories read-only to prevent the agent from modifying binaries, libraries, or configuration files.
+
+| Aspect | Detail |
+|---|---|
+| Default | `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, `/var/log`, and `/var/lib/dpkg` are read-only. |
+| What you can change | Add or remove paths in the `filesystem_policy.read_only` section of the policy file. |
+| Risk if relaxed | Making `/usr` or `/lib` writable lets the agent replace system binaries (such as `curl` or `node`) with trojanized versions. Making `/etc` writable lets the agent modify DNS resolution, TLS trust stores, or user accounts. |
+| Recommendation | Never make system paths writable. If the agent needs a writable location for generated files, use a subdirectory of `/sandbox`. |
+
+## Agent Config Directory
+
+<AgentOnly variant="openclaw">
+
+The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration (model routing, CORS settings, channel config).
+The current entrypoint reads the gateway auth token from OpenClaw config when present, exports it as `OPENCLAW_GATEWAY_TOKEN`, and writes it to `/tmp/nemoclaw-proxy-env.sh` so interactive sandbox sessions can reach the gateway through system-wide shell hooks.
+The launch boundary removes `OPENCLAW_GATEWAY_TOKEN` from the gateway process environment and does not pass its value in process arguments.
+
+In root mode, the gateway process still runs as the separate `gateway` user, but the token is intentionally available to sandbox shells for local gateway access.
+
+Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
+
+This directory remains writable so the agent can manage its own config, install skills, and write standard home-directory state.
+NemoClaw does not provide post-provisioning immutability for the OpenClaw config or state tree.
+
+- **DAC permissions (default).**
+  Sandbox-user images create `/sandbox/.openclaw` with native mode `0700` and `openclaw.json` with `0600`.
+  Root-mode images use `2770` (setgid `sandbox:sandbox`) and `0660` for the separate gateway identity.
+  Rebuild existing sandboxes after updating NemoClaw to apply these defaults.
+- **Native config ownership.**
+  OpenClaw owns `openclaw.json` after first launch.
+  NemoClaw does not maintain a config hash, seal, last-good copy, recovery anchor, baseline, or config guard for this file.
+  Use `openclaw configure`, `openclaw config set`, or `openclaw config unset` inside the sandbox.
+- **Gateway token environment.**
+  The entrypoint exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions.
+  The gateway process reads the token from `openclaw.json` instead.
+  Code running as the sandbox user can read that token while the file exists.
+
+| Aspect | Detail |
+|---|---|
+| Default | The sandbox user owns writable config and state, with private permissions for verified same-user launches. The entrypoint places `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
+| What you can change | Use native OpenClaw commands for agent configuration. Use NemoClaw and OpenShell commands for inference routes, credential bindings, network policy, and sandbox lifecycle. |
+| Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
+| Recommendation | Treat agent config and state as agent-controlled. Keep credentials in OpenShell providers, restrict network policy, and recreate the sandbox from trusted state after suspected compromise. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+The `/sandbox/.hermes` directory contains Hermes runtime configuration, generated environment settings, logs, platform state, and durable database state.
+NemoClaw writes `config.yaml` and `.env` during onboarding and rebuilds.
+Direct edits to these files can be overwritten when NemoClaw regenerates the image.
+
+Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
+Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
+
+The Hermes config and state tree remains mutable after provisioning.
+NemoClaw does not prevent the sandbox identity from changing paths that its Unix permissions allow.
+Hermes startup and restart adopt a stable config snapshot after validating its paths and secret boundary.
+The native `mcp_servers` map in that snapshot is authoritative, including direct edits; there is no separate host-side MCP registry comparison.
+
+| Aspect | Detail |
+|---|---|
+| Default | The Hermes config tree contains NemoClaw-generated config plus mutable runtime state. |
+| What you can change | Hermes and the sandbox user can change mutable runtime config. Use host-side NemoClaw commands when you also need OpenShell policy and provider updates. |
+| Risk of direct edits | Invalid config can prevent Hermes from starting. A direct MCP edit cannot by itself create the matching OpenShell policy or credential binding. |
+| Recommendation | Keep credentials in OpenShell providers. Back up Hermes state before destructive operations. |
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+The `/sandbox/.deepagents` directory contains Deep Agents Code runtime state and NemoClaw-generated configuration.
+NemoClaw writes `config.toml` during onboarding and rebuilds.
+Direct edits to this file can be overwritten when NemoClaw regenerates the managed inference route.
+
+The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
+OpenShell-owned credential stores and host-only secrets remain outside the native home/workspace transfer. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
+
+The agent-native `.deepagents/.mcp.json` contains OpenShell placeholders. NemoClaw reads it directly and carries managed entries through bounded lifecycle handoffs rather than reconstructing it from host-side registry state.
+
+The Deep Agents config and state tree remains mutable after provisioning.
+NemoClaw does not prevent the sandbox identity from changing paths that its Unix permissions allow.
+
+| Aspect | Detail |
+|---|---|
+| Default | The Deep Agents config tree contains NemoClaw-generated `config.toml`, agent-native MCP configuration, and mutable Deep Agents memory and skill state. |
+| What you can change | Use host-side NemoClaw commands for durable model, provider, managed MCP, and policy changes; inspect or edit memory and skills through `dcode` or direct file access when appropriate. |
+| Risk of direct edits | Direct MCP edits remain authoritative but cannot widen OpenShell policy. Storing credentials in `.deepagents/.env` or literal values in `.mcp.json` moves them outside the managed credential boundary and is rejected by managed lifecycle operations. |
+| Recommendation | Keep generated config under NemoClaw control. Use OpenShell providers and NemoClaw MCP commands for credentials, and back up Deep Agents state before destructive operations. |
+
+</AgentOnly>
+
+## Writable Paths
+
+The agent has read-write access to `/sandbox`, `/tmp`, `/dev/null`, and `/dev/pts`.
+
+| Aspect | Detail |
+|---|---|
+| Default | `/sandbox` (agent workspace), `/tmp` (temporary files), `/dev/null`, and `/dev/pts` (the devpts pseudo-terminal directory, required so PTY-based tools such as `tmux`, `script`, and interactive shells can allocate a terminal). |
+| What you can change | Add additional writable paths in `filesystem_policy.read_write`. |
+| Risk if relaxed | Each additional writable path expands the agent's ability to persist data and potentially modify system behavior. Adding `/var` lets the agent write to log directories. Adding `/home` gives access to other user directories. |
+| Recommendation | Keep writable paths to `/sandbox` and `/tmp`. If the agent needs a persistent working directory, create a subdirectory under `/sandbox`. |
+
+## Landlock LSM Enforcement
+
+Landlock is a Linux Security Module that enforces filesystem access rules at the kernel level.
+
+<AgentOnly variant="openclaw">
+
+| Aspect | Detail |
+|---|---|
+| Default | `compatibility: best_effort`. The entrypoint applies Landlock rules when the kernel supports them and silently skips them on older kernels. |
+| What you can change | This is a NemoClaw default, not a user-facing knob. |
+| Risk if relaxed | On kernels without Landlock support (pre-5.13), filesystem restrictions rely solely on container mount configuration, which is less granular. |
+| Recommendation | Run on a kernel that supports Landlock (5.13+). Ubuntu 22.04 LTS and later include Landlock support. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+| Aspect | Detail |
+|---|---|
+| Default | `compatibility: best_effort`. The entrypoint applies Landlock rules when the kernel supports them and silently skips them on older kernels. |
+| What you can change | This is a NemoClaw default, not a user-facing knob. |
+| Risk if relaxed | On kernels without Landlock support (pre-5.13), filesystem restrictions rely solely on container mount configuration, which is less granular. |
+| Recommendation | Run on a kernel that supports Landlock (5.13+). Ubuntu 22.04 LTS and later include Landlock support. |
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+| Aspect | Detail |
+|---|---|
+| Default | `compatibility: strict`. Deep Agents sandbox startup fails closed when OpenShell cannot enforce the managed filesystem policy. |
+| What you can change | This is a NemoClaw Deep Agents invariant, not a user-facing knob. |
+| Risk if relaxed | Silent Landlock degradation would leave the terminal coding harness with weaker filesystem isolation while still reporting a successful sandbox. |
+| Recommendation | Run Deep Agents on a kernel and runtime that support Landlock enforcement. Rebuild or move hosts if startup reports an enforcement failure. |
+
+</AgentOnly>

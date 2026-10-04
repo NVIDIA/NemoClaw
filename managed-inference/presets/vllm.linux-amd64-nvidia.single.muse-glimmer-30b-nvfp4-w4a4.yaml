@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingPreset
+
+metadata:
+  id: vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4
+  displayName: Muse Glimmer 30B NVFP4 W4A4 on one Linux x86_64 NVIDIA GPU
+  supportState: experimental
+  validation:
+    level: hardware
+    evidence: brev-rtx-pro-server-6000-2026-08-18
+
+spec:
+  selection: explicit-only
+  priority: 310
+
+  requirements:
+    all:
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.daemon_reachable
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.runtime_supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.storage_compatible
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.nvidia_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.container_toolkit_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.cdi_healthy
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.os.platform
+          comparison:
+            operator: equals
+            value: linux
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.os.architecture
+          comparison:
+            operator: equals
+            value: x64
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.docker.runtime
+          comparison:
+            operator: equals
+            value: docker
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.gpu.count
+          comparison:
+            operator: at-least
+            value: 1
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.gpu.driver_version
+          comparison:
+            operator: version-at-least
+            value: 580.65.06
+
+  plan:
+    backend: vllm
+    platform: linux
+    interactive: false
+    recipeRef: vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1

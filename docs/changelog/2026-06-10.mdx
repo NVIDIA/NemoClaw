@@ -1,0 +1,21 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.63
+
+NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safety, local inference onboarding, messaging safeguards, and release validation:
+
+- Sandbox lifecycle commands preserve and recover more state.
+  `rebuild --yes` can recreate a locally registered sandbox that is missing from a healthy gateway, Docker-driver sandboxes can restart from OpenShell container labels after a host reboot, and `upgrade-sandboxes` detects recorded NemoClaw image drift even when the agent version itself matches.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- Snapshot-backed rebuilds preserve OpenClaw configuration more safely.
+  Rebuilds now carry forward user-owned `openclaw.json` settings, merge restored config with freshly generated runtime state, and fail when restored config cannot be applied safely.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- Onboarding diagnoses host setup and local inference issues earlier.
+  The installer reports unusual Docker daemon access when a Linux user is outside the `docker` group, host DNS blocks are caught before NVIDIA provider validation, Ollama auth-proxy port conflicts recover during startup, and managed vLLM offers an interactive model picker for supported host profiles.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Messaging and Hermes startup paths enforce clearer runtime boundaries.
+  Slack setup validates Socket Mode credentials and warns or blocks duplicate Slack Socket Mode sandboxes on a shared gateway, while Hermes direct gateway launch keeps environment-secret protections active and handles wrapped gateway arguments.
+  For more information, refer to [Set Up Slack](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-slack).

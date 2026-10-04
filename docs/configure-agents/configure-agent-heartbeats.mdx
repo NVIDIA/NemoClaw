@@ -1,0 +1,57 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure OpenClaw Agent Heartbeats"
+sidebar-title: "Configure Agent Heartbeats"
+description: "Configure or disable periodic OpenClaw isolated-session agent turns in a NemoClaw sandbox."
+description-agent: "Configures OpenClaw heartbeat cadence during onboarding or in an existing sandbox through native OpenClaw configuration. Use when changing periodic agent wake-ups or disabling heartbeat instructions."
+keywords: ["nemoclaw heartbeat", "openclaw heartbeat", "HEARTBEAT.md"]
+content:
+  type: "how_to"
+agent-variants: ["openclaw"]
+---
+
+OpenClaw heartbeats run as periodic isolated-session agent turns.
+Set their initial cadence through NemoClaw before onboarding, or change an existing sandbox through native OpenClaw configuration.
+
+## Set the Heartbeat Cadence
+
+Set `NEMOCLAW_AGENT_HEARTBEAT_EVERY` to an integer followed by `s`, `m`, or `h`, such as `5m` or `2h`.
+OpenClaw defaults to 30 minutes, or 1 hour for Anthropic OAuth and Claude CLI reuse, when the variable is unset.
+
+```bash
+export NEMOCLAW_AGENT_HEARTBEAT_EVERY=2h
+nemoclaw onboard
+```
+
+At each interval, the agent wakes in a dedicated heartbeat session to review follow-ups and read `HEARTBEAT.md` when that file exists in the workspace.
+NemoClaw sets OpenClaw's `agents.defaults.heartbeat.isolatedSession` option so ordinary main-session activity cannot substitute for a scheduled heartbeat.
+
+## Disable Heartbeats
+
+Set the interval to `0m` to disable periodic turns.
+
+```bash
+export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
+nemoclaw onboard
+```
+
+Disabling heartbeats also removes `HEARTBEAT.md` from normal-run bootstrap context according to OpenClaw behavior.
+The model no longer receives heartbeat-only instructions.
+
+## Apply the Change
+
+NemoClaw writes the initial heartbeat setting into `openclaw.json` during onboarding.
+OpenClaw owns that file after first launch.
+
+For an existing sandbox, connect and use the native OpenClaw config command:
+
+```bash
+nemoclaw <sandbox-name> connect
+openclaw config set agents.defaults.heartbeat.every 2h
+```
+
+Use `0m` to disable heartbeats.
+Run `openclaw config unset agents.defaults.heartbeat.every` to return the cadence to OpenClaw's default behavior without removing NemoClaw's isolated-session setting.
+Restart and reconnect preserve the current value.
+Rebuild transfers the complete native configuration captured immediately before replacement. To roll back to an earlier cadence, set the recorded value explicitly; the retired selective snapshot restore flow is not available.

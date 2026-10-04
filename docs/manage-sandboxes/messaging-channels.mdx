@@ -1,0 +1,87 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Choose Messaging Channels"
+sidebar-title: "Choose Messaging Channels"
+description: "Compare the supported messaging paths, including experimental Google Chat for OpenClaw and Hermes."
+description-agent: "Compares supported and experimental messaging channels, their credential or pairing requirements, and their NemoClaw runtime boundaries. Use when choosing a channel for OpenClaw or Hermes."
+keywords: ["nemoclaw messaging channels", "telegram", "discord", "slack", "google chat", "wechat", "whatsapp", "microsoft teams"]
+content:
+  type: "concept"
+skill:
+  priority: 30
+agent-variants: ["openclaw", "hermes"]
+---
+NemoClaw supports Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams for OpenClaw and Hermes sandboxes.
+Experimental Google Chat is also available for both agents.
+OpenShell-managed processes and gateway resources carry channel traffic.
+
+For token-based channels, NemoClaw registers credentials with OpenShell providers.
+WeChat uses a host-side QR scan during onboarding to capture a token.
+
+WhatsApp pairs inside the sandbox through a QR scan and intentionally stores mutable session state there.
+Microsoft Teams uses Bot Framework credentials plus a public HTTPS webhook that forwards to the sandbox.
+
+NemoClaw writes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
+
+<Warning title="Experimental Channels">
+Google Chat, WeChat, WhatsApp, and Microsoft Teams are experimental.
+WeChat and WhatsApp rely on QR-based pairing flows that are more fragile than token-based bots.
+
+Microsoft Teams and OpenClaw Google Chat require externally reachable webhook paths that depend on your host networking setup.
+Hermes Google Chat pulls inbound events from Google Cloud Pub/Sub over REST and does not expose a webhook.
+Interfaces, defaults, and supported features can change, and NVIDIA does not recommend these channels for production use.
+</Warning>
+
+## Compare Channel Requirements
+
+| Channel | Required credentials or pairing | Optional settings | Setup guide |
+|---|---|---|---|
+| Telegram | `TELEGRAM_BOT_TOKEN` | DM allowlist, group policy, mention mode | [Set Up Telegram](set-up-telegram) |
+| Discord | `DISCORD_BOT_TOKEN` | Server ID, user ID, mention mode | [Set Up Discord](set-up-discord) |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | User and channel allowlists | [Set Up Slack](set-up-slack) |
+| Google Chat | Service-account JSON; OpenClaw public HTTPS endpoint and personal-account app principal when applicable; Hermes Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist | OpenClaw user ID allowlist instead of pairing | [Set Up Google Chat](set-up-google-chat) |
+| WeChat | Host-side QR scan | DM allowlist | [Set Up WeChat](set-up-wechat) |
+| WhatsApp | In-sandbox QR pairing | Hermes sender allowlist and non-interactive channel selection | [Set Up WhatsApp](set-up-whatsapp) |
+| Microsoft Teams | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | User allowlist, webhook port, mention mode | [Set Up Microsoft Teams](set-up-microsoft-teams) |
+
+<AgentOnly variant="openclaw">
+Google Chat requires a service-account JSON key and a public HTTPS endpoint for the OpenClaw webhook.
+Refer to [Set Up Google Chat](set-up-google-chat) for the interactive tunnel, audience, and account-principal flow.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Google Chat requires a service-account JSON key, a Google Cloud project ID, a complete Pub/Sub subscription name, and a comma-separated email sender allowlist for Hermes.
+If you omit the email allowlist, Hermes uses default-deny behavior and rejects all senders.
+Refer to [Set Up Google Chat](set-up-google-chat) for topic publishing, pull subscription, and credential-boundary requirements.
+</AgentOnly>
+
+## Prepare the Host and Policy
+
+- Use a machine where you can run `$$nemoclaw onboard`.
+- Prepare the token, app credentials, or paired phone required by each selected channel.
+- Select the matching network policy preset or equivalent custom egress rules for each channel.
+- Confirm Docker is running and your user can access the Docker socket through the `docker` group or the documented `sudo` workflow.
+
+<AgentOnly variant="openclaw">
+Use host-side `$$nemoclaw <sandbox> channels` commands.
+OpenClaw owns `/sandbox/.openclaw/openclaw.json`, and NemoClaw restores the complete credential-sanitized native config across rebuilds.
+OpenShell credential bindings and policy remain host-owned.
+Use the host-side channel commands because an in-sandbox config change cannot create the matching OpenShell credential binding or policy.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use host-side `$$nemoclaw <sandbox> channels` commands.
+Select a home channel with Hermes `/sethome` inside a chat.
+NemoClaw preserves that selection when the sandbox rebuilds.
+Do not mutate messaging configuration directly inside the sandbox because NemoClaw generates `/sandbox/.hermes/.env` and Hermes config at image build time, and changes inside the running container do not persist across rebuilds.
+</AgentOnly>
+
+`$$nemoclaw tunnel start` does not start chat bridges.
+It starts optional host services such as a cloudflared tunnel when that binary is present.
+Refer to [Run Sandboxes](../operate-sandboxes/run-sandboxes) for tunnel management.
+
+## Next Steps
+
+- [Enable Channels During Onboarding](enable-channels-during-onboarding) for a new sandbox.
+- [Add Channels After Onboarding](add-channels-after-onboarding) for an existing sandbox.
+- [Manage Messaging Channels](manage-messaging-channels) to rotate, pause, resume, or remove a channel.

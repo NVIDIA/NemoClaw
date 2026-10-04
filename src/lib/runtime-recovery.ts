@@ -6,83 +6,47 @@
  * output and determine recovery strategy.
  */
 
-import { loadSession } from "./onboard-session";
+import {
+  parseCliOpenShellSandboxInventory,
+  stripOpenShellCliAnsi,
+} from "./adapters/openshell/sandbox-observer-cli";
 
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
-function stripAnsi(text: string | null | undefined): string {
-  return String(text || "").replace(ANSI_RE, "");
+/** Detect an OpenShell protobuf/wire schema-mismatch error in command output. */
+export function isOpenShellProtobufSchemaMismatch(output = ""): boolean {
+  const clean = stripOpenShellCliAnsi(output);
+  return /invalid wire type/i.test(clean) || /proto(?:buf)?(?: decode| schema| wire)/i.test(clean);
 }
 
-export interface StateClassification {
-  state: string;
-  reason: string;
-}
-
+/** Parse the set of all live sandbox names from `openshell sandbox list` output. */
 export function parseLiveSandboxNames(listOutput = ""): Set<string> {
-  const clean = stripAnsi(listOutput);
-  const names = new Set<string>();
-  for (const rawLine of clean.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (/^(NAME|No sandboxes found\.?$)/i.test(line)) continue;
-    if (/^Error:/i.test(line)) continue;
-    const cols = line.split(/\s+/);
-    if (cols[0]) {
-      names.add(cols[0]);
-    }
-  }
-  return names;
+  return new Set(
+    parseCliOpenShellSandboxInventory(listOutput).sandboxes.map((sandbox) => sandbox.name),
+  );
 }
 
-export function classifySandboxLookup(output = ""): StateClassification {
-  const clean = stripAnsi(output).trim();
-  if (!clean) {
-    return { state: "missing", reason: "empty" };
-  }
-  if (/sandbox not found|status:\s*NotFound/i.test(clean)) {
-    return { state: "missing", reason: "not_found" };
-  }
-  if (
-    /transport error|client error|Connection reset by peer|Connection refused|No active gateway|Gateway: .*Error/i.test(
-      clean,
-    )
-  ) {
-    return { state: "unavailable", reason: "gateway_unavailable" };
-  }
-  return { state: "present", reason: "ok" };
+export interface LiveSandboxEntry {
+  name: string;
+  phase: string | null;
 }
 
-export function classifyGatewayStatus(output = ""): StateClassification {
-  const clean = stripAnsi(output).trim();
-  if (!clean) {
-    return { state: "inactive", reason: "empty" };
-  }
-  if (
-    /No active gateway|transport error|client error|Connection reset by peer|Connection refused|Gateway: .*Error/i.test(
-      clean,
-    )
-  ) {
-    return { state: "unavailable", reason: "gateway_unavailable" };
-  }
-  if (/^\s*(?:Status:\s*)?Connected\s*$/im.test(clean)) {
-    return { state: "connected", reason: "ok" };
-  }
-  return { state: "inactive", reason: "not_connected" };
+/**
+ * Parse `openshell sandbox list` rows into name + live PHASE pairs, skipping
+ * headers and status/error lines. Used by #5714 list recovery to surface the
+ * live phase (e.g. Ready) of a rediscovered sandbox without trusting the list
+ * output for any other (e.g. agent) metadata it does not contain.
+ */
+export function parseLiveSandboxEntries(listOutput = ""): LiveSandboxEntry[] {
+  return parseCliOpenShellSandboxInventory(listOutput).sandboxes.map(({ name, phase }) => ({
+    name,
+    phase,
+  }));
 }
 
-export function shouldAttemptGatewayRecovery({
-  sandboxState = "missing",
-  gatewayState = "inactive",
-} = {}): boolean {
-  return sandboxState === "unavailable" && gatewayState !== "connected";
-}
-
-export function getRecoveryCommand(): string {
-  const session = loadSession();
-  if (session && session.resumable !== false) {
-    return "nemoclaw onboard --resume";
-  }
-  return "nemoclaw onboard";
+/** Parse the set of sandbox names in a Ready/Running phase from `sandbox list` output. */
+export function parseReadySandboxNames(listOutput = ""): Set<string> {
+  return new Set(
+    parseCliOpenShellSandboxInventory(listOutput)
+      .sandboxes.filter((sandbox) => sandbox.readiness === "ready")
+      .map((sandbox) => sandbox.name),
+  );
 }

@@ -21,9 +21,11 @@ export const RISKY_PATTERNS: RegExp[] = [
   /^scripts\/.*\.sh$/,
   /^bin\/lib\/onboard\.js$/,
   /^bin\/.*\.js$/,
+  /^src\/lib\/onboard\//,
   /^nemoclaw\/src\/blueprint\//,
   /^nemoclaw-blueprint\//,
   /^\.github\/workflows\//,
+  /^\.agents\/skills\/nemoclaw-maintainer-day\/scripts\/check-gates\.ts$/,
   /\.prek\./,
   /policy/i,
   /ssrf/i,
@@ -31,14 +33,15 @@ export const RISKY_PATTERNS: RegExp[] = [
   /inference/i,
 ];
 
-export const TEST_PATTERNS: RegExp[] = [
-  /\.test\.[jt]sx?$/,
-  /\.spec\.[jt]sx?$/,
-  /^test\//,
-];
+const DOCUMENTATION_PATTERNS: RegExp[] = [/^docs\//, /^fern\//];
+
+export const TEST_PATTERNS: RegExp[] = [/\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/, /^test\//];
 
 export function isRiskyFile(path: string): boolean {
-  return RISKY_PATTERNS.some((re) => re.test(path));
+  return (
+    !DOCUMENTATION_PATTERNS.some((pattern) => pattern.test(path)) &&
+    RISKY_PATTERNS.some((pattern) => pattern.test(path))
+  );
 }
 
 export function isTestFile(path: string): boolean {
@@ -53,11 +56,7 @@ export function isTestFile(path: string): boolean {
  * Run a command and return its stdout. On failure, logs the error to stderr
  * and returns an empty string so callers can handle the absence of data.
  */
-export function run(
-  cmd: string,
-  args: string[],
-  timeoutMs = 120_000,
-): string {
+export function run(cmd: string, args: string[], timeoutMs = 120_000): string {
   try {
     return execFileSync(cmd, args, {
       encoding: "utf-8",
@@ -90,13 +89,15 @@ export function ghJson(args: string[]): unknown {
 // Required CI checks
 // ---------------------------------------------------------------------------
 
-// Checks triggered by `pull_request` events. First-time fork contributors
-// need a maintainer to click "Approve and run" before these execute.
-// If any are missing from statusCheckRollup, CI cannot be considered green.
+// First-time fork contributors may need a maintainer to click "Approve and run" before
+// pull_request checks execute. If any required context is missing from
+// statusCheckRollup, CI cannot be considered green.
 export const REQUIRED_CHECK_NAMES: string[] = [
-  "checks",       // pr.yaml — lint, typecheck, test
-  "commit-lint",  // commit-lint.yaml
-  "dco-check",    // dco-check.yaml
+  "checks", // pr.yaml — lint, typecheck, test
+  "check-hash",
+  "changes",
+  "commit-lint", // commit-lint.yaml
+  "dco-check", // dco-check.yaml
 ];
 
 // ---------------------------------------------------------------------------
@@ -106,11 +107,15 @@ export const REQUIRED_CHECK_NAMES: string[] = [
 /** Union of CheckRun and StatusContext fields from GitHub's statusCheckRollup. */
 export interface StatusCheck {
   __typename?: string;
-  name?: string;       // CheckRun field
-  context?: string;    // StatusContext field
-  status?: string;     // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
+  name?: string; // CheckRun field
+  context?: string; // StatusContext field
+  workflowName?: string; // CheckRun workflow identity
+  startedAt?: string; // CheckRun/StatusContext RFC3339 timestamp
+  completedAt?: string; // CheckRun RFC3339 timestamp
+  detailsUrl?: string; // CheckRun workflow-run identity when Actions produced it
+  status?: string; // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
   conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
-  state?: string;      // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
+  state?: string; // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +135,10 @@ export const SCORE_NEAR_MISS = 30;
 export const SCORE_SECURITY_ACTIONABLE = 20;
 /** PR carries the "security" GitHub label */
 export const SCORE_LABEL_SECURITY = 15;
-/** PR carries a "priority: high" GitHub label */
-export const SCORE_LABEL_PRIORITY_HIGH = 10;
+/** PR has Urgent Project Priority */
+export const SCORE_PROJECT_PRIORITY_URGENT = 15;
+/** PR has High Project Priority */
+export const SCORE_PROJECT_PRIORITY_HIGH = 10;
 /** PR has been stale > 7 days — mild priority bump to prevent rot */
 export const SCORE_STALE_AGE = 5;
 

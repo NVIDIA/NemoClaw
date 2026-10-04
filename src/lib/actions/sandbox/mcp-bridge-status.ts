@@ -1,0 +1,648 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import { isIP } from "node:net";
+import { resolveHostAddressesBounded } from "../../adapters/dns/resolve";
+import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
+import {
+  buildDeepAgentsMcpStatusCommand,
+  buildHermesMcpStatusCommand,
+  buildOpenClawMcpInspectCommand,
+  DEFAULT_OPENCLAW_CONFIG_DIR,
+  openClawConfigDir,
+} from "./mcp-bridge-adapters";
+import { parseUnsafeDeepAgentsMcpConfigResult } from "./mcp-bridge-adapter-status";
+import {
+  isAgentMcpAdapter,
+  McpBridgeError,
+  type McpSourceEntry,
+  type McpBridgeStatus,
+} from "./mcp-bridge-contracts";
+import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { getPolicyPresence } from "./mcp-bridge-policy";
+import {
+  getMcpProviderInspectionRuntimeSelection,
+  inspectMcpProvider,
+  inspectMcpProviderAttachments,
+  observeMcpCredentialRevision,
+  providerMatchesCredential,
+  providerShapeDetail,
+} from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import type {
+  McpAttachedCredentialRevision,
+  McpCredentialRevisionObservation,
+} from "./mcp-bridge-provider-readiness";
+import {
+  credentialResolutionWarning,
+  MCP_CONNECT_403_POLICY_DETAIL,
+  probeCredentialResolution,
+} from "./mcp-bridge-resolution-probe";
+import {
+  ensureSandboxGatewaySelected,
+  getAgentConfigDir,
+  getSandboxAgent,
+  getSandboxOrThrow,
+} from "./mcp-bridge-state";
+import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
+import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
+import {
+  inspectMcpRecordedPublicTargetPins,
+  inspectMcpRecordedTargetPins,
+  type McpBridgeRecordedPinStatus,
+  type McpBridgePublicPinStatus,
+} from "./mcp-bridge-url-validation";
+import {
+  assertAuthenticatedBridgeEntry,
+  resolvePersistedCredentialEnvForRedaction,
+  validateMcpServerName,
+  validateSandboxName,
+} from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+
+export interface McpBridgeJsonSummary {
+  sandbox: string;
+  agent: string;
+  support: McpBridgeStatus["support"];
+  bridges: McpBridgeStatus[];
+}
+
+const UNSUPPORTED_STORED_URL_WARNING =
+  "This agent-source MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
+const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
+  "This agent-source MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
+const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
+  "the unsupported legacy credential may still be attached to fresh sandbox children";
+const AUTHORIZATION_DETAIL_MAX_LENGTH = 240;
+
+function authorizationDetailForDisplay(
+  detail: string,
+  entry: McpSourceEntry,
+  fallback: string,
+): string {
+  return (
+    redactBridgeFailureForDisplay(detail, entry).trim().slice(0, AUTHORIZATION_DETAIL_MAX_LENGTH) ||
+    fallback
+  );
+}
+
+/** Require endpoint authorization before accepting an unchanged stable credential handle. */
+export async function assertUnchangedStableMcpCredentialAuthorized(
+  sandboxName: string,
+  entry: McpSourceEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  previousRevision: McpCredentialRevisionObservation | undefined,
+  credentialRevision: McpCredentialRevisionObservation,
+  inspectStatus: typeof statusMcpBridge = statusMcpBridge,
+): Promise<void> {
+  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) return;
+
+  let detail = "post-update wire-level credential verification did not return a result";
+  try {
+    const [status] = await inspectStatus(sandboxName, entry.server, {
+      allowCredentialProbeWithAdapterMismatch: true,
+      probeCredentialResolution: true,
+      runtimeSelection,
+    });
+    const probe = status?.provider.credentialResolution;
+    if (probe?.ok === true) return;
+    if (probe?.detail) detail = authorizationDetailForDisplay(probe.detail, entry, detail);
+  } catch (error) {
+    detail = authorizationDetailForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      "post-update credential status inspection failed",
+    );
+  }
+  throw new McpBridgeError(
+    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
+  );
+}
+
+function storedUrlWarning(entry: McpSourceEntry): string | undefined {
+  try {
+    return normalizeRecordedMcpServerUrl(entry) === entry.url
+      ? undefined
+      : UNSUPPORTED_STORED_URL_WARNING;
+  } catch {
+    return UNSUPPORTED_STORED_URL_WARNING;
+  }
+}
+
+function storedCredentialWarning(entry: McpSourceEntry): string | undefined {
+  try {
+    assertAuthenticatedBridgeEntry(entry);
+    return undefined;
+  } catch {
+    return UNSUPPORTED_STORED_CREDENTIAL_WARNING;
+  }
+}
+
+async function getAdapterRegistration(
+  sandboxName: string,
+  adapter: AgentMcpAdapter | undefined,
+  entry: McpSourceEntry | undefined,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  credentialRevision?: McpAttachedCredentialRevision,
+  credentialObservationDetail?: string,
+): Promise<McpBridgeStatus["adapter"]> {
+  if (!entry) return { registered: null };
+  if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
+  const credentialInspectionFailure = credentialObservationDetail
+    ? {
+        registered: null,
+        detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+      }
+    : undefined;
+  if (credentialInspectionFailure && adapter !== "deepagents-config")
+    return credentialInspectionFailure;
+  const command =
+    adapter === "openclaw-config"
+      ? buildOpenClawMcpInspectCommand(
+          entry,
+          false,
+          openClawConfigDir(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR)),
+          credentialRevision,
+        )
+      : adapter === "hermes-config"
+        ? buildHermesMcpStatusCommand(entry, credentialRevision)
+        : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return credentialInspectionFailure ?? { registered: null, detail: error.message };
+  }
+  const unsafeProjection =
+    adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpConfigResult(result) : null;
+  if (unsafeProjection) {
+    const redactedPath = redactBridgeSecretsForDisplay(
+      unsafeProjection.path,
+      entry,
+      resolvePersistedCredentialEnvForRedaction(entry.env),
+    ).trim();
+    throw new McpBridgeError(`${unsafeProjection.messagePrefix}${redactedPath}`, 2);
+  }
+  if (credentialInspectionFailure) return credentialInspectionFailure;
+  if (result.status === 0) {
+    const output = result.stdout.trim();
+    if (output === "registered") return { registered: true };
+    return { registered: false, detail: output || "not found" };
+  }
+  const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
+  return {
+    registered: false,
+    detail: redactBridgeSecretsForDisplay(
+      result.stderr || result.stdout || "not found",
+      entry,
+      envValues,
+    ),
+  };
+}
+
+export interface McpBridgeStatusOptions {
+  /**
+   * Let a credential-only recovery preflight verify the current attached
+   * revision even when the managed agent projection still names an older
+   * revision. The normal status path remains fail-closed on adapter drift.
+   */
+  allowCredentialProbeWithAdapterMismatch?: boolean;
+  /**
+   * Run the wire-level credential-resolution probe for each entry (#6379).
+   * Costs one native command plus an in-sandbox MCP initialize per entry, so
+   * the dispatch layer enables it only where the operator asked for it.
+   */
+  probeCredentialResolution?: boolean;
+  /**
+   * Enumerate names advertised by one managed MCP endpoint. The dispatch
+   * layer restricts this live operation to an explicitly named server.
+   */
+  discoverTools?: boolean;
+  /** Reuse the operation-scoped OpenShell target when status closes another lifecycle action. */
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
+}
+
+function attachedCredentialRevision(
+  observation: McpCredentialRevisionObservation | null | undefined,
+): McpAttachedCredentialRevision | undefined {
+  return observation !== undefined &&
+    observation !== null &&
+    observation !== "absent" &&
+    observation !== "canonical"
+    ? observation
+    : undefined;
+}
+
+function credentialObservationDetail(
+  observation: McpCredentialRevisionObservation | null | undefined,
+): string | undefined {
+  if (observation === null)
+    return "the current OpenShell credential revision could not be observed";
+  if (observation === "absent") {
+    return "a fresh OpenShell exec did not expose the credential placeholder";
+  }
+  if (observation === "canonical") {
+    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder";
+  }
+  return undefined;
+}
+
+export async function statusMcpBridge(
+  sandboxName: string,
+  server?: string,
+  options: McpBridgeStatusOptions = {},
+): Promise<McpBridgeStatus[]> {
+  validateSandboxName(sandboxName);
+  if (server !== undefined) validateMcpServerName(server);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  const agent = getSandboxAgent(sandbox);
+  const providerRuntimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = await inspectSourceBridgeState(sandbox, providerRuntimeSelection);
+  const bridges = observed.bridges;
+  const legacyNames = Object.keys(observed.sources.legacy).sort();
+  if (legacyNames.length > 0) {
+    throw new McpBridgeError(
+      `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it.`,
+      2,
+    );
+  }
+  let selectedEntry: McpSourceEntry | undefined;
+  if (server !== undefined && Object.hasOwn(bridges, server)) {
+    selectedEntry = bridges[server];
+  } else if (server !== undefined && agent.mcpCapability.adapter) {
+    selectedEntry =
+      (await inspectPolicyOnlyMcpEntry(
+        sandbox,
+        server,
+        agent.name,
+        agent.mcpCapability.adapter,
+        providerRuntimeSelection,
+      )) ?? undefined;
+  }
+  const entries: Array<[string, McpSourceEntry | undefined]> =
+    server !== undefined ? [[server, selectedEntry]] : Object.entries(bridges);
+  if (server !== undefined && !selectedEntry) {
+    return [
+      {
+        server,
+        agent: agent.name,
+        warnings: [],
+        support: {
+          supported: agent.mcpCapability.support === "bridge",
+          mode: agent.mcpCapability.support,
+          ...(agent.mcpCapability.adapter ? { adapter: agent.mcpCapability.adapter } : {}),
+          ...(agent.mcpCapability.reason ? { reason: agent.mcpCapability.reason } : {}),
+        },
+        env: { names: [], missing: [], ready: false },
+        provider: {
+          present: false,
+          attached: null,
+          credentialReady: null,
+          state: "unbound",
+        },
+        policy: { present: false, state: "blocked" },
+        adapter: { registered: null },
+        ...(options.discoverTools
+          ? {
+              toolDiscovery: {
+                ...mcpToolDiscoveryPreconditionFailure(
+                  "tool discovery skipped: MCP server is not registered",
+                ),
+              },
+            }
+          : {}),
+      },
+    ];
+  }
+  if (entries.length === 0) return [];
+  if (Object.keys(bridges).length > 0) {
+    await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
+  }
+
+  const credentialObservations = new Map<string, McpCredentialRevisionObservation | null>();
+  for (const [name, entry] of entries) {
+    if (!entry || storedCredentialWarning(entry) !== undefined) continue;
+    try {
+      credentialObservations.set(
+        name,
+        await observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+      );
+    } catch {
+      credentialObservations.set(name, null);
+    }
+  }
+  const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  const publicPinStatusByServer = new Map<string, McpBridgePublicPinStatus>();
+  const publicPinQueues = Array.from({ length: 4 }, () => Promise.resolve());
+  let nextPublicQueue = 0;
+  await Promise.all(
+    entries.map(async ([name, entry]) => {
+      if (!entry?.allowedIps) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(entry.url);
+      } catch {
+        return;
+      }
+      if (entry.trustedPrivateHost) {
+        privatePinStatusByServer.set(
+          name,
+          await inspectMcpRecordedTargetPins(parsed, entry.trustedPrivateHost, entry.allowedIps),
+        );
+        return;
+      }
+      if (entry.allowedIps.some((address) => isIP(address) === 0)) return;
+      const pins = entry.allowedIps;
+      const slot = nextPublicQueue++ % publicPinQueues.length;
+      const inspection = publicPinQueues[slot].then(async () => {
+        publicPinStatusByServer.set(
+          name,
+          await inspectMcpRecordedPublicTargetPins(parsed, pins, (hostname) =>
+            resolveHostAddressesBounded(hostname, 2_000),
+          ),
+        );
+      });
+      publicPinQueues[slot] = inspection;
+      return inspection;
+    }),
+  );
+
+  const attachmentInspection = entries.some(([, entry]) => !!entry?.providerName)
+    ? await inspectMcpProviderAttachments(sandboxName, providerRuntimeSelection)
+    : undefined;
+
+  return Promise.all(
+    entries.map(async ([name, entry]) => {
+      const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
+      const policyPresence = await getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+      const hasCredentialBinding =
+        !!entry &&
+        Array.isArray(entry.env) &&
+        entry.env.length === 1 &&
+        !!entry.providerName &&
+        !!entry.providerId;
+      const missingEnv = entry
+        ? entry.env.filter(
+            (envName: string) => process.env[envName] === undefined || process.env[envName] === "",
+          )
+        : [];
+      const expectedCredential = entry?.env.length === 1 ? entry.env[0] : undefined;
+      const providerInspection = await inspectMcpProvider(
+        entry?.providerName,
+        providerRuntimeSelection,
+      );
+      const providerCredentialReady = providerMatchesCredential(
+        providerInspection,
+        expectedCredential,
+        entry?.providerId,
+      );
+      const providerDetail = providerShapeDetail(
+        providerInspection,
+        expectedCredential,
+        entry?.providerId,
+      );
+      const attached = !entry?.providerName
+        ? null
+        : !attachmentInspection?.attachments
+          ? null
+          : attachmentInspection.attachments.some(
+              (attachment) => attachment.name === entry.providerName,
+            );
+      const warnings: string[] = [];
+      let credentialWarning: string | undefined;
+      if (entry) {
+        const urlWarning = storedUrlWarning(entry);
+        if (urlWarning) warnings.push(urlWarning);
+        credentialWarning = storedCredentialWarning(entry);
+        if (credentialWarning) warnings.push(credentialWarning);
+        if (entry.policyConflict) warnings.push(entry.policyConflict);
+      }
+      const privatePinStatus = privatePinStatusByServer.get(name);
+      const publicPinStatus = publicPinStatusByServer.get(name);
+      if (privatePinStatus?.state === "drift") {
+        warnings.push(
+          "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
+        );
+      } else if (privatePinStatus?.state === "unresolved") {
+        warnings.push(
+          "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "drift") {
+        warnings.push(
+          "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
+        );
+      } else if (publicPinStatus?.state === "unresolved") {
+        warnings.push(
+          "Public DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "rejected") {
+        warnings.push(
+          `Public DNS target was rejected: ${publicPinStatus.detail ?? "the current addresses are not public"} The live policy was not changed.`,
+        );
+      }
+      const unsafeCredentialMayBeAttached =
+        !!credentialWarning && !!entry?.providerName && attached !== false;
+      const credentialObservation = entry ? credentialObservations.get(name) : undefined;
+      const credentialRevision = attachedCredentialRevision(credentialObservation);
+      const observationDetail = credentialObservationDetail(credentialObservation);
+      const readiness = {
+        policyGatewayPresent: entry?.policyConflict ? false : policyPresence,
+        providerAttached: attached,
+        providerCredentialReady,
+      };
+      const adapterRegistration = await getAdapterRegistration(
+        sandboxName,
+        support.adapter,
+        entry,
+        providerRuntimeSelection,
+        credentialRevision,
+        unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
+      );
+      const agentRegistrationMissing =
+        entry?.source === "policy" && adapterRegistration.registered !== true;
+      const credentialResolution =
+        options.probeCredentialResolution && entry
+          ? unsafeCredentialMayBeAttached
+            ? {
+                ok: null,
+                detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              }
+            : observationDetail
+              ? { ok: null, detail: `probe skipped: ${observationDetail}` }
+              : adapterRegistration.registered !== true &&
+                  options.allowCredentialProbeWithAdapterMismatch !== true
+                ? {
+                    ok: null,
+                    detail:
+                      "probe skipped: the managed agent adapter does not match the current credential revision",
+                  }
+                : await probeCredentialResolution(
+                    sandboxName,
+                    entry,
+                    support.adapter,
+                    readiness,
+                    providerRuntimeSelection,
+                    credentialRevision,
+                  )
+          : undefined;
+      // Name observed pin drift when it can explain the CONNECT denial (#10464).
+      const diagnosedCredentialResolution =
+        credentialResolution?.detail === MCP_CONNECT_403_POLICY_DETAIL &&
+        entry?.allowedIps &&
+        publicPinStatus?.state === "drift" &&
+        publicPinStatus.currentAddresses
+          ? {
+              ...credentialResolution,
+              detail:
+                `OpenShell denied the probe connection (CONNECT 403): current public DNS answers ` +
+                `${publicPinStatus.currentAddresses.join(", ")} do not match recorded pins ` +
+                `${entry.allowedIps.join(", ")}. Run mcp update <server> --refresh-public-pins to refresh the live policy.`,
+            }
+          : credentialResolution;
+      const resolutionWarning = diagnosedCredentialResolution
+        ? credentialResolutionWarning(entry?.env[0], diagnosedCredentialResolution)
+        : undefined;
+      if (resolutionWarning) warnings.push(resolutionWarning);
+      const toolDiscovery =
+        options.discoverTools && entry
+          ? unsafeCredentialMayBeAttached
+            ? mcpToolDiscoveryPreconditionFailure(
+                `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              )
+            : await discoverMcpTools(
+                sandboxName,
+                entry,
+                support.adapter,
+                readiness,
+                providerRuntimeSelection,
+              )
+          : undefined;
+      return {
+        server: name,
+        agent: entry?.agent ?? agent.name,
+        warnings,
+        support,
+        ...(entry ? { url: entry.url } : {}),
+        ...(entry?.trustedPrivateHost && entry.allowedIps && privatePinStatus
+          ? {
+              trustedPrivateTarget: {
+                host: entry.trustedPrivateHost,
+                recordedPins: [...entry.allowedIps],
+                ...(privatePinStatus.currentAddresses
+                  ? { currentPins: privatePinStatus.currentAddresses }
+                  : {}),
+                state: privatePinStatus.state,
+                ...(privatePinStatus.detail ? { detail: privatePinStatus.detail } : {}),
+              },
+            }
+          : {}),
+        ...(entry && !entry.trustedPrivateHost && entry.allowedIps && publicPinStatus
+          ? {
+              publicTarget: {
+                host: new URL(entry.url).hostname,
+                recordedPins: [...entry.allowedIps],
+                ...(publicPinStatus.currentAddresses
+                  ? { currentPins: publicPinStatus.currentAddresses }
+                  : {}),
+                state: publicPinStatus.state,
+                ...(publicPinStatus.detail ? { detail: publicPinStatus.detail } : {}),
+              },
+            }
+          : {}),
+        env: {
+          names: entry?.env ?? [],
+          missing: missingEnv,
+          ready:
+            hasCredentialBinding &&
+            (providerInspection.exists ? providerCredentialReady : missingEnv.length === 0),
+        },
+        provider: {
+          name: entry?.providerName,
+          present: entry?.providerName ? providerInspection.exists : null,
+          attached,
+          credentialReady: entry ? providerCredentialReady : null,
+          state:
+            providerInspection.exists === null
+              ? "unavailable"
+              : !entry?.providerName || providerInspection.exists === false || attached === false
+                ? "unbound"
+                : providerCredentialReady
+                  ? agentRegistrationMissing
+                    ? "orphaned"
+                    : "configured"
+                  : "conflict",
+          ...(providerDetail ? { detail: providerDetail } : {}),
+          ...(diagnosedCredentialResolution
+            ? { credentialResolution: diagnosedCredentialResolution }
+            : {}),
+        },
+        policy: {
+          name: entry?.policyName,
+          present: policyPresence,
+          state:
+            policyPresence === null
+              ? "unavailable"
+              : entry?.policyConflict
+                ? "conflict"
+                : policyPresence
+                  ? agentRegistrationMissing
+                    ? "orphaned"
+                    : "configured"
+                  : "blocked",
+          ...(entry?.policyConflict ? { detail: entry.policyConflict } : {}),
+        },
+        adapter: adapterRegistration,
+        ...(toolDiscovery ? { toolDiscovery } : {}),
+      };
+    }),
+  );
+}
+
+function getPersistedBridgeSupport(entry: McpSourceEntry): McpBridgeStatus["support"] {
+  if (isAgentMcpAdapter(entry.adapter)) {
+    return {
+      supported: true,
+      mode: "bridge",
+      adapter: entry.adapter,
+    };
+  }
+  try {
+    return getSupportSummary(loadAgent(entry.agent));
+  } catch {
+    return {
+      supported: false,
+      mode: "disabled",
+      reason: `Persisted agent '${entry.agent}' is unavailable.`,
+    };
+  }
+}
+
+function getSupportSummary(agent: AgentDefinition): McpBridgeStatus["support"] {
+  return {
+    supported: agent.mcpCapability.support === "bridge",
+    mode: agent.mcpCapability.support,
+    ...(agent.mcpCapability.adapter ? { adapter: agent.mcpCapability.adapter } : {}),
+    ...(agent.mcpCapability.reason ? { reason: agent.mcpCapability.reason } : {}),
+  };
+}
+
+export function buildJsonSummary(
+  sandboxName: string,
+  agent: AgentDefinition,
+  statuses: McpBridgeStatus[],
+): McpBridgeJsonSummary {
+  return {
+    sandbox: sandboxName,
+    agent: agent.name,
+    support: getSupportSummary(agent),
+    bridges: statuses,
+  };
+}

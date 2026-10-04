@@ -1,0 +1,536 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import * as onboardSession from "../state/onboard-session";
+import * as registry from "../state/registry";
+import {
+  isValidOpenShellInferenceRoute,
+  type OpenShellSynchronousInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
+import {
+  createSynchronousCliOpenShellInferenceRouteObserver,
+  type CaptureOpenShellInferenceRouteSynchronously,
+} from "../adapters/openshell/inference-route-cli";
+import { getPersistedSandboxTargetGatewayName } from "../actions/sandbox/gateway-target";
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceEndpointSource,
+} from "../inference/selection";
+import {
+  persistedProviderNameToSelectionKey,
+  type RemoteProviderConfigEntryLike,
+} from "./inference-providers/provider-selection-keys";
+
+export type { RemoteProviderConfigEntryLike } from "./inference-providers/provider-selection-keys";
+
+interface VllmInstallResumeSession {
+  readonly vllmInstallModel?: string | null;
+  readonly steps?: {
+    readonly provider_selection?: { readonly status?: string | null } | null;
+  } | null;
+}
+
+interface VllmInstallResumeSessionAccess {
+  loadSession(): VllmInstallResumeSession | null;
+  checkpointVllmInstallModel(modelId: string): unknown;
+}
+
+export interface VllmInstallResumeDeps {
+  getNonInteractiveProvider(): string | null;
+  getVllmInstallResumeModel?(): string | null;
+  checkpointVllmInstallModel?(modelId: string): void;
+}
+
+export function readVllmInstallResumeModel(
+  access: Pick<VllmInstallResumeSessionAccess, "loadSession"> = onboardSession,
+): string | null {
+  return access.loadSession()?.vllmInstallModel ?? null;
+}
+
+export function applyVllmInstallResumeDefaults<T extends VllmInstallResumeDeps>(
+  deps: T,
+  access: Pick<VllmInstallResumeSessionAccess, "loadSession"> = onboardSession,
+): T {
+  return {
+    ...deps,
+    getNonInteractiveProvider: () =>
+      deps.getNonInteractiveProvider() ??
+      (readVllmInstallResumeModel(access) ? "install-vllm" : null),
+    getVllmInstallResumeModel: () =>
+      deps.getVllmInstallResumeModel?.() ?? readVllmInstallResumeModel(access),
+  };
+}
+
+export function vllmInstallRecoveryOptions(
+  deps: Pick<VllmInstallResumeDeps, "checkpointVllmInstallModel" | "getVllmInstallResumeModel">,
+  access: VllmInstallResumeSessionAccess = onboardSession,
+): {
+  checkpointInstallIntent?: (modelId: string) => void;
+  modelIntent?: string;
+} {
+  const resumeModel = deps.getVllmInstallResumeModel?.() ?? null;
+  const checkpoint =
+    deps.checkpointVllmInstallModel ??
+    (access.loadSession()?.steps?.provider_selection?.status === "in_progress"
+      ? access.checkpointVllmInstallModel
+      : undefined);
+  return {
+    ...(checkpoint ? { checkpointInstallIntent: checkpoint } : {}),
+    ...(resumeModel ? { modelIntent: resumeModel } : {}),
+  };
+}
+
+export function providerNameToOptionKey(
+  remoteProviderConfig: Record<string, RemoteProviderConfigEntryLike>,
+  name: string | null | undefined,
+  opts: { hasManagedLlamaCpp?: boolean; hasNimContainer?: boolean } = {},
+): string | null {
+  if (!name) return null;
+  return persistedProviderNameToSelectionKey(name, opts, remoteProviderConfig);
+}
+
+export interface ProviderRecoveryDeps {
+  inferenceRouteObserver: OpenShellSynchronousInferenceRouteObserver;
+  selectedGatewayName: () => string;
+  warn?(message: string): void;
+}
+
+export interface CliProviderRecoveryDeps extends Omit<
+  ProviderRecoveryDeps,
+  "inferenceRouteObserver"
+> {
+  captureOpenshell: CaptureOpenShellInferenceRouteSynchronously;
+}
+
+export interface ProviderSelectionRecoveryReaderBundle {
+  readRecordedProvider(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedNimContainer(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedManagedLlamaCpp(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
+  readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedModel(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+}
+
+export interface ProviderRecoveryHelpers extends ProviderSelectionRecoveryReaderBundle {
+  readonly providerSelectionReaders: ProviderSelectionRecoveryReaderBundle;
+  readLiveInference(
+    sandboxName: string | null | undefined,
+  ): { provider: string | null; model: string | null } | null;
+  readRecordedEndpointUrl(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedInferenceRoute(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): RecordedInferenceRoute | null;
+  readRecordedProviderEndpoints(
+    provider: string,
+    excludeSandboxName: string | null | undefined,
+  ): string[] | null;
+}
+
+export interface RecordedInferenceRoute {
+  provider: string;
+  model: string;
+  endpointUrl: string | null;
+  endpointSource?: InferenceEndpointSource | null;
+  preferredInferenceApi: string;
+  source: "registry" | "session";
+}
+
+export type SandboxRecoveryAuthority = "missing" | "authorized" | "unauthorized";
+
+export function classifySandboxRecoveryAuthority(
+  entry: registry.SandboxEntry | null,
+  sessionId: string | null | undefined,
+): SandboxRecoveryAuthority {
+  if (!entry) return "missing";
+  if (entry.pendingRouteReservation !== true) return "authorized";
+  return registry.isPendingReservationForSession(entry, sessionId) ? "authorized" : "unauthorized";
+}
+
+export function getSandboxRecoveryAuthority(
+  sandboxName: string,
+  sessionId: string | null | undefined,
+): SandboxRecoveryAuthority {
+  return classifySandboxRecoveryAuthority(registry.getSandbox(sandboxName), sessionId);
+}
+
+export function shouldRecoverRecordedProvider(input: {
+  fresh: boolean;
+  sandboxName: string | null;
+  sandboxRecoveryAuthority: SandboxRecoveryAuthority;
+  sessionSandboxName: string | null;
+}): boolean {
+  return (
+    !input.fresh &&
+    (!input.sandboxName ||
+      input.sandboxRecoveryAuthority === "authorized" ||
+      (input.sandboxRecoveryAuthority === "missing" &&
+        input.sessionSandboxName === input.sandboxName))
+  );
+}
+
+function readRegistryRecoveryState(
+  sandboxName: string,
+  recoverySessionId: string | null | undefined,
+): {
+  authority: SandboxRecoveryAuthority;
+  entry: registry.SandboxEntry | null;
+} {
+  const entry = registry.getSandbox(sandboxName);
+  const authority = classifySandboxRecoveryAuthority(entry, recoverySessionId);
+  return { authority, entry };
+}
+
+export function validateLiveGatewayInference(
+  value: { provider: string | null; model: string | null } | null,
+): { provider: string; model: string } | null {
+  const provider = typeof value?.provider === "string" ? value.provider.trim() : "";
+  const model = typeof value?.model === "string" ? value.model.trim() : "";
+  if (!provider || !model) return null;
+  const route = { provider, model };
+  return isValidOpenShellInferenceRoute(route) ? route : null;
+}
+
+function completeRecordedInferenceRoute(
+  value: {
+    provider?: unknown;
+    model?: unknown;
+    endpointUrl?: unknown;
+    endpointSource?: unknown;
+    preferredInferenceApi?: unknown;
+  },
+  source: RecordedInferenceRoute["source"],
+): RecordedInferenceRoute | null {
+  const inference = validateLiveGatewayInference({
+    provider: typeof value.provider === "string" ? value.provider : null,
+    model: typeof value.model === "string" ? value.model : null,
+  });
+  const preferredInferenceApi =
+    typeof value.preferredInferenceApi === "string" ? value.preferredInferenceApi.trim() : "";
+  if (!inference || !preferredInferenceApi) return null;
+  const endpointUrl =
+    typeof value.endpointUrl === "string" && value.endpointUrl.trim()
+      ? value.endpointUrl.trim()
+      : null;
+  const endpointSource = endpointUrl
+    ? normalizeInferenceEndpointSource(value.endpointSource)
+    : null;
+  return { ...inference, endpointUrl, endpointSource, preferredInferenceApi, source };
+}
+
+export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {
+  const isManagedLlamaCppState = (value: {
+    provider?: string | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+    hostLocalInferenceProvenance?: unknown;
+  }): boolean =>
+    value.provider === "llama-cpp-local" &&
+    (value.servingProfileProvenance?.recipe.backend === "install-llama-cpp" ||
+      value.hostLocalInferenceProvenance != null);
+
+  const managedLlamaCppRecipeId = (value: {
+    provider?: string | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+  }): string | null => {
+    const recipe = value.servingProfileProvenance?.recipe;
+    return value.provider === "llama-cpp-local" &&
+      recipe?.backend === "install-llama-cpp" &&
+      typeof recipe.id === "string" &&
+      recipe.id.length > 0
+      ? recipe.id
+      : null;
+  };
+
+  function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.warn?.(
+      `  Warning: could not verify recorded inference ownership for sandbox '${sandboxName}'; refusing recovery (${detail}).`,
+    );
+    return null;
+  }
+
+  function readLiveInference(
+    sandboxName: string | null | undefined,
+  ): { provider: string | null; model: string | null } | null {
+    if (!sandboxName) return null;
+    try {
+      const { defaultSandbox, sandboxes } = registry.listSandboxes();
+      // The gateway holds one active inference config at a time. Trust the
+      // live read for the default sandbox, or when the registry has no
+      // entries (rebuild path: destroy wiped the entry but the gateway
+      // config persists). Other non-default sandboxes have a stored config
+      // that the gateway will swap to on their next connect.
+      const trustGateway = sandboxName === defaultSandbox || sandboxes.length === 0;
+      if (!trustGateway) return null;
+      const sandbox = sandboxes.find((entry) => entry.name === sandboxName);
+      const result = deps.inferenceRouteObserver.observeInferenceRoute({
+        target: {
+          kind: "named",
+          gatewayName: sandbox
+            ? getPersistedSandboxTargetGatewayName(sandbox)
+            : deps.selectedGatewayName(),
+        },
+      });
+      if (!result.ok || result.value.state === "unconfigured") return null;
+      // Recovery applies tighter bounds to the complete route returned by the
+      // typed observer; partial or malformed output must not steer a rebuild.
+      return validateLiveGatewayInference(result.value.route);
+    } catch {
+      return null;
+    }
+  }
+
+  function readRecordedProvider(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry)
+        return typeof entry.provider === "string" && entry.provider ? entry.provider : null;
+    } catch (error) {
+      return refuseRecoveryAfterRegistryError(sandboxName, error);
+    }
+    try {
+      const session = onboardSession.loadSession();
+      if (
+        session &&
+        session.sandboxName === sandboxName &&
+        typeof session.provider === "string" &&
+        session.provider
+      ) {
+        return session.provider;
+      }
+    } catch {
+      // fall through to live gateway
+    }
+    const live = readLiveInference(sandboxName);
+    if (live && typeof live.provider === "string" && live.provider) {
+      return live.provider;
+    }
+    return null;
+  }
+
+  function readRecordedManagedLlamaCpp(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean {
+    if (!sandboxName) return false;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return false;
+      if (entry) return isManagedLlamaCppState(entry);
+    } catch {
+      return false;
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return Boolean(session?.sandboxName === sandboxName && isManagedLlamaCppState(session));
+    } catch {
+      return false;
+    }
+  }
+
+  function readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry) return managedLlamaCppRecipeId(entry);
+    } catch {
+      return null;
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return session?.sandboxName === sandboxName ? managedLlamaCppRecipeId(session) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readRecordedNimContainer(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry)
+        return typeof entry.nimContainer === "string" && entry.nimContainer
+          ? entry.nimContainer
+          : null;
+    } catch (error) {
+      return refuseRecoveryAfterRegistryError(sandboxName, error);
+    }
+    try {
+      const session = onboardSession.loadSession();
+      if (
+        session &&
+        session.sandboxName === sandboxName &&
+        typeof session.nimContainer === "string" &&
+        session.nimContainer
+      ) {
+        return session.nimContainer;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function readRecordedModel(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry) return typeof entry.model === "string" && entry.model ? entry.model : null;
+    } catch (error) {
+      return refuseRecoveryAfterRegistryError(sandboxName, error);
+    }
+    try {
+      const session = onboardSession.loadSession();
+      if (
+        session &&
+        session.sandboxName === sandboxName &&
+        typeof session.model === "string" &&
+        session.model
+      ) {
+        return session.model;
+      }
+    } catch {
+      // fall through to live gateway
+    }
+    const live = readLiveInference(sandboxName);
+    if (live && typeof live.model === "string" && live.model) {
+      return live.model;
+    }
+    return null;
+  }
+
+  function readRecordedEndpointUrl(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry)
+        return typeof entry.endpointUrl === "string" && entry.endpointUrl
+          ? entry.endpointUrl
+          : null;
+    } catch (error) {
+      return refuseRecoveryAfterRegistryError(sandboxName, error);
+    }
+    try {
+      const session = onboardSession.loadSession();
+      if (
+        session &&
+        session.sandboxName === sandboxName &&
+        typeof session.endpointUrl === "string" &&
+        session.endpointUrl
+      ) {
+        return session.endpointUrl;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function readRecordedInferenceRoute(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): RecordedInferenceRoute | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      // A present registry row is authoritative. If it is incomplete, fail
+      // closed instead of filling its gaps from an older onboard session.
+      if (entry) return completeRecordedInferenceRoute(entry, "registry");
+    } catch (error) {
+      return refuseRecoveryAfterRegistryError(sandboxName, error);
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return session?.sandboxName === sandboxName
+        ? completeRecordedInferenceRoute(session, "session")
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readRecordedProviderEndpoints(
+    provider: string,
+    excludeSandboxName: string | null | undefined,
+  ): string[] | null {
+    try {
+      return registry
+        .listSandboxes()
+        .sandboxes.filter(
+          (entry) => entry.name !== excludeSandboxName && entry.provider === provider,
+        )
+        .map((entry) => (typeof entry.endpointUrl === "string" ? entry.endpointUrl.trim() : ""));
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    providerSelectionReaders: {
+      readRecordedProvider,
+      readRecordedNimContainer,
+      readRecordedManagedLlamaCpp,
+      readRecordedManagedLlamaCppRecipeId,
+      readRecordedModel,
+    },
+    readLiveInference,
+    readRecordedProvider,
+    readRecordedNimContainer,
+    readRecordedManagedLlamaCpp,
+    readRecordedManagedLlamaCppRecipeId,
+    readRecordedModel,
+    readRecordedEndpointUrl,
+    readRecordedInferenceRoute,
+    readRecordedProviderEndpoints,
+  };
+}
+
+/** Keep provider recovery scoped to the named base gateway; unsupported scope is terminal. */
+export function createCliProviderRecoveryHelpers(
+  deps: CliProviderRecoveryDeps,
+): ProviderRecoveryHelpers {
+  const { captureOpenshell, ...recoveryDeps } = deps;
+  return createProviderRecoveryHelpers({
+    ...recoveryDeps,
+    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
+  });
+}

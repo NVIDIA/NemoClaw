@@ -1,0 +1,366 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { type GatewayRecoveryDeps, startGatewayForRecovery } from "./gateway-recovery";
+
+// #3768: with the loop now purely deadline-driven, `waitUntilAsync` needs a
+// clock reader. Rather than using vi.useFakeTimers (which globally patches
+// timers and can hang async code), pair a captured virtual clock with the
+// injected `sleepSeconds` mock so the clock advances only when the loop
+// actually sleeps. Tests get deterministic deadline expiration without any
+// real wall-clock waits or global timer state.
+//
+// `advance` is exposed so a test can also advance the clock from inside a
+// mocked probe. This is how the timeout test proves the loop is truly
+// deadline-driven: if each probe advances the clock, then a maxAttempts=N
+// cap would exit at a different observable count than a pure deadline
+// would, so the assertions can only be satisfied by the deadline path.
+function makeVirtualClock(startMs = 1_000_000_000_000) {
+  let now = startMs;
+  return {
+    now: () => now,
+    advance: (seconds: number) => {
+      now += Math.max(0, seconds) * 1000;
+    },
+    sleeper: vi.fn((seconds: number) => {
+      now += Math.max(0, seconds) * 1000;
+    }),
+  };
+}
+
+function createDeps(
+  overrides: Partial<GatewayRecoveryDeps> & { healthProbe?: () => boolean } = {},
+): GatewayRecoveryDeps {
+  const clock = makeVirtualClock();
+  const adapters = gatewayAdaptersForTest();
+  adapters.observer.observeGatewayReuse.mockImplementation(async () => ({
+    healthy: overrides.healthProbe?.() ?? false,
+    namedMetadata: true,
+    gatewayReuseState: "stale",
+    shouldSelect: false,
+    endpoints: [],
+    endpointBinding: "unknown",
+  }));
+  return {
+    ...adapters,
+    assertGatewayStartAllowed: vi.fn(),
+    getGatewayClusterContainerState: () => "missing",
+    getContainerRuntime: () => "docker",
+    sleepSeconds: clock.sleeper,
+    now: clock.now,
+    startGatewayWithOptions: vi.fn(
+      async () => undefined,
+    ) as GatewayRecoveryDeps["startGatewayWithOptions"],
+    shouldPatchCoredns: () => false,
+    // Tests assert the plain-CLI fallback path by default; the Linux
+    // Docker-driver branch is opted into explicitly per case.
+    isLinuxDockerDriverGatewayEnabled: () => false,
+    ...overrides,
+  };
+}
+
+describe("gateway recovery", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete process.env.OPENSHELL_GATEWAY;
+  });
+
+  it("uses the default gateway starter when no explicit target is supplied", async () => {
+    const deps = createDeps();
+
+    await startGatewayForRecovery({}, deps);
+
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
+      exitOnFailure: false,
+    });
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("passes the frozen target into the managed gateway starter (#10514)", async () => {
+    const deps = createDeps();
+    const output = {
+      error: vi.fn(),
+      log: vi.fn(),
+      step: vi.fn(),
+      warn: vi.fn(),
+    };
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    };
+
+    await startGatewayForRecovery({ output, runtimeSelection }, deps);
+
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
+      exitOnFailure: false,
+      output,
+      runtimeSelection,
+    });
+  });
+
+  it("starts and selects the named gateway using the port encoded in its name", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "1");
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps)).rejects.toThrow(
+      "Gateway 'nemoclaw-8090' did not become ready",
+    );
+
+    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+    expect(deps.lifecycle.selectGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8090" },
+    });
+  });
+
+  it("derives the canonical gateway name when only a non-default port is supplied", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "1");
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "Gateway 'nemoclaw-8091' did not become ready",
+    );
+
+    expect(deps.lifecycle.selectGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+    });
+  });
+
+  it("polls until the configured recovery deadline and reports it in the timeout (#3768)", async () => {
+    // #3768: prove the loop is DEADLINE-driven, not just attempt-capped.
+    // Design: with count=10 and interval=1s the wait budget is 10s. Make
+    // each subprocess-probe advance the clock by ~1s so probes are the
+    // primary time-consumer, then sleeps at 1s add another second per
+    // iteration. Under a pure deadline: iterations run until ~2s per
+    // iteration cumulatively hits 10s -> ~5 probes. Under a hidden
+    // maxAttempts=count cap, the loop would exit at exactly 10 probes
+    // (attempt cap hits first because probes and sleeps take equal time),
+    // which is a different observable count from the deadline path. The
+    // strict upper bound `probeCount < 10` therefore only passes when the
+    // deadline (not an attempt cap) terminates the loop.
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "10");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "1");
+    const clock = makeVirtualClock();
+    const deps = createDeps({
+      sleepSeconds: clock.sleeper,
+      now: clock.now,
+      healthProbe: () => {
+        clock.advance(1);
+        return false;
+      },
+    });
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "configured 10s recovery deadline (1s poll interval)",
+    );
+
+    const probeCount = vi.mocked(deps.observer.observeGatewayReuse).mock.calls.length;
+    // The deadline (not an attempt cap) MUST have terminated the loop:
+    // probe advances 1s + sleep advances 1s = 2s per iteration, so under
+    // a 10s budget the loop runs ~5 iterations and cannot reach the 10
+    // attempts a hidden attempt cap would permit.
+    expect(probeCount).toBeGreaterThan(0);
+    expect(probeCount).toBeLessThan(10);
+    // Sleeps happen after every probe except the last one (deadline check
+    // after the final probe short-circuits before an extra sleep).
+    expect(clock.sleeper).toHaveBeenCalled();
+    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
+    expect(clock.sleeper.mock.calls.every(([s]) => s <= 1)).toBe(true);
+  });
+
+  it("succeeds on the first healthy probe without sleeping and sets OPENSHELL_GATEWAY (#3768)", async () => {
+    // Advisor: pin the happy path so a future refactor cannot silently
+    // break the side effects the caller relies on after readiness.
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "3");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "2");
+    const clock = makeVirtualClock();
+    const deps = createDeps({
+      sleepSeconds: clock.sleeper,
+      now: clock.now,
+      healthProbe: () => true,
+      isGatewayHttpReady: async () => true,
+    });
+
+    await startGatewayForRecovery({ gatewayPort: 8091 }, deps);
+
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8091");
+    expect(deps.sleepSeconds).not.toHaveBeenCalled();
+    // First iteration only: 3 subprocess calls (status + gateway info -g +
+    // gateway info); loop returns before the next iteration would start.
+    expect(deps.observer.observeGatewayReuse).toHaveBeenCalledOnce();
+  });
+
+  it("replaces ambient OpenShell selectors during targeted recovery (#10514)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    };
+    const deps = createDeps({
+      healthProbe: () => true,
+      isGatewayHttpReady: async () => true,
+    });
+
+    await startGatewayForRecovery({ gatewayPort: 8091, runtimeSelection }, deps);
+
+    const request = { target: { kind: "named", gatewayName: "nemoclaw-8091" }, runtimeSelection };
+    expect(deps.lifecycle.selectGateway).toHaveBeenCalledWith(request);
+    expect(deps.observer.observeGatewayReuse).toHaveBeenCalledWith(request);
+  });
+
+  it("succeeds after retrying past unhealthy probes and still sets OPENSHELL_GATEWAY (#3768)", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "3");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "2");
+    // Probe #1 fails the health predicate, probe #2 passes. Each probe
+    // reads status + gateway info -g + gateway info (3 calls).
+    let healthCalls = 0;
+    const clock = makeVirtualClock();
+    const deps = createDeps({
+      sleepSeconds: clock.sleeper,
+      now: clock.now,
+      healthProbe: () => {
+        healthCalls++;
+        return healthCalls > 1;
+      },
+      isGatewayHttpReady: async () => true,
+    });
+
+    await startGatewayForRecovery({ gatewayPort: 8091 }, deps);
+
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8091");
+    // Exactly one inter-attempt sleep between the unhealthy first probe
+    // and the healthy second probe.
+    expect(deps.sleepSeconds).toHaveBeenCalledTimes(1);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
+    expect(deps.observer.observeGatewayReuse).toHaveBeenCalledTimes(2);
+  });
+
+  it("with NEMOCLAW_HEALTH_POLL_COUNT=0 fails fast without silently claiming healthy (#3768)", async () => {
+    // Edge case: a zero-count budget must not silently pretend the gateway
+    // is healthy. The wait-budget helper clamps to a 1ms deadline, so
+    // waitUntilAsync's first deadline check terminates before the probe
+    // callback runs. Function throws with a deadline message instead of
+    // returning success.
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "0");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "2");
+    const deps = createDeps({ sleepSeconds: vi.fn() });
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      /did not become ready within the configured .* recovery deadline/,
+    );
+
+    expect(deps.observer.observeGatewayReuse).not.toHaveBeenCalled();
+    expect(deps.sleepSeconds).not.toHaveBeenCalled();
+  });
+
+  it("reports legacy zero-interval recovery as immediate probes", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "3");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "0");
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "did not become ready within the configured 3 immediate health probes",
+    );
+
+    expect(deps.observer.observeGatewayReuse).toHaveBeenCalledTimes(3);
+    expect(deps.sleepSeconds).toHaveBeenCalledTimes(2);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(2, 0);
+  });
+
+  it("rejects non-canonical gateway recovery names before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayName: "other-gateway" }, deps)).rejects.toThrow(
+      "Invalid NemoClaw gateway name 'other-gateway'",
+    );
+
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("rejects a gateway name and port mismatch before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(
+      startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8091 }, deps),
+    ).rejects.toThrow("Gateway 'nemoclaw-8090' does not match port 8091");
+
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("rejects privileged recovery ports before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-80" }, deps)).rejects.toThrow(
+      "Invalid gateway recovery port 80",
+    );
+
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("rejects the OpenRouter Runtime adapter port before invoking OpenShell (#5826)", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 11437 }, deps)).rejects.toThrow(
+      "OpenRouter Runtime adapter",
+    );
+
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on cross-port recovery when the Linux Docker-driver gateway is enabled", async () => {
+    const deps = createDeps({ isLinuxDockerDriverGatewayEnabled: () => true });
+
+    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps)).rejects.toThrow(
+      /Cross-port recovery for Linux Docker-driver gateway 'nemoclaw-8090' is not safe/,
+    );
+
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+  });
+});
+
+describe("gateway lifecycle authority during recovery", () => {
+  it("starts no gateway on any recovery branch when an external supervisor owns it (#6576)", async () => {
+    const ownershipError = new Error("owned by openshell-gateway.service");
+    const deps = createDeps({
+      assertGatewayStartAllowed: vi.fn(() => {
+        throw ownershipError;
+      }),
+    });
+
+    // The cross-port, non-default-name target is the branch that reselects the
+    // gateway without going through startGatewayWithOptions.
+    await expect(
+      startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 }, deps),
+    ).rejects.toThrow(ownershipError);
+
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
+    expect(deps.lifecycle.selectGateway).not.toHaveBeenCalled();
+    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+  });
+
+  it("still recovers normally when NemoClaw owns the gateway lifecycle (#6576)", async () => {
+    const deps = createDeps({ assertGatewayStartAllowed: vi.fn() });
+
+    await startGatewayForRecovery({}, deps);
+
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledOnce();
+  });
+});

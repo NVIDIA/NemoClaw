@@ -1,0 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/** Public rebuild facade. Phase orchestration lives in focused rebuild modules. */
+export { rebuildSandbox, stageMessagingManifestPlanForRebuild } from "./rebuild-pipeline";
+export { retireRebuildRecoveryBackup } from "./rebuild-recreate-journal";

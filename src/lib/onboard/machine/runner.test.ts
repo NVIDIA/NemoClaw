@@ -1,0 +1,264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  pauseOnboardMachine,
+  retryTo,
+} from "./result";
+import {
+  MissingOnboardStateHandlerError,
+  OnboardMachineTransitionLimitError,
+  type OnboardStateHandlers,
+  runOnboardMachine,
+} from "./runner";
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  createSession,
+  createTestRuntime as createRuntime,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
+
+interface RunnerContext {
+  attempts: number;
+  visited: string[];
+}
+
+describe("runOnboardMachine", () => {
+  it("runs handlers until completion while applying retry and branch transitions", async () => {
+    const runtime = createRuntime();
+    const calls: string[] = [];
+    const handlers: OnboardStateHandlers<RunnerContext> = {
+      init: () => advanceTo("preflight"),
+      preflight: () => advanceTo("gateway"),
+      gateway: () => advanceTo("provider_selection"),
+      provider_selection: () => advanceTo("inference"),
+      inference: (context) => {
+        calls.push(`inference:${context.attempts}`);
+        return context.attempts === 0 ? retryTo("provider_selection") : advanceTo("sandbox");
+      },
+      sandbox: () => branchTo("openclaw"),
+      openclaw: () => advanceTo("policies"),
+      policies: () => advanceTo("finalizing"),
+      finalizing: () => advanceTo("post_verify"),
+      post_verify: () => completeOnboardMachine({ sandboxName: "my-assistant" }),
+    };
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers,
+      updateContext: ({ context, state }) => ({
+        attempts: state === "inference" ? context.attempts + 1 : context.attempts,
+        visited: [...context.visited, state],
+      }),
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      sandboxName: "my-assistant",
+      machine: { state: "complete" },
+    });
+    expect(calls).toEqual(["inference:0", "inference:1"]);
+    expect(result.context.visited).toEqual([
+      "init",
+      "preflight",
+      "gateway",
+      "provider_selection",
+      "inference",
+      "provider_selection",
+      "inference",
+      "sandbox",
+      "openclaw",
+      "policies",
+      "finalizing",
+      "post_verify",
+    ]);
+  });
+
+  it("stops on failed terminal results", async () => {
+    const runtime = createRuntime();
+    const policies = vi.fn(() => advanceTo("finalizing"));
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => failOnboardMachine("preflight failed", { step: "preflight" }),
+        policies,
+      },
+    });
+
+    expect(result.session).toMatchObject({
+      status: "failed",
+      failure: { step: "preflight", message: "preflight failed" },
+      machine: { state: "failed" },
+    });
+    expect(policies).not.toHaveBeenCalled();
+  });
+
+  it("stops on a pause result without leaving the current retryable state", async () => {
+    const session = createSession({
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "post_verify",
+        stateEnteredAt: "2026-05-28T00:00:00.000Z",
+        revision: 4,
+      },
+    });
+    const runtime = createRuntime(session);
+    const postVerify = vi.fn(() =>
+      pauseOnboardMachine({ sandboxName: "my-assistant" }, { reason: "not-ready" }),
+    );
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: { post_verify: postVerify },
+    });
+
+    expect(postVerify).toHaveBeenCalledOnce();
+    expect(result.session).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      sandboxName: "my-assistant",
+      machine: { state: "post_verify", revision: 4 },
+    });
+  });
+
+  it("returns immediately for terminal sessions", async () => {
+    const startedAt = "2026-05-28T00:00:00.000Z";
+    const completeSession = createSession({
+      resumable: false,
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: startedAt,
+        revision: 1,
+      },
+    });
+    completeSession.status = "complete";
+    const runtime = createRuntime(completeSession);
+    const init = vi.fn(() => advanceTo("preflight"));
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: { init },
+    });
+
+    expect(result.session).toMatchObject({ status: "complete", machine: { state: "complete" } });
+    expect(init).not.toHaveBeenCalled();
+  });
+
+  it("stops before configured non-terminal states without requiring a handler", async () => {
+    const runtime = createRuntime();
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      stopStates: ["provider_selection"],
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => advanceTo("gateway"),
+        gateway: () => advanceTo("provider_selection"),
+      },
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+
+  it("stops between results from a multi-result handler", async () => {
+    const runtime = createRuntime();
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      stopStates: ["inference"],
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => advanceTo("gateway"),
+        gateway: () => advanceTo("provider_selection"),
+        provider_selection: () => [
+          advanceTo("inference", { metadata: { state: "provider_selection" } }),
+          advanceTo("sandbox", { metadata: { state: "inference" } }),
+        ],
+      },
+    });
+
+    expect(result.session.machine.state).toBe("inference");
+  });
+
+  it("propagates runtime transition errors without updating context", async () => {
+    const runtime = createRuntime();
+    const updateContext = vi.fn(({ context }) => context);
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: { init: () => advanceTo("sandbox") },
+        updateContext,
+      }),
+    ).rejects.toThrow("Invalid onboarding machine transition");
+    expect(updateContext).not.toHaveBeenCalled();
+  });
+
+  it("throws when a non-terminal state has no handler", async () => {
+    const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: {},
+      }),
+    ).rejects.toThrow(MissingOnboardStateHandlerError);
+  });
+
+  it("throws when retry-capable handlers exceed the transition limit", async () => {
+    const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: {
+          init: () => advanceTo("preflight"),
+          preflight: () => advanceTo("gateway"),
+          gateway: () => advanceTo("provider_selection"),
+          provider_selection: () => advanceTo("inference"),
+          inference: () => retryTo("provider_selection"),
+        },
+        maxTransitions: 5,
+      }),
+    ).rejects.toThrow(OnboardMachineTransitionLimitError);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "uses the default transition limit for non-finite maxTransitions values [case %#]",
+    async (maxTransitions) => {
+      const runtime = createRuntime();
+
+      await expect(
+        runOnboardMachine({
+          context: { attempts: 0, visited: [] } as RunnerContext,
+          runtime,
+          handlers: {
+            init: () => advanceTo("preflight"),
+            preflight: () => advanceTo("gateway"),
+            gateway: () => advanceTo("provider_selection"),
+            provider_selection: () => advanceTo("inference"),
+            inference: () => retryTo("provider_selection"),
+          },
+          maxTransitions,
+        }),
+      ).rejects.toMatchObject({ maxTransitions: 100 });
+    },
+  );
+});

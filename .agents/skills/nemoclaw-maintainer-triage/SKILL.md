@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-triage
-description: AI-assisted label triage for NVIDIA/NemoClaw issues and PRs. Reads triage-instructions.md at runtime for consistent label guidance. Supports single-item mode (give it a number) and batch mode (fetches up to 50 unlabeled open items). On approval, applies labels and an optional triage comment via gh CLI, then logs the session to the daily-rhythm activity folder. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
+description: "Propose and apply authorized Issue Type, Project fields, and labels for NemoClaw issues or PRs, individually or in a batch."
 user_invocable: true
 ---
 
@@ -9,137 +9,99 @@ user_invocable: true
 
 # NemoClaw Maintainer — Triage
 
-AI-assisted label suggestion for issues and PRs. Reads live triage instructions, suggests labels and a triage comment, applies on approval, and logs the session.
+Use Issue Type for issue classification. Use Project fields for priority and lifecycle.
+Use labels for routing and action queues.
 
----
+## Step 1: Load Canonical Policy
 
-## Step 1: Read Triage Instructions
+Before evaluating an item, read these files in order:
 
-Before suggesting any labels, read the live instructions:
+1. [workflow-policy.md](../nemoclaw-maintainer-policies/references/workflow-policy.md)
+2. [triage-instructions.md](../nemoclaw-maintainer-policies/references/triage-instructions.md)
+3. [label-taxonomy.json](../nemoclaw-maintainer-policies/references/label-taxonomy.json)
+4. [examples.md](../nemoclaw-maintainer-policies/references/examples.md)
 
-```bash
-cat docs/triage-instructions.md
-```
-
-Do not triage from memory. The instructions contain the label guide, tone rules, skip list, and output format. They may have been updated since your last session.
-
----
+Do not use another label guide.
+The policy package is the source of truth for Issue Type, Project fields, labels, confidence, authorization, and output shape.
 
 ## Step 2: Determine Mode
 
-**Single-item mode** — user provides a specific issue or PR number:
+**Single-item mode** — the user provides an issue or PR number:
 
 ```bash
-# For an issue:
-gh issue view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author
-
-# For a PR:
-gh pr view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author
+gh issue view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,projectItems
+gh pr view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,files,isDraft,mergeStateStatus,projectItems,statusCheckRollup
 ```
 
-**Batch mode** — user says "batch", "all unlabeled", or provides no number:
+Use the command for the item type.
+For issues, read Issue Type through the GitHub GraphQL API.
+Read Project Priority and Status from Project 199. Do not infer them from labels.
+
+**Batch mode** — collect both normal inbox items and unlabeled items:
 
 ```bash
-# Fetch unlabeled open issues (no labels applied yet):
-gh issue list --repo NVIDIA/NemoClaw --limit 50 --json number,title,body,labels,url,author \
-  | jq '[.[] | select(.labels | length == 0)]'
-
-# Fetch unlabeled open PRs:
-gh pr list --repo NVIDIA/NemoClaw --limit 50 --json number,title,body,labels,url,author \
-  | jq '[.[] | select(.labels | length == 0)]'
+gh issue list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 50 --json number,title,body,labels,url,author
+gh issue list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author
+gh pr list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 50 --json number,title,body,labels,url,author,isDraft,mergeStateStatus
+gh pr list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author,isDraft,mergeStateStatus
 ```
 
-In batch mode, work through items one at a time — present each suggestion and wait for approval before moving to the next.
+Keep unlabeled items from the unfiltered results.
+Combine them with the `needs: triage` results. Remove duplicates by item type and number.
+Process one item at a time.
 
----
+## Step 3: Present the Dry Run
 
-## Step 3: Suggest Labels and Comment
+Use the JSON-compatible payload defined by canonical `triage-instructions.md`. Include:
 
-For each item, apply the rules from `triage-instructions.md` and present:
+- native Issue Type for issues
+- Project Priority and Status recommendations
+- only labels from `label-taxonomy.json`
+- labels to remove, including a completed `needs: triage` inbox marker
+- confidence, rationale, questions, and `human_review_required`
+- the proposed public comment, when one is useful.
 
-**Action:** `label` · **Suggested labels:** `bug`, `Platform: MacOS`
-**Reason:** One sentence from the instructions.
-**Triage comment (optional):**
-> Comment text here.
+Prefer no label over a guessed label.
+Do not use labels for Issue Type, Priority, Status, or resolution.
+Do not propose an unknown label. Do not propose `PRR` during triage.
 
-Ask: "Apply these labels? (yes / skip / edit labels / no comment)"
+In batch mode, present each dry run and wait for an explicit `apply`, `skip`, or edited write set before moving to the next item.
 
-Options:
+## Step 4: Apply Only the Accepted Write Set
 
-- **yes** — apply as shown
-- **skip** — move to next item without applying
-- **edit labels** — user specifies different labels, then apply
-- **no comment** — apply labels only, skip posting the comment
+Acceptance authorizes only the fields, labels, and comment in the proposal.
+Before each write, re-read Issue Type, Project fields, and labels, then resolve all live IDs.
+Do not store mutable IDs in this skill.
+If the state differs from the accepted proposal's base state, stop and present an updated proposal for acceptance.
+Resume writes only after the user accepts the updated proposal.
 
----
+Apply writes in this order:
 
-## Step 4: Apply on Approval
+1. Set native Issue Type and accepted Project fields.
+2. Add and remove canonical labels.
+3. Remove `needs: triage` when the inbox action is complete.
+4. Post the accepted comment, if any.
 
-Apply labels:
+Do not write if the accepted plan contains a low-confidence inference, an unknown label, or an unauthorized field.
+Return a corrected proposal.
 
-```bash
-# Issue:
-gh issue edit <number> --repo NVIDIA/NemoClaw --add-label "bug,Platform: MacOS"
+## Step 5: Report
 
-# PR:
-gh pr edit <number> --repo NVIDIA/NemoClaw --add-label "enhancement: inference"
-```
+For every applied item, report:
 
-Post comment (if approved):
+- Issue Type before and after, when applicable
+- Project Priority and Status before and after
+- labels added and removed
+- whether a comment was posted
+- any proposed write that was skipped and why.
 
-```bash
-gh issue comment <number> --repo NVIDIA/NemoClaw --body "Comment text here."
-# or for PRs:
-gh pr comment <number> --repo NVIDIA/NemoClaw --body "Comment text here."
-```
+Do not write an external activity log unless the invoking maintainer explicitly asks for one.
 
----
+## Batch Ordering
 
-## Step 5: Log to Activity
+Prioritize candidates using policy evidence, not labels that duplicate Project Priority:
 
-After each approved item, append to `~/development/daily-rhythm/activity/nemoclaw-triage-log.md`.
-
-Use the absolute path — this file lives in the daily-rhythm activity folder so it persists to GitLab over time.
-
-```markdown
-### [ISSUE|PR] NVIDIA/NemoClaw#<number> — <title>
-**Date:** YYYY-MM-DD
-**Labels applied:** bug, Platform: MacOS
-**Comment posted:** yes | no
-
----
-```
-
-Create the file if it doesn't exist, with this header:
-
-```markdown
-# NemoClaw — Triage Log
-
-A running record of label triage actions on NVIDIA/NemoClaw issues and PRs.
-Persisted via daily-rhythm to GitLab.
-
----
-```
-
-At the end of a batch session, append a session summary before the individual entries:
-
-```markdown
-## YYYY-MM-DD — Triage Session
-**Items triaged:** N
-**Labels applied:** N labels across N items
-
----
-```
-
-Never stage or commit this file to the NemoClaw repo.
-
----
-
-## Response Time Note
-
-When triaging in batch mode, prioritize items in this order:
-
-1. Items with outage, data loss, or critical breakage signals in title or body (candidate for `priority: high`)
-2. Items opened by company-affiliated or known community contributors
-3. Issues open > 5 business days with no label (first-response window at risk)
-4. Everything else by recency
+1. Security, outage, or data-loss reports that might need Project Priority `Urgent` or `High`.
+2. Items that need a response from an author or maintainer.
+3. Items waiting longest for triage.
+4. Remaining items by recency.

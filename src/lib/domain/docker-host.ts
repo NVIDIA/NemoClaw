@@ -1,0 +1,106 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+
+export interface DockerDaemonObservation {
+  readonly reachable: boolean;
+  readonly serverVersion?: string;
+}
+
+/**
+ * Parse `docker info` output into the stable daemon facts shared by host
+ * readiness and installed-sandbox diagnostics.
+ *
+ * Docker can exit successfully while emitting a zero-value JSON object when
+ * its daemon is unavailable. Positive server-version evidence is therefore
+ * required for JSON output. Plain text remains supported for older callers and
+ * test doubles, except for the well-known daemon connection failures.
+ */
+export function parseDockerDaemonObservation(rawOutput = ""): DockerDaemonObservation {
+  const text = String(rawOutput).trim();
+  if (!text) return { reachable: false };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const lowered = text.toLowerCase();
+    const reachable = !(
+      lowered.includes("cannot connect to the docker daemon") ||
+      lowered.includes("error during connect") ||
+      lowered.includes("is the docker daemon running")
+    );
+    return {
+      reachable,
+      ...(reachable && !/\s/u.test(text) ? { serverVersion: text } : {}),
+    };
+  }
+
+  if (!parsed || typeof parsed !== "object") return { reachable: false };
+  const observation = parsed as Record<string, unknown>;
+  if (Array.isArray(observation.ServerErrors) && observation.ServerErrors.length > 0) {
+    return { reachable: false };
+  }
+
+  if (
+    typeof observation.ServerVersion === "string" &&
+    observation.ServerVersion.trim().length > 0
+  ) {
+    return { reachable: true, serverVersion: observation.ServerVersion.trim() };
+  }
+
+  const version = observation.version;
+  if (version && typeof version === "object") {
+    const nativeVersion = (version as Record<string, unknown>).Version;
+    if (typeof nativeVersion === "string" && nativeVersion.trim().length > 0) {
+      return { reachable: true, serverVersion: nativeVersion.trim() };
+    }
+  }
+
+  return { reachable: false };
+}
+
+export function isDockerDaemonReachable(rawOutput = ""): boolean {
+  return parseDockerDaemonObservation(rawOutput).reachable;
+}
+
+/** Docker context names safe to resolve and reproduce in operator diagnostics. */
+const DOCKER_CONTEXT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
+
+export function isSupportedDockerContextName(value: string | undefined): boolean {
+  return DOCKER_CONTEXT_NAME_PATTERN.test(String(value ?? ""));
+}
+
+// A DOCKER_HOST value onboarding can use. Unset means Docker's default socket,
+// which is supported; a set value must be an absolute `unix://` socket that can
+// be written to the gateway environment file. TCP and SSH endpoints and
+// relative paths are unsupported, so onboarding cannot use them even when they
+// are reachable.
+//
+// The raw value is checked for control bytes and bidirectional controls before
+// trimming, so terminal output cannot be altered and a trailing `\n` cannot be
+// trimmed away and then accepted. The socket path is checked for the single
+// quote it would be wrapped in when written to the gateway environment file.
+export function isSupportedGatewayDockerHost(value: string | undefined): boolean {
+  const raw = String(value ?? "");
+  if (/[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(raw)) return false;
+  const candidate = raw.trim();
+  if (!candidate) return true;
+  const prefix = "unix://";
+  if (!candidate.startsWith(prefix)) return false;
+  const socketPath = candidate.slice(prefix.length);
+  return path.isAbsolute(socketPath) && !socketPath.includes("'");
+}
+
+/**
+ * Credential-helper names that only Docker Desktop writes into the Docker
+ * client config (`credsStore`). The helper needs an interactive GUI session,
+ * so headless sessions can fail every image pull with it configured (#9457).
+ * Shared by host assessment (WSL helper probing) and the advisory check so
+ * the two consumers cannot diverge.
+ */
+export const DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES: ReadonlySet<string> = new Set([
+  "desktop",
+  "desktop.exe",
+]);

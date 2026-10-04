@@ -1,0 +1,372 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Channel-layer lifecycle contract: every policy mutator that succeeds must
+ * call refreshSandboxPolicyContextFile once with the sandbox name, and every
+ * mutator that fails or short-circuits (dry-run, unknown preset, declined
+ * confirm, apply/remove returns false) must skip the refresh.
+ *
+ * This pins the caller/callee contract between policy-channel and
+ * policy-context-refresh so a future mutator added to the channel cannot
+ * silently let the in-sandbox POLICY.md drift.
+ */
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
+import * as store from "../../credentials/store";
+import * as policies from "../../policy";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import {
+  addSandboxPolicy,
+  applyChannelPresetIfAvailable,
+  removeChannelPresetIfPresent,
+  removeSandboxPolicy,
+} from "./policy-channel";
+import * as policyContextRefresh from "./policy-context-refresh";
+
+type PresetInfo = ReturnType<typeof policies.listPresets>[number];
+
+class ExitError extends Error {
+  constructor(public readonly code: number | undefined) {
+    super(`process.exit(${code})`);
+  }
+}
+
+const POLICY_PRESETS: PresetInfo[] = [
+  { file: "npm.yaml", name: "npm", description: "npm and Yarn registry access" },
+  { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
+  { file: "discord.yaml", name: "discord", description: "Discord API access" },
+];
+
+let errSpy: MockInstance;
+let refreshSpy: MockInstance;
+let applyPresetMock: MockInstance;
+let removePresetMock: MockInstance;
+let applyPresetContentMock: MockInstance;
+let loadPresetFromFileMock: MockInstance;
+
+async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
+  try {
+    await action();
+  } catch (error) {
+    if (error instanceof ExitError) return error.code;
+    throw error;
+  }
+  throw new Error("Expected process.exit to be called");
+}
+
+let stdinIsTty: PropertyDescriptor | undefined;
+
+beforeEach(() => {
+  delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
+  errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    throw new ExitError(code);
+  }) as never);
+
+  vi.spyOn(store, "prompt").mockResolvedValue("y");
+  vi.spyOn(registry, "getSandbox").mockReturnValue({
+    name: "alpha",
+    agent: null,
+  });
+
+  vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+  vi.spyOn(onboardSession, "updateSession").mockReturnValue(
+    undefined as unknown as onboardSession.Session,
+  );
+
+  vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
+  vi.spyOn(policies, "listCustomPresets").mockResolvedValue([]);
+  vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+  vi.spyOn(policies, "getGatewayPresets").mockResolvedValue(null);
+  vi.spyOn(policies, "selectFromList").mockResolvedValue("pypi");
+  vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
+  vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
+    return `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`;
+  });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    async (_sandboxName: unknown, name: unknown) =>
+      `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
+  );
+  applyPresetMock = vi.spyOn(policies, "applyPreset").mockResolvedValue(true);
+  removePresetMock = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
+  applyPresetContentMock = vi.spyOn(policies, "applyPresetContent").mockResolvedValue(true);
+  loadPresetFromFileMock = vi.spyOn(policies, "loadPresetFromFile").mockImplementation(() => ({
+    presetName: "custom",
+    content: "network_policies:\n  custom:\n    host: custom.example.com\n",
+  }));
+  vi.spyOn(policies, "getPresetEndpoints").mockReturnValue(["host.example.com"]);
+  vi.spyOn(policies, "getPresetValidationWarning").mockReturnValue(null);
+
+  refreshSpy = vi
+    .spyOn(policyContextRefresh, "refreshSandboxPolicyContextFile")
+    .mockResolvedValue({ outcome: "ok", written: true });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
+});
+
+describe("addSandboxPolicy refresh contract", () => {
+  it("refreshes the in-sandbox POLICY.md after a successful built-in apply", async () => {
+    await addSandboxPolicy("alpha", { preset: "pypi", yes: true });
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", {
+      suppressDisclosure: true,
+    });
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh on --dry-run because the registry was never mutated", async () => {
+    await addSandboxPolicy("alpha", { preset: "pypi", yes: true, dryRun: true });
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when interactive confirmation is declined", async () => {
+    vi.spyOn(store, "prompt").mockResolvedValue("n");
+
+    await addSandboxPolicy("alpha");
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the policy library reports apply failure", async () => {
+    applyPresetMock.mockResolvedValue(false);
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { preset: "pypi", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", {
+      suppressDisclosure: true,
+    });
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the preset name is unknown", async () => {
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { preset: "nonexistent", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyExternalPreset refresh contract (--from-file)", () => {
+  let tempDir: string;
+  let tempFile: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "policy-refresh-"));
+    tempFile = path.join(tempDir, "preset.yaml");
+    fs.writeFileSync(tempFile, "network_policies:\n  custom:\n    host: custom.example.com\n");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("refreshes after a successful custom-preset apply via --from-file", async () => {
+    await addSandboxPolicy("alpha", { fromFile: tempFile, yes: true });
+
+    expect(loadPresetFromFileMock).toHaveBeenCalled();
+    expect(applyPresetContentMock).toHaveBeenCalled();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh when applyPresetContent reports failure", async () => {
+    applyPresetContentMock.mockReturnValue(false);
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { fromFile: tempFile, yes: true })),
+    ).resolves.toBe(1);
+
+    expect(applyPresetContentMock).toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh on --dry-run with --from-file", async () => {
+    await addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true });
+
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a link-local metadata endpoint during --from-file dry-run", async () => {
+    loadPresetFromFileMock.mockReturnValue({
+      presetName: "metadata",
+      content: `preset:
+  name: metadata
+network_policies:
+  metadata:
+    endpoints:
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`,
+    });
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true })),
+    ).resolves.toBe(1);
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+      ),
+    );
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeSandboxPolicy refresh contract", () => {
+  beforeEach(() => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["pypi"]);
+  });
+
+  it("refreshes the in-sandbox POLICY.md after a successful removal", async () => {
+    await removeSandboxPolicy("alpha", { preset: "pypi", yes: true });
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "pypi");
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh on --dry-run", async () => {
+    await removeSandboxPolicy("alpha", { preset: "pypi", yes: true, dryRun: true });
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when interactive confirmation is declined", async () => {
+    vi.spyOn(store, "prompt").mockResolvedValue("n");
+
+    await removeSandboxPolicy("alpha");
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the policy library reports remove failure", async () => {
+    removePresetMock.mockResolvedValue(false);
+
+    await expect(
+      captureExit(() => removeSandboxPolicy("alpha", { preset: "pypi", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "pypi");
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the preset is not currently applied", async () => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+
+    await expect(
+      captureExit(() => removeSandboxPolicy("alpha", { preset: "pypi", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyChannelPresetIfAvailable refresh contract", () => {
+  it("refreshes once after a successful channel preset apply", async () => {
+    const ok = await applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(true);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh when policy library reports apply failure", async () => {
+    applyPresetMock.mockResolvedValue(false);
+
+    const ok = await applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(false);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library throws", async () => {
+    applyPresetMock.mockRejectedValue(new Error("preset YAML missing"));
+
+    const ok = await applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(false);
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeChannelPresetIfPresent refresh contract", () => {
+  it("refreshes once after a successful built-in channel preset removal", async () => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["discord"]);
+
+    await removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh when the channel is not a built-in preset", async () => {
+    await removeChannelPresetIfPresent("alpha", "totally-not-a-preset");
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the built-in preset is not currently applied", async () => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+
+    await removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library reports remove failure", async () => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["discord"]);
+    removePresetMock.mockResolvedValue(false);
+
+    await removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library throws", async () => {
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["discord"]);
+    removePresetMock.mockRejectedValue(new Error("preset removal racing with rebuild"));
+
+    await removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});

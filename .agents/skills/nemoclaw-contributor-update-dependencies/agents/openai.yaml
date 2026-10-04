@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "Upgrade Dependencies"
+  short_description: "Audit dependency migrations across releases"
+  default_prompt: "Use $nemoclaw-contributor-update-dependencies to audit and implement this dependency upgrade end to end."

@@ -19,8 +19,14 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.4.9"
+expected_version: "2026.9.2"
+version_scheme: calendar
 gateway_command: "openclaw gateway run"
+# Interactive entry point a user types inside the sandbox. OpenClaw stays a
+# gateway agent (runtime.kind defaults to gateway); this only records the
+# command so NemoClaw stops hardcoding it.
+runtime:
+  interactive_command: "openclaw tui"
 
 # ── Health probe ────────────────────────────────────────────────
 health_probe:
@@ -34,41 +40,34 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.openclaw
-  writable_dir: /sandbox/.openclaw-data
-  config_file: openclaw.json      # relative to immutable_dir
+  dir: /sandbox/.openclaw
+  config_file: openclaw.json
   format: json
 
-# ── State directories ──────────────────────────────────────────
-state_dirs:
-  - agents
-  - extensions
-  - workspace
-  - skills
-  - hooks
-  - identity
-  - devices
-  - canvas
-  - cron
-  - memory
-  - telegram
-  - credentials
+# Static integration metadata only. OpenClaw remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.openclaw/workspace/skills
+  list_command: [skills, list, --agent, main]
+  add_command: [skills, install, "{source}", --agent, main, --force]
+
+user_managed_files:
+  - .env
+  - .mcp.json
 
 # ── Authentication ──────────────────────────────────────────────
 device_pairing: true
 web_auth_method: device_pairing
 
-# ── Messaging platforms ─────────────────────────────────────────
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-
 # ── Inference ───────────────────────────────────────────────────
 inference:
   provider_type: gateway_managed
   proxy_support: explicit  # configured in openclaw.json providers block
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: openclaw-config
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

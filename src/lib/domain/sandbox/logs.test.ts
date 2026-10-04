@@ -1,0 +1,264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import {
+  GATEWAY_LOG_SOURCE_TAG,
+  getLogsProbeTimeoutMs,
+  isBrokenPipeRelayError,
+  LOG_RELAY_BROKEN_PIPE_EXIT_CODE,
+  normalizeSandboxLogsOptions,
+  tagGatewayLogLine,
+  tagGatewayLogLines,
+} from "./logs";
+
+describe("sandbox logs helpers", () => {
+  it("normalizes boolean and partial logs options", () => {
+    expect(normalizeSandboxLogsOptions(true)).toEqual({ follow: true, lines: "200", since: null });
+    expect(normalizeSandboxLogsOptions({ follow: false, lines: "", since: "" })).toEqual({
+      follow: false,
+      lines: "200",
+      since: null,
+    });
+    expect(normalizeSandboxLogsOptions({ follow: true, lines: "50", since: "5m" })).toEqual({
+      follow: true,
+      lines: "50",
+      since: "5m",
+    });
+  });
+
+  it("bounds probe timeout env input", () => {
+    expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "1234" })).toBe(1234);
+    expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "0" })).toBe(5000);
+    expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "not-a-number" })).toBe(5000);
+    expect(getLogsProbeTimeoutMs({})).toBe(5000);
+  });
+});
+
+import { mergeTailLogLines, parseLineTimestamp } from "./logs";
+
+describe("parseLineTimestamp", () => {
+  it("parses the bracketed epoch-seconds format from OpenShell OCSF audit", () => {
+    expect(parseLineTimestamp("[1779488798.644] [sandbox] [OCSF ] NET:OPEN DENIED")).toBe(
+      1779488798644,
+    );
+  });
+
+  it("parses the bracketed epoch with no fractional component", () => {
+    expect(parseLineTimestamp("[1779488800] [sandbox] [INFO ] ok")).toBe(1779488800000);
+  });
+
+  it("pads short fractional seconds to milliseconds", () => {
+    expect(parseLineTimestamp("[1779488798.6] [sandbox] x")).toBe(1779488798600);
+    expect(parseLineTimestamp("[1779488798.64] [sandbox] x")).toBe(1779488798640);
+  });
+
+  it("parses the ISO 8601 gateway-log format", () => {
+    expect(
+      parseLineTimestamp("2026-05-22T20:55:38.152+00:00 [gateway] starting HTTP server..."),
+    ).toBe(Date.parse("2026-05-22T20:55:38.152+00:00"));
+  });
+
+  it("parses the ISO 8601 format with Z suffix", () => {
+    expect(parseLineTimestamp("2026-05-22T20:55:38.152Z [gateway] ok")).toBe(
+      Date.parse("2026-05-22T20:55:38.152Z"),
+    );
+  });
+
+  it("returns null when no recognised timestamp prefix is present", () => {
+    expect(parseLineTimestamp("just a free-form line")).toBeNull();
+    expect(parseLineTimestamp("")).toBeNull();
+    expect(parseLineTimestamp("  [not-a-timestamp]")).toBeNull();
+  });
+});
+
+describe("mergeTailLogLines", () => {
+  it("returns the empty string when no sources or no lines requested", () => {
+    expect(mergeTailLogLines([], 5)).toBe("");
+    expect(mergeTailLogLines(["[1] a\n"], 0)).toBe("[1] a\n");
+  });
+
+  it("caps the merged output at maxLines (#4100)", () => {
+    const gateway = ["[1] g1", "[3] g2", "[5] g3"].join("\n") + "\n";
+    const openshell = ["[2] o1", "[4] o2", "[6] o3"].join("\n") + "\n";
+    const merged = mergeTailLogLines([gateway, openshell], 3);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines).toEqual(["[4] o2", "[5] g3", "[6] o3"]);
+  });
+
+  it("interleaves chronologically across sources", () => {
+    const gateway = "[1779488800.100] g first\n[1779488800.300] g third\n";
+    const openshell = "[1779488800.200] o second\n[1779488800.400] o fourth\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual([
+      "[1779488800.100] g first",
+      "[1779488800.200] o second",
+      "[1779488800.300] g third",
+      "[1779488800.400] o fourth",
+    ]);
+  });
+
+  it("keeps continuation lines attached to their preceding timestamped line", () => {
+    const gateway = [
+      "[1779488800.100] g header",
+      "  continuation line for g",
+      "[1779488800.400] g next",
+    ].join("\n");
+    const openshell = "[1779488800.200] o middle\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual([
+      "[1779488800.100] g header",
+      "  continuation line for g",
+      "[1779488800.200] o middle",
+      "[1779488800.400] g next",
+    ]);
+  });
+
+  it("deterministically interleaves identically-timestamped lines by source order", () => {
+    const gateway = "[1779488800.000] g\n";
+    const openshell = "[1779488800.000] o\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual(["[1779488800.000] g", "[1779488800.000] o"]);
+  });
+
+  it("preserves source order for untimestamped lines and places them before timestamped lines", () => {
+    const single = "no timestamp here\n[1779488800.000] later\n";
+    const merged = mergeTailLogLines([single], 10);
+    expect(merged.trimEnd().split("\n")).toEqual(["no timestamp here", "[1779488800.000] later"]);
+  });
+
+  it("returns at most maxLines when both sources individually have >= maxLines", () => {
+    // The original bug: passing --tail 5 to each source yields 10 lines.
+    const gatewayFive = Array.from({ length: 5 }, (_v, i) => `[${i + 1}] g${i + 1}`).join("\n");
+    const openshellFive = Array.from({ length: 5 }, (_v, i) => `[${i + 1}.5] o${i + 1}`).join("\n");
+    const merged = mergeTailLogLines([gatewayFive, openshellFive], 5);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines.length).toBe(5);
+  });
+
+  it("ignores empty sources without producing extra blank lines", () => {
+    const merged = mergeTailLogLines(["", "[1] a\n", ""], 3);
+    expect(merged).toBe("[1] a\n");
+  });
+
+  it("appends a trailing newline so callers can pipe through process.stdout.write", () => {
+    expect(mergeTailLogLines(["[1] a"], 3).endsWith("\n")).toBe(true);
+  });
+
+  it("preserves sparse-source content when a chatty source dominates by timestamp", () => {
+    const gatewayBoot = [
+      "[1779488800.000] [gateway] starting HTTP server",
+      "[1779488815.000] [telegram] [default] bridge did not start within 15s",
+    ].join("\n");
+    const openshellDense = Array.from(
+      { length: 200 },
+      (_v, i) => `[${1779488900 + i}.000] [sandbox] [INFO] log line ${i}`,
+    ).join("\n");
+    const merged = mergeTailLogLines([`${gatewayBoot}\n`, `${openshellDense}\n`], 200);
+    expect(merged).toContain("bridge did not start within 15s");
+    expect(merged).toContain("starting HTTP server");
+  });
+
+  it("inherits a preceding timestamp for an untimestamped diagnostic line in the same source", () => {
+    const gateway = [
+      "[1779488800.000] [gateway] starting provider",
+      "[telegram] [default] bridge did not start within 15s",
+    ].join("\n");
+    const openshellLater = Array.from(
+      { length: 50 },
+      (_v, i) => `[${1779489000 + i}.000] [sandbox] [INFO] line ${i}`,
+    ).join("\n");
+    const merged = mergeTailLogLines([`${gateway}\n`, `${openshellLater}\n`], 50);
+    expect(merged).toContain("bridge did not start within 15s");
+  });
+
+  it("caps the total output at maxLines with two chatty sources", () => {
+    const gateway = Array.from({ length: 500 }, (_v, i) => `[${1000 + i}.000] g${i}`).join("\n");
+    const openshell = Array.from({ length: 500 }, (_v, i) => `[${2000 + i}.000] o${i}`).join("\n");
+    const merged = mergeTailLogLines([`${gateway}\n`, `${openshell}\n`], 100);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("gateway log source tagging (#10340)", () => {
+  // The verbatim banner from #10325: border and continuation lines carry no
+  // subsystem of their own, so a line-based consumer cannot attribute them.
+  const BANNER_LINES = [
+    "│",
+    "◆  Config warnings ────",
+    "│",
+    "│  - plugins.entries.tavily: plugin not installed: tavily - install the",
+    "│    official external plugin with: openclaw plugins install",
+    "│    @openclaw/tavily-plugin",
+    "│",
+    "└────",
+  ];
+
+  it("gives every banner line a source tag", () => {
+    const tagged = BANNER_LINES.map(tagGatewayLogLine);
+    expect(tagged.every((line) => line.startsWith(`${GATEWAY_LOG_SOURCE_TAG} `))).toBe(true);
+  });
+
+  it("leaves a line that already names the gateway byte-identical", () => {
+    const line = "2026-05-22T20:55:38.152+00:00 [gateway] server listening";
+    expect(tagGatewayLogLine(line)).toBe(line);
+  });
+
+  it("keeps a recognised leading timestamp first so merge ordering still parses it", () => {
+    const line = "2026-05-22T20:55:38.152+00:00 starting provider";
+    const tagged = tagGatewayLogLine(line);
+    expect(tagged).toBe("2026-05-22T20:55:38.152+00:00 [gateway] starting provider");
+    expect(parseLineTimestamp(tagged)).toBe(parseLineTimestamp(line));
+  });
+
+  it("keeps a bracketed epoch timestamp first", () => {
+    const line = "[1779488800.000] starting provider";
+    const tagged = tagGatewayLogLine(line);
+    expect(tagged).toBe("[1779488800.000] [gateway] starting provider");
+    expect(parseLineTimestamp(tagged)).toBe(parseLineTimestamp(line));
+  });
+
+  it("is idempotent so re-tagging never stacks prefixes", () => {
+    const once = BANNER_LINES.map(tagGatewayLogLine);
+    expect(once.map(tagGatewayLogLine)).toEqual(once);
+  });
+
+  it("leaves an empty line empty", () => {
+    expect(tagGatewayLogLine("")).toBe("");
+  });
+
+  it("tags each line of a chunk and preserves the trailing newline", () => {
+    expect(tagGatewayLogLines("alpha\nbeta\n")).toBe("[gateway] alpha\n[gateway] beta\n");
+  });
+
+  it("preserves the absence of a trailing newline", () => {
+    expect(tagGatewayLogLines("alpha\nbeta")).toBe("[gateway] alpha\n[gateway] beta");
+  });
+
+  it("returns empty input unchanged", () => {
+    expect(tagGatewayLogLines("")).toBe("");
+  });
+});
+
+describe("relay write failures (#10340)", () => {
+  it("treats a broken downstream pipe as a clean stop", () => {
+    expect(isBrokenPipeRelayError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).toBe(
+      true,
+    );
+  });
+
+  it("does not treat other write failures as a clean stop", () => {
+    expect(isBrokenPipeRelayError(Object.assign(new Error("no space"), { code: "ENOSPC" }))).toBe(
+      false,
+    );
+    expect(isBrokenPipeRelayError(new Error("plain"))).toBe(false);
+    expect(isBrokenPipeRelayError(null)).toBe(false);
+    expect(isBrokenPipeRelayError(undefined)).toBe(false);
+  });
+
+  it("returns 141 when a downstream reader closes the pipe (#10340)", () => {
+    expect(LOG_RELAY_BROKEN_PIPE_EXIT_CODE).toBe(141);
+  });
+});

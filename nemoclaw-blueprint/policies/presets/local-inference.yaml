@@ -3,23 +3,32 @@
 
 preset:
   name: local-inference
-  description: "Local inference access (Ollama :11434, LM Studio :1234, vLLM :8000) via host gateway"
+  description: "Local inference access (Ollama :11434, vLLM :8000, llama.cpp) through the OpenShell gateway"
 
 network_policies:
   local_inference:
     name: local_inference
     endpoints:
       - host: host.openshell.internal
+        port: 8081
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+      - host: host.openshell.internal
         port: 11434
         protocol: rest
         enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: host.openshell.internal
-        port: 1234
-        protocol: rest
-        enforcement: enforce
+        allowed_ips:
+          # OpenShell's SSRF guard rejects private host-gateway IPs unless
+          # the policy explicitly allowlists the resolved address.
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -27,6 +36,10 @@ network_policies:
         port: 11435
         protocol: rest
         enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -34,6 +47,10 @@ network_policies:
         port: 8000
         protocol: rest
         enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

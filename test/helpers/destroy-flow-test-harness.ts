@@ -1,0 +1,839 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createRequire } from "node:module";
+
+import { expect, type MockInstance, vi } from "vitest";
+import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
+import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
+import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../src/lib/onboard/runtime-provider/contract";
+import type { Session } from "../../src/lib/state/onboard-session";
+import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
+
+type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
+
+const requireSource = createRequire(
+  new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
+);
+const destroyModulePath = "./destroy.js";
+
+export type DestroyHarness = {
+  destroyCommand: typeof import("../../src/commands/sandbox/destroy").default;
+  assertHermesPortableCommandUnavailableSpy: MockInstance;
+  assertDestroyIdentitySpy: MockInstance;
+  cleanupGatewaySpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
+  compareAndSwapSessionSpy: MockInstance;
+  destroySandbox: DestroySandbox;
+  prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
+  dockerCaptureSpy: MockInstance;
+  dockerRunSpy: MockInstance;
+  errorSpy: MockInstance;
+  events: string[];
+  executeSandboxDestroySpy: MockInstance;
+  enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
+  finalGatewaySleepSpy: MockInstance;
+  finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
+  gatewayPinsAtMcpPrepare: Array<string | undefined>;
+  gatewayPinsAtSandboxList: Array<string | undefined>;
+  killStaleProxySpy: MockInstance;
+  lifecycleLockEvents: string[];
+  listHostGatewayRegistryEntriesSpy: MockInstance;
+  logSpy: MockInstance;
+  mcpRuntimeSelectionSpy: MockInstance;
+  /** In-memory pending managed vLLM retirement record; null when none is recorded. */
+  pendingVllmRetirement: { sandboxName: string | null };
+  clearPendingVllmRetirementSpy: MockInstance;
+  recordPendingVllmRetirementSpy: MockInstance;
+  prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
+  prepareMcpBridgesForDestroySpy: MockInstance;
+  prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
+  cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
+  preparePortableDestroyAuthoritySpy: MockInstance;
+  promptSpy: MockInstance;
+  registry: Pick<typeof import("../../src/lib/state/registry"), "getSandbox" | "listSandboxes">;
+  removeManagedAgentStateVolumesSpy: MockInstance;
+  removeSandboxSpy: MockInstance;
+  reconstructRetainedSandboxRecoverySpy: MockInstance;
+  resolveRetainedSandboxRecoverySpy: MockInstance;
+  resolveGatewayRuntimeProviderIdSpy: MockInstance;
+  retireHostLocalVllmRuntimeSpy: MockInstance;
+  retireRemovedImmutabilityStateRecordSpy: MockInstance;
+  retirePortableLifecycleReceiptSpy: MockInstance;
+  portableDestroyRevalidateSpy: MockInstance;
+  portableDestroyVerifyAbsentSpy: MockInstance;
+  revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
+  restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
+  runOpenshellSpy: MockInstance;
+  runSandboxProviderPreDeleteCleanupSpy: MockInstance;
+  selectGatewaySpy: MockInstance;
+  sessionState: Session;
+  setDockerIdentityResult: (result: {
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  }) => void;
+  setRegisteredSandboxCount: (count: number) => void;
+  setRegistryEntryPresent: (present: boolean) => void;
+  setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
+  setSandboxPresent: (present: boolean) => void;
+  stopAllSpy: MockInstance;
+  stopModelRouterForDestroyedSandboxSpy: MockInstance;
+  stopNimByNameSpy: MockInstance;
+  unloadOllamaModelsSpy: MockInstance;
+  updateSessionSpy: MockInstance;
+  warnSpy: MockInstance;
+  withGatewayRouteMutationLockSpy: MockInstance;
+  withCurrentPortableHostFenceSpy: MockInstance;
+  withModelRouterPortLifecycleLockSpy: MockInstance;
+};
+
+type DestroyHarnessOptions = {
+  callThroughGatewaySelection?: boolean;
+  agent?: "openclaw" | "hermes" | "langchain-deepagents-code";
+  deleteError?: Error;
+  deleteConvergenceAttempts?: number;
+  deleteOutput?: string;
+  deleteStatus?: number | null;
+  dockerNameLabeledIds?: string[];
+  dockerPsOutput?: string;
+  dockerOrphanIds?: string[];
+  dockerOrphanQueryStatus?: number | null;
+  dockerRemoveStatus?: number | null;
+  dockerRunResult?: { status: number | null; stdout?: string; stderr?: string };
+  dockerRunResultSequence?: Array<{
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  }>;
+  onDockerRun?: (call: number) => void;
+  detachedProviders?: string[];
+  endpointUrl?: string;
+  executeSandboxDestroyResult?: SandboxDestroyExecutionResult;
+  finalizeMcpBridgeError?: string;
+  finalizeMcpError?: string;
+  imageTag?: string | null;
+  invokedCliName?: string;
+  hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  liveListOutput?: string;
+  managedAgentStateVolumeCleanupResults?: readonly ManagedAgentStateVolumeCleanupResult[];
+  onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
+  preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
+  mcpAddState?: "prepared";
+  mcpAdapterScrubSkipped?: true;
+  mcpServers?: string[];
+  mcpRuntimeSelection?: {
+    gatewayName: string;
+    localTlsDir?: string;
+    workspace: string;
+  };
+  openshellDriver?: string;
+  pendingVllmRetirement?: string;
+  portableCommandError?: string;
+  portableDestroyAuthority?: boolean;
+  portableDestroyPrepareError?: string;
+  portableDestroyVerifyAbsentError?: string;
+  prepareMcpBridgeError?: string;
+  promptResponses?: string[];
+  provider?: string;
+  registryEntryPresent?: boolean;
+  registryEntryOverrides?: Partial<SandboxEntry>;
+  registeredSandboxCount?: number;
+  recoveredGatewayRuntimeProviderId?: string | null;
+  retainedRecoveryRecords?: RetainedSandboxRecoveryRecord[];
+  reconstructRetainedRecoveryRecord?: RetainedSandboxRecoveryRecord;
+  replaceSessionAfterRegistryRemoval?: boolean;
+  removeSandboxResult?: boolean;
+  restoreMcpError?: string;
+  sandboxListResult?: { status: number | null; stdout?: string; stderr?: string };
+  sandboxPresent?: boolean;
+  sessionRouterPid?: number;
+  stopInferenceError?: string;
+  runtimeProviderIdentityProof?: RuntimeProviderDestroyIdentityReceipt;
+  workload?: SandboxWorkloadReceipt;
+};
+
+const sandboxEntry = {
+  name: "alpha",
+  agent: "openclaw",
+  provider: "ollama-local",
+  model: "nvidia/nemotron",
+  imageTag: null,
+  nimContainer: "alpha-nim",
+  gatewayName: "nemoclaw-19080",
+  gatewayPort: 19080,
+};
+
+export function sandboxListJson(names: string[]): string {
+  return JSON.stringify(
+    names.map((name) => ({
+      id: `sandbox-${name}`,
+      name,
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-06-27 00:00:00",
+      phase: "Ready",
+      current_policy_version: 1,
+    })),
+  );
+}
+
+export function resetDestroyModuleCache(): void {
+  delete require.cache[requireSource.resolve(destroyModulePath)];
+}
+
+export function traceDestroyBoundaryCalls(
+  harness: Pick<DestroyHarness, "runOpenshellSpy" | "setSandboxPresent">,
+  trace: string[],
+): void {
+  let sandboxPresent = true;
+  harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args : [];
+    switch (`${String(argv[0])}:${String(argv[1])}`) {
+      case "sandbox:delete":
+        trace.push("delete");
+        sandboxPresent = false;
+        harness.setSandboxPresent(false);
+        return { status: 0, stdout: "", stderr: "" };
+      case "sandbox:get":
+        return sandboxPresent
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+      case "sandbox:list":
+        return { status: 0, stdout: sandboxListJson(["alpha"]), stderr: "" };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
+  });
+}
+
+export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
+  if (options.invokedCliName) {
+    process.env.NEMOCLAW_INVOKED_AS = options.invokedCliName;
+    delete require.cache[requireSource.resolve("../../cli/branding.js")];
+    delete require.cache[requireSource.resolve("./destroy-execution.js")];
+  }
+  resetDestroyModuleCache();
+  const events: string[] = [];
+  const lifecycleLockEvents: string[] = [];
+  let sandboxPresent = options.sandboxPresent !== false;
+  let exactDockerCleanupPhase = false;
+  let sessionLockBusy = false;
+  const sessionState = {
+    sessionId: "session-alpha",
+    updatedAt: "2026-08-14T00:00:00.000Z",
+    sandboxName: "alpha",
+    endpointUrl: options.endpointUrl ?? null,
+    routerPid: options.sessionRouterPid ?? null,
+    routerCredentialHash: options.sessionRouterPid ? "router-hash" : null,
+  } as Session;
+
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const portableHostFence = requireSource(
+    "../../state/portable-uninstall-retirement.js",
+  ) as typeof import("../../src/lib/state/portable-uninstall-retirement");
+  const withCurrentPortableHostFenceSpy = vi
+    .spyOn(portableHostFence, "withCurrentPortableHostFence")
+    .mockImplementation(async (operation) => await operation());
+
+  const resolve = requireSource("../../adapters/openshell/resolve.js");
+  const runtime = requireSource("../../adapters/openshell/runtime.js");
+  if (options.deleteConvergenceAttempts !== undefined) {
+    const wait = requireSource("../../core/wait.js") as typeof import("../../src/lib/core/wait");
+    vi.spyOn(wait, "waitUntilAsync").mockImplementation(async (condition) => {
+      for (let attempt = 0; attempt < options.deleteConvergenceAttempts!; attempt += 1) {
+        if (await condition()) return true;
+      }
+      return false;
+    });
+  }
+  const destroyGateway = requireSource(
+    "./destroy-gateway.js",
+  ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway");
+  const destroyPresence = requireSource("./destroy-presence.js");
+  const credentialStore = requireSource("../../credentials/store.js");
+  const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
+  const nim = requireSource("../../inference/nim.js");
+  const ollamaProxy = requireSource(
+    "../../inference/ollama/proxy.js",
+  ) as typeof import("../../src/lib/inference/ollama/proxy");
+  const gatewayRouteMutationLock = requireSource("../../inference/gateway-route-mutation-lock.js");
+  const modelRouterProcess = requireSource("../../onboard/model-router-process.js");
+  const httpsPinRuntimeAdapter = requireSource("../../inference/https-pin-runtime-adapter.js");
+  const tunnelServices = requireSource("../../tunnel/services.js");
+  const onboardSession = requireSource("../../state/onboard-session.js");
+  const gatewayRegistry = requireSource("../../state/gateway-registry.js");
+  const mcpLifecycleLock = requireSource(
+    "../../state/mcp-lifecycle-lock.js",
+  ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
+  const registry = requireSource("../../state/registry.js");
+  const removedImmutabilityMigration = requireSource(
+    "../../state/migrations/removed-immutability.js",
+  );
+  const openShellDockerContainers = requireSource(
+    "../../onboard/openshell-docker-sandbox-containers.js",
+  );
+  const removeExactDockerContainers =
+    openShellDockerContainers.removeExactOpenShellDockerSandboxContainers;
+  vi.spyOn(
+    openShellDockerContainers,
+    "removeExactOpenShellDockerSandboxContainers",
+  ).mockImplementation((...args: Parameters<typeof removeExactDockerContainers>) => {
+    exactDockerCleanupPhase = true;
+    return removeExactDockerContainers(...args);
+  });
+  const destroyExecution = requireSource("./destroy-execution.js");
+  const forwardRecovery = requireSource("./forward-recovery.js");
+  vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
+  const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
+  const destroyPreflight = requireSource("./destroy-preflight.js");
+  const sandboxSession = requireSource("../../state/sandbox-session.js");
+  const mcpBridge = requireSource("./mcp-bridge.js");
+  const mcpBridgeProvider = requireSource("./mcp-bridge-provider.js");
+  const dockerRun = requireSource("../../adapters/docker/run.js");
+  const portableAgentLifecycle = requireSource(
+    "../../onboard/experimental/portable-agent-lifecycle.js",
+  );
+  const localModelProfileCleanup = requireSource("../../inference/local-model-profile/cleanup.js");
+  const portableDemoLifecycle = requireSource(
+    "../../onboard/experimental/portable-demo-lifecycle.js",
+  );
+
+  const withMcpLifecycleLock = mcpLifecycleLock.withMcpLifecycleLock;
+  vi.spyOn(mcpLifecycleLock, "withMcpLifecycleLock").mockImplementation(
+    async (sandboxName, operation, lockOptions) => {
+      lifecycleLockEvents.push("acquired");
+      try {
+        return await withMcpLifecycleLock(sandboxName, operation, lockOptions);
+      } finally {
+        lifecycleLockEvents.push("released");
+      }
+    },
+  );
+  const executeSandboxDestroySpy = vi.spyOn(destroyExecution, "executeSandboxDestroy");
+  if (options.executeSandboxDestroyResult) {
+    executeSandboxDestroySpy.mockResolvedValue(options.executeSandboxDestroyResult);
+  }
+  const enforceRemovedImmutabilityMigrationBoundarySpy = vi
+    .spyOn(removedImmutabilityMigration, "enforceRemovedImmutabilityMigrationBoundary")
+    .mockReturnValue({ stateRecord: null, recoveryArtifacts: [] });
+  const retireRemovedImmutabilityStateRecordSpy = vi
+    .spyOn(removedImmutabilityMigration, "retireRemovedImmutabilityStateRecord")
+    .mockImplementation(() => {
+      events.push("retire-removed-immutability");
+      return true;
+    });
+
+  const prepareManagedLlamaCppRuntimeCleanupSpy = vi
+    .spyOn(localModelProfileCleanup, "prepareManagedLlamaCppRuntimeCleanupForSandbox")
+    .mockImplementation(() => {
+      options.onPrepareManagedLlamaCppRuntimeCleanup?.();
+      return options.preparedManagedLlamaCppRuntimeCleanup ?? null;
+    });
+  const cleanupManagedLlamaCppRuntimeForSandboxSpy = vi
+    .spyOn(localModelProfileCleanup, "cleanupManagedLlamaCppRuntimeForSandbox")
+    .mockReturnValue({ ok: true, removed: [], preserved: [] });
+
+  const assertHermesPortableCommandUnavailableSpy = vi
+    .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+    .mockImplementation(() => {
+      if (options.portableCommandError) throw new Error(options.portableCommandError);
+    });
+  const portableDestroyRevalidateSpy = vi.fn(() => {
+    events.push("portable-revalidate");
+  });
+  const portableDestroyVerifyAbsentSpy = vi.fn(() => {
+    events.push("portable-absent");
+    if (options.portableDestroyVerifyAbsentError) {
+      throw new Error(options.portableDestroyVerifyAbsentError);
+    }
+  });
+  const preparePortableDestroyAuthoritySpy = vi
+    .spyOn(portableDemoLifecycle, "preparePortableDemoSandboxDestroyAuthority")
+    .mockImplementation(() => {
+      if (options.portableDestroyPrepareError) {
+        throw new Error(options.portableDestroyPrepareError);
+      }
+      return options.portableDestroyAuthority
+        ? {
+            revalidate: portableDestroyRevalidateSpy,
+            verifyAbsent: portableDestroyVerifyAbsentSpy,
+          }
+        : null;
+    });
+
+  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+  const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
+  for (const response of options.promptResponses ?? []) {
+    promptSpy.mockResolvedValueOnce(response);
+  }
+  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
+    detected: true,
+    sessions: [{ pid: 1 }],
+  });
+  const configuredRegistryEntry = {
+    ...sandboxEntry,
+    imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
+    agent: options.agent ?? sandboxEntry.agent,
+    ...(options.provider ? { provider: options.provider } : {}),
+    ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
+    ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
+    ...(options.hostLocalInferenceReceipt !== undefined
+      ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
+      : {}),
+    ...(options.hostLocalInferenceProvenance
+      ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
+      : {}),
+    ...(options.workload ? { workload: options.workload } : {}),
+    ...options.registryEntryOverrides,
+  } as SandboxEntry;
+  let registryEntryPresent = options.registryEntryPresent !== false;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() =>
+    registryEntryPresent ? configuredRegistryEntry : null,
+  );
+  let registeredSandboxCount = options.registeredSandboxCount ?? 0;
+  vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
+    sandboxes: Array.from({ length: registeredSandboxCount }, (_, index) => ({
+      name: `sb-${index}`,
+    })),
+  }));
+  const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => {
+    if (options.removeSandboxResult === false) return false;
+    registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
+    if (options.replaceSessionAfterRegistryRemoval) {
+      sessionState.sessionId = "replacement-session";
+      sessionState.updatedAt = "2026-08-14T00:01:00.000Z";
+      sessionState.sandboxName = "alpha";
+      sessionState.endpointUrl = "http://host.openshell.internal:4000/v1";
+      sessionState.routerPid = 6262;
+      sessionState.routerCredentialHash = "replacement-hash";
+      sessionLockBusy = true;
+    }
+    return true;
+  });
+  const stopModelRouterForDestroyedSandboxSpy = vi.spyOn(
+    destroyPreflight,
+    "stopModelRouterForDestroyedSandbox",
+  );
+  vi.spyOn(destroyPreflight, "teardownSandboxDashboardForward").mockReturnValue(true);
+  const retirePortableLifecycleReceiptSpy = vi
+    .spyOn(destroyExecution, "retirePortableLifecycleAuthority")
+    .mockImplementation(() => undefined);
+  const revokeHttpsPinRuntimeAdapterRouteSpy = vi
+    .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
+    .mockResolvedValue(true);
+  // Pass-through: run the critical section without the cross-process lease so
+  // flow tests stay hermetic while asserting lock scope.
+  const withGatewayRouteMutationLockSpy = vi
+    .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
+    .mockImplementation(async (_gatewayName: unknown, operation: unknown) =>
+      (operation as () => Promise<unknown>)(),
+    );
+  const withModelRouterPortLifecycleLockSpy = vi
+    .spyOn(gatewayRouteMutationLock, "withModelRouterPortLifecycleLock")
+    .mockImplementation(async (_port: unknown, operation: unknown) =>
+      (operation as () => Promise<unknown>)(),
+    );
+  const listHostGatewayRegistryEntriesSpy = vi
+    .spyOn(gatewayRegistry, "listHostGatewayRegistryEntries")
+    .mockReturnValue([]);
+  const retireHostLocalVllmRuntimeSpy = vi
+    .spyOn(localModelProfileCleanup, "retireHostLocalVllmRuntime")
+    .mockReturnValue({ status: "absent" });
+  const pendingVllmRetirement = { sandboxName: options.pendingVllmRetirement ?? null };
+  const recordPendingVllmRetirementSpy = vi
+    .spyOn(localModelProfileCleanup, "recordPendingHostLocalVllmRetirement")
+    .mockImplementation((sandboxName: unknown) => {
+      pendingVllmRetirement.sandboxName = String(sandboxName);
+    });
+  vi.spyOn(localModelProfileCleanup, "readPendingHostLocalVllmRetirement").mockImplementation(
+    () => pendingVllmRetirement.sandboxName,
+  );
+  const clearPendingVllmRetirementSpy = vi
+    .spyOn(localModelProfileCleanup, "clearPendingHostLocalVllmRetirement")
+    .mockImplementation(() => {
+      pendingVllmRetirement.sandboxName = null;
+    });
+  vi.spyOn(modelRouterProcess, "doesModelRouterProcessOwnPort").mockReturnValue(false);
+  vi.spyOn(modelRouterProcess, "inspectModelRouterProcessForPort").mockReturnValue({
+    status: "absent",
+  });
+  vi.spyOn(modelRouterProcess, "isRouterResponsive").mockResolvedValue(false);
+  vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
+  let retainedRecoveryRecords = [...(options.retainedRecoveryRecords ?? [])];
+  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockImplementation(
+    () => retainedRecoveryRecords,
+  );
+  const reconstructRetainedSandboxRecoverySpy = vi
+    .spyOn(onboardSession, "reconstructRetainedSandboxRecoveryFromPendingCreate")
+    .mockImplementation(() => {
+      const record = options.reconstructRetainedRecoveryRecord;
+      if (!record) return null;
+      if (!retainedRecoveryRecords.some((candidate) => candidate.recordId === record.recordId)) {
+        retainedRecoveryRecords.push(record);
+      }
+      return record;
+    });
+  const resolveRetainedSandboxRecoverySpy = vi
+    .spyOn(onboardSession, "resolveRetainedSandboxRecovery")
+    .mockReturnValue(true);
+  vi.spyOn(onboardSession, "acquireOnboardLock").mockImplementation(() =>
+    sessionLockBusy
+      ? {
+          acquired: false,
+          lockFile: "/tmp/onboard.lock",
+          stale: false,
+          holderPid: 6262,
+          holderStartedAt: "2026-08-14T00:01:00.000Z",
+          holderCommand: "replacement nemoclaw onboard process",
+        }
+      : { acquired: true, lockFile: "/tmp/onboard.lock", stale: false },
+  );
+  vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined);
+  const compareAndSwapSessionSpy = vi
+    .spyOn(onboardSession, "compareAndSwapSession")
+    .mockImplementation((matches: unknown, mutator: unknown) => {
+      expect(typeof matches).toBe("function");
+      expect(typeof mutator).toBe("function");
+      if (sessionLockBusy) return "busy";
+      if (!(matches as (value: Session) => boolean)(sessionState)) return "mismatch";
+      (mutator as (value: Session) => void)(sessionState);
+      return "updated";
+    });
+  const updateSessionSpy = vi
+    .spyOn(onboardSession, "updateSession")
+    .mockImplementation((mutator: unknown) => {
+      const session = { sandboxName: "alpha" };
+      expect(typeof mutator).toBe("function");
+      (mutator as (value: typeof session) => void)(session);
+      return session;
+    });
+  const gatewayPinsAtSandboxList: Array<string | undefined> = [];
+  let identityProbeCall = 0;
+  const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args : [];
+    switch (`${String(argv[0])}:${String(argv[1])}`) {
+      case "sandbox:list":
+        gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
+        return (
+          options.sandboxListResult ?? {
+            status: 0,
+            stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
+            stderr: "",
+          }
+        );
+      case "sandbox:get":
+        return sandboxPresent
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+      case "sandbox:delete":
+        events.push("delete");
+        const deleteStatus = options.deleteStatus === undefined ? 0 : options.deleteStatus;
+        if (deleteStatus === 0 || /\bnot found\b/iu.test(options.deleteOutput ?? "")) {
+          sandboxPresent = false;
+        }
+        return {
+          status: deleteStatus,
+          stdout: options.deleteOutput ?? "",
+          stderr: "",
+          ...(options.deleteError ? { error: options.deleteError } : {}),
+        };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
+  });
+  const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+    status: 0,
+    output: options.liveListOutput ?? "",
+  });
+  const dockerCaptureSpy = vi
+    .spyOn(dockerRun, "dockerCapture")
+    .mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv[0] !== "ps") return "";
+      const filterIndex = argv.indexOf("--filter");
+      const filterValue = filterIndex >= 0 ? argv[filterIndex + 1] : undefined;
+      const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
+      const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
+      const matchedNames = nameFilter
+        ? names.filter((name) => `/${name}`.includes(nameFilter))
+        : names;
+      return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
+    });
+  let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
+  let dockerNameLabeledIds = [...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? [])];
+  let dockerIdentityResult = options.dockerRunResult;
+  const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    const isDockerOrphanQuery =
+      argv[0] === "ps" &&
+      argv.includes("label=openshell.ai/managed-by=openshell") &&
+      argv.includes("label=openshell.ai/sandbox-name=alpha") &&
+      argv.at(-1) === "{{.ID}}";
+    if (isDockerOrphanQuery) {
+      return {
+        status: options.dockerOrphanQueryStatus ?? 0,
+        stdout: dockerOrphanIds.join("\n"),
+        stderr: "",
+      } as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    const isDockerNameLabeledQuery =
+      argv[0] === "ps" &&
+      !argv.includes("label=openshell.ai/managed-by=openshell") &&
+      argv.includes("label=openshell.ai/sandbox-name=alpha") &&
+      argv.at(-1) === "{{.ID}}";
+    if (isDockerNameLabeledQuery) {
+      return {
+        status: options.dockerOrphanQueryStatus ?? 0,
+        stdout: dockerNameLabeledIds.join("\n"),
+        stderr: "",
+      } as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    if (argv[0] === "rm" && argv[1] === "-f") {
+      const status = options.dockerRemoveStatus ?? 0;
+      if (status === 0) {
+        dockerOrphanIds = dockerOrphanIds.filter((id) => id !== argv[2]);
+        dockerNameLabeledIds = dockerNameLabeledIds.filter((id) => id !== argv[2]);
+      }
+      return { status, stdout: "", stderr: "" } as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    const filterIndex = argv.indexOf("--filter");
+    const isIdentityProbe =
+      argv[0] === "ps" &&
+      argv.includes("-a") &&
+      argv.includes("--no-trunc") &&
+      filterIndex >= 0 &&
+      argv[filterIndex + 1]?.startsWith("label=openshell.ai/sandbox-name=") === true;
+    if (!isIdentityProbe) {
+      return (options.dockerRunResult ?? { status: 0 }) as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    identityProbeCall += 1;
+    options.onDockerRun?.(identityProbeCall);
+    const defaultIdentityResult = {
+      status: 0,
+      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
+    };
+    const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
+    const exactCleanupResult = {
+      status: options.dockerOrphanQueryStatus ?? 0,
+      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
+      stderr: "",
+    };
+    const result =
+      (exactDockerCleanupPhase ? exactCleanupResult : undefined) ??
+      sequencedResult ??
+      dockerIdentityResult ??
+      defaultIdentityResult;
+    return result as ReturnType<typeof dockerRun.dockerRun>;
+  });
+  const selectGatewaySpy = vi.spyOn(destroyGateway, "selectGatewayForSandboxDestroy");
+  if (!options.callThroughGatewaySelection)
+    selectGatewaySpy.mockImplementation(async () => undefined);
+  const resolveGatewayRuntimeProviderIdSpy = vi
+    .spyOn(destroyGateway, "resolveGatewayCleanupRuntimeProviderId")
+    .mockImplementation(
+      (
+        _gatewayName: string,
+        registeredProviderId?: string | null,
+        deps?: { configuredRuntimeProviderId?: string | null },
+      ) =>
+        registeredProviderId ??
+        options.recoveredGatewayRuntimeProviderId ??
+        deps?.configuredRuntimeProviderId ??
+        process.env.NEMOCLAW_GATEWAY_RUNTIME?.trim().toLowerCase() ??
+        null,
+    );
+  const cleanupGatewaySpy = vi
+    .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
+    .mockImplementation(async () => undefined);
+  const finalGatewaySleepSpy = vi.fn(async (_ms: number) => undefined);
+  const assertDestroyIdentitySpy = vi.spyOn(
+    destroyPresence,
+    "assertUnambiguousDestroyContainerIdentity",
+  );
+  if (options.runtimeProviderIdentityProof) {
+    assertDestroyIdentitySpy.mockReturnValue({
+      identities: undefined,
+      providerIdentity: options.runtimeProviderIdentityProof,
+    });
+  }
+  const runSandboxProviderPreDeleteCleanupSpy = vi
+    .spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup")
+    .mockImplementation(async () => {
+      await Promise.resolve();
+      events.push("detach");
+      return { detached: options.detachedProviders ?? [], failures: [] };
+    });
+  vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
+    () => undefined,
+  );
+  const removeManagedAgentStateVolumesSpy = vi
+    .spyOn(sandboxProviderCleanup, "removeManagedAgentStateVolumes")
+    .mockReturnValue(options.managedAgentStateVolumeCleanupResults ?? []);
+  const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
+    if (options.stopInferenceError !== undefined) {
+      throw new Error(options.stopInferenceError);
+    }
+  });
+  vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
+  const killStaleProxySpy = vi
+    .spyOn(ollamaProxy, "killStaleProxy")
+    .mockImplementation(() => undefined);
+  vi.spyOn(ollamaProxy, "killStaleProxyIfUnused").mockImplementation(
+    (hasRemainingOwner: () => boolean) => {
+      if (hasRemainingOwner()) return false;
+      killStaleProxySpy();
+      return true;
+    },
+  );
+  const unloadOllamaModelsSpy = vi.spyOn(ollamaProxy, "unloadOllamaModels").mockReturnValue({
+    ok: true,
+    outcome: "released",
+    endpoint: "http://127.0.0.1:11434",
+    selectedModels: [],
+    discoveries: [],
+    requests: [],
+  });
+  const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
+  const resolvedMcpRuntimeSelection = options.mcpRuntimeSelection ?? {
+    gatewayName: "nemoclaw-19080",
+    workspace: "default",
+  };
+  const mcpRuntimeSelectionSpy = vi
+    .spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection")
+    .mockReturnValue(resolvedMcpRuntimeSelection);
+  const mcpPreparation = {
+    entries: preparedServers.map((server) => ({ server })),
+    detachedProviderEntries: preparedServers.map((server) => ({ server })),
+    scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
+    destroyAlreadyPrepared: false,
+    destroyAlreadyPending: false,
+    ...(preparedServers.length ? { runtimeSelection: resolvedMcpRuntimeSelection } : {}),
+    ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
+  };
+  const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
+  const { McpBridgeError } = mcpBridge as any;
+  const prepareMcpBridgesForDestroySpy = vi
+    .spyOn(mcpBridge, "prepareMcpBridgesForDestroy")
+    .mockImplementation(async () => {
+      events.push("mcp-prepare");
+      if (options.prepareMcpBridgeError !== undefined) {
+        throw new McpBridgeError(options.prepareMcpBridgeError);
+      }
+      gatewayPinsAtMcpPrepare.push(process.env.OPENSHELL_GATEWAY);
+      return mcpPreparation;
+    });
+  const prepareMcpBridgesForAbsentSandboxDestroySpy = vi
+    .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxDestroy")
+    .mockImplementation(async () => {
+      gatewayPinsAtMcpPrepare.push(process.env.OPENSHELL_GATEWAY);
+      return mcpPreparation;
+    });
+  const restoreMcpBridgesAfterDestroyAbortSpy = vi
+    .spyOn(mcpBridge, "restoreMcpBridgesAfterDestroyAbort")
+    .mockImplementation(async () => {
+      events.push("mcp-restore");
+      return options.restoreMcpError === undefined
+        ? undefined
+        : Promise.reject(new Error(options.restoreMcpError));
+    });
+  const finalizeMcpBridgesAfterSandboxDeleteSpy = vi
+    .spyOn(mcpBridge, "finalizeMcpBridgesAfterSandboxDelete")
+    .mockImplementation(() => {
+      if (options.finalizeMcpBridgeError !== undefined) {
+        return Promise.reject(new McpBridgeError(options.finalizeMcpBridgeError));
+      }
+      return options.finalizeMcpError
+        ? Promise.reject(new Error(options.finalizeMcpError))
+        : Promise.resolve();
+    });
+
+  logSpy.mockClear();
+
+  return {
+    destroyCommand,
+    assertHermesPortableCommandUnavailableSpy,
+    assertDestroyIdentitySpy,
+    cleanupGatewaySpy,
+    captureOpenshellSpy,
+    compareAndSwapSessionSpy,
+    dockerCaptureSpy,
+    dockerRunSpy,
+    destroySandbox: (sandboxName, destroyOptions) =>
+      requireSource(destroyModulePath).destroySandbox(sandboxName, destroyOptions, {
+        finalGatewayCleanup: {
+          sleep: finalGatewaySleepSpy,
+        },
+      }),
+    prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
+    errorSpy,
+    events,
+    executeSandboxDestroySpy,
+    runSandboxProviderPreDeleteCleanupSpy,
+    enforceRemovedImmutabilityMigrationBoundarySpy,
+    finalGatewaySleepSpy,
+    finalizeMcpBridgesAfterSandboxDeleteSpy,
+    gatewayPinsAtMcpPrepare,
+    gatewayPinsAtSandboxList,
+    killStaleProxySpy,
+    lifecycleLockEvents,
+    listHostGatewayRegistryEntriesSpy,
+    logSpy,
+    mcpRuntimeSelectionSpy,
+    pendingVllmRetirement,
+    clearPendingVllmRetirementSpy,
+    recordPendingVllmRetirementSpy,
+    prepareMcpBridgesForAbsentSandboxDestroySpy,
+    prepareMcpBridgesForDestroySpy,
+    prepareManagedLlamaCppRuntimeCleanupSpy,
+    cleanupManagedLlamaCppRuntimeForSandboxSpy,
+    preparePortableDestroyAuthoritySpy,
+    portableDestroyRevalidateSpy,
+    portableDestroyVerifyAbsentSpy,
+    promptSpy,
+    registry,
+    removeManagedAgentStateVolumesSpy,
+    removeSandboxSpy,
+    reconstructRetainedSandboxRecoverySpy,
+    resolveRetainedSandboxRecoverySpy,
+    resolveGatewayRuntimeProviderIdSpy,
+    retireHostLocalVllmRuntimeSpy,
+    retireRemovedImmutabilityStateRecordSpy,
+    retirePortableLifecycleReceiptSpy,
+    revokeHttpsPinRuntimeAdapterRouteSpy,
+    restoreMcpBridgesAfterDestroyAbortSpy,
+    runOpenshellSpy,
+    selectGatewaySpy,
+    sessionState,
+    setDockerIdentityResult: (result) => {
+      dockerIdentityResult = result;
+    },
+    setRegisteredSandboxCount: (count: number) => {
+      registeredSandboxCount = count;
+    },
+    setRegistryEntryPresent: (present: boolean) => {
+      registryEntryPresent = present;
+    },
+    setRetainedRecoveryRecords: (records) => {
+      retainedRecoveryRecords = [...records];
+    },
+    setSandboxPresent: (present: boolean) => {
+      sandboxPresent = present;
+    },
+    stopAllSpy,
+    stopModelRouterForDestroyedSandboxSpy,
+    stopNimByNameSpy,
+    unloadOllamaModelsSpy,
+    updateSessionSpy,
+    warnSpy,
+    withGatewayRouteMutationLockSpy,
+    withCurrentPortableHostFenceSpy,
+    withModelRouterPortLifecycleLockSpy,
+  };
+}

@@ -5,4 +5,4 @@
 // Override any port via environment variables.
 // Based on the approach from jnun (PR #683).
 
-module.exports = require("../../dist/lib/ports");
+module.exports = require("../../dist/lib/core/ports");

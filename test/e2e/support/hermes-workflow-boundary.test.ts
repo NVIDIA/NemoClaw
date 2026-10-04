@@ -1,0 +1,452 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+import {
+  validateHermesGpuStartupWorkflow,
+  validateHermesGpuStartupWorkflowBoundary,
+} from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
+import {
+  HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+} from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { readRepoText, readWorkflow } from "../../helpers/e2e-workflow-contract";
+
+const WF = ".github/workflows/e2e.yaml";
+const FX = "tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
+const GPU = "hermes-gpu-startup";
+const KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+type Doc = ReturnType<typeof YAML.parse>;
+
+function tmp<T>(use: (dir: string) => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-"));
+  try {
+    return use(dir);
+  } finally {
+    fs.rmSync(dir, { force: true, recursive: true });
+  }
+}
+
+function tempFile<T>(content: string, use: (file: string) => T): T {
+  return tmp((dir) => {
+    const file = path.join(dir, "input");
+    fs.writeFileSync(file, content);
+    return use(file);
+  });
+}
+
+function wfErrors(
+  mutate: (workflow: Doc) => void,
+  validate: (file: string) => string[] = validateHermesGpuStartupWorkflowBoundary,
+): string[] {
+  const workflow = readWorkflow();
+  mutate(workflow);
+  return tempFile(YAML.stringify(workflow), validate);
+}
+
+function step(job: Doc, name: string): Doc {
+  return job.steps.find((candidate: { name?: string }) => candidate.name === name);
+}
+
+function restoreHarness(tmp: string, content: string, fail: boolean) {
+  const state = path.join(tmp, "hermes-gpu-fallback-docker-runtime.123.1.fallback.ABC123");
+  const daemon = path.join(tmp, "daemon.json");
+  const bin = path.join(tmp, "bin");
+  const sudoLog = path.join(tmp, "sudo.log");
+  const { uid, gid } = os.userInfo();
+  fs.mkdirSync(state, { mode: 0o700 });
+  fs.mkdirSync(bin);
+  fs.writeFileSync(daemon, '{"default-runtime":"runc"}\n', { mode: 0o600 });
+  const files = {
+    "capture.complete": "",
+    "daemon.json.metadata": `640 ${uid} ${gid}\n`,
+    "daemon.json.original": content,
+    "default-runtime.modified": "",
+    "default-runtime.original": "nvidia\n",
+  };
+  for (const [name, value] of Object.entries(files)) {
+    fs.writeFileSync(path.join(state, name), value, { mode: 0o600 });
+  }
+  const scripts = {
+    docker: `#!/bin/sh
+if [ "$1" = info ] && [ "\${2:-}" = --format ]; then echo nvidia; fi
+exit 0
+`,
+    stat: `#!/bin/bash
+/usr/bin/stat -c "$2" "$3" 2>/dev/null && exit
+exec /usr/bin/stat -f "$(printf %s "$2" | sed s/%a/%Lp/g)" "$3"
+`,
+    sudo: `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_SUDO_LOG"
+if [ "\${FAIL_INSTALL:-0}" = 1 ] && [ "\${1:-}" = install ]; then exit 42; fi
+exec "$@"
+`,
+    systemctl: "#!/bin/sh\n:\n",
+  };
+  for (const [name, script] of Object.entries(scripts)) {
+    fs.writeFileSync(path.join(bin, name), script, { mode: 0o700 });
+  }
+  return { bin, daemon, fail, gid, state, sudoLog, tmp, uid };
+}
+
+function restore(harness: ReturnType<typeof restoreHarness>) {
+  return spawnSync("bash", [FX, "restore", harness.state, harness.daemon], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEMOCLAW_E2E_FIXTURE_DAEMON_JSON: harness.daemon,
+      NEMOCLAW_E2E_FIXTURE_STATE_ROOT: harness.tmp,
+      FAIL_INSTALL: harness.fail ? "1" : "0",
+      FAKE_SUDO_LOG: harness.sudoLog,
+      PATH: `${harness.bin}:${process.env.PATH ?? ""}`,
+    },
+  });
+}
+
+function snapshotFile(file: string) {
+  const fd = fs.openSync(file, "r");
+  try {
+    return { stat: fs.fstatSync(fd), text: fs.readFileSync(fd, "utf8") };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function withRestore(
+  fail: boolean,
+  check: (result: ReturnType<typeof restore>, harness: ReturnType<typeof restoreHarness>) => void,
+): void {
+  tmp((tmp) => {
+    const harness = restoreHarness(tmp, '{"default-runtime":"nvidia"}\n', fail);
+    const result = restore(harness);
+    expect(fs.existsSync(harness.state)).toBe(false);
+    check(result, harness);
+  });
+}
+
+describe("Hermes GPU boundary", () => {
+  it("accepts baseline", () => {
+    expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
+  });
+
+  it.each([
+    [
+      "unconditional installation",
+      (job: Doc) => {
+        delete job.steps[0].if;
+      },
+    ],
+    [
+      "missing Podman configuration package",
+      (job: Doc) => {
+        job.steps[0].with.packages = job.steps[0].with.packages.replace(
+          "golang-github-containers-common ",
+          "",
+        );
+      },
+    ],
+    [
+      "unreviewed packages",
+      (job: Doc) => {
+        job.steps[0].with.packages = "curl";
+      },
+    ],
+    [
+      "installation after checkout",
+      (job: Doc) => {
+        job.steps.splice(1, 0, job.steps.shift());
+      },
+    ],
+  ] as const)("rejects %s of Podman host dependencies", (_label, mutate) => {
+    const workflow: Doc = readWorkflow();
+    mutate(workflow.jobs[GPU]);
+    const errors = validateHermesGpuStartupWorkflow(workflow);
+    expect(errors).toContain(
+      "hermes-gpu-startup must install reviewed Podman host dependencies before candidate checkout",
+    );
+  });
+
+  it("requires each GPU scenario to identify its evidence shard", () => {
+    const errors = wfErrors((workflow) => {
+      delete workflow.jobs[GPU].env.NEMOCLAW_E2E_SHARD;
+    });
+    expect(errors).toContain(
+      "hermes-gpu-startup job must set NEMOCLAW_E2E_SHARD=${{ matrix.scenario }}",
+    );
+  });
+
+  it("recovers stale Docker CLI isolation immediately before native Podman setup", () => {
+    const errors = wfErrors((workflow) => {
+      const job = workflow.jobs[GPU];
+      job.steps = job.steps.filter(
+        (candidate: { name?: string }) =>
+          candidate.name !== "Recover Docker CLI before native Podman E2E",
+      );
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toContain(
+      "hermes-gpu-startup must recover stale Docker CLI isolation immediately before native Podman setup",
+    );
+  });
+
+  it("rejects fail-open stale Docker CLI recovery", () => {
+    const errors = wfErrors((workflow) => {
+      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")["continue-on-error"] =
+        true;
+    });
+
+    expect(errors).toContain("hermes-gpu-startup trusted runtime boundary failed");
+  });
+
+  it("rejects broad drift", () => {
+    const errors = wfErrors((workflow) => {
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "provider/unexpected-model";
+      const job = workflow.jobs[GPU];
+      job["runs-on"] = "ubuntu-latest";
+      job.if = "${{ always() }}";
+      job.strategy["max-parallel"] = 9;
+      job.strategy.matrix.include = [{ scenario: "native" }];
+      job.env.UNRELATED_SECRET = KEY;
+      const run = step(job, "Run Hermes GPU startup live Vitest test");
+      run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
+      run.run = "npx vitest run --project e2e-live test/e2e/live/hermes-e2e.test.ts";
+      step(job, "Upload Hermes GPU startup artifacts").with.path = "wrong";
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
+        "hermes-gpu-startup job must use the trusted execution plan behind generate-matrix",
+        "hermes-gpu-startup must expand reviewed GPU scenarios by supported runtime",
+        "hermes-gpu-startup job env must not consume repository secrets",
+        "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not run the hosted Hermes E2E test",
+        "hermes-gpu-startup upload needs a scenario artifact path",
+        "hermes-gpu-startup job must enable hosted-compatible inference mode",
+      ]),
+    );
+  });
+
+  it("rejects inference adapter boundary drift", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+
+    const errors = wfErrors((workflow) => {
+      workflow.env.NEMOCLAW_E2E_INFERENCE_MODE = "internal-nvidia";
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_INFERENCE_MODE = "mock";
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "hermes-e2e job must consume the defaulted inference mode input",
+        "hermes-e2e job must leave hosted inference selection to the adapter",
+        "workflow env must leave inference mode scoped to adapter-consuming jobs",
+      ]),
+    );
+  });
+
+  it("requires the reviewed OpenShell SDK for live config export", () => {
+    const missingNeed = wfErrors((workflow) => {
+      workflow.jobs["hermes-e2e"].needs = ["base-image-publication", "generate-matrix"];
+    }, validateE2eWorkflowBoundary);
+    const wrongArtifact = wfErrors((workflow) => {
+      step(workflow.jobs["hermes-e2e"], "Download reviewed OpenShell SDK archive").with.name =
+        "unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["hermes-e2e"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(missingNeed).toContain(
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
+    );
+    expect(wrongArtifact).toContain(
+      "hermes-e2e job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
+  });
+
+  it("requires the shared reviewed SDK installer for external gateway health", () => {
+    const wrongArtifact = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Download reviewed OpenShell SDK archive",
+      ).with.path = "${{ runner.temp }}/unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(wrongArtifact).toContain(
+      "external-gateway-health job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "external-gateway-health job must install the reviewed SDK with the shared action",
+    );
+  });
+
+  const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
+    ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
+      jobName,
+      maximumTimeoutMinutes: innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+      message: `${jobName} timeout must be between ${jobTimeoutMinutes} and ${innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with 15-30 minutes of job headroom`,
+      minimumTimeoutMinutes: jobTimeoutMinutes,
+    }),
+  );
+
+  it.each(hermesTimeoutBoundaries)(
+    "requires 15-30 minutes of outer headroom for $jobName",
+    ({ jobName, maximumTimeoutMinutes, message, minimumTimeoutMinutes }) => {
+      const insufficient = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
+      }, validateE2eWorkflowBoundary);
+      const additional = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
+      }, validateE2eWorkflowBoundary);
+      const excessive = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
+      }, validateE2eWorkflowBoundary);
+
+      expect(insufficient).toContain(message);
+      expect(additional).toEqual([]);
+      expect(excessive).toContain(message);
+    },
+  );
+
+  it("rejects unconditional live secret in hermes-e2e mock run step", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a direct main dispatch or an authorized NVIDIA-owned PR dispatch",
+        ),
+      ]),
+    );
+  });
+
+  it("rejects live secret exposure to a PR checkout without authorization", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = {
+        NVIDIA_INFERENCE_API_KEY:
+          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}",
+      };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a direct main dispatch or an authorized NVIDIA-owned PR dispatch",
+        ),
+      ]),
+    );
+  });
+
+  it.each([
+    ["hash", (fixture: string) => `${fixture}\n# drift`, "trusted SHA-256"],
+    ["mode", (fixture: string) => fixture.replace("install -m 0600", "install -m 0644"), "0644"],
+    [
+      "path",
+      (fixture: string) =>
+        fixture.replace(
+          "expected_daemon_json=/etc/docker/daemon.json",
+          "expected_daemon_json=/tmp/pr.json",
+        ),
+      "privileged state",
+    ],
+    [
+      "metadata",
+      (fixture: string) =>
+        fixture.replace('sudo chown "$original_uid:$original_gid"', "true # no chown"),
+      "mode, UID, GID",
+    ],
+    [
+      "cleanup",
+      (fixture: string) =>
+        fixture.replace('rm -rf -- "$state_dir" || restore_failed=1', "true # no cleanup"),
+      "before restore failure",
+    ],
+  ])("rejects fixture %s drift", (_name, mutate, expected) => {
+    const errors = tempFile(mutate(readRepoText(FX)), (file) =>
+      validateHermesGpuStartupWorkflowBoundary(WF, file),
+    );
+    expect(errors.join("\n")).toContain(expected);
+  });
+
+  it("preserves an invalid restore path", () => {
+    tmp((tmp) => {
+      const root = path.join(tmp, "root");
+      const victim = path.join(tmp, "victim");
+      fs.mkdirSync(root);
+      fs.mkdirSync(victim);
+      const result = spawnSync("bash", [FX, "restore", victim, path.join(tmp, "daemon.json")], {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_E2E_FIXTURE_STATE_ROOT: root },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Refusing Docker restore");
+      expect(fs.existsSync(victim)).toBe(true);
+    });
+  });
+
+  it("rejects trusted-boundary drift", () => {
+    const errors = wfErrors((workflow) => {
+      const job = workflow.jobs[GPU];
+      const checkout = step(job, "Checkout trusted Hermes GPU runtime fixture");
+      const install = step(job, "Install trusted Hermes GPU runtime fixture");
+      checkout.with.ref = "${{ inputs.checkout_sha }}";
+      install.env.TRUSTED_FIXTURE_SHA256 = "0".repeat(64);
+      step(job, "Run Hermes GPU startup live Vitest test").run = `bash ${FX}`;
+      step(job, "Recover Docker daemon after Hermes GPU fallback fixture").run =
+        `done < <(bash ${FX})`;
+      step(job, "Remove trusted Hermes GPU runtime fixture").if = "${{ success() }}";
+      job.steps.reverse();
+    });
+    expect(errors.join("\n")).toMatch(
+      /root-owned.*trusted runtime.*trusted recovery.*always step/s,
+    );
+  });
+
+  it("restores daemon content, metadata, ownership, and runtime", () => {
+    withRestore(false, (result, harness) => {
+      const snapshot = snapshotFile(harness.daemon);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("nvidia\n");
+      expect(snapshot.text).toBe('{"default-runtime":"nvidia"}\n');
+      expect([snapshot.stat.mode & 0o777, snapshot.stat.uid, snapshot.stat.gid]).toEqual([
+        0o640,
+        harness.uid,
+        harness.gid,
+      ]);
+      expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain(
+        `chown ${harness.uid}:${harness.gid} ${harness.daemon}`,
+      );
+    });
+  });
+
+  it("cleans private state after daemon restoration fails", () => {
+    withRestore(true, (result, harness) => {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Failed to prove restoration of the Docker daemon");
+      expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain("install -m 640");
+    });
+  });
+});

@@ -1,35 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: pr
+name: CI / Pull Request
+
+run-name: "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}"
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
+    if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      hugging_face_models: ${{ steps.filter.outputs.hugging_face_models }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           predicate-quantifier: every
           filters: |
@@ -37,34 +43,920 @@ jobs:
               - '**'
               - '!**/*.md'
               - '!docs/**'
+              - '!fern/docs.yml'
+              - '!fern/assets/**'
+            hugging_face_models:
+              - '{managed-inference/models/**,src/lib/inference/serving/catalog-loader.ts,src/lib/inference/serving/generate-catalog.ts,src/lib/inference/serving/hugging-face-model-verification.ts,tools/managed-inference/verify-hugging-face-models.ts,package.json,package-lock.json}'
 
-  checks:
+  docs-only-checks:
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Run basic checks
-        uses: ./.github/actions/basic-checks
+      - name: Setup Node.js for docs-only checks
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install docs-only check dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Install hadolint
+        shell: bash
+        run: |
+          set -euo pipefail
+          HADOLINT_VERSION="v2.14.0"
+          HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o /usr/local/bin/hadolint "$HADOLINT_URL"
+          ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
+          [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Resolve checked-out merge base for docs-only checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")"
+          [ -n "$DOCS_ONLY_FROM_REF" ]
+          echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
+
+      - name: Run docs-only hook checks
+        run: npx prek run --from-ref "$DOCS_ONLY_FROM_REF" --to-ref HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
 
-  test-e2e-ollama-proxy:
-    needs: [checks, changes]
+      - name: Validate documentation
+        run: npm run docs
+
+  static-checks:
+    needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Run static checks
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
+      - name: Verify exported defaults with the pinned v1 consumer
+        env:
+          NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
+
+  hugging-face-models:
+    needs: changes
+    if: needs.changes.outputs.hugging_face_models == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: "22"
-      - name: Run Ollama auth proxy E2E tests
-        run: bash test/e2e-ollama-proxy.sh
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify Hugging Face model references
+        run: npm run catalog:verify-hugging-face
+
+  openshell-sdk-package:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      required: ${{ steps.locate.outputs.required }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout pull request lockfiles
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            package-lock.json
+            nemoclaw/package-lock.json
+          sparse-checkout-cone-mode: false
+
+      - name: Checkout base package decision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-sdk-package-decision
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Locate approved SDK artifact
+        id: locate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts
+          decision="$(NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" node "$trusted_inspector")"
+          required="$(jq -ser 'if length == 1 and (.[0].required | type) == "boolean" then (.[0].required | tostring) else error("invalid package decision") end' <<<"$decision")"
+          printf 'required=%s\n' "$required" >> "$GITHUB_OUTPUT"
+          if [ "$required" = "false" ]; then exit 0; fi
+          if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::The reviewed SDK is available only to same-repository pull requests."
+            exit 1
+          fi
+          artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
+          bundle="$(jq -cS '[.sourceRegistryPackage, .sourceRegistryPackageReplacement // empty]' .trusted-sdk-package-decision/ci/reviewed-npm-audit.json | sha256sum | cut -d ' ' -f 1)"
+          bundle_name="reviewed-openshell-sdk-$bundle"
+          if ! artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100" 2>/dev/null)"; then
+            echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
+            exit 1
+          fi
+          artifact="$(jq -cer --arg name "$bundle_name" --argjson repo "$REPOSITORY_ID" '
+            [.[] | .artifacts[] | select(.name == $name and .expired == false
+              and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == $repo)]
+            | max_by(.id) // error("missing SDK artifact")' <<<"$artifacts")" || {
+            echo "::error::No retained SDK archive matches the approved package identities. Run gh workflow run main.yaml --ref main and wait for package-openshell-sdk. Rerun CI, or update the PR against main if the approved package policy changed."
+            exit 1
+          }
+          run_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
+          artifact_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" 2>/dev/null | jq -e --arg repo "$GITHUB_REPOSITORY" '
+            (.path | split("@")[0]) == ".github/workflows/main.yaml" and .head_branch == "main"
+            and (.event == "push" or .event == "workflow_dispatch")
+            and .head_repository.full_name == $repo and .repository.full_name == $repo' >/dev/null
+          printf 'artifact_id=%s\nrun_id=%s\nartifact_name=%s\n' "$artifact_id" "$run_id" "$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Download approved SDK bundle
+        if: steps.locate.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.locate.outputs.run_id }}
+          artifact-ids: ${{ steps.locate.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/openshell-sdk-bundle
+
+      - name: Setup Node.js for archive verification
+        if: steps.locate.outputs.required == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm for archive verification
+        if: steps.locate.outputs.required == 'true'
+        uses: ./.trusted-sdk-package-decision/.github/actions/setup-reviewed-npm
+
+      - name: Verify selected SDK archive against base policy and PR locks
+        if: steps.locate.outputs.required == 'true'
+        env:
+          ARTIFACT_NAME: ${{ steps.locate.outputs.artifact_name }}
+          NEMOCLAW_CI_NPM_PACKAGE_MODE: artifact
+          NEMOCLAW_CI_TARGET_ROOT: ${{ github.workspace }}
+          NEMOCLAW_CI_NPM_CACHE: ${{ runner.temp }}/sdk-verification-cache
+          NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+        run: |
+          set -euo pipefail
+          mkdir -p "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY" "$NEMOCLAW_CI_NPM_CACHE"
+          cp "$RUNNER_TEMP/openshell-sdk-bundle/$ARTIFACT_NAME" "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY/$ARTIFACT_NAME"
+          node .trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts
+
+      - name: Publish SDK archive inside this CI run
+        if: steps.locate.outputs.required == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk/${{ steps.locate.outputs.artifact_name }}
+          if-no-files-found: error
+          retention-days: 1
+
+  compile-artifacts:
+    needs: [changes, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/check-dist-sourcemaps.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Compile and verify CLI and plugin outputs
+        uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
+
+      - name: Upload compiled test inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-test-inputs
+          path: |
+            dist
+            nemoclaw/dist
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Detect legacy coverage artifact reader
+        id: legacy_coverage
+        run: |
+          if grep -q 'name: cli-build-output' .trusted-ci-actions/.github/actions/ci-cli-coverage-merge/action.yaml; then
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload compiled CLI artifact
+        if: steps.legacy_coverage.outputs.required == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-build-output
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build-typecheck:
+    needs: [changes, compile-artifacts, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            nemoclaw/package-lock.json
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+      - name: Install dependencies
+        run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
+        env:
+          NPM_CONFIG_ALLOW_REMOTE: root
+
+      - name: Run package-contract and type checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
+
+  installer-integration:
+    needs: [changes, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Run installer integration tests
+        uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+
+  reviewed-npm-audit:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+
+  real-openclaw-dist-harness:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # This required proof reads reviewed npm metadata/tarballs. Keep npm's
+      # transient-registry retry policy explicit at the pre-merge boundary.
+      npm_config_fetch_retries: "3"
+      npm_config_fetch_retry_mintimeout: "10000"
+      npm_config_fetch_retry_maxtimeout: "60000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build generated harness inputs
+        run: npm run build:policy-boundary && npm run catalog:compile
+
+      - name: Audit the real patched OpenClaw distribution
+        env:
+          NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
+        run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
+  cli-test-shards:
+    needs: [changes, compile-artifacts, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    # Coverage startup plus the stable, duration-weighted roster can exceed
+    # the former 15-minute cap before Vitest writes its shard artifacts.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Verify compiled test inputs
+        run: |
+          test -s dist/nemoclaw.js
+          test -s dist/managed-inference/catalog.json
+          test -s nemoclaw/dist/index.js
+          test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs
+          test -s nemoclaw/dist/shared/sandbox-name.cjs
+
+      - name: Run CLI coverage shard
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
+        with:
+          shard: ${{ matrix.shard }}
+          shard-count: "12"
+
+  cli-tests:
+    needs:
+      - build-typecheck
+      - changes
+      - cli-test-shards
+      - openshell-sdk-package
+    if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            details="$RUN_URL"
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)"; then
+              if job_ids="$(jq -er '
+                if ((.total_count | type) != "number") or
+                  (.total_count < 0) or
+                  (.total_count > 100) or
+                  ((.total_count | floor) != .total_count) or
+                  ((.jobs | type) != "array") or
+                  ((.jobs | length) != .total_count)
+                then error("invalid workflow job listing")
+                else
+                  [.jobs[] |
+                    select((.name | type) == "string") |
+                    select(.name | test("^cli-test-shards \\(([1-9]|1[0-2])\\)$")) |
+                    select(.conclusion != "success")] as $failed |
+                  if ($failed | length) == 0 or
+                    ($failed | length) > 12 or
+                    (($failed | map(.name) | unique | length) != ($failed | length))
+                  then error("invalid failed CLI shard listing")
+                  else
+                    $failed[] |
+                    if ((.id | type) != "number") or
+                      (.id < 1) or
+                      (.id > 9007199254740991) or
+                      ((.id | floor) != .id) or
+                      (.status != "completed") or
+                      ((.conclusion | type) != "string")
+                    then error("invalid failed CLI shard")
+                    else .id
+                    end
+                  end
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+                details=""
+                while IFS= read -r job_id; do
+                  [ -n "$details" ] && details="${details}; "
+                  details="${details}${RUN_URL}/job/${job_id}"
+                done <<<"$job_ids"
+              fi
+            fi
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}. Details: ${details}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Merge CLI coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
+        with:
+          shard-count: "12"
+
+  plugin-tests:
+    needs: [changes, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      code-quality: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Run plugin coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
+
+  checks:
+    needs:
+      - changes
+      - docs-only-checks
+      - static-checks
+      - hugging-face-models
+      - build-typecheck
+      - installer-integration
+      - reviewed-npm-audit
+      - real-openclaw-dist-harness
+      - openshell-sdk-package
+      - cli-tests
+      - plugin-tests
+    if: always()
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify required PR checks
+        env:
+          CI_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
+          HF_MODELS_CHANGED: ${{ needs.changes.outputs.hugging_face_models }}
+          HF_MODELS_RESULT: ${{ needs['hugging-face-models'].result }}
+          STATIC_RESULT: ${{ needs['static-checks'].result }}
+          BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
+          REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
+          OPEN_SHELL_SDK_PACKAGE_RESULT: ${{ needs['openshell-sdk-package'].result }}
+          CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [ "$CI_REQUIRED" != "true" ]; then
+            echo "Metadata-only PR edit; the existing head and base CI results remain valid."
+            exit 0
+          fi
+
+          job_listing_state="uninitialized"
+          jobs_json=""
+          dependency_url="$RUN_URL"
+          failed=0
+
+          load_job_listing() {
+            if [ "$job_listing_state" != "uninitialized" ]; then
+              return
+            fi
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)" && jq -e '
+                ((.total_count | type) == "number") and
+                (.total_count >= 0) and
+                (.total_count <= 100) and
+                ((.total_count | floor) == .total_count) and
+                ((.jobs | type) == "array") and
+                ((.jobs | length) == .total_count)
+              ' <<<"$jobs_json" >/dev/null 2>&1; then
+              job_listing_state="ready"
+            else
+              job_listing_state="failed"
+            fi
+          }
+
+          resolve_dependency_url() {
+            local name="$1"
+            local result="$2"
+            local job_id=""
+            dependency_url="$RUN_URL"
+            case "$name" in
+              changes|docs-only-checks|static-checks|hugging-face-models|build-typecheck|installer-integration|reviewed-npm-audit|real-openclaw-dist-harness|openshell-sdk-package|cli-tests|plugin-tests) ;;
+              *) return ;;
+            esac
+            load_job_listing
+            if [ "$job_listing_state" = "ready" ] && job_id="$(jq -er \
+              --arg name "$name" \
+              --arg result "$result" '
+                [.jobs[] | select(.name == $name)] as $matching |
+                if ($matching | length) != 1
+                then error("missing or duplicate dependency job")
+                elif (($matching[0].id | type) != "number") or
+                  ($matching[0].id < 1) or
+                  ($matching[0].id > 9007199254740991) or
+                  (($matching[0].id | floor) != $matching[0].id) or
+                  ($matching[0].status != "completed") or
+                  (($matching[0].conclusion | type) != "string") or
+                  ($matching[0].conclusion != $result)
+                then error("invalid dependency job")
+                else $matching[0].id
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+              dependency_url="${RUN_URL}/job/${job_id}"
+            fi
+          }
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              resolve_dependency_url "$name" "$result"
+              echo "::error title=${name} failed::Expected success, got ${result}. Details: ${dependency_url}"
+              failed=1
+            fi
+          }
+
+          allow_success_or_skipped() {
+            local name="$1"
+            local result="$2"
+            case "$result" in
+              success|skipped) ;;
+              *)
+                resolve_dependency_url "$name" "$result"
+                echo "::error title=${name} failed::Expected success or skipped, got ${result}. Details: ${dependency_url}"
+                failed=1
+                ;;
+            esac
+          }
+
+          require_success "changes" "$CHANGES_RESULT"
+
+          if [ "$CODE_CHANGED" = "true" ]; then
+            allow_success_or_skipped "docs-only-checks" "$DOCS_ONLY_RESULT"
+            require_success "static-checks" "$STATIC_RESULT"
+            if [ "$HF_MODELS_CHANGED" = "true" ]; then
+              require_success "hugging-face-models" "$HF_MODELS_RESULT"
+            else
+              allow_success_or_skipped "hugging-face-models" "$HF_MODELS_RESULT"
+            fi
+            require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
+            require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
+            require_success "openshell-sdk-package" "$OPEN_SHELL_SDK_PACKAGE_RESULT"
+            require_success "cli-tests" "$CLI_TESTS_RESULT"
+            require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          else
+            require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
+            allow_success_or_skipped "static-checks" "$STATIC_RESULT"
+            allow_success_or_skipped "hugging-face-models" "$HF_MODELS_RESULT"
+            allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            allow_success_or_skipped "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
+            allow_success_or_skipped "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
+            allow_success_or_skipped "openshell-sdk-package" "$OPEN_SHELL_SDK_PACKAGE_RESULT"
+            allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
+            allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          fi
+
+          [ "$failed" -eq 0 ]
 
   # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
   # which runs on NVIDIA self-hosted runners via copy-pr-bot.

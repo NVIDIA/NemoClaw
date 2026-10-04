@@ -1,0 +1,1411 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { once } from "node:events";
+import fs from "node:fs";
+import type { IncomingMessage } from "node:http";
+import https from "node:https";
+import os from "node:os";
+import path from "node:path";
+
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+
+import { MCP_BRIDGE_ALLOWED_METHODS } from "../../src/lib/actions/sandbox/mcp-bridge-policy";
+import { startTestProgress } from "../e2e/fixtures/progress.ts";
+import {
+  buildCloudflaredQuickTunnelArgs,
+  FAKE_MCP_STATUS_RESULT_TOKEN,
+  HERMES_DEFERRED_TOOL_SEARCH_MISS,
+  parseTryCloudflareOrigin,
+  type StartedHttpServer,
+  startCompatibleMock,
+  startFakeMcpHttpsServer,
+  startPublicMcpHttpsTunnel,
+} from "../e2e/live/mcp-bridge-servers";
+
+import { createMcpFixtureTls } from "../e2e/fixtures/mcp-fixture-tls.ts";
+
+const servers: StartedHttpServer[] = [];
+function progressProbe() {
+  const lines: string[] = [];
+  const progress = startTestProgress(
+    "MCP tunnel support",
+    ["start MCP tunnel", "verify MCP tunnel"],
+    {
+      logLine: (line) => lines.push(line),
+    },
+  );
+  return { lines, progress };
+}
+type CompatibleToolCallResponse = {
+  choices: Array<{
+    message: {
+      content?: unknown;
+      tool_calls: Array<{ id: string; function: { name: string; arguments: string } }>;
+    };
+  }>;
+};
+async function postCompatibleChat(
+  port: number,
+  body: unknown,
+): Promise<CompatibleToolCallResponse> {
+  const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return response.json() as Promise<CompatibleToolCallResponse>;
+}
+
+const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
+
+async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
+  response.setEncoding("utf8");
+  let buffer = "";
+  for await (const chunk of response) {
+    buffer += String(chunk);
+    let eventBoundary = buffer.indexOf("\n\n");
+    while (eventBoundary !== -1) {
+      const event = buffer.slice(0, eventBoundary);
+      buffer = buffer.slice(eventBoundary + 2);
+      const data = event
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice("data: ".length))
+        .join("\n");
+      yield data;
+      eventBoundary = buffer.indexOf("\n\n");
+    }
+  }
+}
+
+afterAll(() => {
+  closeFixtureTls();
+});
+
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((server) => server.close()));
+});
+
+describe("authenticated MCP live fixtures", () => {
+  it("builds a bounded public HTTPS quick-tunnel origin without embedding credentials", () => {
+    expect(buildCloudflaredQuickTunnelArgs(43123)).toEqual([
+      "tunnel",
+      "--no-autoupdate",
+      "--protocol",
+      "http2",
+      "--url",
+      "https://127.0.0.1:43123",
+      "--no-tls-verify",
+      "--loglevel",
+      "info",
+    ]);
+    expect(() => buildCloudflaredQuickTunnelArgs(0)).toThrow(/invalid local MCP HTTPS port/);
+    expect(() => buildCloudflaredQuickTunnelArgs(65_536)).toThrow(/invalid local MCP HTTPS port/);
+  });
+
+  it("accepts only an exact public trycloudflare origin from tunnel output", () => {
+    expect(
+      parseTryCloudflareOrigin(
+        '{"message":"https://mcp-fixture-123.trycloudflare.com registered"}',
+      ),
+    ).toBe("https://mcp-fixture-123.trycloudflare.com");
+    expect(parseTryCloudflareOrigin("http://mcp-fixture.trycloudflare.com")).toBeNull();
+    expect(
+      parseTryCloudflareOrigin("https://mcp-fixture.trycloudflare.com.attacker.invalid"),
+    ).toBeNull();
+  });
+
+  it("requires three consecutive public readiness probes and resets after a failure", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-fixture-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const curl = path.join(directory, "curl");
+    const curlCount = path.join(directory, "curl-count");
+    const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
+    const priorOpenShellSecret = process.env.OPENSHELL_OIDC_CLIENT_SECRET;
+    process.env.MCP_TUNNEL_MUST_NOT_LEAK = "ambient-ci-secret";
+    process.env.OPENSHELL_OIDC_CLIENT_SECRET = "ambient-openshell-secret";
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        '[ -z "${MCP_TUNNEL_MUST_NOT_LEAK:-}" ] || exit 9',
+        '[ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] || exit 10',
+        "printf '%s\\n' 'https://fixture-cleanup-123.trycloudflare.com' >&2",
+        "trap 'exit 0' TERM INT",
+        "while :; do sleep 1; done",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      curl,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        "const args = process.argv.slice(2);",
+        "const has = (value) => args.includes(value);",
+        "const hasPair = (option, value) =>",
+        "  args.some((arg, index) => arg === option && args[index + 1] === value);",
+        "const validProbe =",
+        '  has("--disable") &&',
+        '  has("--silent") &&',
+        '  has("--show-error") &&',
+        '  has("--head") &&',
+        '  has("--tlsv1.2") &&',
+        '  hasPair("--proto", "=https") &&',
+        '  hasPair("--connect-timeout", "5") &&',
+        '  hasPair("--max-time", "5") &&',
+        '  hasPair("--output", "/dev/null") &&',
+        '  hasPair("--write-out", "%{http_code}") &&',
+        '  args.at(-1) === "https://fixture-cleanup-123.trycloudflare.com/mcp";',
+        "if (!validProbe) process.exit(11);",
+        `const countFile = ${JSON.stringify(curlCount)};`,
+        'const count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;',
+        "fs.writeFileSync(countFile, String(count + 1));",
+        "process.stdout.write(String([502, 405, 502, 405, 405, 405][count] ?? 405));",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    let cleanupName = "";
+    let cleanupProcess: (() => Promise<void>) | undefined;
+    const observation = progressProbe();
+    const { progress } = observation;
+
+    try {
+      const tunnel = await startPublicMcpHttpsTunnel({
+        cloudflaredBin: cloudflared,
+        curlBin: curl,
+        cleanup: {
+          add: (name, run) => {
+            cleanupName = name;
+            cleanupProcess = async () => {
+              await run();
+            };
+          },
+        },
+        label: "unit MCP fixture",
+        progress,
+        server: { port: 43123, close: async () => {} },
+      });
+
+      expect(tunnel).toMatchObject({
+        origin: "https://fixture-cleanup-123.trycloudflare.com",
+        url: "https://fixture-cleanup-123.trycloudflare.com/mcp",
+      });
+      // 502, 405, 502 resets the streak; only the following three 405s admit
+      // the tunnel. The count is the observable consecutive-readiness contract.
+      expect(fs.readFileSync(curlCount, "utf8")).toBe("6");
+      expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
+      expect(cleanupProcess).toBeTypeOf("function");
+      expect(observation.lines).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("event: cloudflared quick tunnel attempt 1 started"),
+        ]),
+      );
+      progress.stop();
+      expect(progress.summary().phases[0]?.outputEvents).toBeGreaterThan(0);
+      expect(JSON.stringify(progress.summary())).not.toContain(
+        "fixture-cleanup-123.trycloudflare.com",
+      );
+    } finally {
+      await cleanupProcess?.();
+      priorAmbientSecret === undefined
+        ? delete process.env.MCP_TUNNEL_MUST_NOT_LEAK
+        : (process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret);
+      priorOpenShellSecret === undefined
+        ? delete process.env.OPENSHELL_OIDC_CLIENT_SECRET
+        : (process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret);
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the proxy-aware HTTPS probe when Node fetch cannot reach the public tunnel", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-probe-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const curl = path.join(directory, "curl");
+    const priorHttpsProxy = process.env.HTTPS_PROXY;
+    const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' 'https://fixture-cleanup-123.trycloudflare.com' >&2",
+        "trap 'exit 0' TERM INT",
+        "while :; do sleep 1; done",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      curl,
+      [
+        "#!/bin/sh",
+        '[ "${HTTPS_PROXY:-}" = "http://proxy.example.test:8080" ] || exit 9',
+        '[ -z "${MCP_TUNNEL_MUST_NOT_LEAK:-}" ] || exit 10',
+        'head_request=false; target=""',
+        'for arg in "$@"; do [ "$arg" = "--head" ] && head_request=true; target="$arg"; done',
+        '[ "$head_request" = true ] || exit 11',
+        '[ "$target" = "https://fixture-cleanup-123.trycloudflare.com/mcp" ] || exit 12',
+        "printf '%s' '405'",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.HTTPS_PROXY = "http://proxy.example.test:8080";
+    process.env.MCP_TUNNEL_MUST_NOT_LEAK = "ambient-ci-secret";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new TypeError("fetch failed"));
+    let cleanupProcess: (() => Promise<void>) | undefined;
+
+    try {
+      const tunnel = await startPublicMcpHttpsTunnel({
+        cloudflaredBin: cloudflared,
+        curlBin: curl,
+        cleanup: {
+          add: (_name, run) => {
+            cleanupProcess = async () => {
+              await run();
+            };
+          },
+        },
+        label: "proxy-aware fixture",
+        progress: progressProbe().progress,
+        server: { port: 43123, close: async () => {} },
+      });
+
+      expect(tunnel.origin).toBe("https://fixture-cleanup-123.trycloudflare.com");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await cleanupProcess?.();
+      fetchMock.mockRestore();
+      priorHttpsProxy === undefined
+        ? delete process.env.HTTPS_PROXY
+        : (process.env.HTTPS_PROXY = priorHttpsProxy);
+      priorAmbientSecret === undefined
+        ? delete process.env.MCP_TUNNEL_MUST_NOT_LEAK
+        : (process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret);
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits failed cloudflared child output from diagnostics", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const boundaryUrl = "HTTPS://boundary-user:boundary-password@boundary-proxy.example.test:9443/";
+    const diagnosticSuffix = [
+      "",
+      "proxy HTTPS://proxy-user:proxy-password@proxy.example.test:8443 failed",
+      "fallback socks5://socks-user:socks-password@socks.example.test:1080 failed",
+      "PASSWORD=tunnel-password-value",
+      "token: eyJhbGciOiJIUzI1NiJ9.tunnel-payload",
+      "",
+    ].join("\n");
+    const boundaryPaddingBytes =
+      32 * 1024 + "HTTPS://".length - boundaryUrl.length - diagnosticSuffix.length;
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        `printf '%s' '${boundaryUrl}' >&2`,
+        `dd if=/dev/zero bs=${boundaryPaddingBytes} count=1 2>/dev/null | tr '\\000' x >&2`,
+        `printf '%s' '${diagnosticSuffix}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "redaction fixture",
+          progress: progressProbe().progress,
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain("boundary-proxy.example.test:9443");
+      expect(message).not.toContain("proxy.example.test:8443");
+      expect(message).not.toContain("socks.example.test:1080");
+      expect(message).not.toContain("boundary-user");
+      expect(message).not.toContain("boundary-password");
+      expect(message).not.toContain("proxy-user");
+      expect(message).not.toContain("proxy-password");
+      expect(message).not.toContain("socks-user");
+      expect(message).not.toContain("socks-password");
+      expect(message).not.toContain("tunnel-password-value");
+      expect(message).not.toContain("tunnel-payload");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits a Slack credential split across cloudflared data events", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-chunks-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const credentialPrefix = ["xoxb", "1234567890"].join("-");
+    const credentialTail = "-1234567890123-abcdefghijklmnopqrstuvwxyz";
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        `printf '%s' '${credentialPrefix}' >&2`,
+        "sleep 0.01",
+        `printf '%s\\n' '${credentialTail}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "chunked redaction fixture",
+          progress: progressProbe().progress,
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain(credentialPrefix);
+      expect(message).not.toContain(credentialTail);
+      expect(message).not.toContain(`${credentialPrefix}${credentialTail}`);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("implements authenticated Streamable HTTP and legacy SSE", async () => {
+    const secret = "fixture-secret";
+    const challenge = "fixture-challenge";
+    const resultToken = `MCP_AUTH_REWRITE_OK::${challenge}`;
+    const server = await startFakeMcpHttpsServer({
+      secret,
+      challenge,
+      resultToken,
+      tls: fixtureTls,
+    });
+    servers.push(server);
+    const url = `https://127.0.0.1:${server.port}/mcp`;
+    const headers = {
+      authorization: `Bearer ${secret}`,
+      "content-type": "application/json",
+    };
+
+    const request = async (
+      method: string,
+      body?: Record<string, unknown>,
+      target = url,
+      extraHeaders: Record<string, string> = {},
+    ): Promise<{ status: number; body: string; json(): unknown }> =>
+      await new Promise((resolve, reject) => {
+        const encoded = body ? JSON.stringify(body) : "";
+        const req = https.request(
+          target,
+          {
+            method,
+            ca: fixtureTls.cert,
+            headers: encoded
+              ? { ...headers, ...extraHeaders, "content-length": Buffer.byteLength(encoded) }
+              : { ...headers, ...extraHeaders },
+          },
+          (response) => {
+            let responseBody = "";
+            response.setEncoding("utf8");
+            response.on("data", (chunk: string) => {
+              responseBody += chunk;
+            });
+            response.on("end", () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                body: responseBody,
+                json: () => JSON.parse(responseBody),
+              }),
+            );
+          },
+        );
+        req.on("error", reject);
+        req.end(encoded);
+      });
+
+    expect((await request("HEAD")).status).toBe(405);
+    expect(server.observations).toEqual([
+      expect.objectContaining({
+        method: "HEAD",
+        path: "/mcp",
+        responseStatus: 405,
+      }),
+    ]);
+    expect(server.requests, "public tunnel readiness must not pollute security assertions").toEqual(
+      [],
+    );
+    const initialize = await request("POST", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    expect(initialize.json()).toMatchObject({
+      result: { protocolVersion: "2025-06-18" },
+    });
+    const sessionId = server.requests.at(-1)?.negotiatedSessionId ?? "";
+    expect(sessionId).toMatch(/^fake-session-\d+$/u);
+    const initialized = await request("POST", {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    expect(initialized.status).toBe(202);
+
+    const openEventChannel = async (
+      eventHeaders: Record<string, string>,
+    ): Promise<IncomingMessage> =>
+      await new Promise((resolve, reject) => {
+        const eventRequest = https.request(
+          url,
+          {
+            method: "GET",
+            ca: fixtureTls.cert,
+            headers: eventHeaders,
+          },
+          resolve,
+        );
+        eventRequest.on("error", reject);
+        eventRequest.end();
+      });
+    const missingCredential = await openEventChannel({
+      authorization: "Bearer wrong-secret",
+      accept: "text/event-stream",
+    });
+    expect(missingCredential.statusCode).toBe(401);
+    missingCredential.resume();
+    const eventChannel = await openEventChannel({
+      authorization: `Bearer ${secret}`,
+      accept: "text/event-stream",
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": "2025-06-18",
+    });
+    expect(eventChannel.statusCode).toBe(200);
+    expect(eventChannel.headers["content-type"]).toBe("text/event-stream");
+    eventChannel.setEncoding("utf8");
+    const [firstEventChunk] = await once(eventChannel, "data", {
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(firstEventChunk).toBe(": connected\n\n");
+    expect(eventChannel.complete).toBe(false);
+    eventChannel.destroy();
+
+    const openLegacySession = async (): Promise<{
+      channel: IncomingMessage;
+      endpoint: string;
+      reader: AsyncGenerator<string>;
+      sessionId: string;
+    }> => {
+      const channel = await openEventChannel({
+        authorization: `Bearer ${secret}`,
+        accept: "text/event-stream",
+      });
+      expect(channel.statusCode).toBe(200);
+      const reader = readSseData(channel);
+      const endpointEvent = await reader.next();
+      expect(endpointEvent.done).toBe(false);
+      const endpoint = new URL(endpointEvent.value ?? "", url);
+      const opaqueSessionId = endpoint.searchParams.get("legacySessionId") ?? "";
+      expect(endpoint.pathname).toBe("/mcp");
+      expect(opaqueSessionId).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+      return {
+        channel,
+        endpoint: endpoint.href,
+        reader,
+        sessionId: opaqueSessionId,
+      };
+    };
+    const initializeLegacySession = async (
+      legacy: Awaited<ReturnType<typeof openLegacySession>>,
+      id: string | number,
+    ): Promise<void> => {
+      const initializeEvent = legacy.reader.next();
+      expect(
+        (
+          await request(
+            "POST",
+            {
+              jsonrpc: "2.0",
+              id,
+              method: "initialize",
+              params: { protocolVersion: "2025-06-18" },
+            },
+            legacy.endpoint,
+          )
+        ).status,
+      ).toBe(202);
+      expect(JSON.parse((await initializeEvent).value ?? "")).toMatchObject({
+        id,
+        result: { protocolVersion: "2025-06-18" },
+      });
+      expect(
+        (
+          await request(
+            "POST",
+            { jsonrpc: "2.0", method: "notifications/initialized" },
+            legacy.endpoint,
+            { "mcp-protocol-version": "2025-06-18" },
+          )
+        ).status,
+      ).toBe(202);
+    };
+
+    const legacy = await openLegacySession();
+    expect(server.activeLegacySessionCount()).toBe(1);
+    const guessedEndpoint = new URL(legacy.endpoint);
+    guessedEndpoint.searchParams.set("legacySessionId", "A".repeat(43));
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 9, method: "tools/list" },
+          guessedEndpoint.href,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (await request("POST", { jsonrpc: "2.0", id: 9, method: "tools/list" }, legacy.endpoint))
+        .status,
+    ).toBe(409);
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 9,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(400);
+
+    const legacyInitializeEvent = legacy.reader.next();
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 10,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(202);
+    expect(JSON.parse((await legacyInitializeEvent).value ?? "")).toMatchObject({
+      id: 10,
+      result: { protocolVersion: "2025-06-18" },
+    });
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 10,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-03-26" },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(202);
+    expect(
+      (await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-03-26",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+          "mcp-session-id": "fake-session-cross-route",
+        })
+      ).status,
+    ).toBe(400);
+    const legacyListEvent = legacy.reader.next();
+    expect(
+      (
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
+      ).status,
+    ).toBe(202);
+    expect(JSON.parse((await legacyListEvent).value ?? "")).toMatchObject({
+      id: 11,
+      result: { tools: [{ name: "fake_echo" }] },
+    });
+
+    const secondLegacy = await openLegacySession();
+    expect(secondLegacy.sessionId).not.toBe(legacy.sessionId);
+    await initializeLegacySession(secondLegacy, "second-init");
+    expect(server.activeLegacySessionCount()).toBe(2);
+
+    const firstStreamEvent = legacy.reader.next();
+    const secondStreamEvent = secondLegacy.reader.next();
+    expect(
+      await Promise.all([
+        request(
+          "POST",
+          { jsonrpc: "2.0", id: "first-stream", method: "tools/list" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        ),
+        request(
+          "POST",
+          { jsonrpc: "2.0", id: "second-stream", method: "tools/list" },
+          secondLegacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        ),
+      ]).then((responses) => responses.map((response) => response.status)),
+    ).toEqual([202, 202]);
+    expect(JSON.parse((await firstStreamEvent).value ?? "")).toMatchObject({ id: "first-stream" });
+    expect(JSON.parse((await secondStreamEvent).value ?? "")).toMatchObject({
+      id: "second-stream",
+    });
+
+    const requestOffset = server.requests.length;
+    const orderedEvents = [legacy.reader.next(), legacy.reader.next()];
+    const concurrentResponses = await Promise.all([
+      request("POST", { jsonrpc: "2.0", id: 30, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
+      request("POST", { jsonrpc: "2.0", id: 31, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
+    ]);
+    expect(concurrentResponses.map((response) => response.status)).toEqual([202, 202]);
+    const wireIds = await Promise.all(
+      orderedEvents.map(
+        async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id,
+      ),
+    );
+    const recordedResponses = server.requests
+      .slice(requestOffset)
+      .filter((record) => record.legacySessionId === legacy.sessionId)
+      .sort(
+        (left, right) =>
+          (left.legacyResponseSequence ?? Number.MAX_SAFE_INTEGER) -
+          (right.legacyResponseSequence ?? Number.MAX_SAFE_INTEGER),
+      );
+    expect(recordedResponses.map((record) => record.rpcId)).toEqual(wireIds);
+    expect(recordedResponses.map((record) => record.legacyResponseSequence)).toEqual([4, 5]);
+
+    legacy.channel.destroy();
+    await expect.poll(() => server.activeLegacySessionCount()).toBe(1);
+    expect(
+      (
+        await request("POST", { jsonrpc: "2.0", id: 40, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
+      ).status,
+    ).toBe(404);
+    secondLegacy.channel.destroy();
+    await expect.poll(() => server.activeLegacySessionCount()).toBe(0);
+
+    const list = await request("POST", {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    });
+    expect(list.json()).toMatchObject({
+      result: {
+        tools: [
+          {
+            name: "fake_echo",
+            annotations: { readOnlyHint: true },
+            inputSchema: { required: ["challenge"] },
+          },
+        ],
+      },
+    });
+
+    const call = await request("POST", {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "fake_echo", arguments: { challenge } },
+    });
+    expect(call.json()).toMatchObject({
+      result: {
+        content: [{ type: "text", text: resultToken }],
+        isError: false,
+      },
+    });
+    const statusCall = await request("POST", {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "fake_status", arguments: {} },
+    });
+    expect(statusCall.json()).toMatchObject({
+      result: { content: [{ type: "text", text: FAKE_MCP_STATUS_RESULT_TOKEN }], isError: false },
+    });
+    expect(server.requests.at(-1)?.rpcToolName).toBe("fake_status");
+    const paramsByMethod: Partial<Record<(typeof MCP_BRIDGE_ALLOWED_METHODS)[number], unknown>> = {
+      initialize: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "fixture", version: "1.0.0" },
+      },
+      "tools/call": { name: "fake_echo", arguments: { challenge } },
+      "resources/read": { uri: "file:///empty" },
+      "resources/subscribe": { uri: "file:///empty" },
+      "resources/unsubscribe": { uri: "file:///empty" },
+      "prompts/get": { name: "empty", arguments: {} },
+      "tasks/get": { taskId: "fake-task" },
+      "tasks/update": { taskId: "fake-task", inputResponses: {} },
+      "tasks/result": { taskId: "fake-task" },
+      "tasks/cancel": { taskId: "fake-task" },
+      "completion/complete": {
+        ref: { type: "ref/prompt", name: "empty" },
+        argument: { name: "value", value: "" },
+      },
+      "logging/setLevel": { level: "info" },
+      "notifications/cancelled": { requestId: 1 },
+      "notifications/progress": { progressToken: 1, progress: 1 },
+      "notifications/elicitation/complete": {
+        elicitationId: "fake-elicitation",
+      },
+    };
+
+    for (const rpcMethod of MCP_BRIDGE_ALLOWED_METHODS.filter((method) =>
+      method.startsWith("notifications/"),
+    )) {
+      const params = paramsByMethod[rpcMethod];
+      const response = await request("POST", {
+        jsonrpc: "2.0",
+        method: rpcMethod,
+        ...(params !== undefined ? { params } : {}),
+      });
+
+      expect({ status: response.status, body: response.body }, rpcMethod).toEqual({
+        status: 202,
+        body: "",
+      });
+    }
+
+    for (const [index, rpcMethod] of MCP_BRIDGE_ALLOWED_METHODS.filter(
+      (method) => !method.startsWith("notifications/"),
+    ).entries()) {
+      const id = index + 1;
+      const params = paramsByMethod[rpcMethod];
+      const response = await request("POST", {
+        jsonrpc: "2.0",
+        id,
+        method: rpcMethod,
+        ...(params !== undefined ? { params } : {}),
+      });
+
+      expect(response.status, rpcMethod).toBe(200);
+      expect(JSON.parse(response.body), rpcMethod).toMatchObject({
+        jsonrpc: "2.0",
+        id,
+      });
+      expect(JSON.parse(response.body), rpcMethod).not.toHaveProperty("error");
+      expect(JSON.parse(response.body), rpcMethod).toHaveProperty("result");
+    }
+
+    expect(
+      server.requests.every(
+        (request) => request.auth !== "Bearer openshell:resolve:env:FAKE_TOKEN",
+      ),
+    ).toBe(true);
+  });
+
+  it("emits an MCP tool call and withholds success until the tool result returns", async () => {
+    const resultToken = "MCP_AUTH_REWRITE_OK::fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "fixture",
+      toolResultToken: resultToken,
+      toolNames: ["mcp_fake_fake_echo"],
+    });
+    servers.push(server);
+    const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
+    const headers = {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    };
+    const tools = [{ type: "function", function: { name: "mcp_fake_fake_echo", parameters: {} } }];
+    const first = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "mock/model",
+        messages: [{ role: "user", content: "use the tool" }],
+        tools,
+      }),
+    });
+    const firstBody = (await first.json()) as CompatibleToolCallResponse;
+    expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "mcp_fake_fake_echo",
+        arguments: JSON.stringify({ challenge: "fixture" }),
+      },
+    });
+    expect(JSON.stringify(firstBody)).not.toContain(resultToken);
+
+    const final = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "mock/model",
+        messages: [{ role: "tool", content: resultToken }],
+        tools,
+      }),
+    });
+    expect(await final.json()).toMatchObject({
+      choices: [{ message: { content: resultToken } }],
+    });
+
+    const streamed = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "mock/model",
+        stream: true,
+        messages: [{ role: "user", content: "use the tool" }],
+        tools,
+      }),
+    });
+    const firstDataLine = (await streamed.text())
+      .split("\n")
+      .find((line) => line.startsWith("data: {") && line.includes("tool_calls"));
+    expect(firstDataLine).toBeDefined();
+    const firstChunk = JSON.parse(firstDataLine!.slice("data: ".length));
+    expect(firstChunk).toMatchObject({
+      model: "mock/model",
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: { name: "mcp_fake_fake_echo" },
+              },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
+  it("drives bridge and progressive denied-tool probes to a verified policy denial", async () => {
+    const prompt = "run denied probe";
+    const post = async (
+      server: StartedHttpServer,
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+      tools: string[],
+    ) =>
+      await postCompatibleChat(server.port, {
+        messages,
+        tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+      });
+    const bridge = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      deniedToolProbe: {
+        mode: "bridge",
+        promptMarker: prompt,
+        resultToken: "policy_denied",
+        toolName: "mcp__fake__fake_status",
+      },
+    });
+    servers.push(bridge);
+    const user = { role: "user", content: prompt };
+    const bridgeCall = await post(bridge, [user], ["tool_call"]);
+    expect(bridgeCall.choices[0].message.tool_calls[0].function.name).toBe("tool_call");
+    const bridgeResult = await post(
+      bridge,
+      [
+        user,
+        {
+          role: "tool",
+          tool_call_id: "call_denied_tool_bridge",
+          content: JSON.stringify({ error: "policy_denied", detail: "blocked by deny rule" }),
+        },
+      ],
+      ["tool_call"],
+    );
+    expect(bridgeResult.choices[0].message.content).toBe("policy_denied");
+
+    const progressive = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      deniedToolProbe: {
+        mode: "progressive",
+        promptMarker: prompt,
+        query: "status",
+        resultToken: "policy_denied",
+        toolName: "fake_fake_status",
+      },
+    });
+    servers.push(progressive);
+    const searchCall = await post(progressive, [user], ["search_tools"]);
+    expect(searchCall.choices[0].message.tool_calls[0].function.name).toBe("search_tools");
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_denied_tool_search",
+      content: "Found 1\n- fake_fake_status: status",
+    };
+    const deniedCall = await post(
+      progressive,
+      [user, searchResult],
+      ["search_tools", "fake_fake_status"],
+    );
+    expect(deniedCall.choices[0].message.tool_calls[0].function.name).toBe("fake_fake_status");
+    const deniedResult = await post(
+      progressive,
+      [
+        user,
+        searchResult,
+        {
+          role: "tool",
+          tool_call_id: "call_denied_progressive_tool",
+          content: "policy_denied",
+        },
+      ],
+      ["search_tools", "fake_fake_status"],
+    );
+    expect(deniedResult.choices[0].message.content).toBe("policy_denied");
+  });
+
+  it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
+    const deferredToolName = "fake__fake_echo";
+    const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "deferred-fixture",
+      toolResultToken: resultToken,
+      deferredToolName,
+    });
+    servers.push(server);
+    const bridgeTools = ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+      type: "function",
+      function: { name, parameters: {} },
+    }));
+
+    const call = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+    ) =>
+      await postCompatibleChat(server.port, { model: "mock/model", messages, tools: bridgeTools });
+    const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_hermes_tool_search",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ queries: [deferredToolName] }),
+      },
+    });
+    const missedSearch = await call([
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_search",
+        content: JSON.stringify({
+          queries: [deferredToolName],
+          total_available: 1,
+          results: [{ query: deferredToolName, matches: ["some_other_tool"] }],
+          tools: { some_other_tool: { description: "Another tool" } },
+        }),
+      },
+    ]);
+    expect(missedSearch).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
+      ],
+    });
+    const echoedSearchQueryWithoutMatch = await call([
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_search",
+        content: JSON.stringify({
+          queries: [deferredToolName],
+          total_available: 1,
+          results: [{ query: deferredToolName, matches: [] }],
+          tools: {},
+        }),
+      },
+    ]);
+    expect(echoedSearchQueryWithoutMatch).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
+      ],
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_hermes_tool_search",
+      content: JSON.stringify({
+        queries: [deferredToolName],
+        total_available: 1,
+        results: [{ query: deferredToolName, matches: [deferredToolName] }],
+        tools: { [deferredToolName]: { description: "Deferred echo" } },
+      }),
+    };
+    const describeBody = await call([searchResult]);
+    expect(describeBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "tool_describe",
+        arguments: JSON.stringify({ names: [deferredToolName] }),
+      },
+    });
+    const wrongDescription = await call([
+      searchResult,
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_describe",
+        content: JSON.stringify({ tools: { [deferredToolName]: {} } }),
+      },
+    ]);
+    expect(wrongDescription).toMatchObject({
+      choices: [
+        { message: { content: expect.stringContaining("did not return the deferred schema") } },
+      ],
+    });
+    const descriptionResult = {
+      role: "tool",
+      tool_call_id: "call_hermes_tool_describe",
+      content: JSON.stringify({
+        tools: {
+          [deferredToolName]: {
+            description: "Deferred echo",
+            parameters: { properties: { challenge: { type: "string" } } },
+          },
+        },
+      }),
+    };
+    const callBody = await call([searchResult, descriptionResult]);
+    expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "tool_call",
+        arguments: JSON.stringify({
+          name: deferredToolName,
+          arguments: { challenge: "deferred-fixture" },
+        }),
+      },
+    });
+    expect(JSON.stringify(callBody)).not.toContain(resultToken);
+
+    const finalBody = await call([
+      searchResult,
+      descriptionResult,
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_call",
+        content: JSON.stringify({ result: resultToken }),
+      },
+    ]);
+    expect(finalBody).toMatchObject({
+      choices: [{ message: { content: resultToken } }],
+    });
+  });
+
+  it("uses the OpenClaw tool catalog before calling a deferred MCP tool", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
+    const resultToken = "MCP_AUTH_REWRITE_OK::openclaw-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "openclaw-fixture",
+      toolResultToken: resultToken,
+      openClawToolSearch: { query: "fake echo", toolNames: ["mcp__fake__fake_echo"] },
+    });
+    servers.push(server);
+    const call = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+    ) =>
+      await postCompatibleChat(server.port, {
+        model: "mock/model",
+        messages,
+        tools: ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+          type: "function",
+          function: { name, parameters: {} },
+        })),
+      });
+    const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_search",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: "fake echo", limit: 8 }),
+      },
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "openclaw-rewritten-search-id",
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            query: "fake echo",
+            count: 1,
+            matches: [{ name: deferredToolName, description: "Deferred echo" }],
+          }),
+        },
+      ]),
+    };
+    expect((await call([searchResult])).choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_describe",
+      function: { name: "tool_describe", arguments: JSON.stringify({ id: deferredToolName }) },
+    });
+    const descriptionResult = {
+      role: "tool",
+      tool_call_id: "openclaw-rewritten-describe-id",
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            name: deferredToolName,
+            parameters: { properties: { challenge: { type: "string" } } },
+          }),
+        },
+      ]),
+    };
+    expect(
+      (await call([searchResult, descriptionResult])).choices[0].message.tool_calls[0],
+    ).toMatchObject({
+      id: "call_openclaw_tool_call",
+      function: {
+        name: "tool_call",
+        arguments: JSON.stringify({
+          id: deferredToolName,
+          args: { challenge: "openclaw-fixture" },
+        }),
+      },
+    });
+    expect(
+      await call([
+        searchResult,
+        descriptionResult,
+        { role: "tool", tool_call_id: "call_openclaw_tool_call", content: resultToken },
+      ]),
+    ).toMatchObject({ choices: [{ message: { content: resultToken } }] });
+  });
+
+  it("fails closed when a Hermes deferred tool leaks into the model registry", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "leak-fixture",
+      deferredToolName,
+    });
+    servers.push(server);
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer compatible-key",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "use the deferred tool" }],
+        tools: ["tool_search", "tool_describe", "tool_call", deferredToolName].map((name) => ({
+          type: "function",
+          function: { name, parameters: {} },
+        })),
+      }),
+    });
+    expect(await response.json()).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining(`deferred target ${deferredToolName} leaked`),
+          },
+        },
+      ],
+    });
+  });
+
+  it("requires Deep Agents search_tools before exposing the matching MCP tool", async () => {
+    const resultToken = "MCP_AUTH_REWRITE_OK::progressive-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "progressive-fixture",
+      toolResultToken: resultToken,
+      progressiveToolSearch: {
+        toolName: "fake_fake_echo",
+        query: "AuThEnTiCaTeD McP",
+      },
+    });
+    servers.push(server);
+    const post = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+      tools: string[],
+    ) =>
+      await postCompatibleChat(server.port, {
+        messages,
+        tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+      });
+
+    const searchBody = await post([{ role: "user", content: "use MCP" }], ["search_tools", "ls"]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "search_tools",
+        arguments: JSON.stringify({ query: "AuThEnTiCaTeD McP" }),
+      },
+    });
+    const missedSearch = await post(
+      [
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_tool_search",
+          content: "No hidden tools matched",
+        },
+      ],
+      ["search_tools", "ls"],
+    );
+    expect(missedSearch).toMatchObject({
+      choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
+    });
+    const legacySearch = await post(
+      [
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_tool_search",
+          content: "Discovered fake_fake_echo",
+        },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(legacySearch).toMatchObject({
+      choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_progressive_tool_search",
+      content:
+        "Found 1 matching hidden tool(s); returning 1 bounded discovery candidate(s) " +
+        "(per-search limit 20):\n- fake_fake_echo: Authenticated MCP tool",
+    };
+    const callBody = await post([searchResult], ["search_tools", "ls", "fake_fake_echo"]);
+    expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "fake_fake_echo",
+        arguments: JSON.stringify({ challenge: "progressive-fixture" }),
+      },
+    });
+    const rejectedToolResult = await post(
+      [
+        searchResult,
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_mcp_proof",
+          content: "This MCP action requires approval in a headless runtime",
+        },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(rejectedToolResult).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining(
+              "progressive target fake_fake_echo did not return the expected authenticated result",
+            ),
+          },
+        },
+      ],
+    });
+    const finalBody = await post(
+      [
+        searchResult,
+        { role: "tool", tool_call_id: "call_progressive_mcp_proof", content: resultToken },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(finalBody).toMatchObject({ choices: [{ message: { content: resultToken } }] });
+
+    const leaked = await post(
+      [{ role: "user", content: "use MCP" }],
+      ["search_tools", "fake_fake_echo"],
+    );
+    expect(leaked).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining("visible before search_tools"),
+          },
+        },
+      ],
+    });
+  });
+});

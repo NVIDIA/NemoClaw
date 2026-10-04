@@ -1,0 +1,1119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
+  execSandbox: execSandboxMock,
+}));
+
+import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../fixtures/shell-probe.ts";
+import {
+  cloudExperimentalChecksForOnboarding,
+  DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+} from "../live/cloud-experimental-check-list.ts";
+import {
+  assertRequiredCloudExperimentalResult,
+  buildCloudExperimentalChecksEvidence,
+  buildCloudExperimentalCommandEnv,
+  cloudExperimentalCheckTimeoutMs,
+  runE2eCloudExperimentalChecks,
+} from "../live/cloud-experimental-checks.ts";
+
+const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
+const dcodeTuiSessionGuard = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh",
+);
+const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
+const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
+`;
+const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
+const dcodeLandlockCheck = path.join(cloudChecksDir, "05-deepagents-code-landlock-readonly.sh");
+const dcodeObservabilityCheck = path.join(cloudChecksDir, "11-deepagents-code-observability.sh");
+const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
+const tavilyBlocked = "BLOCKED:policy denied";
+const observabilityEnabled = "enabled";
+const denialRestored = /returns to the default Tavily denial/;
+const denialNotRestored = /did not restore the default Tavily denial/;
+const policyRemoveFailed = /policy-remove tavily failed/;
+const observabilityPreserved = /preserve enabled observability after policy-remove/;
+const observabilityDriftedAfter = /observability state drifted after policy-remove/;
+const observabilityDriftedBefore = /observability state drifted before Tavily policy mutation/;
+
+function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
+  return {
+    command: [],
+    exitCode,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr,
+    artifacts: {
+      stdout: "stdout.txt",
+      stderr: "stderr.txt",
+      result: "result.json",
+    },
+  };
+}
+
+function writeDcodeApprovalTestDriver(driverPath: string, testEntrypoint: string): void {
+  const checkSource = fs.readFileSync(dcodeApprovalCheck, "utf8");
+  const testDriverSource = checkSource.replace(dcodeApprovalMainEntrypoint, testEntrypoint);
+  expect(testDriverSource).not.toBe(checkSource);
+  fs.writeFileSync(driverPath, testDriverSource, { mode: 0o755 });
+}
+
+describe("P0-E cloud-experimental parity guardrails", () => {
+  it.each(["cloud-openclaw", "cloud-hermes", undefined])(
+    "does not select Deep Agents checks for onboarding %s",
+    (onboarding) => {
+      expect(cloudExperimentalChecksForOnboarding(onboarding)).toEqual([]);
+    },
+  );
+  it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+    try {
+      fs.writeFileSync(path.join(binDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync("bash", [dcodeFreshReonboardCheck], {
+        encoding: "utf8",
+        env: {
+          PATH: `${binDir}:${DEFAULT_TEST_PATH}`,
+          SANDBOX_NAME: "openclaw-sandbox",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "04-deepagents-code-fresh-reonboard: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(binDir, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps complete native DCode config and mutation-boundary coverage in the fresh re-onboard check", () => {
+    const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
+
+    expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
+    expect(script).toContain("config get --key models.default");
+    expect(script).toContain("config get --format yaml");
+    expect(script).toContain("config set --key models.default");
+    expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
+    expect(script).toContain("config is baked into the sandbox image at build time");
+    expect(script).toContain("re-onboard with the new selection");
+    expect(script).toContain('NEMOCLAW_COMPAT_MODEL="$model_a"');
+    expect(script).toContain('NEMOCLAW_MODEL="$model_a"');
+    expect(script).toContain('config_sha_restored" = "$config_sha_before');
+    expect(script).toContain('config["agents"] == {"startup_command": "discard"}');
+    expect(script).toContain('config["hooks"] == {"post_start": "discard"}');
+    expect(script).not.toContain("select-authorized-chat-model.mts");
+    expect(script).toContain("executePrivilegedSandboxCommand");
+    expect(script).toContain("resolvePrivilegedSandboxTarget");
+    expect(script).not.toMatch(/\bdocker (?:exec|ps)\b/u);
+    expect(script).not.toContain(
+      'NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF="$NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF"',
+    );
+  });
+
+  it("routes the Landlock sentinel through the selected runtime provider", () => {
+    const script = fs.readFileSync(dcodeLandlockCheck, "utf8");
+
+    expect(script).toContain("executePrivilegedSandboxCommand");
+    expect(script).not.toContain('spawnSync(\n  "docker"');
+  });
+
+  it("accepts only the provider-owned Podman host address outside RFC1918", () => {
+    const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+
+    expect(script).toContain("169.254.2.2");
+    expect(script).not.toContain("169.254.*");
+  });
+
+  it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
+    await SandboxExecCommand.run(
+      [
+        "deepagents-sandbox",
+        "--",
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      process.cwd(),
+    );
+
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "deepagents-sandbox",
+      [
+        "env",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "all_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "http_proxy",
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "pass",
+      ],
+      { workdir: undefined, tty: false, timeoutSeconds: undefined },
+    );
+  });
+
+  it("routes the live OTLP probe through managed Python and the OpenShell proxy", () => {
+    const script = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+      "utf8",
+    );
+
+    expect(script).toMatch(
+      /grep -Fq 'CAPTURE_READY:'[\s\S]*COLLECTOR_PORT}\/health[\s\S]*DECOY_PORT}\/health/,
+    );
+    expect(script).toContain("urllib.request.urlopen(request, timeout=10)");
+    expect(script).toContain("except urllib.error.HTTPError as error:");
+    expect(script).toContain('body = error.read(512).decode("utf-8", "replace")');
+    expect(script).not.toContain("urllib.request.ProxyHandler({})");
+    expect(script).not.toContain("os.environ.pop");
+    expect(script).toMatch(/"\$CLI" "\$SANDBOX_NAME" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
+    expect(script).not.toContain("env -u ALL_PROXY");
+    expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
+    expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
+    expect(script).toMatch(
+      /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
+    );
+  });
+
+  it("skips the DCode observability probe before host prerequisites on other agents", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-skip-"));
+    try {
+      const invocationLog = path.join(tempDir, "openshell-args.txt");
+      const openshell = path.join(tempDir, "openshell");
+      fs.writeFileSync(
+        openshell,
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$NEMOCLAW_FAKE_OPENSHELL_LOG"\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+          ),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            NEMOCLAW_CLI_BIN: path.join(tempDir, "missing-nemoclaw"),
+            NEMOCLAW_FAKE_OPENSHELL_LOG: invocationLog,
+            PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
+            REPO: path.join(tempDir, "missing-repo"),
+            SANDBOX_NAME: "openclaw-sandbox",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "11-deepagents-code-observability: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+      expect(fs.readFileSync(invocationLog, "utf8")).toBe(
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          "openclaw-sandbox",
+          "--",
+          "bash",
+          "-c",
+          "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1",
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("fails required Deep Agents cloud-experimental checks when scripts print SKIP", () => {
+    expect(() =>
+      assertRequiredCloudExperimentalResult(
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+        shellResult(0, "05-deepagents-code-landlock-readonly: SKIP: not a Deep Agents sandbox\n"),
+      ),
+    ).toThrow(/must not skip/);
+  });
+
+  it("fails Deep Agents Python egress blocked-host assertions without denial evidence", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "blocked-no-marker",
+          NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE: "OpenShell runtime error without denial marker",
+          PATH: DEFAULT_TEST_PATH,
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "self-test Python probe for fixture host lacked denial evidence",
+    );
+  });
+
+  it("passes Deep Agents Python egress probes as native multiline argv", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "probe-command-shape",
+          PATH: DEFAULT_TEST_PATH,
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const commands = result.stdout.trim().split("\n");
+    expect(commands).toHaveLength(2);
+    expect(commands).toEqual(["NATIVE_MULTILINE_ARGV", "NATIVE_MULTILINE_ARGV"]);
+  });
+
+  it("passes the Deep Agents fetch_url probe as native multiline argv", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "fetch-probe-command-shape",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("NATIVE_MULTILINE_ARGV");
+  });
+
+  it.each([
+    [
+      "accepts an explicit non-empty success response",
+      "fetch-success-classification",
+      "FETCH_SUCCESS:200:1234",
+      0,
+      "1 passed",
+    ],
+    [
+      "accepts explicit denial evidence",
+      "fetch-blocked-classification",
+      "FETCH_BLOCKED:network policy denied",
+      0,
+      "1 passed",
+    ],
+    [
+      "rejects an unclassified fetch error",
+      "fetch-blocked-classification",
+      "FETCH_ERROR:opaque 403",
+      1,
+      "lacked denial evidence",
+    ],
+  ] as const)("%s from the fetch_url probe", (_label, selfTest, fixture, status, expected) => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
+          NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).toBe(status);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
+  });
+
+  it("keeps the Deep Agents secret-boundary probe as one atomic shell expression", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST: "probe-command-shape",
+          PATH: DEFAULT_TEST_PATH,
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("ATOMIC_COMMAND");
+  });
+
+  it("passes the Deep Agents Tavily probe as native multiline argv", () => {
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
+        PATH: DEFAULT_TEST_PATH,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("NATIVE_MULTILINE_ARGV");
+  });
+
+  it.each([
+    [tavilyBlocked, "ok", observabilityEnabled, 0, denialRestored, observabilityPreserved],
+    ["REACHED:403", "ok", observabilityEnabled, 1, denialNotRestored, observabilityPreserved],
+    [tavilyBlocked, "fail", observabilityEnabled, 1, policyRemoveFailed, observabilityPreserved],
+    [
+      tavilyBlocked,
+      "clear-marker",
+      observabilityEnabled,
+      1,
+      denialRestored,
+      observabilityDriftedAfter,
+    ],
+    [tavilyBlocked, "ok", "disabled", 1, observabilityDriftedBefore, /registry=disabled, marker=1/],
+  ])(
+    "restores the default Tavily denial without observability drift (%s/%s/%s)",
+    (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
+      const result = spawnSync("bash", [dcodeTavilyCheck], {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
+          NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+          NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+          PATH: DEFAULT_TEST_PATH,
+          SANDBOX_NAME: "deepagents-sandbox",
+        },
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
+      expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain(
+        "trap restore_tavily_denial EXIT",
+      );
+    },
+  );
+
+  it("skips the DCode auto-approval check before optional host prerequisites", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
+    try {
+      fs.writeFileSync(path.join(tempDir, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const result = spawnSync("/bin/bash", [dcodeApprovalCheck], {
+        encoding: "utf8",
+        env: { PATH: tempDir, REPO: process.cwd(), SANDBOX_NAME: "openclaw-sandbox" },
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(
+        "12-deepagents-code-thread-auto-approval: SKIP: sandbox openclaw-sandbox is not a Deep Agents Code sandbox",
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
+    const result = spawnSync("bash", ["-n", dcodeApprovalCheck], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    const script = fs.readFileSync(dcodeApprovalCheck, "utf8");
+    expect(script).toContain("trap restore_export_baseline_on_exit EXIT");
+    expect(script).toContain("rebuild_named_sandbox disabled --no-observability");
+    expect(script).toContain('export_baseline_registry_state)" = "disabled:disabled"');
+  });
+
+  it("restores the DCode export baseline and preserves the triggering failure status", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-baseline-recovery-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const testDriver = path.join(tempDir, "restore-export-baseline");
+    const callLog = path.join(tempDir, "calls.log");
+    const registryPath = path.join(tempDir, ".nemoclaw", "sandboxes.json");
+    const disabledRegistry = JSON.stringify({
+      sandboxes: {
+        "deepagents-sandbox": {
+          agent: "langchain-deepagents-code",
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        },
+      },
+    });
+    try {
+      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+      fs.writeFileSync(
+        registryPath,
+        JSON.stringify({
+          sandboxes: {
+            "deepagents-sandbox": {
+              agent: "langchain-deepagents-code",
+              dcodeAutoApprovalMode: "thread-opt-in",
+              observabilityEnabled: true,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          'printf \'%s\\n\' "$*" >>"$MOCK_CALL_LOG"',
+          `printf '%s\\n' '${disabledRegistry}' >"$MOCK_REGISTRY_FILE"`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeDcodeApprovalTestDriver(
+        testDriver,
+        `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+EXPORT_BASELINE_RECOVERY_ARMED=1
+cleanup_probe_files() { :; }
+trap restore_export_baseline_on_exit EXIT
+exit 37
+`,
+      );
+
+      const result = spawnSync("bash", [testDriver, mockCli], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: tempDir,
+          MOCK_CALL_LOG: callLog,
+          MOCK_REGISTRY_FILE: registryPath,
+        },
+      });
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(37);
+      expect(fs.readFileSync(callLog, "utf8").trim()).toBe(
+        "deepagents-sandbox rebuild --yes --dcode-auto-approval disabled --no-observability",
+      );
+      expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual(
+        JSON.parse(disabledRegistry),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["accepts a later passing status", "unhealthy-then-ready", 0, 2],
+    ["fails after three unsuccessful status attempts", "unhealthy-always", 1, 3],
+  ] as const)(
+    "%s for a fresh DCode re-onboard",
+    (_label, mode, expectedStatus, expectedAttempts) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-readiness-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
+          mockCli,
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+            'if [ "$MOCK_STATUS_MODE" = "unhealthy-always" ] || [ "$count" -eq 1 ]; then',
+            `  printf '%s\\n' '{"inferenceHealth":{"ok":false,"failureLabel":"unreachable"}}'`,
+            "  exit 1",
+            "fi",
+            `printf '%s\\n' '{"inferenceHealth":{"ok":true}}'`,
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        // The shell program is a fixed literal; repository and temporary-file paths are
+        // positional arguments and are expanded only inside double quotes.
+        // lgtm[js/shell-command-injection-from-environment]
+        const result = spawnSync(
+          "/bin/bash",
+          [
+            "-c",
+            'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
+            "bash",
+            dcodeFreshReonboardCheck,
+            mockCli,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              MOCK_STATUS_COUNTER_FILE: counterFile,
+              MOCK_STATUS_MODE: mode,
+            },
+          },
+        );
+
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(result.stdout).toContain(
+          mode === "unhealthy-always" ? '"failureLabel":"unreachable"' : '"ok":true',
+        );
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
+    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
+    ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
+  ] as const)(
+    "%s during a named DCode rebuild",
+    (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const testDriver = path.join(tempDir, "rebuild-named-sandbox");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
+          mockCli,
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_REBUILD_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_REBUILD_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_REBUILD_COUNTER_FILE"`,
+            'case "$MOCK_REBUILD_MODE" in',
+            "  timeout-then-success)",
+            '    if [ "$count" -eq 1 ]; then',
+            `      printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+            "      exit 1",
+            "    fi",
+            "    ;;",
+            "  timeout-always)",
+            `    printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+            "    exit 1",
+            "    ;;",
+            "  http-401)",
+            `    printf '%s\\n' 'existing sandbox inference probe returned HTTP 401' 'Sandbox is untouched — no data was lost.' >&2`,
+            "    exit 1",
+            "    ;;",
+            "  *)",
+            "    exit 2",
+            "    ;;",
+            "esac",
+            `printf '%s\\n' rebuilt`,
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        writeDcodeApprovalTestDriver(
+          testDriver,
+          `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0
+rebuild_named_sandbox disabled
+`,
+        );
+        const result = spawnSync("/bin/bash", [testDriver, mockCli], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_REBUILD_COUNTER_FILE: counterFile,
+            MOCK_REBUILD_MODE: mode,
+          },
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        });
+
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(
+          result.stderr.match(
+            /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
+          ) ?? [],
+        ).toHaveLength(expectedRetryMessages);
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    ["retries a transient status health failure", "failure-then-success", 0, 2, 1],
+    ["fails after the bounded status health retries", "failure-always", 1, 3, 2],
+  ] as const)(
+    "%s before checking the DCode capability",
+    (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-retry-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const testDriver = path.join(tempDir, "assert-status-mode");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
+          mockCli,
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+            `printf '{"name":"deepagents-sandbox","agent":"langchain-deepagents-code","dcodeAutoApprovalMode":"disabled","attempt":%s,"inferenceHealth":{"ok":false,"probed":false}}\\n' "$count"`,
+            'if [ "$MOCK_STATUS_MODE" = "failure-always" ] || { [ "$MOCK_STATUS_MODE" = "failure-then-success" ] && [ "$count" -eq 1 ]; }; then',
+            "  exit 1",
+            "fi",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        writeDcodeApprovalTestDriver(
+          testDriver,
+          `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS=0
+assert_status_mode disabled
+`,
+        );
+        const result = spawnSync("/bin/bash", [testDriver, mockCli], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_STATUS_COUNTER_FILE: counterFile,
+            MOCK_STATUS_MODE: mode,
+          },
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        });
+
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(
+          result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
+        ).toHaveLength(expectedRetryMessages);
+        const expectFailureDiagnostics = expectedStatus !== 0;
+        expect(
+          result.stderr.includes(
+            "nemoclaw status failed while checking 'disabled' after 3 attempts",
+          ),
+        ).toBe(expectFailureDiagnostics);
+        expect(result.stderr.includes('"dcodeAutoApprovalMode":"disabled"')).toBe(
+          expectFailureDiagnostics,
+        );
+        expect(result.stderr.includes('"attempt":3')).toBe(expectFailureDiagnostics);
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each(Array.from(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS, (value) => [value]))(
+    "registers executable Deep Agents check %s in execution order",
+    (scriptPath) => {
+      expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
+        "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+        "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+        "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+        "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      ]);
+
+      const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
+      expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
+    },
+  );
+
+  it("gives long-running Deep Agents checks their complete operation budgets", () => {
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+      ),
+    ).toBe(15 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      ),
+    ).toBe(180_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+      ),
+    ).toBe(25 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      ),
+    ).toBe(20 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+      ),
+    ).toBe(8 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ),
+    ).toBe(35 * 60_000);
+  });
+
+  it.each([
+    [
+      "caller timeout",
+      {
+        ...shellResult(0, ""),
+        exitCode: null,
+        signal: "SIGTERM" as const,
+        timedOut: true,
+      },
+    ],
+    ["nonzero TUI result", shellResult(1, "TUI cleanup did not reach baseline")],
+  ])("cleans up the identified DCode TUI session after a %s (#11847)", async (_case, tuiResult) => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-caller-timeout-"));
+    const cleanup = new CleanupRegistry();
+    const tuiCheck = "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
+    const responses: ShellProbeResult[] = [
+      shellResult(0, ""),
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\n"),
+      tuiResult,
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\nNEMOCLAW_TUI_CALLER_RECOVERY_OK:2\n"),
+    ];
+    let responseIndex = 0;
+    const run = vi.fn(
+      async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+        responses[responseIndex++]!,
+    );
+
+    try {
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "cloud-langchain-deepagents-code",
+          "deepagents-sandbox",
+          [tuiCheck],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup,
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
+        ),
+      ).rejects.toThrow();
+
+      expect(run).toHaveBeenCalledTimes(4);
+      const tuiCommand = run.mock.calls[2]?.[0];
+      const tuiOptions = run.mock.calls[2]?.[1];
+      const sessionId = tuiOptions?.env?.NEMOCLAW_TUI_SESSION_ID;
+      expect(tuiCommand).toMatchObject({
+        command: "bash",
+        args: [path.join(process.cwd(), tuiCheck)],
+      });
+      expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+
+      const recoveryCommand = run.mock.calls[3]?.[0];
+      expect(recoveryCommand).toMatchObject({
+        command: "bash",
+        args: expect.arrayContaining(["recover", "deepagents-sandbox", sessionId, "2"]),
+      });
+
+      await expect(cleanup.runAll()).resolves.toEqual({
+        passed: [expect.stringContaining("clean up failed DCode TUI session")],
+        failures: [],
+      });
+      expect(run).toHaveBeenCalledTimes(4);
+    } finally {
+      fs.rmSync(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("shares process classification across normal waits and failed-session cleanup (#11847)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-session-guard-"));
+    const binDir = path.join(testRoot, "bin");
+    const processRoot = path.join(testRoot, "proc");
+    const targetSession = "12345678-1234-1234-1234-123456789abc";
+    const otherSession = "87654321-4321-4321-4321-cba987654321";
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(processRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(binDir, "openshell"),
+      '#!/bin/bash\nset -euo pipefail\nshift 5\nexec "$@"\n',
+      { mode: 0o755 },
+    );
+    const controlledProcessProgram = [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const dir = path.join(process.env.NEMOCLAW_TEST_PROCESS_ROOT, String(process.pid));",
+      "fs.mkdirSync(dir, { recursive: true });",
+      'fs.writeFileSync(path.join(dir, "environ"), Buffer.from(`NEMOCLAW_TUI_SESSION_ID=${process.env.NEMOCLAW_TUI_SESSION_ID}\\0`));',
+      'fs.writeFileSync(path.join(dir, "cmdline"), Buffer.from("node\\0deepagents_code\\0"));',
+      'process.on("SIGTERM", () => { fs.rmSync(dir, { force: true, recursive: true }); process.exit(0); });',
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const startControlledProcess = (sessionId: string) =>
+      spawn(process.execPath, ["-e", controlledProcessProgram, "deepagents_code"], {
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_PROCESS_ROOT: processRoot,
+          NEMOCLAW_TUI_SESSION_ID: sessionId,
+        },
+        stdio: "ignore",
+      });
+    const target = startControlledProcess(targetSession);
+    const other = startControlledProcess(otherSession);
+    const targetExit = new Promise<number | null>((resolve) => target.once("exit", resolve));
+    const guardEnv = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    };
+
+    try {
+      await expect
+        .poll(() => fs.existsSync(path.join(processRoot, String(target.pid), "environ")))
+        .toBe(true);
+      await expect
+        .poll(() => fs.existsSync(path.join(processRoot, String(other.pid), "environ")))
+        .toBe(true);
+
+      const baseline = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "baseline", "deepagents-sandbox", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(baseline.status, baseline.stderr).toBe(0);
+      expect(baseline.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:2");
+
+      const waitFailure = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(waitFailure.status, waitFailure.stderr).toBe(4);
+      expect(waitFailure.stderr).toContain("did not return to baseline 1");
+
+      const recovery = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "1", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(recovery.status, recovery.stderr).toBe(0);
+      expect(recovery.stdout).toContain("NEMOCLAW_TUI_CALLER_RECOVERY_OK:1");
+      await expect(targetExit).resolves.toBe(0);
+      expect(() => process.kill(other.pid!, 0)).not.toThrow();
+
+      const waitSuccess = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(waitSuccess.status, waitSuccess.stderr).toBe(0);
+      expect(waitSuccess.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:1");
+
+      const baselineFailure = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(baselineFailure.status, baselineFailure.stderr).toBe(4);
+      expect(baselineFailure.stderr).toContain("did not return to baseline 0");
+      expect(() => process.kill(other.pid!, 0)).not.toThrow();
+    } finally {
+      target.kill("SIGKILL");
+      other.kill("SIGKILL");
+      fs.rmSync(testRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("documents Deep Agents check scripts in generated launch/QA evidence", () => {
+    const evidence = buildCloudExperimentalChecksEvidence(
+      "cloud-langchain-deepagents-code",
+      "deepagents-sandbox",
+      DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+    );
+
+    expect(evidence).toMatchObject({
+      targetId: "cloud-langchain-deepagents-code",
+      sandboxName: "deepagents-sandbox",
+    });
+    expect(evidence.checkScripts).toContain(
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+    );
+    expect(evidence.terminalConnectHint).toEqual({
+      agent: "langchain-deepagents-code",
+      interactiveCommand: "dcode",
+      statusLine: "Interactive: dcode",
+      source: "agents/langchain-deepagents-code/manifest.yaml:runtime.interactive_command",
+    });
+  });
+
+  it("builds a minimal cloud-experimental child environment", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv("deepagents-sandbox", "secret-key", {
+      HOME: "/home/runner",
+      PATH: "/usr/bin",
+      AWS_SECRET_ACCESS_KEY: "do-not-copy",
+      GITHUB_TOKEN: "do-not-copy",
+      [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+      NEMOCLAW_MODEL: "model-a",
+      RANDOM_RUNNER_SECRET: "do-not-copy",
+    });
+
+    expect(env).toMatchObject({
+      COMPATIBLE_API_KEY: "secret-key",
+      CLOUD_EXPERIMENTAL_MODEL: "model-a",
+      NEMOCLAW_SANDBOX_NAME: "deepagents-sandbox",
+      SANDBOX_NAME: "deepagents-sandbox",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    });
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.RANDOM_RUNNER_SECRET).toBeUndefined();
+  });
+
+  it("forwards the immutable base reference only for the fresh Deep Agents Code re-onboard", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+      },
+      { forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBe(baseImageReference);
+  });
+
+  it("allows managed-runtime re-onboard without a Docker base-image override", () => {
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      { HOME: "/home/runner", PATH: "/usr/bin" },
+      { forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+  });
+
+  it("omits base overrides from managed-image fresh re-onboarding (#11305)", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      { E2E_WORKLOAD_SOURCE: "managed-image", [DCODE_BASE_IMAGE_ENV]: baseImageReference },
+      { dcodeBaseImageReference: baseImageReference, forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+  });
+
+  it("forwards the contract-selected Deep Agents Code base image reference instead of the ambient publication index", () => {
+    const indexReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const platformReference = `${DCODE_BASE_IMAGE}@sha256:${"b".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        [DCODE_BASE_IMAGE_ENV]: indexReference,
+      },
+      {
+        dcodeBaseImageReference: platformReference,
+        forwardDcodeBaseImage: true,
+      },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBe(platformReference);
+  });
+});

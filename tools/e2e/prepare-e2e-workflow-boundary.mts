@@ -1,0 +1,255 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+import YAML from "yaml";
+import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import { E2E_ACTION_PROVENANCE, E2E_JOB_POLICY } from "./workflow-boundary-policy.mts";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
+
+const PREPARE_E2E_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.prepareWorkspace;
+
+export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
+export const PREPARE_E2E_STEP = "Prepare E2E workspace";
+export const PREPARE_COMPILED_ARTIFACT_ACTION =
+  "./.trusted-ci-actions/.github/actions/ci-compile-artifacts";
+
+const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
+export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
+const PREINSTALLED_E2E_JOBS = new Set([
+  "staging-brev-launchable",
+  "staging-brev-launchable-identity",
+]);
+const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION =
+  "${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}";
+
+export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
+
+export const PREPARE_E2E_TRUSTED_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareTrustedBuild);
+
+type WorkflowRecord = Record<string, unknown>;
+type WorkflowStep = WorkflowRecord & {
+  name?: string;
+  uses?: string;
+  with?: WorkflowRecord;
+};
+
+function record(value: unknown): WorkflowRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as WorkflowRecord)
+    : {};
+}
+
+function steps(value: unknown): WorkflowStep[] {
+  return Array.isArray(value) ? (value as WorkflowStep[]) : [];
+}
+
+export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const action = record(YAML.parse(actionSource));
+  const errors: string[] = [];
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    PREPARE_E2E_ACTION_PROVENANCE.contentSha256
+  ) {
+    errors.push("prepare-e2e content must match the action reviewed at its immutable commit pin");
+  }
+  const expectedInput = {
+    description: "Build the CLI after installing dependencies.",
+    required: false,
+    default: "true",
+  };
+  if (!isDeepStrictEqual(record(record(action.inputs)["build-cli"]), expectedInput)) {
+    errors.push("prepare-e2e build-cli input must default to true");
+  }
+  if (Object.keys(record(action.inputs)).length !== 1) {
+    errors.push("prepare-e2e must expose only the build-cli input");
+  }
+
+  const runs = record(action.runs);
+  if (runs.using !== "composite") errors.push("prepare-e2e must be a composite action");
+  const expectedSteps = [
+    {
+      name: "Set up Node",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "24.18.1", cache: "npm" },
+    },
+    {
+      name: "Install reviewed npm",
+      uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
+    },
+    {
+      name: "Install root dependencies",
+      shell: "bash",
+      run: "npm ci --ignore-scripts",
+    },
+    {
+      name: "Build CLI",
+      if: "${{ inputs.build-cli == 'true' }}",
+      shell: "bash",
+      run: "npm run build:cli",
+    },
+  ];
+  if (!isDeepStrictEqual(runs.steps, expectedSteps)) {
+    errors.push(
+      "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
+    );
+  }
+  return errors;
+}
+
+export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[] {
+  const errors: string[] = [];
+  const jobs = record(workflow.jobs);
+  const expectedJobs = new Set(
+    Object.entries(jobs)
+      .filter(([jobName, value]) => {
+        const job = record(value);
+        return (
+          !PREINSTALLED_E2E_JOBS.has(jobName) &&
+          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
+        );
+      })
+      .map(([jobName]) => jobName),
+  );
+  const sharedE2eJob = jobs[SHARED_E2E_JOB_ID];
+  if (sharedE2eJob === undefined) {
+    errors.push(`prepare-e2e shared job is missing: ${SHARED_E2E_JOB_ID}`);
+  } else {
+    expectedJobs.add(SHARED_E2E_JOB_ID);
+    const env = record(record(sharedE2eJob).env);
+    if (Object.hasOwn(env, "E2E_JOB")) {
+      errors.push(`${SHARED_E2E_JOB_ID} must not declare E2E_JOB`);
+    }
+    if (Object.hasOwn(env, "E2E_EXECUTION_PROFILE")) {
+      errors.push(`${SHARED_E2E_JOB_ID} must not declare E2E_EXECUTION_PROFILE`);
+    }
+  }
+
+  for (const [jobName, value] of Object.entries(jobs)) {
+    const jobSteps = steps(record(value).steps);
+    if (jobSteps.some((step) => step.uses === CHECKOUT_LOCAL_PREPARE_E2E_ACTION)) {
+      errors.push(`${jobName} must not load prepare-e2e from the target checkout`);
+    }
+    const expectedAction =
+      jobName === CLI_ARTIFACT_PRODUCER_JOB ? PREPARE_COMPILED_ARTIFACT_ACTION : PREPARE_E2E_ACTION;
+    const prepareSteps = jobSteps.filter((step) => step.uses === expectedAction);
+    if (jobName === CLI_ARTIFACT_PRODUCER_JOB) {
+      const trustedCheckoutIndex = jobSteps.findIndex(
+        (step) => step.name === "Check out trusted compiled artifact action",
+      );
+      const trustedCheckout = jobSteps[trustedCheckoutIndex];
+      const checkoutInputs = record(trustedCheckout?.with);
+      const candidateIndex = jobSteps.findIndex((step) => step.name === "Check out E2E candidate");
+      if (
+        trustedCheckout?.uses !== "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" ||
+        checkoutInputs.repository !== "${{ github.repository }}" ||
+        checkoutInputs.ref !== "${{ github.workflow_sha }}" ||
+        checkoutInputs.path !== ".trusted-ci-actions" ||
+        checkoutInputs["persist-credentials"] !== false ||
+        !String(checkoutInputs["sparse-checkout"])
+          .split("\n")
+          .includes(".github/actions/ci-compile-artifacts") ||
+        trustedCheckoutIndex <= candidateIndex ||
+        candidateIndex < 0 ||
+        trustedCheckoutIndex >= jobSteps.findIndex((step) => step.uses === expectedAction)
+      ) {
+        errors.push(
+          "generate-matrix must load the shared compiler from the trusted workflow checkout after candidate checkout",
+        );
+      }
+    }
+    if (!expectedJobs.has(jobName)) {
+      if (prepareSteps.length > 0) errors.push(`${jobName} must not use prepare-e2e`);
+      continue;
+    }
+    if (prepareSteps.length !== 1) {
+      errors.push(`${jobName} must use prepare-e2e exactly once`);
+      continue;
+    }
+
+    const prepare = prepareSteps[0];
+    if (prepare.name !== PREPARE_E2E_STEP) {
+      errors.push(`${jobName} prepare-e2e step must be named '${PREPARE_E2E_STEP}'`);
+    }
+    const withInputs = record(prepare.with);
+    const shouldBuild =
+      jobName === CLI_ARTIFACT_PRODUCER_JOB || PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
+    if (shouldBuild && Object.keys(withInputs).length !== 0) {
+      errors.push(
+        jobName === CLI_ARTIFACT_PRODUCER_JOB
+          ? `${jobName} prepare-e2e must own the only default CLI build`
+          : `${jobName} prepare-e2e must use its default trusted CLI build`,
+      );
+    }
+    if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
+      errors.push(`${jobName} prepare-e2e must set build-cli to false`);
+    }
+    if (
+      jobName === "generate-matrix" &&
+      prepare.if !== NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION
+    ) {
+      errors.push(
+        "generate-matrix prepare-e2e must skip native runtime qualification producer dispatches",
+      );
+    }
+    const allowedKeys = shouldBuild
+      ? jobName === "generate-matrix"
+        ? ["if", "name", "uses"]
+        : ["name", "uses"]
+      : ["name", "uses", "with"];
+    if (!isDeepStrictEqual(Object.keys(prepare).sort(), allowedKeys.sort())) {
+      errors.push(`${jobName} prepare-e2e invocation must not override its canonical contract`);
+    }
+
+    for (const retiredStep of [
+      "Set up Node",
+      "Install reviewed npm",
+      "Install root dependencies",
+      "Build CLI",
+    ]) {
+      if (jobSteps.some((step) => step.name === retiredStep)) {
+        errors.push(`${jobName} must not duplicate prepare-e2e step '${retiredStep}'`);
+      }
+    }
+    const checkoutIndex = jobSteps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+    const prepareIndex = jobSteps.indexOf(prepare);
+    if (checkoutIndex < 0 || prepareIndex <= checkoutIndex) {
+      errors.push(`${jobName} must check out the repository before prepare-e2e`);
+    }
+    const authIndex = jobSteps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+    // The protected multiarch job intentionally installs with --ignore-scripts,
+    // builds its candidate boundary, and only then receives Docker credentials.
+    // Its exact post-build auth position is owned by the managed-image validator.
+    if (
+      jobName !== "managed-image-multiarch-startup" &&
+      authIndex >= 0 &&
+      prepareIndex <= authIndex
+    ) {
+      errors.push(`${jobName} must authenticate to Docker Hub before prepare-e2e`);
+    }
+  }
+
+  for (const jobName of PREPARE_E2E_NO_BUILD_JOBS) {
+    if (!expectedJobs.has(jobName)) errors.push(`prepare-e2e no-build job is missing: ${jobName}`);
+  }
+  for (const jobName of PREPARE_E2E_TRUSTED_BUILD_JOBS) {
+    if (!expectedJobs.has(jobName)) {
+      errors.push(`prepare-e2e trusted-build job is missing: ${jobName}`);
+    }
+  }
+  return errors;
+}
+
+export function validatePrepareE2eWorkflowBoundary(
+  workflow: WorkflowRecord,
+  actionPath = DEFAULT_ACTION_PATH,
+): string[] {
+  return [...validatePrepareE2eAction(actionPath), ...validatePrepareE2eInvocations(workflow)];
+}

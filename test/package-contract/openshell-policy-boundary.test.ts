@@ -1,0 +1,441 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
+import { createPackageFixture } from "./helpers/package-fixture";
+
+const repoRoot = path.join(import.meta.dirname, "..", "..");
+const require = createRequire(import.meta.url);
+
+function packageFiles(packageRoot: string): string[] {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  ) as { files?: string[] };
+  return packageJson.files ?? [];
+}
+
+function collectPackedPaths(): ReadonlySet<string> {
+  const fixtureRoot = createPackageFixture({
+    prefix: "nemoclaw-agent-assets-pack-",
+    entries: ["agents"],
+  });
+  try {
+    const paths = npmPackFilePaths(
+      execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: fixtureRoot,
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+      }),
+    );
+    return new Set(paths);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+const packedPaths = collectPackedPaths();
+
+describe("OpenShell policy boundary package contract", () => {
+  it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
+    "pins the YAML parser used by both production package boundaries [case %#]",
+    (packageRoot) => {
+      const output = execFileSync("npm", ["pkg", "get", "dependencies.yaml"], {
+        cwd: packageRoot,
+        encoding: "utf8",
+      }).trim();
+      const dependencyVersion = output.startsWith('"') ? (JSON.parse(output) as string) : output;
+
+      expect(dependencyVersion).toBe("2.8.3");
+    },
+  );
+
+  it("keeps the CommonJS CLI and ESM plugin policy behavior compatible", async () => {
+    const cliPolicy = require("../../dist/lib/adapters/openshell/policy-boundary.js") as {
+      assertPolicyRequirementContainment: (...args: unknown[]) => void;
+      parseOpenShellPolicy: (raw: string) => {
+        yamlBody: string;
+        policy: Record<string, unknown>;
+      };
+      parseActiveGlobalPolicyMetadata: (raw: string) => {
+        state: string;
+        inspection?: { policySource: string };
+      };
+      parseSandboxPolicyMetadata: (
+        raw: string,
+        sandboxName: string,
+      ) => { policySource: string; effectivePolicy: Record<string, unknown> };
+      withoutProviderComposedPolicies: (
+        policies: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      stripProviderComposedPolicies: (policy: string) => string;
+    };
+    expect(
+      cliPolicy.withoutProviderComposedPolicies({ safe: {}, _provider_generated: {} }),
+    ).toEqual({ safe: {} });
+
+    const pluginBoundary = (await import(
+      pathToFileURL(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+      ).href
+    )) as {
+      assertPolicyRequirementContainment: typeof cliPolicy.assertPolicyRequirementContainment;
+      parseOpenShellPolicy: (raw: string) => {
+        yamlBody: string;
+        policy: Record<string, unknown>;
+      };
+      parseActiveGlobalPolicyMetadata: typeof cliPolicy.parseActiveGlobalPolicyMetadata;
+      parseSandboxPolicyMetadata: typeof cliPolicy.parseSandboxPolicyMetadata;
+      withoutProviderComposedPolicies: (
+        policies: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      stripProviderComposedPolicies: (policy: string) => string;
+    };
+    expect(
+      pluginBoundary.withoutProviderComposedPolicies({ safe: {}, _provider_generated: {} }),
+    ).toEqual({ safe: {} });
+
+    const policy = YAML.stringify({
+      version: 1,
+      future_policy: { keep: true },
+      network_policies: { safe: {}, _provider_generated: {} },
+    });
+    const expectedPolicy = {
+      version: 1,
+      future_policy: { keep: true },
+      network_policies: { safe: {} },
+    };
+    expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
+    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(
+      expectedPolicy,
+    );
+    expect(() => cliPolicy.stripProviderComposedPolicies("version: [unterminated")).toThrow();
+    expect(() => pluginBoundary.stripProviderComposedPolicies("version: [unterminated")).toThrow();
+
+    const policyOutput = ["Version: 1", "Hash: sha256:test", "---", policy].join("\n");
+    const expectedParsedPolicy = { yamlBody: policy.trim(), policy: YAML.parse(policy) };
+    expect(cliPolicy.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
+    expect(pluginBoundary.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
+    const sandboxMetadata = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "global",
+      hash: "sha256:sandbox",
+      active_version: 1,
+      policy: { version: 1, network_policies: {} },
+    });
+    const expectedSandboxMetadata = {
+      policySource: "global",
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:sandbox", activeVersion: 1 },
+    };
+    expect(cliPolicy.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
+      expectedSandboxMetadata,
+    );
+    expect(pluginBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
+      expectedSandboxMetadata,
+    );
+    const globalMetadata = JSON.stringify({
+      scope: "global",
+      status: "loaded",
+      policy_source: "global",
+      hash: "sha256:global",
+      active_version: 1,
+      policy: { version: 1, network_policies: {} },
+    });
+    const expectedGlobalMetadata = {
+      state: "active",
+      inspection: {
+        policySource: "global",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:global", activeVersion: 1 },
+      },
+    };
+    expect(cliPolicy.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
+      expectedGlobalMetadata,
+    );
+    expect(pluginBoundary.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
+      expectedGlobalMetadata,
+    );
+
+    const pluginRunner = await import(
+      pathToFileURL(path.join(repoRoot, "nemoclaw", "dist", "blueprint", "runner.js")).href
+    );
+    expect(pluginRunner.actionApply).toBeTypeOf("function");
+  });
+
+  it("loads the source plugin runner through the tsx subprocess boundary", () => {
+    const runnerPath = path.join(repoRoot, "nemoclaw", "src", "blueprint", "runner.ts");
+    const output = execFileSync(
+      process.execPath,
+      [
+        path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+        "--input-type=module",
+        "--eval",
+        `const runner = await import(${JSON.stringify(pathToFileURL(runnerPath).href)}); process.stdout.write(typeof runner.actionApply);`,
+      ],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+
+    expect(output).toBe("function");
+  });
+
+  it("preserves fail-soft CLI parsing while the canonical runner parser stays strict", () => {
+    const cliPolicy = require("../../dist/lib/policy/index.js") as {
+      parseCurrentPolicy: (raw: string | null | undefined) => string;
+    };
+    const canonical = require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+      parseOpenShellPolicy: (raw: string) => {
+        yamlBody: string;
+        policy: Record<string, unknown>;
+      };
+    };
+    const policyBody = "version: 1\nnetwork_policies:\n  safe: {}";
+    const policyOutput = ["Version: 1", "Hash: sha256:test", "---", policyBody].join("\n");
+
+    expect(cliPolicy.parseCurrentPolicy(policyOutput)).toBe(policyBody);
+    expect(canonical.parseOpenShellPolicy(policyOutput)).toEqual({
+      yamlBody: policyBody,
+      policy: YAML.parse(policyBody),
+    });
+
+    const versionlessBody = "some_key:\n  keep: true";
+    expect(cliPolicy.parseCurrentPolicy(versionlessBody)).toBe("");
+    expect(() => canonical.parseOpenShellPolicy(versionlessBody)).toThrow(
+      /does not contain a policy YAML document/,
+    );
+    expect(cliPolicy.parseCurrentPolicy("Version: 1\nHash: sha256:test")).toBe("");
+    expect(() => canonical.parseOpenShellPolicy("Version: 1\nHash: sha256:test")).toThrow(
+      /does not contain a policy YAML document/,
+    );
+    expect(cliPolicy.parseCurrentPolicy("version: [unterminated")).toBe("");
+
+    const versionlessNetworkPolicies = "network_policies:\n  safe: {}";
+    expect(cliPolicy.parseCurrentPolicy(versionlessNetworkPolicies)).toBe(
+      versionlessNetworkPolicies,
+    );
+  });
+
+  it("ships the generated canonical CJS boundary through both package manifests", () => {
+    expect(packageFiles(repoRoot)).toContain("nemoclaw/dist/");
+    expect(packageFiles(path.join(repoRoot, "nemoclaw"))).toContain("dist/");
+
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.cts"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.d.cts"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.js"),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "managed-tool-gateway-matrix.json",
+    "runtime-refresh-credentials.ts",
+    "tool-gateway-broker.ts",
+    "tool-gateway-control-contract.ts",
+  ])("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
+    expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
+
+    expect(packedPaths).toContain(`agents/hermes/host/${file}`);
+
+    const controlContractPath = path.join(
+      repoRoot,
+      "agents",
+      "hermes",
+      "host",
+      "tool-gateway-control-contract.ts",
+    );
+    const validation = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--no-warnings",
+          "--eval",
+          `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes"), contract.isValidName("../packaged-hermes")]));`,
+        ],
+        { cwd: repoRoot, encoding: "utf8" },
+      ),
+    ) as [boolean, boolean];
+    expect(validation).toEqual([true, false]);
+  });
+
+  it("ships agent manifests", () => {
+    expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/*/manifest.yaml"]));
+    expect(packedPaths).toContain("agents/openclaw/manifest.yaml");
+  });
+
+  it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
+    expect(packageFiles(repoRoot)).toEqual(
+      expect.arrayContaining(["agents/nemocua/Dockerfile", "agents/nemocua/policy-additions.yaml"]),
+    );
+    expect(packedPaths).toContain("agents/nemocua/manifest.yaml");
+    expect(packedPaths).toContain("agents/nemocua/Dockerfile");
+    expect(packedPaths).toContain("agents/nemocua/policy-additions.yaml");
+  });
+
+  it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
+    const productionDependencyTree = spawnSync(
+      "npm",
+      ["ls", "ajv", "--omit=dev", "--all", "--json"],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+    expect(
+      productionDependencyTree.status,
+      `${productionDependencyTree.stdout}${productionDependencyTree.stderr}`,
+    ).toBe(0);
+    const productionDependencies = JSON.parse(productionDependencyTree.stdout) as {
+      dependencies?: { ajv?: { version?: string } };
+    };
+    expect(productionDependencies.dependencies?.ajv?.version).toMatch(/^8\./u);
+
+    const fixtureRoot = createPackageFixture({
+      prefix: "nemoclaw-policy-pack-",
+      entries: ["dist", "nemoclaw/dist", "schemas"],
+    });
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-package-"));
+    try {
+      const packed = spawnSync(
+        "npm",
+        ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
+        {
+          cwd: fixtureRoot,
+          encoding: "utf8",
+          env: { ...process.env, npm_config_cache: path.join(tempDir, "npm-cache") },
+        },
+      );
+      expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
+      const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
+      expect(archives).toHaveLength(1);
+      const archivePath = path.join(tempDir, archives[0]!);
+      execFileSync("tar", ["-xzf", archivePath, "-C", tempDir]);
+      const installedRoot = path.join(tempDir, "package");
+      expect(fs.existsSync(path.join(installedRoot, "schemas", "network-policy.schema.json"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(installedRoot, "schemas", "sandbox-policy.schema.json"))).toBe(
+        true,
+      );
+      expect(
+        fs.existsSync(
+          path.join(installedRoot, "dist", "lib", "policy", "sandbox-policy-validation.js"),
+        ),
+      ).toBe(true);
+      const installedNodeModules = path.join(installedRoot, "node_modules");
+      for (const dependency of [
+        "ajv",
+        "fast-deep-equal",
+        "fast-uri",
+        "json5",
+        "json-schema-traverse",
+        "require-from-string",
+        "yaml",
+      ]) {
+        fs.cpSync(
+          path.join(repoRoot, "node_modules", dependency),
+          path.join(installedNodeModules, dependency),
+          { recursive: true },
+        );
+      }
+
+      const validatorPath = path.join(
+        installedRoot,
+        "dist",
+        "lib",
+        "policy",
+        "sandbox-policy-validation.js",
+      );
+      const probe = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+const { parseAndValidateSandboxPolicy } = require(process.argv[1]);
+const valid = [
+  "version: 1",
+  "network_policies:",
+  "  safe:",
+  "    name: safe",
+  "    endpoints:",
+  "      - host: api.example.test",
+  "        port: 443",
+  "        access: full",
+  "    binaries:",
+  "      - path: /usr/bin/node",
+].join("\\n");
+if (parseAndValidateSandboxPolicy(valid).version !== 1) process.exit(2);
+const sensitivePolicyKey = "OPENAI_API_KEY_SUPERSECRET_VALUE";
+try {
+  parseAndValidateSandboxPolicy(
+    "version: 1\\nnetwork_policies:\\n  " +
+      sensitivePolicyKey +
+      ": {name: unsafe, endpoints: []}",
+  );
+  process.exit(3);
+} catch (error) {
+  const message = String(error.message);
+  if (!message.includes("shipped sandbox policy schema")) process.exit(4);
+  if (message.includes(sensitivePolicyKey) || message.length > 600) process.exit(5);
+}
+process.stdout.write("validated");
+`,
+          validatorPath,
+        ],
+        { cwd: installedRoot, encoding: "utf8" },
+      );
+      expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
+      expect(probe.stdout).toBe("validated");
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("locks the generated sandbox boundary to its reviewed direct dependency", () => {
+    const boundaryPath = path.join(
+      repoRoot,
+      "nemoclaw",
+      "dist",
+      "shared",
+      "openshell-policy-boundary.cjs",
+    );
+    expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
+      ["node:util", "yaml"],
+    );
+
+    expect(() =>
+      auditOpenShellPolicyBoundaryDependencies('require("unexpected-package");'),
+    ).toThrow(/non-whitelisted modules: unexpected-package/);
+    expect(() =>
+      auditOpenShellPolicyBoundaryDependencies('const dependency = "yaml"; require(dependency);'),
+    ).toThrow(/non-literal module load/);
+
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("verify-openshell-policy-boundary-dependencies.mts");
+    expect(dockerfile).toContain("dist/shared/openshell-policy-boundary.cjs");
+  });
+});

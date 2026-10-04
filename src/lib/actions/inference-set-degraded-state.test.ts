@@ -1,0 +1,221 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/https-pin-runtime";
+import { SandboxConfigError } from "../sandbox/config";
+import type { ConfigObject } from "../security/credential-filter";
+import { InferenceSetError, runInferenceSet } from "./inference-set";
+import {
+  baseSession,
+  createCompatibleProviderCapture,
+  createDeps,
+} from "./inference-set.test-support";
+
+describe("runInferenceSet degraded state handling", () => {
+  it("aborts before mutating any layer when the sandbox config read fails (#6997)", async () => {
+    const deps = createDeps({ config: {}, session: baseSession() });
+    // A stopped sandbox surfaces SandboxConfigError from the in-sandbox read —
+    // the exact path from the issue.
+    deps.calls.readSandboxConfig.mockImplementation(() => {
+      throw new SandboxConfigError([
+        "  Cannot read openclaw config (/sandbox/.openclaw/openclaw.json).",
+        "  Is the sandbox running?",
+      ]);
+    });
+
+    const error = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+      deps,
+    ).then(
+      () => {
+        throw new Error("expected runInferenceSet to reject");
+      },
+      (rejection: unknown) => rejection,
+    );
+
+    // Converted to the command-layer error type with an actionable message, so
+    // the CLI reports cleanly instead of dumping a raw SandboxConfigError stack.
+    expect(error).toBeInstanceOf(InferenceSetError);
+    expect((error as Error).message).toMatch(/Is the sandbox running/);
+    expect((error as Error).message).toMatch(/Start the sandbox and retry/);
+
+    // #6997 core guarantee: the read is a pre-flight gate, so a stopped sandbox
+    // leaves EVERY mutable layer untouched. Previously the read ran after the
+    // gateway route and registry were committed, leaving a half-applied switch.
+    // Assert zero mutation so re-ordering the read back after the mutations
+    // regresses this test. (The read-only `openshell provider get` probe that
+    // runs earlier is not a mutation, so filter to the route-SET call.)
+    const routeSetCalls = deps.calls.captureOpenshell.mock.calls.filter(
+      (args) => Array.isArray(args[0]) && args[0][0] === "inference" && args[0][1] === "set",
+    );
+    expect(routeSetCalls).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails without restarting when the native OpenClaw batch update does not complete (#3726)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({ config, session: baseSession() });
+    deps.calls.setOpenClawConfigValues.mockImplementation(() => {
+      throw new Error("sandbox exec crashed");
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow(/native OpenClaw batch update applies all related values or none/);
+
+    // Registry still updated despite the in-sandbox sync throwing (no stale registry → no revert).
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "anthropic-prod",
+        model: "claude-sonnet-4-6",
+      }),
+    );
+    // Reports the committed outer state and recovery without claiming convergence.
+    const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(logged).toMatch(/in-sandbox config failed/);
+    expect(logged).toMatch(/Retry the same inference set command/);
+    expect(logged).not.toMatch(/Inference route synced/);
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "retries native sync without rebuild advice when the provider was present: %s",
+    async (initiallyPresent) => {
+      const entry = {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      };
+      let persistedConfig: ConfigObject = {
+        agents: {
+          defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
+        },
+        models: {
+          providers: {
+            inference: {
+              baseUrl: "https://inference.local/v1",
+              api: "openai-completions",
+              headers: {
+                "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+              },
+              models: [
+                {
+                  id: "nvidia/nemotron-3-super-120b-a12b",
+                  name: "inference/nvidia/nemotron-3-super-120b-a12b",
+                },
+              ],
+            },
+          },
+        },
+      };
+      const providerCapture = {
+        name: "compatible-endpoint",
+        type: "openai" as const,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        configKey: "OPENAI_BASE_URL" as const,
+        initiallyPresent,
+      };
+      const deps = createDeps({
+        config: structuredClone(persistedConfig),
+        entry,
+        session: baseSession({
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+        }),
+        captureOpenshell: createCompatibleProviderCapture(providerCapture),
+        ensureHttpsPinRuntimeAdapter: async () => ({
+          baseUrl: `http://host.openshell.internal:11438/route/${"a".repeat(64)}`,
+          routeId: "a".repeat(64),
+          credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+          token: "test-adapter-token",
+        }),
+      });
+      deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(persistedConfig));
+      deps.calls.updateSandbox.mockImplementation((_name, updates) => {
+        Object.assign(entry, updates);
+        return true;
+      });
+      const persistNativeValue: Record<string, (value: unknown) => void> = {
+        "agents.defaults.model.primary": () => undefined,
+        "models.mode": () => undefined,
+        "models.providers.inference": (value) => {
+          const models = persistedConfig.models as ConfigObject;
+          const providers = models.providers as ConfigObject;
+          providers.inference = structuredClone(value) as ConfigObject;
+        },
+      };
+      deps.calls.setOpenClawConfigValues
+        .mockImplementationOnce(() => {
+          throw new Error("sandbox exec crashed");
+        })
+        .mockImplementation((_name, updates) => {
+          const providerUpdate = updates.at(-1)!;
+          persistNativeValue[providerUpdate.dotpath]?.(providerUpdate.value);
+        });
+
+      const options = {
+        provider: "compatible-endpoint",
+        model: "openai/gpt-5.4-mini",
+        endpointUrl: initiallyPresent
+          ? "https://new.example/v1"
+          : "http://host.openshell.internal:11434/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+        noVerify: true,
+      };
+
+      const failedSync = runInferenceSet(options, deps);
+      await expect(failedSync).rejects.toThrow(
+        /native OpenClaw batch update applies all related values or none/,
+      );
+      await expect(failedSync).rejects.not.toThrow(/rebuild/iu);
+      expect(
+        deps.calls.captureOpenshell.mock.calls.map(([args]) => args.slice(0, 2)),
+      ).toContainEqual(["provider", initiallyPresent ? "update" : "create"]);
+      expect(
+        deps.calls.captureOpenshell.mock.calls.map(([args]) => args.slice(0, 2)),
+      ).not.toContainEqual(["provider", "delete"]);
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+      expect(persistedConfig.models).toMatchObject({
+        providers: {
+          inference: {
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+            },
+          },
+        },
+      });
+
+      await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
+        inSandboxConfigSynced: true,
+      });
+      expect(persistedConfig.models).toMatchObject({
+        providers: {
+          inference: {
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
+            },
+          },
+        },
+      });
+    },
+  );
+});

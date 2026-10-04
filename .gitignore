@@ -1,11 +1,14 @@
 # Build artifacts and caches
 .version
+.source-revision
 *.pyc
 *.tsbuildinfo
 .pytest_cache/
 __pycache__/
 coverage/
 dist/
+nemoclaw/runner-dist/
+artifacts/pr-review-advisor-local/
 docs/_build/
 node_modules/
 
@@ -14,8 +17,13 @@ node_modules/
 desktop.ini
 Thumbs.db
 
+# IDE metadata
+.idea/
+
 # Project-specific
 .nemoclaw-maintainer/
+# Legacy DORI status file; no longer read, kept ignored to prevent accidental commits.
+.dori_user_status
 draft_newsletter_*
 research/
 specs/
@@ -46,6 +54,7 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
+.e2e/
 .gstack/
 
 # Chad runtime state + backups (never source — see docs/design/MASTER-REVIEW-2026-10.md §1b)

@@ -1,0 +1,347 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
+import { getSandboxFailurePhase } from "../state/gateway";
+import {
+  buildDockerGpuMode,
+  captureDockerGpuPatchSandboxSnapshot,
+  classifyDockerGpuPatchFailure,
+} from "./docker-gpu-patch";
+
+function sandboxCapture(getOutput: string, listOutput: string) {
+  const responses: Record<string, string> = {
+    "sandbox:get": getOutput,
+    "sandbox:list": listOutput,
+  };
+  return vi.fn((args: readonly string[]) => responses[args.slice(0, 2).join(":")] ?? "");
+}
+
+const GPU_MODE = buildDockerGpuMode("gpus");
+type PatchSnapshot = Parameters<typeof classifyDockerGpuPatchFailure>[0];
+const RUNNING = { Status: "running", Running: true, ExitCode: 0 };
+
+function captureSnapshot(
+  getOutput: string,
+  listOutput: string,
+  patchedContainerState?: Record<string, unknown>,
+) {
+  return captureDockerGpuPatchSandboxSnapshot(
+    "alpha",
+    { patchedContainerId: patchedContainerState ? "new-container-id" : null },
+    {
+      runCaptureOpenshell: sandboxCapture(getOutput, listOutput),
+      ...(patchedContainerState
+        ? { dockerCapture: vi.fn(() => JSON.stringify(patchedContainerState)) }
+        : {}),
+    },
+  );
+}
+
+function classify(
+  snapshot: PatchSnapshot,
+  proofError?: Error,
+  mode: Parameters<typeof classifyDockerGpuPatchFailure>[1] = GPU_MODE,
+) {
+  return classifyDockerGpuPatchFailure(snapshot, mode, proofError ? { proofError } : {});
+}
+
+function failureSnapshot(
+  sandboxPhase: string,
+  patchedContainerState: PatchSnapshot["patchedContainerState"] = null,
+  sandboxListLine: string | null = `alpha   ${sandboxPhase}   30s ago`,
+): PatchSnapshot {
+  return { sandboxPhase, sandboxListLine, patchedContainerState };
+}
+
+describe("Docker GPU patch diagnostics", () => {
+  it("detects terminal failure phases in `openshell sandbox list` output", () => {
+    const phase = (output: string) => getSandboxFailurePhase(output, "my-sandbox");
+    expect(phase("my-sandbox   Error   2s ago")).toBe("Error");
+    expect(phase("my-sandbox   CrashLoopBackOff   3s ago")).toBe("CrashLoopBackOff");
+    expect(phase("my-sandbox   Failed   3s ago")).toBe("Failed");
+    expect(phase("my-sandbox   Ready   3s ago")).toBeNull();
+    expect(phase("other   Error   3s ago")).toBeNull();
+    expect(phase("")).toBeNull();
+  });
+
+  it.each([
+    [
+      "prefers `sandbox list` phase over `sandbox get` when both are present (stale get)",
+      "Name: alpha\nPhase: Provisioning\n",
+      "alpha   Error   2s ago\n",
+      "Error",
+      "alpha   Error   2s ago",
+    ],
+    [
+      "uses the list-derived phase whenever the sandbox row is present",
+      "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
+      "alpha   Ready   1m ago\n",
+      "Ready",
+      "alpha   Ready   1m ago",
+    ],
+    [
+      "reads the trailing phase from the modern name-created-phase layout",
+      "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
+      "NAME    CREATED              PHASE\nalpha   2026-07-14 05:11:40  Provisioning\n",
+      "Provisioning",
+      "alpha   2026-07-14 05:11:40  Provisioning",
+    ],
+    [
+      "keeps the get-derived phase when the sandbox row is absent from list output",
+      "Name: alpha\nPhase: Terminated\n",
+      "other-box   Ready   2s ago\n",
+      "Terminated",
+      null,
+    ],
+  ])("%s (phase precedence)", (_title, getOutput, listOutput, expectedPhase, expectedListLine) => {
+    const snapshot = captureSnapshot(getOutput, listOutput);
+
+    expect(snapshot.sandboxPhase).toBe(expectedPhase);
+    expect(snapshot.sandboxListLine).toBe(expectedListLine);
+  });
+
+  it("captures sandbox phase and patched container State via the snapshot helper", () => {
+    const state = {
+      Status: "exited",
+      Running: false,
+      ExitCode: 125,
+      Error: 'could not select device driver "nvidia" with capabilities: [[gpu]]',
+      OOMKilled: false,
+      StartedAt: "2026-05-12T00:00:00Z",
+      FinishedAt: "2026-05-12T00:00:01Z",
+    };
+    const snapshot = captureSnapshot(
+      "Name: alpha\nPhase: Error\nReason: ContainerExit\n",
+      "alpha   Error   1m ago\n",
+      state,
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   1m ago");
+    expect(snapshot.patchedContainerState?.ExitCode).toBe(125);
+    expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
+  });
+
+  it("uses typed OpenShell observations as the sole phase authority when raw capture conflicts", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Provisioning\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   2s ago");
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects phase-shaped content from failed typed artifacts without raw fallback", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Error\n",
+        outcome: { kind: "failed", error: { kind: "capture", message: "exit 1" } },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "failed", error: { kind: "timeout", message: "timed out" } },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBeNull();
+    expect(snapshot.sandboxListLine).toBeNull();
+    expect(snapshot.openShellDiagnosticArtifacts).toHaveLength(2);
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("classifies a dead patched container as patched_container_failed with the failed mode", () => {
+    const result = classify(
+      failureSnapshot(
+        "Error",
+        {
+          Status: "exited",
+          ExitCode: 125,
+          Error: 'could not select device driver "nvidia" with capabilities: [[gpu]]',
+        },
+        "alpha   Error   1m ago",
+      ),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("Patched GPU container exited with code 125");
+    expect(result.headline).toContain("--gpus all");
+    const flat = result.summaryLines.join("\n");
+    expect(flat).toContain("sandbox_phase=Error");
+    expect(flat).toContain("patched_container_exit_code=125");
+    expect(flat).toContain("could not select device driver");
+    expect(flat).toContain("patched_create_option=--gpus all");
+  });
+
+  it("explains exit code 127 when container logs prove the managed startup command is missing (#7996)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "restarting", ExitCode: 127 }, "alpha   Error   1m ago"),
+      GPU_MODE,
+      { managedStartupCommandMissing: true },
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    const hints = (result.hints ?? []).join("\n");
+    expect(hints).toContain("does not provide the NemoClaw-managed `nemoclaw-start` command");
+    expect(hints).toContain("selected agent and NemoClaw release");
+    expect(hints).not.toMatch(/OpenClaw|sandbox-base/);
+    // The prose stays out of the machine-readable on-disk summary.
+    expect(result.summaryLines.join("\n")).not.toContain("selected agent");
+  });
+
+  it("does not infer a missing startup command when its child process returns 127 (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 127 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("exited with code 127");
+    expect(result.hints ?? []).toEqual([]);
+  });
+
+  it("does not attach the missing-startup-command hints to other non-zero exits (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 125 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.hints ?? []).toEqual([]);
+  });
+
+  it("classifies an Error-phase sandbox with unknown container state as sandbox_error_phase", () => {
+    const result = classify(failureSnapshot("Error", null, null));
+
+    expect(result.kind).toBe("sandbox_error_phase");
+    expect(result.headline).toContain("OpenShell sandbox entered Error phase");
+  });
+
+  it("classifies a live container but timed-out supervisor as supervisor_unreachable", () => {
+    const result = classify(failureSnapshot("Provisioning", RUNNING));
+
+    expect(result.kind).toBe("supervisor_unreachable");
+    expect(result.headline).toContain("Provisioning");
+  });
+
+  it("assigns OpenShell lifecycle ownership when a healthy container remains in Deleting (#9531)", () => {
+    const result = classify(
+      failureSnapshot("Deleting", {
+        Status: "running",
+        Running: true,
+        ExitCode: 0,
+        Health: { Status: "healthy" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "sandbox_deleting_phase",
+      headline:
+        "OpenShell kept the sandbox in Deleting after the replacement container became healthy.",
+      summaryLines: expect.arrayContaining([
+        "sandbox_phase=Deleting",
+        "patched_container_status=running",
+        "patched_container_running=true",
+        "patched_container_exit_code=0",
+        "patched_container_health=healthy",
+        "lifecycle_authority=openshell",
+      ]),
+      hints: [
+        "OpenShell owns the sandbox lifecycle phase. NemoClaw does not accept Docker container health as lifecycle success.",
+      ],
+    });
+  });
+
+  it.each([
+    ["health is not healthy", { ...RUNNING, Health: { Status: "starting" } }],
+    ["container is not running", { Status: "exited", Running: false, ExitCode: 0 }],
+    ["container state is incomplete", RUNNING],
+  ])("does not assign OpenShell lifecycle ownership when %s (#9531)", (_case, state) => {
+    const result = classify(failureSnapshot("Deleting", state));
+
+    expect(result.kind).not.toBe("sandbox_deleting_phase");
+    expect(result.summaryLines).not.toContain("lifecycle_authority=openshell");
+  });
+
+  it("prefers supervisor_unreachable over proof_failure when the sandbox is non-live but non-terminal", () => {
+    const result = classify(
+      failureSnapshot("Provisioning"),
+      new Error("openshell sandbox exec refused: sandbox not ready"),
+    );
+
+    expect(result.kind).toBe("supervisor_unreachable");
+    expect(result.headline).toContain("Provisioning");
+    expect(result.summaryLines.join("\n")).toContain("proof_error=");
+  });
+
+  it("does not blame the supervisor when the patch failed before a container existed", () => {
+    const result = classify(
+      failureSnapshot("Provisioning", null, "alpha   Provisioning   3s ago"),
+      undefined,
+      null,
+    );
+
+    expect(result.kind).toBe("unknown");
+    expect(result.headline).not.toMatch(/supervisor/i);
+  });
+
+  it("treats proof failures inside a Ready sandbox as proof_failure, not patched_container_failed", () => {
+    const result = classify(
+      failureSnapshot("Ready", RUNNING),
+      new Error("nvidia-smi exited with status 9"),
+    );
+
+    expect(result.kind).toBe("proof_failure");
+    expect(result.summaryLines.join("\n")).toContain("proof_error=nvidia-smi exited with status 9");
+  });
+
+  it("does not inspect the original/backup container when newContainerId is missing", () => {
+    const dockerCapture = vi.fn((_args: readonly string[]) =>
+      JSON.stringify({ Status: "exited", ExitCode: 1 }),
+    );
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { dockerCapture },
+    );
+
+    expect(snapshot.patchedContainerState).toBeNull();
+    expect(
+      dockerCapture.mock.calls.some(([args]) => args[0] === "inspect" && args[1] === "--format"),
+    ).toBe(false);
+  });
+});

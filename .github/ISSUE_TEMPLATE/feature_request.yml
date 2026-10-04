@@ -1,6 +1,7 @@
 name: Feature Request
-description: Propose a feature with a design. Not a "please build this" request.
-labels: ["enhancement", "status: triage"]
+description: Propose a concrete behavior that solves a real problem.
+type: Enhancement
+labels: ["needs: triage"]
 body:
   - type: textarea
     id: problem
@@ -11,20 +12,97 @@ body:
       required: true
 
   - type: textarea
-    id: design
+    id: behavior
     attributes:
-      label: Proposed Design
+      label: Desired Behavior
       description: |
-        How should this work? Describe the system behavior, components involved, and user-facing interface.
-        This should be a design, not a wish list.
+        What should a user or contributor be able to do or observe?
+        Describe the before-and-after behavior and give one concrete example.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Proposal Details
+
+        Answer each required proposal-detail field.
+        If a field does not apply, enter `Not applicable` and explain why.
+        If the answer is unknown, enter `Unknown` and state what must be decided.
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Scope and Exclusions
+      description: |
+        State what the proposal includes and excludes.
+        List current constraints that materially change the solution.
     validations:
       required: true
 
   - type: textarea
-    id: alternatives
+    id: ownership
     attributes:
-      label: Alternatives Considered
-      description: What other approaches did you evaluate? Why is the proposed design better?
+      label: Ongoing Ownership
+      description: |
+        Who will maintain this contribution after merge?
+        Name the proposed person or team.
+    validations:
+      required: true
+
+  - type: textarea
+    id: placement_support
+    attributes:
+      label: Placement and Support Expectations
+      description: |
+        Request placement in core NemoClaw or NemoClaw Community.
+        State the support expected after merge.
+        Maintainers make the final placement and support decision.
+        Refer to [Community Solutions](https://github.com/NVIDIA/NemoClaw/blob/main/docs/resources/community-contributions.mdx).
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation_plan
+    attributes:
+      label: Validation Plan
+      description: |
+        List the tests, documentation, security analysis, compatibility evidence,
+        or runtime validation required to evaluate this proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility Requirements
+      description: |
+        List the versions, operating systems, hardware, providers, and runtimes
+        that this proposal is expected to work with. State any exclusions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security or Privacy Impact
+      description: |
+        Describe changes to permissions, credentials, personal data, network access,
+        execution boundaries, or third-party trust.
+        Do not include credential values, personal data, or confidential customer
+        or partner information.
+        Do not report a vulnerability in this issue.
+        Follow [SECURITY.md](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md).
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Idea
+      description: |
+        Optional, non-binding notes about the smallest direct change that might work.
+        Do not design for hypothetical future cases.
     validations:
       required: false
 
@@ -33,10 +111,10 @@ body:
     attributes:
       label: Category
       options:
-        - "enhancement: feature"
-        - "enhancement: provider"
-        - "enhancement: platform"
-        - "enhancement: testing"
+        - "Feature"
+        - "Provider"
+        - "Platform"
+        - "Testing"
     validations:
       required: true
 
@@ -47,5 +125,5 @@ body:
       options:
         - label: I searched existing issues and this is not a duplicate
           required: true
-        - label: This is a design proposal, not a "please build this" request
+        - label: I described the problem and desired behavior
           required: true

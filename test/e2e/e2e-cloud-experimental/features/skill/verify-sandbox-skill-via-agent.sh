@@ -9,7 +9,7 @@
 # (includes SKILL_SMOKE_VERIFY_K9X2). Re-run add-sandbox-skill.sh after template updates.
 #
 # Usage (from repo root):
-#   NVIDIA_API_KEY=nvapi-... SANDBOX_NAME=test01 SKILL_ID=skill-smoke-fixture \
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... SANDBOX_NAME=test01 SKILL_ID=skill-smoke-fixture \
 #     bash test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh
 #
 # Optional:
@@ -37,7 +37,7 @@ ok() { printf '%s\n' "verify-sandbox-skill-via-agent: OK: $*"; }
 info() { printf '%s\n' "verify-sandbox-skill-via-agent: INFO: $*"; }
 
 [ -n "$SANDBOX_NAME" ] || die "set SANDBOX_NAME (or NEMOCLAW_SANDBOX_NAME)"
-[ -n "${NVIDIA_API_KEY:-}" ] || die "set NVIDIA_API_KEY (needed for inference inside sandbox)"
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || die "set NVIDIA_INFERENCE_API_KEY (needed for inference inside sandbox)"
 
 # Do NOT include ${VERIFY_TOKEN} in the prompt itself. The token must come
 # from the agent reading the skill's SKILL.md — that is the entire point of
@@ -58,7 +58,7 @@ command -v openshell >/dev/null 2>&1 || die "openshell not on PATH"
 command -v base64 >/dev/null 2>&1 || die "base64 not on PATH"
 
 prompt_b64=$(printf '%s' "$PROMPT" | base64 | tr -d '\n')
-nv_b64=$(printf '%s' "$NVIDIA_API_KEY" | base64 | tr -d '\n')
+nv_b64=$(printf '%s' "$NVIDIA_INFERENCE_API_KEY" | base64 | tr -d '\n')
 
 ssh_config="$(mktemp)"
 trap 'rm -f "$ssh_config"' EXIT
@@ -70,12 +70,12 @@ command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 180"
 command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 180"
 
 # Remote: decode prompt + key, drop stale session lock for *this* session id (leftover from crashed agent), then run agent.
-# OpenClaw stores sessions under /sandbox/.openclaw-data in NemoClaw sandboxes.
+# OpenClaw stores sessions under /sandbox/.openclaw in NemoClaw sandboxes.
 _lock_rm=""
 if [ "${SKILL_VERIFY_NO_CLEAR_LOCK:-0}" != "1" ]; then
-  _lock_rm="rm -f '/sandbox/.openclaw-data/agents/main/sessions/${SESSION_ID}.jsonl.lock' 2>/dev/null || true; "
+  _lock_rm="rm -f '/sandbox/.openclaw/agents/main/sessions/${SESSION_ID}.jsonl.lock' 2>/dev/null || true; "
 fi
-remote_cmd="pm=\$(printf '%s' '${prompt_b64}' | base64 -d) || exit 1; nv=\$(printf '%s' '${nv_b64}' | base64 -d) || exit 1; export NVIDIA_API_KEY=\"\$nv\"; ${_lock_rm}${AGENT_LAUNCHER}openclaw agent --agent main --local -m \"\$pm\" --session-id '${SESSION_ID}'"
+remote_cmd="pm=\$(printf '%s' '${prompt_b64}' | base64 -d) || exit 1; nv=\$(printf '%s' '${nv_b64}' | base64 -d) || exit 1; export NVIDIA_INFERENCE_API_KEY=\"\$nv\"; ${_lock_rm}${AGENT_LAUNCHER}openclaw agent --agent main -m \"\$pm\" --session-id '${SESSION_ID}'"
 
 info "Running openclaw agent in sandbox '${SANDBOX_NAME}' (session ${SESSION_ID})..."
 
@@ -86,7 +86,7 @@ raw_out=$(
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "openshell-${SANDBOX_NAME}.default" \
     "$remote_cmd" 2>&1
 )
 agent_rc=$?

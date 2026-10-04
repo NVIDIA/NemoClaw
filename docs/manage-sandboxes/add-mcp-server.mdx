@@ -1,0 +1,256 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Add an MCP Server"
+sidebar-title: "Add an MCP Server"
+description: "Register an authenticated public or trusted private Streamable HTTP MCP server with a NemoClaw sandbox."
+description-agent: "Explains mcp add inputs, trusted private endpoints, credential-name restrictions, URL and DNS validation, policy pinning, and agent capability checks. Use when adding a managed MCP server."
+keywords: ["nemoclaw mcp add", "streamable http mcp", "mcp bearer credential", "trusted private mcp"]
+content:
+  type: "how_to"
+skill:
+  priority: 40
+---
+Use the same host-side workflow for OpenClaw, Hermes, and Deep Agents Code sandboxes.
+NemoClaw selects the agent-specific adapter from the running sandbox and writes the configuration that agent consumes. OpenShell remains the source of truth for policy, providers, attachments, and credential values; NemoClaw retains no MCP registry row after the command.
+
+## Check Managed Capability
+
+<AgentOnly variant="deepagents">
+Deep Agents Code `mcp add` and `mcp restart` require native MCP capability v3.
+A legacy image stops with migration guidance before it changes a live provider, policy, or agent configuration.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Hermes stores MCP servers in its native `config.yaml`. Registration and inspection preserve the stable credential handle from the readiness check in the OpenShell resolver placeholder without comparing it with host-side desired state.
+Before an MCP add or restart mutation, NemoClaw requires the Hermes helper to report reconcile-finality capability version 1.
+An add or restart with an older helper stops with rebuild guidance and leaves the provider, policy, attachment, and native configuration unchanged.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+OpenClaw stores MCP servers in `openclaw.json` under `mcp.servers`.
+To continue using or updating an existing Mcporter entry, follow [Migrate an Existing Registration](manage-mcp-servers#migrate-an-existing-registration).
+To remove an entry instead, `$$nemoclaw my-sandbox mcp remove <server>` supports direct removal when its committed registry row proves ownership and the removal preconditions are met.
+Refer to [Remove a Server](manage-mcp-servers#remove-a-server).
+</AgentOnly>
+
+An interrupted add that does not report an unknown outcome is retried from the current agent and OpenShell sources.
+A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker.
+The retry resumes only when the native entry, generated policy, provider identity and credential key, and sandbox attachment form an exact prefix of the requested add; conflicting or ambiguous resources remain unchanged and stop the command.
+
+<AgentOnly variant="hermes">
+If Hermes loses its OpenShell exec relay during the managed reload, NemoClaw first proves whether the transaction committed.
+It returns success for proven committed state and follows normal rollback for proven absence.
+If neither state can be proven, NemoClaw reports an unknown outcome without rollback or another mutation.
+Do not retry, force-remove, or remove and re-add the server while the outcome is unknown.
+Follow [Hermes Add Outcome Is Unknown](../../reference/troubleshoot-mcp-servers#hermes-add-outcome-is-unknown).
+</AgentOnly>
+
+## Add the Server
+
+```bash
+export GITHUB_MCP_TOKEN=ghp_...
+$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
+unset GITHUB_MCP_TOKEN
+```
+
+The assignment is illustrative.
+Load real values from an approved secret manager or masked prompt so the credential is not recorded in shell history.
+
+`--env KEY` reads the value from the host process environment and stores it in OpenShell's provider store.
+NemoClaw writes only the variable name as an OpenShell resolver placeholder in agent-native MCP configuration.
+OpenShell resolves the placeholder at egress.
+
+After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
+If readiness is inconclusive, the command reports a probe skip without failing the committed add.
+
+The generated egress policy is scoped to the selected agent adapter's runtime executable paths, including shared Node.js or Python runtime paths.
+An interactive process launched through one of those allowed runtime paths can therefore reach the MCP endpoint, while `/usr/bin/curl` remains denied.
+A failed `curl` request from an interactive sandbox shell therefore does not show that the MCP route is broken.
+Use the managed status probe to inspect policy readiness and in-sandbox endpoint reachability:
+
+```bash
+$$nemoclaw my-sandbox mcp status github
+```
+
+The managed probe sends a bounded MCP `initialize` request from inside the sandbox through the selected agent adapter.
+It verifies credential resolution only when the status result reports a verified verdict; other probe outcomes are inconclusive.
+Adapter binaries differ between OpenClaw, Hermes, and Deep Agents Code, so do not substitute a generic shell command for this check.
+
+Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
+
+```bash
+export DOORDASH_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp add doordash \
+  --url https://mcp.example.test/mcp \
+  --env DOORDASH_MCP_TOKEN \
+  --deny-tool doordash_submit_order \
+  --deny-tool 'admin_*'
+unset DOORDASH_MCP_TOKEN
+```
+
+NemoClaw writes the denied-tool list into the live OpenShell policy; it does not retain a duplicate registry copy.
+Restart leaves that policy unchanged, and rebuild captures and restores the complete live policy.
+The option matches tool names only and does not inspect tool arguments.
+Use `mcp update` to replace or clear the list after registration.
+
+## Add a Trusted Private Server
+
+Use a trusted private host when the MCP endpoint must remain on an operator-controlled private network.
+This flow is the same for OpenClaw, Hermes, and Deep Agents Code.
+
+Before registration, configure an HTTPS endpoint that meets these requirements:
+
+- The endpoint hostname resolves to stable RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, or the URL uses one private IPv4 literal.
+- The OpenShell gateway can route to every resolved address.
+- The Transport Layer Security (TLS) certificate matches the endpoint hostname and chains to a trust root available to the managed runtime.
+- A host firewall limits the listener to the OpenShell gateway or the required deployment subnet.
+- The endpoint exposes only the required MCP path and methods.
+
+If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
+Rebuild an existing sandbox after adding or changing the CA so both the OpenShell upstream proxy and sandbox clients receive the trust anchor.
+For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
+
+For a host-local MCP process, keep the process bound to loopback when practical.
+Place an operator-managed HTTPS reverse proxy on one stable, routed private address.
+Bind the proxy to the private interface instead of every host interface.
+NemoClaw preserves the URL hostname for TLS Server Name Indication and certificate validation.
+A direct private IPv4 URL requires a certificate with the matching IP subject alternative name.
+Use a DNS hostname for an IPv6 unique local address.
+NemoClaw has not qualified direct IPv6-literal MCP URLs and rejects that URL form.
+
+Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
+Sandbox loopback is not the host service, and trusted-private admission does not create a route to it.
+
+<Warning>
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the exact matching host for this registration.
+Confirm that you operate the endpoint and its network before you run the command.
+</Warning>
+
+Export one dedicated bearer credential, then register the endpoint with its URL hostname:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp add local-tools \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
+The declaration must equal the normalized host from `--url`.
+NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations before mutation.
+It also rejects a trusted-private hostname when its DNS answers mix public and private addresses, or when any answer is otherwise disallowed.
+
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
+NemoClaw combines the environment list with any `--trusted-private-host` options.
+It normalizes and deduplicates environment entries and ignores entries unrelated to this URL. The resulting host and address pins live in the OpenShell policy, so later lifecycle commands do not depend on the ambient environment.
+
+NemoClaw records the normalized host and every validated address as OpenShell policy pins.
+The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
+The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
+You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
+To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+
+Inspect the registration after the add returns:
+
+```bash
+$$nemoclaw my-sandbox mcp status local-tools --json
+```
+
+The JSON field `trustedPrivateTarget.state` must report `match`.
+The ordinary provider, policy, and adapter checks must also report readiness.
+
+<Note>
+NemoClaw does not start, configure, monitor, or retain the reverse proxy, MCP process, certificate, DNS record, or host firewall state.
+</Note>
+
+## Choose a Dedicated Credential Name
+
+Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GCP_LOCATION`, `GCP_SERVICE_ACCOUNT_EMAIL`, `GOOSE_PROVIDER`, `ANTHROPIC_VERTEX_PROJECT_ID`, or `VERTEX_LOCATION`.
+NemoClaw rejects them because OpenShell exposes those non-secret configuration names as child-process values.
+
+It also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
+NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.116` commit `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
+Review this list with every OpenShell version change.
+
+OpenShell reserves credential names matching `v[0-9]+_[A-Za-z0-9_]+` for revisioned placeholders.
+NemoClaw rejects names such as `v10_GITHUB_TOKEN` because OpenShell skips them instead of attaching a credential resolver.
+OpenShell `0.0.116` also reserves names matching `s<64-lowercase-hex>_[A-Za-z0-9_]+` for stable credential handles.
+
+NemoClaw rejects host subprocess controls such as `PATH`, proxy or TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys.
+Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well.
+Use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
+
+NemoClaw requires exactly one `--env` bearer credential per server.
+Use a distinct environment variable for each managed server in the same sandbox because credential keys must be unique across attached providers.
+NemoClaw binds each dedicated provider to its generated MCP endpoint, so OpenShell resolves the placeholder only for that endpoint's host, port, and path.
+One normalized endpoint URL can have only one credential-bound managed server definition in a sandbox.
+If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
+
+If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
+
+## Meet Endpoint Requirements
+
+Every endpoint must use HTTPS.
+The full URL, including its path, is persisted and displayed, so never put a credential in the URL path.
+
+NemoClaw rejects userinfo, query strings, fragments, and known secret-shaped path material.
+Put the bearer value in `--env KEY`.
+
+Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores.
+Endpoint hostnames must use lowercase RFC-style DNS labels without empty, leading-hyphen, trailing-hyphen, or overlong labels.
+
+<AgentOnly variant="deepagents">
+Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
+</AgentOnly>
+Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
+Endpoint URLs cannot use port `0`.
+
+NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
+Public endpoints need no trusted-private declaration.
+Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
+Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
+NemoClaw continues to reject loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
+OpenShell re-resolves the hostname for each new connection, requires every current answer to match the pinned `allowed_ips`, and connects to the validated socket addresses.
+
+A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
+
+Cloudflare Quick Tunnels and other public endpoints can rotate their address sets.
+After each change, follow [Change Endpoint Pins](manage-mcp-servers#change-endpoint-pins) to refresh the validated public pins explicitly.
+A named tunnel can stabilize the hostname without stabilizing its address set.
+Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
+
+Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal`.
+OpenShell `v0.0.116` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
+Use a routed HTTPS endpoint on a stable private address instead.
+
+## Understand the Generated Method Profile
+
+The generated policy permits these client-to-server method groups:
+
+- Session: `initialize`, `notifications/initialized`, and `ping`.
+- Tools: `tools/list` and `tools/call`.
+- Resources: `resources/list`, `resources/read`, `resources/templates/list`, `resources/subscribe`, and `resources/unsubscribe`.
+- Prompts: `prompts/list` and `prompts/get`.
+- Tasks: `tasks/list`, `tasks/get`, `tasks/update`, `tasks/result`, and `tasks/cancel`.
+- Completion and logging: `completion/complete` and `logging/setLevel`.
+- Discovery and listening: `server/discover` and `messages/listen`.
+- Notifications: `notifications/cancelled`, `notifications/progress`, `notifications/roots/list_changed`, and `notifications/elicitation/complete`.
+
+Those methods remain bounded to the configured endpoint path, selected agent adapter binaries, pinned addresses, and a 131,072-byte request body.
+
+Without `--deny-tool`, `tools/call` permits every tool exposed by that server.
+Each `--deny-tool` value adds a higher-priority `tools/call` deny rule for one exact name or glob.
+`strict_tool_names` validates tool name syntax and is not a tool authorization allowlist.
+
+OpenShell also handles the protocol-required empty receive-stream `GET` and client response frames for server-originated MCP requests.
+Those frames are transport behavior rather than additional client-initiated method grants.
+
+Stdio-only MCP servers are not supported.
+NemoClaw does not start, wrap, or translate them.
+
+## Next Steps
+
+- [Manage MCP Servers](manage-mcp-servers) to inspect readiness and rotate credentials.
+- [Troubleshoot MCP Servers](../../reference/troubleshoot-mcp-servers) if add does not converge.
+- [About Managed MCP Servers](about-managed-mcp-servers) for the accepted security design.

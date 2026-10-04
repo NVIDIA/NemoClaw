@@ -1,0 +1,139 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import {
+  DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
+  DEEPAGENTS_MCP_MAX_SERVERS,
+  DEEPAGENTS_STRICT_JSON_HELPERS,
+} from "./mcp-bridge-adapter-deepagents-native-config";
+import {
+  DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+  DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
+} from "./mcp-bridge/deepagents-legacy-config";
+import {
+  MANAGED_HTTP_SERVER_MATCH_HELPERS,
+  DEEPAGENTS_MCP_CONFIG_PATH,
+  buildDeepAgentsRuntimeKindCommandLines,
+  deepAgentsManagedServerConfig,
+  pythonJsonLiteral,
+} from "./mcp-bridge-adapter-status";
+
+// Source-of-truth review for the legacy compatibility boundary:
+// invalidState: a v1 sandbox keeps NemoClaw's owned server inside the mutable,
+// user-shared .mcp.json file, while current images use the agent-native config.
+// sourceBoundary: the surviving v1 Deep Agents runtime selects the legacy path;
+// the host registry remains authoritative for the exact entry NemoClaw owns.
+// whyNotSourceFix: replacing the image before teardown would strand its provider
+// and policy, so old images must be scrubbed and rolled back in their own format.
+// regressionTest: focused legacy teardown, rollback, drift, duplicate-key, mode,
+// and runtime-generation suites execute the rendered helper against real files.
+// removalCondition: delete this compatibility module after supported releases can
+// no longer contain registry-owned v1 entries and the migration window has ended.
+export function buildDeepAgentsMcpRollbackRegisterCommand(
+  entry: McpSourceEntry,
+  expectedServers: Record<string, Record<string, unknown>>,
+): string {
+  const payload = {
+    server: entry.server,
+    expected: expectedServers[entry.server] ?? deepAgentsManagedServerConfig(entry),
+    expectedServers,
+  };
+  return [
+    "/opt/venv/bin/python3 -I - <<'PY'",
+    "import json, os, pathlib, stat, sys, tempfile",
+    `payload = json.loads(${pythonJsonLiteral(payload)})`,
+    `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...DEEPAGENTS_STRICT_JSON_HELPERS,
+    ...DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
+    ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
+    ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
+    ...buildDeepAgentsRuntimeKindCommandLines(),
+    "is_v2 = runtime_kind == 'v2'",
+    `if is_v2 and len(payload['expectedServers']) > ${String(DEEPAGENTS_MCP_MAX_SERVERS)}:`,
+    `    print('Managed MCP v2 supports at most ${String(DEEPAGENTS_MCP_MAX_SERVERS)} servers', file=sys.stderr)`,
+    "    raise SystemExit(2)",
+    "config_path = managed_path if is_v2 else legacy_path",
+    "data = {}",
+    "managed_identity = None",
+    "managed_descriptor = None",
+    "legacy_identity = None",
+    "def fail_rollback(message):",
+    "    close_native_mcp_config_descriptor(managed_descriptor)",
+    "    print(message, file=sys.stderr)",
+    "    raise SystemExit(2)",
+    "try:",
+    "    if is_v2:",
+    "        data, managed_identity, managed_descriptor = load_native_mcp_config_for_update(config_path)",
+    "    elif os.path.lexists(config_path):",
+    "        data, legacy_identity = read_legacy_config(config_path)",
+    "except (OSError, UnicodeDecodeError, ValueError) as exc:",
+    "    fail_rollback(f'Invalid managed MCP rollback state at {config_path}: {exc}')",
+    "if not isinstance(data, dict):",
+    "    fail_rollback(f'Invalid managed MCP rollback state at {config_path}: expected object')",
+    "if is_v2:",
+    "    if data and set(data) != {'mcpServers'}:",
+    "        fail_rollback(f'Invalid native MCP v3 config at {config_path}')",
+    "    servers = data.get('mcpServers', {})",
+    "    if not isinstance(servers, dict):",
+    "        fail_rollback(f'Invalid native MCP v3 server map at {config_path}')",
+    "    if any(not managed_http_server_matches(current, payload['expectedServers'].get(name), True) for name, current in servers.items()):",
+    "        fail_rollback(f'Refusing to overwrite drifted native MCP v3 config at {config_path}')",
+    "    next_servers = {}",
+    "    for name, expected in payload['expectedServers'].items():",
+    "        if name != payload['server'] and name in servers:",
+    "            next_servers[name] = servers[name]",
+    "        else:",
+    "            next_servers[name] = expected",
+    "    data = {'mcpServers': next_servers}",
+    "else:",
+    "    servers = data.setdefault('mcpServers', {})",
+    "    if not isinstance(servers, dict):",
+    "        fail_rollback(f'Refusing to overwrite mixed legacy MCP state at {config_path}')",
+    "    current = servers.get(payload['server'])",
+    "    if payload['server'] in servers and current != payload['expected']:",
+    "        fail_rollback(f'Refusing to overwrite user-owned legacy MCP server at {config_path}')",
+    "    servers[payload['server']] = payload['expected']",
+    "config_path.parent.mkdir(parents=True, exist_ok=True)",
+    "if not is_v2:",
+    "    tmp_fd, tmp_name = tempfile.mkstemp(prefix='.nemoclaw-mcp.', dir=config_path.parent)",
+    "    try:",
+    "        os.fchmod(tmp_fd, 0o600)",
+    "        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as tmp_file:",
+    "            json.dump(data, tmp_file, indent=2, sort_keys=True)",
+    "            tmp_file.write('\\n')",
+    "            tmp_file.flush()",
+    "            os.fsync(tmp_file.fileno())",
+    "        assert_legacy_source_stable(config_path, legacy_identity)",
+    "        if legacy_identity is None:",
+    "            os.link(tmp_name, config_path, follow_symlinks=False)",
+    "            os.unlink(tmp_name)",
+    "        else:",
+    "            os.replace(tmp_name, config_path)",
+    "    finally:",
+    "        try:",
+    "            os.unlink(tmp_name)",
+    "        except FileNotFoundError:",
+    "            pass",
+    "else:",
+    "    try:",
+    "        write_native_mcp_config(config_path, data, managed_identity, managed_descriptor)",
+    "    except (OSError, ValueError) as exc:",
+    "        fail_rollback(f'Could not publish managed MCP rollback state at {config_path}: {exc}')",
+    "try:",
+    "    persisted = read_native_mcp_config(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except (OSError, UnicodeDecodeError, ValueError) as exc:",
+    "    fail_rollback(f'Could not verify managed MCP rollback state at {config_path}: {exc}')",
+    "if is_v2:",
+    "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
+    "    restored = isinstance(persisted_servers, dict) and set(persisted_servers) == set(payload['expectedServers']) and all(managed_http_server_matches(persisted_servers.get(name), expected, True) for name, expected in payload['expectedServers'].items())",
+    "else:",
+    "    persisted_servers = persisted.get('mcpServers') if isinstance(persisted, dict) else None",
+    "    restored = isinstance(persisted_servers, dict) and persisted_servers.get(payload['server']) == payload['expected']",
+    "if not restored:",
+    "    fail_rollback(f'Managed MCP rollback verification failed at {config_path}')",
+    "print('NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1')",
+    "PY",
+  ].join("\n");
+}

@@ -7,7 +7,6 @@ import { parsePort } from "./ports.js";
 const ENV_KEY = "TEST_PLUGIN_PORT";
 
 function clearEnv(): void {
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
   delete process.env[ENV_KEY];
 }
 
@@ -36,6 +35,11 @@ describe("parsePort (plugin)", () => {
 
   it("rejects non-numeric", () => {
     process.env[ENV_KEY] = "abc";
+    expect(() => parsePort(ENV_KEY, 18789)).toThrow("Invalid port");
+  });
+
+  it("rejects a leading-zero port", () => {
+    process.env[ENV_KEY] = "08000";
     expect(() => parsePort(ENV_KEY, 18789)).toThrow("Invalid port");
   });
 

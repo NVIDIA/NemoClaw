@@ -1,0 +1,657 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { isDeepStrictEqual } from "node:util";
+
+import { dockerImageInspectFormat, dockerRmi } from "../../adapters/docker";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { TrustedRemoteBaseImageOverride } from "../../agent/base-image";
+import { loadAgent } from "../../agent/defs";
+import {
+  ensureAgentBaseImage,
+  getAgentSandboxBaseImageEnvVar,
+  pinTrustedAgentBaseImageOverrideForOperation,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
+} from "../../agent/onboard";
+import { RD as _RD, R } from "../../cli/terminal-style";
+import { snapshotOpenShellEnv } from "../../gateway-runtime-action";
+import type { WebSearchConfig } from "../../inference/web-search";
+import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  getResumeSandboxGpuOverrides,
+  resolveSandboxGpuConfig,
+} from "../../onboard/sandbox-gpu-mode";
+import type {
+  SandboxBaseImageResolutionMetadata,
+  TrustedLocalBaseImageOverride,
+} from "../../sandbox-base-image";
+import { redact } from "../../security/redact";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
+import type { ToolDisclosure } from "../../tool-disclosure";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import {
+  DCODE_AGENT_NAME,
+  type ResolvedDcodeRebuildTarget,
+  resolveDcodeRebuildTarget,
+} from "./rebuild-dcode-target";
+import {
+  ensureRebuildTargetGatewaySelected,
+  type RebuildAgentBaseImageOptions,
+  type RebuildSandboxEntry,
+} from "./rebuild-flow-helpers";
+import {
+  disposePreparedDcodeRebuildImage,
+  type PreparedDcodeRebuildImage,
+  prepareManagedDcodeRebuildImage,
+  verifyPreparedDcodeRebuildImage,
+} from "./rebuild-managed-image-preflight";
+import type { RebuildResumeConfig } from "./rebuild-resume-config";
+
+export type DcodeRebuildPreflightBail = (message: string, code?: number) => never;
+
+type PinnedDcodeBaseImage = {
+  readonly imageRef: string;
+  readonly resolutionMetadata: SandboxBaseImageResolutionMetadata;
+  readonly trustedLocalOverride?: TrustedLocalBaseImageOverride;
+  readonly trustedRemoteOverride?: TrustedRemoteBaseImageOverride;
+  dispose(): boolean;
+  verify(): boolean;
+};
+
+export type PreparedDcodeReplacement = {
+  readonly buildContext: PreparedDcodeRebuildImage;
+  readonly gatewayName: string;
+  readonly toolDisclosure: ToolDisclosure;
+  readonly dcodeAutoApprovalMode: DcodeAutoApprovalMode;
+  dispose(): boolean;
+  verify(): boolean;
+};
+
+export type DcodeReplacementPreflightInput = {
+  sandboxName: string;
+  entry: RebuildSandboxEntry;
+  resumeConfig: RebuildResumeConfig;
+  toolDisclosure: ToolDisclosure;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode;
+  skipLiveRoute: boolean;
+  /** Authoritative persisted gateway port carried by the rebuild target. */
+  gatewayPort?: number;
+  log(message: string): void;
+  bail: DcodeRebuildPreflightBail;
+  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean | Promise<boolean>;
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
+
+export type DcodeReplacementPreparationInput = DcodeReplacementPreflightInput & {
+  webSearchConfig: WebSearchConfig | null;
+  baseImageOptions?: RebuildAgentBaseImageOptions;
+};
+
+export type DcodeRebuildPreflightScope = {
+  readonly enabled: boolean;
+  readonly bail: DcodeRebuildPreflightBail;
+  readonly preparedBuildContext: PreparedDcodeRebuildImage | null;
+  readonly preparedReplacement: PreparedDcodeReplacement | null;
+  adopt(prepared: PreparedDcodeReplacement): void;
+  cleanup(): void;
+  applyDockerGpuPatchNetwork(): () => void;
+};
+
+/** Own process-local DCode preflight state until the rebuild transaction ends. */
+export function createDcodeRebuildPreflightScope(
+  enabled: boolean,
+  bail: DcodeRebuildPreflightBail,
+  env: NodeJS.ProcessEnv = process.env,
+): DcodeRebuildPreflightScope {
+  const restoreOpenShellEnv = snapshotOpenShellEnv(env);
+  let preparedReplacement: PreparedDcodeReplacement | null = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (!enabled || cleaned) return;
+    let disposed = true;
+    try {
+      if (preparedReplacement) disposed = preparedReplacement.dispose();
+      if (!disposed) {
+        console.warn("  Warning: temporary DCode rebuild inputs could not be fully removed.");
+      }
+    } finally {
+      restoreOpenShellEnv();
+      cleaned = disposed;
+    }
+  };
+
+  return {
+    enabled,
+    bail: enabled
+      ? (message, code) => {
+          cleanup();
+          return bail(message, code);
+        }
+      : bail,
+    get preparedBuildContext() {
+      return preparedReplacement?.buildContext ?? null;
+    },
+    get preparedReplacement() {
+      return preparedReplacement;
+    },
+    adopt(prepared) {
+      preparedReplacement = prepared;
+    },
+    cleanup,
+    applyDockerGpuPatchNetwork() {
+      const preparedBuildContext = preparedReplacement?.buildContext;
+      if (!preparedBuildContext) return () => undefined;
+      const previous = env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+      if (preparedBuildContext.dockerGpuPatchNetwork) {
+        env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = preparedBuildContext.dockerGpuPatchNetwork;
+      } else {
+        delete env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+      }
+      return () => {
+        if (previous === undefined) delete env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+        else env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = previous;
+      };
+    },
+  };
+}
+
+function fail(detail: string, bail: DcodeRebuildPreflightBail, failure = detail): never {
+  console.error("");
+  console.error(`  ${_RD}Rebuild preflight failed:${R} ${redact(detail)}`);
+  console.error("  Sandbox is untouched — no data was lost.");
+  return bail(redact(failure));
+}
+
+/** Select and health-check the gateway recorded for this DCode sandbox. */
+export async function ensureDcodeRebuildTargetGatewaySelected(
+  sandboxName: string,
+  entry: RebuildSandboxEntry,
+  log: (message: string) => void,
+  bail: DcodeRebuildPreflightBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<boolean> {
+  try {
+    resolveSandboxGatewayName(entry);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error), bail);
+  }
+  return ensureRebuildTargetGatewaySelected(sandboxName, entry, log, bail, runtimeSelection);
+}
+
+function resolveTarget(
+  entry: RebuildSandboxEntry,
+  resumeConfig: RebuildResumeConfig,
+  bail: DcodeRebuildPreflightBail,
+  gatewayPort?: number,
+): ResolvedDcodeRebuildTarget {
+  try {
+    return resolveDcodeRebuildTarget(entry, resumeConfig, gatewayPort);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error), bail);
+  }
+}
+
+async function requireInferenceRoute(
+  sandboxName: string,
+  target: ResolvedDcodeRebuildTarget,
+  bail: DcodeRebuildPreflightBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<void> {
+  const result = await probeSandboxInferenceInvocation({
+    sandboxName,
+    agentName: target.agent,
+    ...target,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  });
+  if (!result.ok) {
+    fail(
+      `recorded inference credentials or route were rejected: ${result.detail}`,
+      bail,
+      "Recorded inference route smoke check failed",
+    );
+  }
+}
+
+function loadMatchingDcodeSession(
+  sandboxName: string,
+): ReturnType<typeof onboardSession.loadSession> {
+  const session = onboardSession.loadSession();
+  return session?.sandboxName === sandboxName ? session : null;
+}
+
+function requireCurrentTarget(
+  sandboxName: string,
+  entry: RebuildSandboxEntry,
+  target: ResolvedDcodeRebuildTarget,
+  resumeConfig: RebuildResumeConfig,
+  bail: DcodeRebuildPreflightBail,
+  gatewayPort?: number,
+): void {
+  const currentEntry = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
+  if (!currentEntry || !isDeepStrictEqual(currentEntry, entry)) {
+    fail("the recorded sandbox target changed during preflight", bail);
+  }
+  const currentTarget = resolveTarget(currentEntry, resumeConfig, bail, gatewayPort);
+  if (!isDeepStrictEqual(currentTarget, target)) {
+    fail("the resolved DCode target changed during preflight", bail);
+  }
+}
+
+function getRecordedGpuConfig(
+  sandboxName: string,
+  entry: RebuildSandboxEntry,
+  session: ReturnType<typeof onboardSession.loadSession>,
+) {
+  const overrides = getResumeSandboxGpuOverrides(
+    entry,
+    session?.sandboxName === sandboxName ? session.gpuPassthrough : undefined,
+  );
+  return resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(entry.openshellDriver),
+    {
+      flag: overrides.flag,
+      device: overrides.device,
+      env: {},
+    },
+  );
+}
+
+function inspectLocalImageId(imageRef: string): string {
+  try {
+    return dockerImageInspectFormat("{{.Id}}", imageRef, {
+      ignoreError: true,
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function isImmutableRemoteImageRef(imageRef: string): boolean {
+  return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
+}
+
+function recordedDcodeOverrideReference(
+  metadata: SandboxBaseImageResolutionMetadata | null | undefined,
+  imageName: string,
+  bail: DcodeRebuildPreflightBail,
+): string | null {
+  if (!metadata || metadata.source !== "override") return null;
+  if (
+    typeof metadata.digest !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(metadata.digest) ||
+    metadata.imageName !== imageName ||
+    metadata.ref !== `${imageName}@${metadata.digest}` ||
+    metadata.pinnedRemoteRef !== undefined
+  ) {
+    fail(
+      "the recorded Deep Agents Code base-image resolution metadata does not describe an exact published override",
+      bail,
+    );
+  }
+  return metadata.ref;
+}
+
+function reuseRecordedDcodeBaseImage(
+  agent: ReturnType<typeof loadAgent>,
+  options: RebuildAgentBaseImageOptions,
+  bail: DcodeRebuildPreflightBail,
+): ReturnType<typeof ensureAgentBaseImage> | null {
+  const metadata = options.resolutionHint;
+  const envName = getAgentSandboxBaseImageEnvVar(agent.name);
+  if (
+    process.env[envName]?.trim() ||
+    options.forceBaseImageRefresh === true ||
+    isSandboxBaseImageRefreshRequested(process.env) ||
+    !metadata
+  ) {
+    return null;
+  }
+  const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const imageRef = recordedDcodeOverrideReference(metadata, imageName, bail);
+  if (!imageRef) return null;
+
+  const hadPrevious = Object.hasOwn(process.env, envName);
+  const previous = process.env[envName];
+  const restoreLease = pinTrustedAgentRemoteBaseImageOverrideForOperation(envName, {
+    ref: imageRef,
+    resolutionMetadata: metadata,
+  });
+  try {
+    process.env[envName] = imageRef;
+    const result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
+    if (
+      result.imageTag !== imageRef ||
+      result.resolutionMetadata !== metadata ||
+      result.resolutionMetadata.source !== "override"
+    ) {
+      fail(
+        "the recorded Deep Agents Code base-image resolution metadata could not be revalidated",
+        bail,
+      );
+    }
+    return result;
+  } finally {
+    restoreLease();
+    if (hadPrevious && previous !== undefined) process.env[envName] = previous;
+    else delete process.env[envName];
+  }
+}
+
+function resolvePinnedDcodeBaseImage(
+  bail: DcodeRebuildPreflightBail,
+  options: RebuildAgentBaseImageOptions = {},
+): PinnedDcodeBaseImage {
+  const agent = loadAgent(DCODE_AGENT_NAME);
+  if (!agent.dockerfileBasePath) {
+    fail("DCode is missing its sandbox base Dockerfile", bail);
+  }
+  let result = reuseRecordedDcodeBaseImage(agent, options, bail);
+  if (!result) {
+    try {
+      result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
+    } catch {
+      try {
+        result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+      } catch (buildError) {
+        fail(
+          `DCode base image could not be resolved or built: ${buildError instanceof Error ? buildError.message : String(buildError)}`,
+          bail,
+        );
+      }
+    }
+  }
+  if (
+    result.imageTag &&
+    !result.trustedLocalOverride &&
+    !isImmutableRemoteImageRef(result.imageTag)
+  ) {
+    try {
+      result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+    } catch (error) {
+      fail(
+        `DCode base image could not be built: ${error instanceof Error ? error.message : String(error)}`,
+        bail,
+      );
+    }
+  }
+  const imageRef = result.imageTag;
+  const trustedLocalOverride = result.trustedLocalOverride;
+  const trustedRemoteOverride =
+    imageRef &&
+    isImmutableRemoteImageRef(imageRef) &&
+    result.resolutionMetadata?.ref === imageRef &&
+    result.resolutionMetadata.source !== "local"
+      ? { ref: imageRef, resolutionMetadata: result.resolutionMetadata }
+      : undefined;
+  if (
+    !imageRef ||
+    (trustedLocalOverride?.ref !== imageRef && trustedRemoteOverride?.ref !== imageRef)
+  ) {
+    fail("DCode base image did not retain its current resolution proof", bail);
+  }
+  const imageId = inspectLocalImageId(imageRef);
+  if (!imageId) {
+    if (trustedLocalOverride) {
+      try {
+        dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
+      } catch {
+        // The identity failure is the actionable error.
+      }
+    }
+    fail("DCode base image identity could not be verified", bail);
+  }
+  const resolutionMetadata = result.resolutionMetadata;
+  if (
+    !resolutionMetadata ||
+    resolutionMetadata.ref !== imageRef ||
+    resolutionMetadata.imageId !== imageId
+  ) {
+    if (trustedLocalOverride) {
+      try {
+        dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
+      } catch {
+        // Report the metadata mismatch instead of the Docker cleanup failure.
+      }
+    }
+    fail("DCode base-image resolution metadata does not match the pinned image", bail);
+  }
+
+  let disposed = trustedRemoteOverride !== undefined;
+  let warned = false;
+  const dispose = (): boolean => {
+    if (disposed) return true;
+    try {
+      const removal = dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
+      if (removal.status === 0) {
+        disposed = true;
+        process.removeListener("exit", dispose);
+        return true;
+      }
+    } catch {
+      // Report the same safe warning below.
+    }
+    if (!warned) {
+      warned = true;
+      console.warn("  Warning: failed to remove the temporary DCode base image.");
+    }
+    return false;
+  };
+  if (trustedLocalOverride) process.on("exit", dispose);
+  return {
+    imageRef,
+    resolutionMetadata,
+    trustedLocalOverride,
+    trustedRemoteOverride,
+    dispose,
+    verify: () => inspectLocalImageId(imageRef) === imageId,
+  };
+}
+
+async function withPinnedBaseImage<T>(
+  pinned: PinnedDcodeBaseImage,
+  action: () => Promise<T>,
+): Promise<T> {
+  const envName = "NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF";
+  const hadPrevious = Object.hasOwn(process.env, envName);
+  const previous = process.env[envName];
+  const restoreTrustedLocalOverride = pinned.trustedLocalOverride
+    ? pinTrustedAgentBaseImageOverrideForOperation(envName, pinned.trustedLocalOverride)
+    : () => undefined;
+  const restoreTrustedRemoteOverride = pinned.trustedRemoteOverride
+    ? pinTrustedAgentRemoteBaseImageOverrideForOperation(envName, pinned.trustedRemoteOverride)
+    : () => undefined;
+  process.env[envName] = pinned.imageRef;
+  try {
+    return await action();
+  } finally {
+    restoreTrustedRemoteOverride();
+    restoreTrustedLocalOverride();
+    if (hadPrevious && previous !== undefined) process.env[envName] = previous;
+    else delete process.env[envName];
+  }
+}
+
+function disposePreparation(
+  buildContext: PreparedDcodeRebuildImage | null,
+  pinnedBase: PinnedDcodeBaseImage | null,
+): boolean {
+  let contextDisposed = true;
+  let baseDisposed = true;
+  if (buildContext) contextDisposed = disposePreparedDcodeRebuildImage(buildContext);
+  if (pinnedBase) baseDisposed = pinnedBase.dispose();
+  return contextDisposed && baseDisposed;
+}
+
+/** Prebuild and revalidate the managed DCode replacement inputs before mutation. */
+export async function prepareDcodeReplacementBeforeMutation(
+  input: DcodeReplacementPreparationInput,
+): Promise<PreparedDcodeReplacement | null> {
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    webSearchConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+    runtimeSelection,
+  } = input;
+  let buildContext: PreparedDcodeRebuildImage | null = null;
+  let pinnedBase: PinnedDcodeBaseImage | null = null;
+  let transferred = false;
+  try {
+    if (!sandboxState.hasPositiveManagedImageEvidence(entry)) {
+      fail(
+        "the registry has no NemoClaw-managed image fingerprint; custom and legacy images cannot be safely prebuilt and recreated automatically",
+        bail,
+      );
+    }
+
+    const session = loadMatchingDcodeSession(sandboxName);
+    const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+
+    pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
+    const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
+    if (sandboxGpuConfig.errors.length > 0) fail(sandboxGpuConfig.errors.join(" "), bail);
+    const pinnedBaseForPreparation = pinnedBase;
+    const imageResult = await withPinnedBaseImage(pinnedBaseForPreparation, () =>
+      prepareManagedDcodeRebuildImage({
+        agent: loadAgent(DCODE_AGENT_NAME),
+        provider: target.provider,
+        model: target.model,
+        preferredInferenceApi: target.preferredInferenceApi,
+        compatibleEndpointReasoning: resumeConfig.compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort: resumeConfig.compatibleEndpointReasoningEffort,
+        webSearchConfig,
+        toolDisclosure: input.toolDisclosure,
+        dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
+        preResolvedBaseImageMetadata: pinnedBaseForPreparation.resolutionMetadata,
+        sandboxGpuConfig,
+        gatewayPort,
+      }),
+    );
+    if (!imageResult.ok) fail(imageResult.detail, bail);
+    buildContext = imageResult.prepared;
+
+    if (
+      !(await ensureDcodeRebuildTargetGatewaySelected(
+        sandboxName,
+        entry,
+        log,
+        bail,
+        runtimeSelection,
+      ))
+    ) {
+      return null;
+    }
+    if (!(await input.checkGatewaySchema(runtimeSelection))) return null;
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
+    if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
+      fail("the prepared DCode replacement inputs changed during preflight", bail);
+    }
+
+    const preparedBuildContext = buildContext;
+    const preparedBase = pinnedBase;
+    const replacement: PreparedDcodeReplacement = {
+      buildContext: preparedBuildContext,
+      gatewayName: target.gatewayName,
+      toolDisclosure: input.toolDisclosure,
+      dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
+      dispose: () => disposePreparation(preparedBuildContext, preparedBase),
+      verify: () => verifyPreparedDcodeRebuildImage(preparedBuildContext) && preparedBase.verify(),
+    };
+    transferred = true;
+    return replacement;
+  } finally {
+    if (!transferred) disposePreparation(buildContext, pinnedBase);
+  }
+}
+
+/** Recheck long-running backup inputs at the last safe point before deletion. */
+export async function revalidateDcodeReplacementAtMutationEdge(
+  input: DcodeReplacementPreflightInput & { replacement: PreparedDcodeReplacement },
+): Promise<boolean> {
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+    replacement,
+    runtimeSelection,
+  } = input;
+  const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
+  if (replacement.gatewayName !== target.gatewayName) {
+    fail("the prepared DCode gateway changed before deletion", bail);
+  }
+  if (replacement.toolDisclosure !== input.toolDisclosure) {
+    fail("the prepared DCode tool-disclosure mode changed before deletion", bail);
+  }
+  if (replacement.dcodeAutoApprovalMode !== input.dcodeAutoApprovalMode) {
+    fail("the prepared DCode auto-approval mode changed before deletion", bail);
+  }
+  if (
+    !(await ensureDcodeRebuildTargetGatewaySelected(
+      sandboxName,
+      entry,
+      log,
+      bail,
+      runtimeSelection,
+    ))
+  ) {
+    return false;
+  }
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
+  if (!replacement.verify()) {
+    fail("the prepared DCode replacement inputs changed before deletion", bail);
+  }
+  return true;
+}
+
+/**
+ * Revalidate DCode's live route and registry target when the replacement is an
+ * immutable managed image. The generic managed-workload handoff owns the exact
+ * image and profile authority, so no Dockerfile artifact exists to retain.
+ */
+export async function revalidateManagedDcodeWorkloadAtMutationEdge(
+  input: DcodeReplacementPreflightInput,
+): Promise<boolean> {
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+    runtimeSelection,
+  } = input;
+  const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
+  if (
+    !(await ensureDcodeRebuildTargetGatewaySelected(
+      sandboxName,
+      entry,
+      log,
+      bail,
+      runtimeSelection,
+    ))
+  ) {
+    return false;
+  }
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
+  return true;
+}

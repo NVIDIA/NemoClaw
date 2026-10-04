@@ -1,0 +1,232 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { vi } from "vitest";
+
+import { describe, expect, test as it } from "../helpers/owned-test-resources";
+import {
+  livePolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/live-policy-fixture";
+
+import {
+  runWithEnvAsync,
+  runWithInputAsync,
+  testTimeoutOptions,
+  writeSandboxRegistry,
+} from "./helpers";
+
+vi.setConfig({ maxConcurrency: 4 });
+
+function readOpenShellPolicy(home: string): string {
+  return fs.readFileSync(path.join(home, "applied-policy.yaml"), "utf8");
+}
+
+function writePolicyMutationOpenshellStub(home: string): string {
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  const openshell = path.join(localBin, "openshell");
+  const appliedPolicy = path.join(home, "applied-policy.yaml");
+  fs.writeFileSync(appliedPolicy, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+  fs.writeFileSync(
+    openshell,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      `  printf 'Name: alpha\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n'`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+      '  if [[ " $* " == *" --output json "* ]]; then',
+      `    printf '%s\\n' ${JSON.stringify(livePolicyMetadata("alpha"))}`,
+      "    exit 0",
+      "  fi",
+      `  cat ${JSON.stringify(appliedPolicy)}`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "policy" ] && [ "$2" = "set" ]; then',
+      '  while [ "$#" -gt 0 ]; do',
+      '    if [ "$1" = "--policy" ]; then',
+      `      cp "$2" ${JSON.stringify(appliedPolicy)}`,
+      "      break",
+      "    fi",
+      "    shift",
+      "  done",
+      "  exit 0",
+      "fi",
+      'printf "unexpected openshell args: %s\\n" "$*" >&2',
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return openshell;
+}
+
+describe.concurrent("CLI dispatch", () => {
+  it("connect help uses native oclif usage through the public sandbox route", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+
+    const connect = await runWithEnvAsync("alpha connect --help", testHome.environment());
+
+    expect(connect.code).toBe(0);
+    expect(connect.out).toContain("Usage: nemoclaw alpha connect");
+    expect(connect.out).not.toContain("sandbox:connect");
+  });
+
+  it(
+    "keeps public compatibility help routes for sandbox command families",
+    testTimeoutOptions(30_000),
+    async ({ testHome }) => {
+      const { home } = testHome;
+      writeSandboxRegistry(home);
+
+      const logs = await runWithEnvAsync("alpha logs --help", testHome.environment());
+      expect(logs.code).toBe(0);
+      expect(logs.out).toContain("$ nemoclaw alpha logs");
+      expect(logs.out).not.toContain("$ nemoclaw sandbox logs");
+      expect(logs.out).toContain("--tail");
+
+      const policy = await runWithEnvAsync("alpha policy-add --help", testHome.environment());
+      expect(policy.code).toBe(0);
+      expect(policy.out).toContain("$ nemoclaw alpha policy add");
+      expect(policy.out).not.toContain("$ nemoclaw sandbox policy add");
+
+      const hosts = await runWithEnvAsync("alpha hosts-add --help", testHome.environment());
+      expect(hosts.code).toBe(0);
+      expect(hosts.out).toContain("$ nemoclaw alpha hosts-add");
+      expect(hosts.out).not.toContain("$ nemoclaw sandbox hosts add");
+
+      const channels = await runWithEnvAsync("alpha channels add --help", testHome.environment());
+      expect(channels.code).toBe(0);
+      expect(channels.out).toContain("$ nemoclaw alpha channels add");
+      expect(channels.out).not.toContain("$ nemoclaw sandbox channels add");
+
+      const config = await runWithEnvAsync("alpha config get --help", testHome.environment());
+      expect(config.code).toBe(0);
+      expect(config.out).toContain("$ nemoclaw alpha config get");
+      expect(config.out).not.toContain("$ nemoclaw sandbox config get");
+      expect(config.out).toContain("--format json|yaml");
+
+      const rebuild = await runWithEnvAsync("alpha rebuild --help", testHome.environment());
+      expect(rebuild.code).toBe(0);
+      expect(rebuild.out).toContain(
+        "Back up, recreate, and restore a sandbox using the current agent image.",
+      );
+    },
+  );
+
+  it("keeps public mutation dry-runs", async ({ testHome }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+
+    const policy = await runWithEnvAsync(
+      "alpha policy-add github --dry-run",
+      testHome.environment(),
+    );
+    expect(policy.code).toBe(0);
+    expect(policy.out).toContain("--dry-run: no changes applied.");
+
+    const channels = await runWithEnvAsync(
+      "alpha channels add telegram --dry-run",
+      testHome.environment(),
+    );
+    expect(channels.code).toBe(0);
+    expect(channels.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+  });
+
+  it("keeps public policy-add/remove built-in mutation routes", async ({ testHome }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home, managedSandboxEntry("alpha"));
+    const openshell = writePolicyMutationOpenshellStub(home);
+
+    const add = await runWithEnvAsync(
+      "alpha policy-add github --yes",
+      testHome.environment({
+        NEMOCLAW_OPENSHELL_BIN: openshell,
+      }),
+    );
+    expect(add.code).toBe(0);
+    expect(add.out).toContain("Applied preset: github");
+    expect(readOpenShellPolicy(home)).toContain("github:");
+
+    const remove = await runWithEnvAsync(
+      "alpha policy-remove github -y",
+      testHome.environment({
+        NEMOCLAW_OPENSHELL_BIN: openshell,
+      }),
+    );
+    expect(remove.code).toBe(0);
+    expect(remove.out).toContain("Removed preset: github");
+    expect(readOpenShellPolicy(home)).not.toContain("github:");
+  });
+
+  it("keeps public policy-add non-interactive missing-preset failure before mutation", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+    const openshell = writePolicyMutationOpenshellStub(home);
+
+    const result = await runWithEnvAsync(
+      "alpha policy-add",
+      testHome.environment({
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_BIN: openshell,
+      }),
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Non-interactive mode requires a preset name.");
+    expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
+  });
+
+  it("keeps public policy-add missing-preset failure when stdin contains probe output", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+    const openshell = writePolicyMutationOpenshellStub(home);
+
+    const result = await runWithInputAsync(
+      "alpha policy-add",
+      "/usr/bin/dmesg\n3",
+      testHome.environment({
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_BIN: openshell,
+      }),
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Non-interactive mode requires a preset name.");
+    expect(result.out).not.toContain("Unknown preset '/usr/bin/dmesg");
+    expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
+  });
+
+  it("sandbox channels start rejects a sandbox missing from the registry (#4584)", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+
+    const startMissing = await runWithEnvAsync(
+      "sandbox channels start does-not-exist telegram",
+      testHome.environment(),
+    );
+    const stopMissing = await runWithEnvAsync(
+      "sandbox channels stop does-not-exist telegram",
+      testHome.environment(),
+    );
+
+    expect(startMissing.code).toBe(1);
+    expect(startMissing.out).toContain("Sandbox 'does-not-exist' not found in the registry.");
+    expect(stopMissing.code).toBe(1);
+    expect(stopMissing.out).toContain("Sandbox 'does-not-exist' not found in the registry.");
+  });
+});

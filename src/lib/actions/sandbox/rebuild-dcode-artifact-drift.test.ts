@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+import {
+  configureDcodeSession,
+  makeDcodeSandboxEntry,
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import {
+  createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
+
+describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it("preserves live DCode when retained replacement inputs drift after backup (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+      dcodeImageVerificationResults: [true, false],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+  });
+  it("preserves live DCode when its pinned base image drifts after backup (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+      dcodeBaseImageIds: [`sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`, "sha256:changed"],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+  });
+});

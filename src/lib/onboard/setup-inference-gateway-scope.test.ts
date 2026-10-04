@@ -1,0 +1,282 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+import { scopeGatewayOpenshellArgs } from "../adapters/openshell/gateway-scope";
+import { createInferenceRouteHelpers } from "./inference-route";
+import {
+  bindGatewayUpsertProvider,
+  createRoutedResumeProviderUpsert,
+  createGatewayScopedOpenshellRunner,
+  selectGatewayForFollowupOrExit,
+} from "./setup-inference";
+
+const GATEWAY = "nemoclaw-9090";
+
+describe("gateway-scoped onboarding OpenShell commands", () => {
+  it.each([
+    [
+      ["provider", "get", "openai-api"],
+      ["provider", "get", "-g", GATEWAY, "openai-api"],
+    ],
+    [
+      ["inference", "set", "--provider", "openai-api", "--model", "gpt-test"],
+      ["inference", "set", "-g", GATEWAY, "--provider", "openai-api", "--model", "gpt-test"],
+    ],
+    [
+      ["sandbox", "provider", "detach", "alpha", "openai-api"],
+      ["sandbox", "provider", "detach", "-g", GATEWAY, "alpha", "openai-api"],
+    ],
+  ])("adds the target gateway to %j", (input, expected) => {
+    expect(scopeGatewayOpenshellArgs(input, GATEWAY)).toEqual(expected);
+  });
+
+  it("targets sandbox execution at the same gateway", () => {
+    expect(
+      scopeGatewayOpenshellArgs(["sandbox", "exec", "-n", "alpha", "--", "true"], GATEWAY),
+    ).toEqual(["sandbox", "exec", "-g", GATEWAY, "-n", "alpha", "--", "true"]);
+  });
+
+  it("does not treat gateway-like sandbox payload arguments as OpenShell options", () => {
+    expect(
+      scopeGatewayOpenshellArgs(
+        [
+          "sandbox",
+          "exec",
+          "-n",
+          "alpha",
+          "--",
+          "tool",
+          "--gateway",
+          "payload-gateway",
+          "--gateway-endpoint=https://payload.example.test",
+        ],
+        GATEWAY,
+      ),
+    ).toEqual([
+      "sandbox",
+      "exec",
+      "-g",
+      GATEWAY,
+      "-n",
+      "alpha",
+      "--",
+      "tool",
+      "--gateway",
+      "payload-gateway",
+      "--gateway-endpoint=https://payload.example.test",
+    ]);
+  });
+
+  it.each([
+    ["--gateway-endpoint", "https://other.example.test"],
+    ["--gateway-endpoint=https://other.example.test"],
+  ])(
+    "rejects an explicit endpoint override before the payload separator: %j",
+    (...endpointArgs) => {
+      expect(() =>
+        scopeGatewayOpenshellArgs(["provider", "get", ...endpointArgs, "openai-api"], GATEWAY),
+      ).toThrow(/--gateway-endpoint may bypass the gateway recorded/);
+    },
+  );
+
+  it.each([["-g", GATEWAY], ["--gateway", GATEWAY], [`--gateway=${GATEWAY}`]])(
+    "accepts an identical existing target: %j",
+    (...gatewayArgs) => {
+      const command = ["provider", "list", ...gatewayArgs];
+      expect(scopeGatewayOpenshellArgs(command, GATEWAY)).toEqual(command);
+    },
+  );
+
+  it("rejects a conflicting, duplicate, missing, or selection-based target", () => {
+    expect(() =>
+      scopeGatewayOpenshellArgs(["provider", "get", "-g", "nemoclaw", "openai-api"], GATEWAY),
+    ).toThrow(/instead of 'nemoclaw-9090'/);
+    expect(() =>
+      scopeGatewayOpenshellArgs(["inference", "get", "-g", GATEWAY, "--gateway", GATEWAY], GATEWAY),
+    ).toThrow(/multiple gateway targets/);
+    expect(() => scopeGatewayOpenshellArgs(["provider", "list", "-g"], GATEWAY)).toThrow(
+      /instead of 'nemoclaw-9090'/,
+    );
+    expect(() => scopeGatewayOpenshellArgs(["gateway", "select", GATEWAY], GATEWAY)).toThrow(
+      /must not change the selected gateway/,
+    );
+  });
+
+  it("scopes every command sent through the runner without mutating the caller argv", () => {
+    const run = vi.fn((_args: string[], _options?: { ignoreError?: boolean }) => ({ status: 0 }));
+    const scoped = createGatewayScopedOpenshellRunner(run, GATEWAY);
+    const command = ["provider", "delete", "openai-api"];
+    scoped(command, { ignoreError: true });
+    expect(command).toEqual(["provider", "delete", "openai-api"]);
+    expect(run).toHaveBeenCalledWith(["provider", "delete", "-g", GATEWAY, "openai-api"], {
+      ignoreError: true,
+    });
+  });
+
+  it("rejects an ambient endpoint override before creating a scoped runner", () => {
+    const run = vi.fn();
+    expect(() =>
+      createGatewayScopedOpenshellRunner(run, GATEWAY, {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",
+      }),
+    ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("keeps an omitted provider env separate from the bound gateway", async () => {
+    const upsert = vi.fn(async () => ({ ok: true }));
+    await bindGatewayUpsertProvider(upsert, GATEWAY)(
+      "openai-api",
+      "openai",
+      "OPENAI_API_KEY",
+      null,
+    );
+    expect(upsert).toHaveBeenCalledWith(
+      "openai-api",
+      "openai",
+      "OPENAI_API_KEY",
+      null,
+      undefined,
+      GATEWAY,
+    );
+  });
+
+  it("binds a routed resume provider mutation to the selected gateway", async () => {
+    const events: string[] = [];
+    const upsert = vi.fn(async () => {
+      events.push("provider mutation");
+      return { ok: true };
+    });
+    const reupsertRoutedProvider = createRoutedResumeProviderUpsert({
+      upsertProvider: upsert,
+      hydrateCredentialEnv: () => "test-secret",
+    });
+
+    expect(
+      await reupsertRoutedProvider(
+        GATEWAY,
+        "nvidia-router",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).toEqual({
+      ok: true,
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      message: undefined,
+      status: undefined,
+    });
+
+    expect(events).toEqual(["provider mutation"]);
+    expect(upsert).toHaveBeenCalledWith(
+      "nvidia-router",
+      "openai",
+      "NVIDIA_INFERENCE_API_KEY",
+      "http://host.openshell.internal:4000/v1",
+      { NVIDIA_INFERENCE_API_KEY: "test-secret" },
+      GATEWAY,
+    );
+  });
+
+  it("selects the managed gateway for follow-up commands and fails closed on error", async () => {
+    const selectGateway = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, state: "completed" })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: { kind: "command", reason: "failed", message: "Denied" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The named gateway is not registered.",
+        },
+      });
+    const lifecycle = { selectGateway };
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).resolves.toBeUndefined();
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    expect(selectGateway).toHaveBeenNthCalledWith(1, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(selectGateway).toHaveBeenNthCalledWith(2, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(selectGateway).toHaveBeenNthCalledWith(3, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("No follow-up operations"));
+  });
+});
+
+describe("gateway-scoped inference route readers", () => {
+  it("uses the explicit gateway for verification and readiness", () => {
+    const observeInferenceRoute = vi.fn(() => ({
+      ok: true as const,
+      value: {
+        state: "configured" as const,
+        route: { provider: "openai-api", model: "gpt-test" },
+      },
+    }));
+    const route = createInferenceRouteHelpers({ observeInferenceRoute });
+
+    route.verifyInferenceRoute(GATEWAY, "openai-api", "gpt-test");
+    expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "gpt-test")).toBe(true);
+    expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "other")).toBe(false);
+    expect(observeInferenceRoute).toHaveBeenCalledTimes(3);
+    observeInferenceRoute.mock.calls.forEach((call) => {
+      expect(call).toEqual([{ target: { kind: "named", gatewayName: GATEWAY } }]);
+    });
+  });
+
+  it("reads compatibility peers through the injected registry boundary", () => {
+    const listSandboxes = vi.fn(() => ({
+      defaultSandbox: "alpha",
+      sandboxes: [
+        {
+          name: "alpha",
+          gatewayName: GATEWAY,
+          gatewayPort: 9090,
+          provider: "openai-api",
+          model: "gpt-test",
+          gpuEnabled: false,
+        },
+      ],
+    }));
+    const route = createInferenceRouteHelpers(
+      {
+        observeInferenceRoute: vi.fn(() => ({
+          ok: false as const,
+          error: { kind: "transport" as const, reason: "unreachable" as const, message: "down" },
+        })),
+      },
+      listSandboxes,
+    );
+
+    expect(
+      route.checkGatewayRouteCompatibility({
+        gatewayName: GATEWAY,
+        sandboxName: "alpha",
+        route: { provider: "openai-api", model: "gpt-test" },
+      }),
+    ).toEqual({ ok: true });
+    expect(listSandboxes).toHaveBeenCalledOnce();
+  });
+});

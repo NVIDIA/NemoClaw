@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.qwen3-6-27b-fp8.linux-amd64-single.v1
+  displayName: Qwen3.6 27B FP8 with vLLM on Linux amd64
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.qwen3-6-27b-fp8.v1
+  runtime:
+    image: nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773
+    imageDownloadSizeBytes: 8928665752
+    minimumComputeCapability: 89
+    minimumGpuMemoryBytes: 48000000000
+    pullTimeoutSeconds: 43200
+    architecture: amd64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 68719476736
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 262144
+      - name: --gpu-memory-utilization
+        value: 0.7
+      - name: --max-num-seqs
+        value: 4
+      - name: --reasoning-parser
+        value: qwen3
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: qwen3_coder
+      - name: --load-format
+        value: fastsafetensors
+      - name: --enable-prefix-caching
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: Qwen/Qwen3.6-27B-FP8

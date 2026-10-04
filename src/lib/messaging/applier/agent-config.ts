@@ -1,0 +1,1088 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { posix as path } from "node:path";
+
+import JSON5 from "json5";
+import YAML from "yaml";
+
+import { isObjectRecord } from "../../core/json-types";
+import { redact } from "../../security/redact";
+import type { MessagingHookOutputMap } from "../hooks";
+import type {
+  ChannelHookPhase,
+  MessagingAgentId,
+  MessagingSerializableValue,
+  SandboxMessagingAgentRenderPlan,
+  SandboxMessagingChannelPlan,
+  SandboxMessagingEnvLinesRenderPlan,
+  SandboxMessagingJsonRenderPlan,
+  SandboxMessagingPlan,
+} from "../manifest";
+import { isProviderPlaceholderForEnvKey } from "../provider-placeholders";
+import {
+  HERMES_ENV_RENDER_TARGET,
+  migrationOnlyEnvTargets,
+  ownedCredentialEnvKeys,
+  readEnvLineKey,
+  staleCredentialEnvKeys,
+} from "./credential-env-cleanup";
+import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
+import type {
+  MessagingHookApplyRequest,
+  MessagingHookApplyRunner,
+  MessagingOpenShellRunner,
+} from "./types";
+
+const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>(["apply", "post-agent-install"]);
+const OPENCLAW_CONFIG_TARGET = "/sandbox/.openclaw/openclaw.json";
+
+export function listHookRequests(
+  plan: SandboxMessagingPlan,
+  phase?: ChannelHookPhase,
+): MessagingHookApplyRequest[] {
+  return enabledPlanChannels(plan).flatMap((channel) =>
+    channel.hooks
+      .filter((hook) => !phase || hook.phase === phase)
+      .map((hook) => toHookApplyRequest(plan, channel, hook)),
+  );
+}
+
+export async function applyAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  options: {
+    readonly runOpenshell: MessagingOpenShellRunner;
+    readonly runHook?: MessagingHookApplyRunner;
+  },
+): Promise<{
+  readonly appliedTargets: readonly string[];
+  readonly appliedHooks: readonly string[];
+  readonly unresolvedTemplateRefs: readonly string[];
+}> {
+  const hookRequests = hookRequestsForPhases(plan, AGENT_CONFIG_HOOK_PHASES);
+  if (hookRequests.length > 0 && !options.runHook) {
+    throw new Error("Messaging agent config hooks require a hook runner.");
+  }
+
+  const appliedHooks: string[] = [];
+  const appliedTargets: string[] = [];
+  for (const request of hookRequests.filter((hook) => hook.phase === "apply")) {
+    await runApplyHook(request, options.runHook, plan, options.runOpenshell, {
+      appliedHooks,
+      appliedTargets,
+    });
+  }
+
+  const enabledRender = filterEnabledPlanEntries(plan, plan.agentRender);
+  const disabledChannelIds = new Set(plan.disabledChannels);
+  const disabledJsonRender = plan.agentRender.filter(
+    (entry): entry is SandboxMessagingJsonRenderPlan =>
+      entry.kind === "json-fragment" && disabledChannelIds.has(entry.channelId),
+  );
+
+  const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledJsonRender]);
+  const targets: [string, SandboxMessagingAgentRenderPlan[]][] = [
+    ...renderByTarget,
+    ...migrationOnlyEnvTargets(plan, new Set(renderByTarget.keys())).map(
+      (target) => [target, []] as [string, SandboxMessagingAgentRenderPlan[]],
+    ),
+  ];
+  for (const [target, render] of targets) {
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const kind = render[0]?.kind;
+    if (kind && render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot apply mixed messaging render kinds to ${target}.`);
+    }
+    if (
+      plan.agent === "openclaw" &&
+      resolvedTarget === OPENCLAW_CONFIG_TARGET &&
+      kind === "json-fragment"
+    ) {
+      const changed = applyOpenClawConfigPatch(
+        plan.sandboxName,
+        render.filter(
+          (entry): entry is SandboxMessagingJsonRenderPlan =>
+            isJsonRender(entry) && !disabledChannelIds.has(entry.channelId),
+        ),
+        render.filter(
+          (entry): entry is SandboxMessagingJsonRenderPlan =>
+            isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
+        ),
+        options.runOpenshell,
+      );
+      if (changed) appliedTargets.push(resolvedTarget);
+      continue;
+    }
+    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    // Nothing rendered and no file on disk: no migration to perform.
+    if (!kind && existing === undefined) continue;
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonFragments(
+            plan,
+            existing,
+            render.filter(
+              (entry): entry is SandboxMessagingJsonRenderPlan =>
+                isJsonRender(entry) && !disabledChannelIds.has(entry.channelId),
+            ),
+            render.filter(
+              (entry): entry is SandboxMessagingJsonRenderPlan =>
+                isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
+            ),
+            resolvedTarget,
+          )
+        : applyEnvLines(plan, existing, render.filter(isEnvLinesRender));
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+
+  for (const request of hookRequests.filter((hook) => hook.phase === "post-agent-install")) {
+    await runApplyHook(request, options.runHook, plan, options.runOpenshell, {
+      appliedHooks,
+      appliedTargets,
+    });
+  }
+
+  return {
+    appliedTargets: uniqueStrings(appliedTargets),
+    appliedHooks,
+    unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
+  };
+}
+
+/** Remove only one disabled channel's manifest-owned config before plan retirement. */
+export function removeDisabledChannelAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly appliedTargets: readonly string[] } {
+  if (!plan.disabledChannels.includes(channelId)) {
+    throw new Error(`Cannot remove active messaging channel config '${channelId}'.`);
+  }
+  const disabledRender = plan.agentRender.filter((entry) => entry.channelId === channelId);
+  const appliedTargets: string[] = [];
+  for (const [target, render] of groupRenderByTarget(disabledRender)) {
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const kind = render[0]?.kind;
+    if (!kind || render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot remove mixed messaging render kinds from ${target}.`);
+    }
+    if (
+      plan.agent === "openclaw" &&
+      resolvedTarget === OPENCLAW_CONFIG_TARGET &&
+      kind === "json-fragment"
+    ) {
+      const changed = applyOpenClawConfigPatch(
+        plan.sandboxName,
+        [],
+        render.filter(isJsonRender),
+        options.runOpenshell,
+      );
+      if (changed) appliedTargets.push(resolvedTarget);
+      continue;
+    }
+    const existing = readSandboxFileForRemoval(
+      plan.sandboxName,
+      resolvedTarget,
+      options.runOpenshell,
+    );
+    if (existing === undefined) continue;
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonFragments(plan, existing, [], render.filter(isJsonRender), resolvedTarget)
+        : removeOwnedEnvLines(existing, render.filter(isEnvLinesRender));
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+  return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function applyOpenClawConfigPatch(
+  sandboxName: string,
+  render: readonly SandboxMessagingJsonRenderPlan[],
+  disabledRender: readonly SandboxMessagingJsonRenderPlan[],
+  runOpenshell: MessagingOpenShellRunner,
+): boolean {
+  const patch: Record<string, MessagingSerializableValue> = {};
+  for (const pathValue of minimalRemovalPaths(disabledRender.map((entry) => entry.path))) {
+    if (openClawConfigPathExists(sandboxName, pathValue, runOpenshell)) {
+      setJsonPath(patch, pathValue, null);
+    }
+  }
+  for (const entry of render) {
+    assertOpenClawPatchValue(entry.path, entry.value);
+    setJsonPath(patch, entry.path, entry.value);
+  }
+  if (Object.keys(patch).length === 0) return false;
+
+  writeOpenClawConfigPatch(sandboxName, patch, runOpenshell);
+  return true;
+}
+
+function writeOpenClawConfigPatch(
+  sandboxName: string,
+  patch: Record<string, MessagingSerializableValue>,
+  runOpenshell: MessagingOpenShellRunner,
+): void {
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "openclaw",
+      "config",
+      "patch",
+      "--stdin",
+    ],
+    {
+      ignoreError: true,
+      input: JSON.stringify(patch),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  if (result.error || result.signal || (result.status ?? 0) !== 0) {
+    throw new Error(`Failed to apply native OpenClaw messaging config: ${compactOutput(result)}`);
+  }
+}
+
+function minimalRemovalPaths(paths: readonly string[]): string[] {
+  const selected: string[] = [];
+  const candidates = [...new Set(paths)].sort(
+    (left, right) => left.split(".").length - right.split(".").length,
+  );
+  for (const candidate of candidates) {
+    if (!selected.some((ancestor) => candidate.startsWith(`${ancestor}.`))) {
+      selected.push(candidate);
+    }
+  }
+  return selected;
+}
+
+function openClawConfigPathExists(
+  sandboxName: string,
+  dotpath: string,
+  runOpenshell: MessagingOpenShellRunner,
+): boolean {
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "openclaw",
+      "config",
+      "get",
+      dotpath,
+      "--json",
+    ],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (!result.error && !result.signal && (result.status ?? 0) === 0) return true;
+  const output = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  if (/Config path (?:is valid but unset|not found)|Unknown config path/iu.test(output))
+    return false;
+  throw new Error(`Failed to inspect native OpenClaw messaging config: ${compactOutput(result)}`);
+}
+
+function assertOpenClawPatchValue(pathValue: string, value: MessagingSerializableValue): void {
+  if (value === null) {
+    throw new Error(
+      `OpenClaw messaging render path '${pathValue}' cannot set null because native patches reserve null for removal.`,
+    );
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) assertOpenClawPatchValue(pathValue, entry);
+    return;
+  }
+  if (isObjectRecord(value)) {
+    for (const entry of Object.values(value)) assertOpenClawPatchValue(pathValue, entry);
+  }
+}
+
+function removeOwnedEnvLines(
+  existing: string,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+): string {
+  const ownedKeys = new Set(
+    render.flatMap((entry) => entry.lines.map(readEnvLineKey).filter((key) => key !== null)),
+  );
+  const output = existing
+    .split(/\n/u)
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .filter((line) => {
+      const key = readEnvLineKey(line);
+      return key === null || !ownedKeys.has(key);
+    });
+  return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
+/**
+ * Repair the Hermes env file after starting an image built with an older
+ * applier. This deliberately touches only the manifest-owned credential key
+ * space and reports whether the gateway must reload the file.
+ */
+export function reconcileCredentialEnvAtOpenShell(
+  plan: SandboxMessagingPlan,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly changed: boolean; readonly target?: string } {
+  if (plan.agent !== "hermes" || ownedCredentialEnvKeys(plan).size === 0) {
+    return { changed: false };
+  }
+
+  const render = filterEnabledPlanEntries(plan, plan.agentRender).filter(
+    (entry): entry is SandboxMessagingEnvLinesRenderPlan =>
+      entry.target === HERMES_ENV_RENDER_TARGET && isEnvLinesRender(entry),
+  );
+  const target = resolveSandboxAgentConfigTarget(HERMES_ENV_RENDER_TARGET, plan.agent);
+  const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
+  if (existing === undefined) return { changed: false };
+
+  const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender], [], {
+    preserveResolverCredentialLines: true,
+  });
+  if (contents === existing) return { changed: false };
+  writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
+  return { changed: true, target };
+}
+
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
+
+/**
+ * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
+ * generation-scoped placeholders. The exact placeholder grammar prevents a raw
+ * provider credential or arbitrary sandbox value from entering Hermes state.
+ */
+function readHermesRuntimeAliasRender(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): SandboxMessagingEnvLinesRenderPlan[] {
+  return filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).flatMap((alias) => {
+    const sourceKey = alias.envKey;
+    const targetKey = alias.targetEnvKey;
+    if (
+      !targetKey ||
+      sourceKey === targetKey ||
+      !ENV_KEY_PATTERN.test(sourceKey) ||
+      !ENV_KEY_PATTERN.test(targetKey)
+    ) {
+      return [];
+    }
+    const expectedPattern = `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${sourceKey}$`;
+    const expectedValue = `openshell:resolve:env:${sourceKey}`;
+    if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
+    const result = runOpenshell(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        plan.sandboxName,
+        "--",
+        "sh",
+        "-c",
+        'printenv "$1"',
+        "sh",
+        sourceKey,
+      ],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if ((result.status ?? 0) !== 0) return [];
+    const placeholder = String(result.stdout ?? "").replace(/\r?\n$/u, "");
+    if (!new RegExp(expectedPattern, "u").test(placeholder)) return [];
+    return [
+      {
+        agent: "hermes",
+        channelId: alias.channelId,
+        kind: "env-lines",
+        lines: [`${targetKey}=${placeholder}`],
+        target: HERMES_ENV_RENDER_TARGET,
+        templateRefs: [],
+      },
+    ];
+  });
+}
+
+function hookRequestsForPhases(
+  plan: SandboxMessagingPlan,
+  phases: ReadonlySet<ChannelHookPhase>,
+): MessagingHookApplyRequest[] {
+  return enabledPlanChannels(plan).flatMap((channel) =>
+    channel.hooks
+      .filter((hook) => phases.has(hook.phase))
+      .map((hook) => toHookApplyRequest(plan, channel, hook)),
+  );
+}
+
+function toHookApplyRequest(
+  plan: SandboxMessagingPlan,
+  channel: SandboxMessagingChannelPlan,
+  hook: SandboxMessagingChannelPlan["hooks"][number],
+): MessagingHookApplyRequest {
+  const inputs = buildHookInputMap(plan, channel);
+  const selectedInputs = hook.inputs
+    ? Object.fromEntries(
+        hook.inputs
+          .filter((inputKey) => Object.hasOwn(inputs, inputKey))
+          .map((inputKey) => [inputKey, inputs[inputKey] as MessagingSerializableValue]),
+      )
+    : inputs;
+
+  return {
+    sandboxName: plan.sandboxName,
+    agent: plan.agent,
+    channelId: channel.channelId,
+    hookId: hook.id,
+    phase: hook.phase,
+    handler: hook.handler,
+    inputKeys: hook.inputs,
+    inputs: selectedInputs,
+    outputs: hook.outputs,
+    onFailure: hook.onFailure,
+  };
+}
+
+function buildHookInputMap(
+  plan: SandboxMessagingPlan,
+  channel: SandboxMessagingChannelPlan,
+): Record<string, MessagingSerializableValue> {
+  const inputs: Record<string, MessagingSerializableValue> = {};
+  for (const input of channel.inputs) {
+    if (input.value === undefined) continue;
+    inputs[input.inputId] = input.value;
+    if (input.statePath) inputs[input.statePath] = input.value;
+  }
+  for (const credential of plan.credentialBindings) {
+    if (credential.channelId !== channel.channelId) continue;
+    inputs[`credential.${credential.credentialId}.placeholder`] = credential.placeholder;
+  }
+  return inputs;
+}
+
+async function runApplyHook(
+  request: MessagingHookApplyRequest,
+  runner: MessagingHookApplyRunner | undefined,
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+  applied: {
+    readonly appliedHooks: string[];
+    readonly appliedTargets: string[];
+  },
+): Promise<void> {
+  if (!runner) return;
+  try {
+    const result = await runner(request);
+    applied.appliedHooks.push(`${request.channelId}:${request.hookId}`);
+    if (result?.outputs) {
+      applied.appliedTargets.push(...applyHookBuildFileOutputs(plan, result.outputs, runOpenshell));
+    }
+  } catch (error) {
+    if (request.onFailure === "skip-channel") return;
+    throw error;
+  }
+}
+
+function groupRenderByTarget(
+  render: readonly SandboxMessagingAgentRenderPlan[],
+): ReadonlyMap<string, SandboxMessagingAgentRenderPlan[]> {
+  const groups = new Map<string, SandboxMessagingAgentRenderPlan[]>();
+  for (const entry of render) {
+    const group = groups.get(entry.target) ?? [];
+    group.push(entry);
+    groups.set(entry.target, group);
+  }
+  return groups;
+}
+
+function isJsonRender(
+  render: SandboxMessagingAgentRenderPlan,
+): render is SandboxMessagingJsonRenderPlan {
+  return render.kind === "json-fragment";
+}
+
+function isEnvLinesRender(
+  render: SandboxMessagingAgentRenderPlan,
+): render is SandboxMessagingEnvLinesRenderPlan {
+  return render.kind === "env-lines";
+}
+
+function applyJsonFragments(
+  plan: SandboxMessagingPlan,
+  existing: string | undefined,
+  render: readonly SandboxMessagingJsonRenderPlan[],
+  disabledRender: readonly SandboxMessagingJsonRenderPlan[],
+  target: string,
+): string {
+  const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
+  const root = parseStructuredConfig(existing, target, format);
+  const rules = credentialPlaceholderRules(plan);
+  for (const entry of disabledRender) {
+    deleteJsonPath(root, entry.path);
+  }
+  for (const entry of render) {
+    setJsonPath(
+      root,
+      entry.path,
+      preserveCredentialPlaceholders(entry.value, getJsonPath(root, entry.path), rules),
+    );
+  }
+  return format === "yaml" ? YAML.stringify(root) : JSON.stringify(root, null, 2) + "\n";
+}
+
+function deleteJsonPath(root: Record<string, MessagingSerializableValue>, pathValue: string): void {
+  const segments = pathValue.split(".").filter(Boolean);
+  if (segments.length === 0) {
+    throw new Error("Messaging render path must not be empty.");
+  }
+  let cursor: Record<string, MessagingSerializableValue> = root;
+  for (const segment of segments.slice(0, -1)) {
+    assertSafeObjectKey(segment, "Messaging render path");
+    const next = cursor[segment];
+    if (!isObjectRecord(next)) return;
+    cursor = next as Record<string, MessagingSerializableValue>;
+  }
+  const finalSegment = segments[segments.length - 1] as string;
+  assertSafeObjectKey(finalSegment, "Messaging render path");
+  delete cursor[finalSegment];
+}
+
+function parseStructuredConfig(
+  existing: string | undefined,
+  target: string,
+  format: "json" | "yaml",
+): Record<string, MessagingSerializableValue> {
+  if (!existing || existing.trim().length === 0) return {};
+  const parsed = format === "yaml" ? YAML.parse(existing) : (JSON5.parse(existing) as unknown);
+  if (!isObjectRecord(parsed)) {
+    throw new Error(`Messaging agent config target ${target} must contain an object.`);
+  }
+  return parsed as Record<string, MessagingSerializableValue>;
+}
+
+type CredentialPlaceholderRule = {
+  readonly envKey: string;
+  readonly placeholder: string;
+};
+
+function activeCredentialBindings(
+  plan: SandboxMessagingPlan,
+): readonly SandboxMessagingPlan["credentialBindings"][number][] {
+  const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
+  return plan.credentialBindings.filter((binding) => active.has(binding.channelId));
+}
+
+function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+  return activeCredentialBindings(plan).flatMap((binding) => {
+    if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
+      return [];
+    }
+    return [{ envKey: binding.providerEnvKey, placeholder: binding.placeholder }];
+  });
+}
+
+function preserveCredentialPlaceholders(
+  desired: MessagingSerializableValue,
+  existing: unknown,
+  rules: readonly CredentialPlaceholderRule[],
+): MessagingSerializableValue {
+  if (typeof desired === "string") {
+    const rule = rules.find((candidate) => candidate.placeholder === desired);
+    if (
+      rule &&
+      typeof existing === "string" &&
+      isProviderPlaceholderForEnvKey(existing, rule.envKey)
+    ) {
+      return existing;
+    }
+    return desired;
+  }
+  if (Array.isArray(desired)) {
+    return desired.map((entry, index) =>
+      preserveCredentialPlaceholders(
+        entry,
+        Array.isArray(existing) ? existing[index] : undefined,
+        rules,
+      ),
+    );
+  }
+  if (isObjectRecord(desired)) {
+    const existingObject = isObjectRecord(existing) ? existing : {};
+    return Object.fromEntries(
+      Object.entries(desired).map(([key, value]) => [
+        key,
+        preserveCredentialPlaceholders(value, existingObject[key], rules),
+      ]),
+    );
+  }
+  return desired;
+}
+
+function getJsonPath(root: Record<string, MessagingSerializableValue>, pathValue: string): unknown {
+  let cursor: unknown = root;
+  for (const segment of pathValue.split(".").filter(Boolean)) {
+    if (!isObjectRecord(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+function setJsonPath(
+  root: Record<string, MessagingSerializableValue>,
+  path: string,
+  value: MessagingSerializableValue,
+): void {
+  const segments = path.split(".").filter(Boolean);
+  if (segments.length === 0) {
+    throw new Error("Messaging render path must not be empty.");
+  }
+  let cursor: Record<string, MessagingSerializableValue> = root;
+  for (const segment of segments.slice(0, -1)) {
+    assertSafeObjectKey(segment, "Messaging render path");
+    const next = cursor[segment];
+    if (!isObjectRecord(next)) {
+      const created: Record<string, MessagingSerializableValue> = {};
+      cursor[segment] = created;
+      cursor = created;
+    } else {
+      cursor = next as Record<string, MessagingSerializableValue>;
+    }
+  }
+  const finalSegment = segments[segments.length - 1] as string;
+  assertSafeObjectKey(finalSegment, "Messaging render path");
+  const existing = cursor[finalSegment];
+  if (isObjectRecord(existing) && isObjectRecord(value)) {
+    mergeObjects(
+      existing as Record<string, MessagingSerializableValue>,
+      value as Record<string, MessagingSerializableValue>,
+    );
+    return;
+  }
+  cursor[finalSegment] = value;
+}
+
+function applyEnvLines(
+  plan: SandboxMessagingPlan,
+  existing: string | undefined,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  additionalLines: readonly string[] = [],
+  options: { readonly preserveResolverCredentialLines?: boolean } = {},
+): string {
+  const desired = new Map<string, string>();
+  const rawDesiredLines: string[] = [];
+  for (const entry of render) {
+    for (const line of entry.lines) {
+      const key = readEnvLineKey(line);
+      if (key) {
+        desired.set(key, line);
+      } else {
+        rawDesiredLines.push(line);
+      }
+    }
+  }
+  for (const line of additionalLines) {
+    const key = readEnvLineKey(line);
+    if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
+    desired.set(key, line);
+  }
+  const stale = new Set(staleCredentialEnvKeys(plan, new Set(desired.keys())));
+  if (options.preserveResolverCredentialLines) {
+    const allowedResolvers = activeResolverEnvAssignments(plan);
+    for (const line of (existing ?? "").split(/\n/u)) {
+      const key = readEnvLineKey(line);
+      const sourceKey = readOpenShellResolverSourceKey(line);
+      if (key && sourceKey && stale.has(key) && allowedResolvers.has(`${key}\0${sourceKey}`)) {
+        stale.delete(key);
+      }
+    }
+  }
+
+  const written = new Set<string>();
+  const output = (existing ?? "")
+    .split(/\n/)
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .flatMap((line) => {
+      const key = readEnvLineKey(line);
+      if (key !== null && stale.has(key)) return [];
+      if (!key || !desired.has(key)) return [line];
+      written.add(key);
+      return [desired.get(key) as string];
+    });
+
+  for (const [key, line] of desired) {
+    // A legacy plan can still render a stale key; appending it would undo the prune.
+    if (!written.has(key) && !stale.has(key)) output.push(line);
+  }
+  output.push(...rawDesiredLines);
+  return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
+function activeResolverEnvAssignments(plan: SandboxMessagingPlan): ReadonlySet<string> {
+  const assignments = new Set<string>();
+  for (const binding of activeCredentialBindings(plan)) {
+    if (ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+      assignments.add(`${binding.providerEnvKey}\0${binding.providerEnvKey}`);
+    }
+  }
+  for (const alias of filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? [])) {
+    if (
+      alias.targetEnvKey &&
+      ENV_KEY_PATTERN.test(alias.targetEnvKey) &&
+      ENV_KEY_PATTERN.test(alias.envKey)
+    ) {
+      assignments.add(`${alias.targetEnvKey}\0${alias.envKey}`);
+    }
+  }
+  return assignments;
+}
+
+function readOpenShellResolverSourceKey(line: string): string | null {
+  const assignment = line.trim().replace(/^export\s+/u, "");
+  const separator = assignment.indexOf("=");
+  if (separator < 1) return null;
+  const rawValue = assignment.slice(separator + 1).trim();
+  const value =
+    rawValue.length >= 2 &&
+    ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+      (rawValue.startsWith("'") && rawValue.endsWith("'")))
+      ? rawValue.slice(1, -1)
+      : rawValue;
+  return (
+    value.match(
+      /^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    value.match(
+      /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    null
+  );
+}
+
+function applyHookBuildFileOutputs(
+  plan: SandboxMessagingPlan,
+  outputs: MessagingHookOutputMap,
+  runOpenshell: MessagingOpenShellRunner,
+): string[] {
+  const appliedTargets: string[] = [];
+  for (const output of Object.values(outputs)) {
+    if (output.kind !== "build-file") continue;
+    const file = readHookBuildFile(output.value);
+    const target = resolveHookBuildFileTarget(file.path, plan.agent);
+    if (plan.agent === "openclaw" && target === OPENCLAW_CONFIG_TARGET) {
+      if (!isObjectRecord(file.merge) || file.content !== undefined) {
+        throw new Error("OpenClaw config hooks must provide an object merge, not file contents.");
+      }
+      validateSafeMergeValue(file.merge);
+      assertOpenClawPatchValue(target, file.merge);
+      writeOpenClawConfigPatch(plan.sandboxName, file.merge, runOpenshell);
+      appliedTargets.push(target);
+      continue;
+    }
+    const contents =
+      file.merge !== undefined
+        ? applyStructuredMerge(
+            readSandboxFile(plan.sandboxName, target, runOpenshell),
+            file.merge,
+            target,
+          )
+        : serializeHookBuildFileContent(file.content, target);
+    writeSandboxFile(plan.sandboxName, target, contents, runOpenshell, file.mode);
+    appliedTargets.push(target);
+  }
+  return appliedTargets;
+}
+
+function readHookBuildFile(value: MessagingSerializableValue): {
+  readonly path: string;
+  readonly mode?: string;
+  readonly content?: MessagingSerializableValue;
+  readonly merge?: MessagingSerializableValue;
+} {
+  if (!isObjectRecord(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
+    throw new Error("Messaging build-file hook output must include a non-empty path.");
+  }
+  const file = value as Record<string, MessagingSerializableValue | undefined>;
+  const path = value.path;
+  const mode = value.mode;
+  if (file.content === undefined && file.merge === undefined) {
+    throw new Error(`Messaging build-file '${path}' must include content or merge.`);
+  }
+  if (mode !== undefined) {
+    if (typeof mode !== "string") {
+      throw new Error(`Messaging build-file '${path}' mode must be a string.`);
+    }
+    assertSafeFileMode(path, mode);
+  }
+  return {
+    path,
+    mode,
+    content: file.content,
+    merge: file.merge,
+  };
+}
+
+function applyStructuredMerge(
+  existing: string | undefined,
+  patch: MessagingSerializableValue,
+  target: string,
+): string {
+  if (!isObjectRecord(patch)) {
+    throw new Error(`Messaging build-file merge for ${target} must be an object.`);
+  }
+  const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
+  const root = parseStructuredConfig(existing, target, format);
+  mergeObjects(root, patch);
+  return format === "yaml" ? YAML.stringify(root) : `${JSON.stringify(root, null, 2)}\n`;
+}
+
+function mergeObjects(
+  target: Record<string, MessagingSerializableValue>,
+  patch: Record<string, MessagingSerializableValue>,
+): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      throw new Error(`Messaging build-file merge rejected unsafe object key '${key}'.`);
+    }
+    const existing = target[key];
+    if (isObjectRecord(existing) && isObjectRecord(value)) {
+      mergeObjects(
+        existing as Record<string, MessagingSerializableValue>,
+        value as Record<string, MessagingSerializableValue>,
+      );
+      continue;
+    }
+    validateSafeMergeValue(value);
+    target[key] = value;
+  }
+}
+
+function validateSafeMergeValue(value: MessagingSerializableValue): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      validateSafeMergeValue(entry);
+    }
+    return;
+  }
+  if (!isObjectRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      throw new Error(`Messaging build-file merge rejected unsafe object key '${key}'.`);
+    }
+    validateSafeMergeValue(entry as MessagingSerializableValue);
+  }
+}
+
+function serializeHookBuildFileContent(
+  content: MessagingSerializableValue | undefined,
+  target: string,
+): string {
+  if (content === undefined) return "";
+  if (typeof content === "string") return content.endsWith("\n") ? content : `${content}\n`;
+  if (target.endsWith(".yaml") || target.endsWith(".yml")) return YAML.stringify(content);
+  return `${JSON.stringify(content, null, 2)}\n`;
+}
+
+// Source-of-truth boundary for sandbox file writes: plans and hook outputs are
+// serialized data that can outlive their producing manifest/hook code. Validate
+// every target here before invoking OpenShell so future channels cannot bypass
+// the agent-owned /sandbox config roots by returning raw paths.
+function resolveHookBuildFileTarget(filePath: string, agent: MessagingAgentId): string {
+  const normalizedPath = normalizeRelativeAgentPath(filePath, "Messaging build-file path");
+  const root = sandboxAgentConfigRoot(agent);
+  let target: string;
+  if (normalizedPath === "openclaw.json") {
+    target = resolveSandboxAgentConfigTarget(normalizedPath, "openclaw");
+  } else if (normalizedPath === "config.yaml" && agent === "hermes") {
+    target = resolveSandboxAgentConfigTarget("~/.hermes/config.yaml", agent);
+  } else if (normalizedPath === ".env" && agent === "hermes") {
+    target = resolveSandboxAgentConfigTarget("~/.hermes/.env", agent);
+  } else {
+    target = `${root}/${normalizedPath}`;
+  }
+  assertSandboxPathUnderRoot(target, root, filePath, "Messaging build-file path");
+  return target;
+}
+
+function normalizeRelativeAgentPath(filePath: string, context: string): string {
+  if (filePath.trim().length === 0) {
+    throw new Error(`${context} must not be empty.`);
+  }
+  if (filePath.startsWith("/") || filePath.includes("\\") || /[\0-\x1F\x7F]/.test(filePath)) {
+    throw new Error(`${context} '${filePath}' must be a safe relative path.`);
+  }
+  const segments = filePath.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === ".")) {
+    throw new Error(`${context} '${filePath}' must not contain empty segments.`);
+  }
+  if (segments.some((segment) => segment === "..")) {
+    throw new Error(`${context} '${filePath}' must not traverse directories.`);
+  }
+  const normalizedPath = path.normalize(filePath);
+  if (
+    normalizedPath === "." ||
+    normalizedPath === ".." ||
+    normalizedPath.startsWith("../") ||
+    normalizedPath.startsWith("/")
+  ) {
+    throw new Error(`${context} '${filePath}' must stay inside agent config.`);
+  }
+  return normalizedPath;
+}
+
+function sandboxAgentConfigRoot(agent: MessagingAgentId): string {
+  if (agent === "openclaw") return "/sandbox/.openclaw";
+  if (agent === "hermes") return "/sandbox/.hermes";
+  throw new Error(`Cannot resolve messaging build-file root for ${agent}.`);
+}
+
+function assertSandboxPathUnderRoot(
+  target: string,
+  root: string,
+  sourcePath: string,
+  context: string,
+): void {
+  const relative = path.relative(root, target);
+  if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${context} '${sourcePath}' must stay inside ${root}.`);
+  }
+}
+
+function assertSafeFileMode(filePath: string, mode: string): void {
+  if (!/^[0-7]{3,4}$/.test(mode)) {
+    throw new Error(`Messaging build-file '${filePath}' mode must be an octal file mode.`);
+  }
+  if (mode.length === 4 && mode[0] !== "0") {
+    throw new Error(`Messaging build-file '${filePath}' mode must not set special bits.`);
+  }
+  const parsedMode = Number.parseInt(mode, 8);
+  if ((parsedMode & 0o022) !== 0) {
+    throw new Error(`Messaging build-file '${filePath}' mode must not be group/world writable.`);
+  }
+}
+
+function resolveSandboxAgentConfigTarget(target: string, agent: MessagingAgentId): string {
+  const root = sandboxAgentConfigRoot(agent);
+  if (target.startsWith("/")) {
+    const normalizedTarget = path.normalize(target);
+    assertSandboxPathUnderRoot(normalizedTarget, root, target, "Messaging render target");
+    return normalizedTarget;
+  }
+  if (agent === "openclaw" && target === "openclaw.json") {
+    return "/sandbox/.openclaw/openclaw.json";
+  }
+  if (target.startsWith("~/.openclaw/")) {
+    if (agent !== "openclaw") {
+      throw new Error(`Cannot apply OpenClaw messaging target '${target}' for ${agent}.`);
+    }
+    const suffix = normalizeRelativeAgentPath(
+      target.slice("~/.openclaw/".length),
+      "Messaging render target",
+    );
+    const resolved = `${root}/${suffix}`;
+    assertSandboxPathUnderRoot(resolved, root, target, "Messaging render target");
+    return resolved;
+  }
+  if (target.startsWith("~/.hermes/")) {
+    if (agent !== "hermes") {
+      throw new Error(`Cannot apply Hermes messaging target '${target}' for ${agent}.`);
+    }
+    const suffix = normalizeRelativeAgentPath(
+      target.slice("~/.hermes/".length),
+      "Messaging render target",
+    );
+    const resolved = `${root}/${suffix}`;
+    assertSandboxPathUnderRoot(resolved, root, target, "Messaging render target");
+    return resolved;
+  }
+  throw new Error(`Cannot resolve messaging agent config target '${target}' for ${agent}.`);
+}
+
+function readSandboxFile(
+  sandboxName: string,
+  target: string,
+  runOpenshell: MessagingOpenShellRunner,
+): string | undefined {
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const status = result.status ?? 0;
+  return status === 0 ? String(result.stdout ?? "") : undefined;
+}
+
+function readSandboxFileForRemoval(
+  sandboxName: string,
+  target: string,
+  runOpenshell: MessagingOpenShellRunner,
+): string | undefined {
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if ((result.status ?? 0) === 0) return String(result.stdout ?? "");
+  const missing = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", 'test ! -e "$1"', "sh", target],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if ((missing.status ?? 0) === 0) return undefined;
+  throw new Error(`Failed to read messaging agent config '${target}': ${compactOutput(result)}`);
+}
+
+function writeSandboxFile(
+  sandboxName: string,
+  target: string,
+  contents: string,
+  runOpenshell: MessagingOpenShellRunner,
+  mode?: string,
+): void {
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "sh",
+      "-c",
+      mode
+        ? 'mkdir -p "$(dirname "$1")" && cat > "$1" && chmod "$2" "$1"'
+        : 'mkdir -p "$(dirname "$1")" && cat > "$1"',
+      "sh",
+      target,
+      ...(mode ? [mode] : []),
+    ],
+    {
+      input: contents,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  const status = result.status ?? 0;
+  if (status !== 0) {
+    throw new Error(`Failed to apply messaging agent config '${target}': ${compactOutput(result)}`);
+  }
+}
+
+function compactOutput(result: { readonly stdout?: unknown; readonly stderr?: unknown }): string {
+  const output = redact(`${String(result.stderr ?? "")}${String(result.stdout ?? "")}`)
+    .replace(/\r/g, "")
+    .trim();
+  return output || "OpenShell command failed.";
+}
+
+function assertSafeObjectKey(key: string, context: string): void {
+  if (key === "__proto__" || key === "prototype" || key === "constructor") {
+    throw new Error(`${context} rejected unsafe object key '${key}'.`);
+  }
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}

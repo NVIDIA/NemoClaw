@@ -1,0 +1,55 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Persist Sandbox State"
+sidebar-title: "Persist Sandbox State"
+description: "Understand OpenShell native home persistence and NemoClaw's whole-workspace replacement handoff."
+description-agent: "Explains which sandbox state OpenShell preserves and how rebuild transfers the complete native home when replacement is required."
+keywords: ["openshell storage", "nemoclaw rebuild", "sandbox state", "workspace persistence"]
+content:
+  type: "explanation"
+skill:
+  priority: 20
+---
+
+OpenShell owns the sandbox lifecycle and its native home/workspace storage. Routine stop, start, reconnect, and host gateway restart operations keep that storage in place. NemoClaw does not maintain a per-agent persistence allowlist for those operations.
+
+## What Persists
+
+Everything the agent writes under its OpenShell-provided native home/workspace persists as ordinary sandbox state during routine lifecycle operations. This includes undeclared files as well as configuration, histories, hooks, plugins, packages, cron data, skills, memory, and child-agent state.
+
+OpenShell-owned credential stores and host-only secrets are outside the agent home/workspace. NemoClaw does not copy those stores into agent-visible state. Continue to provision credentials through supported OpenShell providers and bindings.
+
+## Rebuild and Recreation
+
+Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw <name> rebuild` or onboarding must replace a sandbox, NemoClaw performs one bounded migration:
+
+1. Capture the native home/workspace as an opaque private archive, remove machine-local agent authority from the archive copy, and verify that the archive does not contain credential material.
+2. Create the replacement through OpenShell.
+3. Clear the replacement's fresh native home/workspace and restore the complete archive.
+4. Validate the replacement before retiring the temporary handoff.
+
+OpenClaw's `gateway.auth` value and Hermes's `.hermes/.env` `API_SERVER_KEY` are machine-local. NemoClaw leaves both live source files unchanged, omits those values only from the private archive copy, and lets the replacement establish fresh local authority. Existing OpenClaw device and scope approvals do not transfer; approve the replacement's fresh pairing or scope-upgrade request when prompted. NemoClaw also removes credential fields from OpenClaw credential, device, identity, pairing, and pending-state JSON; replaces the archived OpenClaw device identity with a fresh non-secret identity; and removes credential fields from Hermes configuration and configuration backups. An invalid or uninspectable recognized authority file stops the transfer instead of being copied unchanged.
+
+Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local. The replacement keeps its fresh copies instead of restoring the retired sandbox's values. NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority. All other unknown agent paths transfer intact, but any credential-bearing or otherwise uninspectable archive content stops the workflow before replacement. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
+
+For an eligible stopped OpenClaw or Deep Agents Code container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture. Stopped Hermes rebuilds instead use the bounded OpenShell start, capture, and return-to-`Stopped` lifecycle described below.
+
+For Hermes, the restored complete home may contain the retired `profiles/dashboard-home` layout from an older release. After restore, NemoClaw runs a one-time migration that moves safe legacy files, including a legacy WhatsApp session, into the shared native Hermes home and removes the retired directory. User-created named profiles remain unchanged. A collision, unsafe link, or other unsafe legacy path fails closed and leaves both copies available for trusted recovery instead of choosing one.
+
+## Backup Before Upgrade
+
+`$$nemoclaw backup-all` remains an installer-facing safety operation. It normally captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. A standalone run with `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` can skip a running sandbox whose SSH endpoint is unreachable; changes in that skipped sandbox are absent from the new backup. The installer uses strict pre-upgrade mode, which rejects ordinary skipped or failed sandboxes instead of treating the batch as complete. Refer to [`$$nemoclaw backup-all`](../../reference/commands#$$nemoclaw-backup-all) for the exact skip and strict-mode behavior. It is not a general snapshot create/list/restore interface.
+
+For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation. This path is available only for a registered sandbox whose lifecycle identity resolves to a supported container provider, whose ownership probe finds exactly one attributed container, and whose container state is `exited` or `created`. After OpenShell accepts the start, one lifecycle transaction covers readiness, complete native-home capture, and returning the sandbox to `Stopped`. Other ordinary non-ready sandboxes that do not meet those conditions are skipped; strict pre-upgrade mode rejects the batch when a registered sandbox is skipped this way.
+
+Backups created by older NemoClaw versions from a selective per-agent path inventory are not candidates for automatic rebuild or recreation restore. Recover files from those legacy backup directories manually, then create a current complete native-home backup before replacement.
+
+## Destroy
+
+`$$nemoclaw <name> destroy` removes NemoClaw-owned managed state volumes and, for Deep Agents Code, clears the complete retained `/sandbox` root before asking OpenShell to delete the sandbox. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.
+
+## Related Topics
+
+- [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes)
+- [Transfer State Manually](transfer-state-manually)

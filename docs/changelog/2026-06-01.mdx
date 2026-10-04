@@ -1,0 +1,30 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.56
+
+NemoClaw v0.0.56 improves install safety, local-inference validation, messaging diagnostics, sandbox lifecycle reporting, and day-two command behavior:
+
+- Public installer and `nemoclaw update` flows now follow the admin-promoted `lkg` release tag by default, so curl-piped installs and update checks target the maintained build while validation catches up to newer semver tags.
+  Non-interactive Linux installs can also reactivate Docker group membership through `sg docker` and continue in the same installer run when that path is available.
+  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- `nemoclaw <name> status`, `nemoclaw <name> connect`, and `nemoclaw upgrade-sandboxes` now probe the live sandbox agent version before deciding whether a rebuild is needed, instead of trusting stale host metadata.
+  Status output reports when the version cannot be verified and points at rebuild when the running agent may predate the current install.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- GPU Docker-driver local-inference onboarding now verifies that host-network sandboxes can reach the selected Ollama or vLLM health endpoint before onboarding reports success.
+  Failures now include the provider endpoint, container network mode, and recovery guidance, which avoids discovering the broken route only after the first agent prompt.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Messaging setup is more diagnosable.
+  Slack setup validates both required Slack credentials before enabling the channel, WhatsApp pairing renders a compact scan-friendly QR for OpenClaw sandboxes and separates gateway close errors from QR rendering, and Telegram DM allowlist aliases continue to work for existing automation.
+  For more information, refer to [Set Up Slack](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-slack), [Set Up WhatsApp](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-whatsapp), and [Set Up Telegram](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-telegram).
+- Command ergonomics are clearer for common day-two paths.
+  `nemoclaw inference set` without both `--provider` and `--model` now points users to the underlying `openshell inference set` command, `nemoclaw <name> skill remove <skill>` removes uploaded skills by `SKILL.md` name, `nemoclaw <name> status --json` supports per-sandbox automation, and `nemoclaw debug --sandbox` validates explicit sandbox names before writing diagnostics.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Policy and sandbox base-image compatibility improved.
+  The `pypi` preset allows the `uv` package manager binary, the sandbox base image includes `tmux` for OpenClaw's bundled tmux-session flow, and Jira preset validation docs now use observable status probes.
+  For more information, refer to [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples).
+- Uninstall, rebuild, and snapshot flows protect user state more consistently.
+  `nemoclaw uninstall` preserves host-side backups and the sandbox registry by default, rebuilds preserve explicit CPU-only sandbox intent, and snapshot restore blocks ambiguous existing-destination rollbacks unless you opt in with `--force`.
+  For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).

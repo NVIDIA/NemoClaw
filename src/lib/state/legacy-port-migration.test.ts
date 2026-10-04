@@ -1,0 +1,885 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
+import {
+  acquireGatewayStateMigrationLock,
+  hasMigratableLegacySandbox,
+  migrateLegacyPortState,
+  releaseGatewayStateMigrationLock,
+} from "./legacy-port-migration";
+import { createSession } from "./onboard-session";
+import { beginSandboxRecreateTransaction } from "../onboard/sandbox-recreate-transaction";
+import {
+  listRetainedSandboxRecoveryRecords,
+  recordRetainedSandboxRecovery,
+} from "./onboard-session/retained-sandbox-recovery";
+
+const homes: string[] = [];
+
+function makeHome(): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-port-state-"));
+  homes.push(home);
+  return home;
+}
+
+function writeJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value));
+}
+
+function readJson(filePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+}
+
+function recordRebuildSession(filePath: string, sandboxName: string, gatewayPort: number) {
+  const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`;
+  const session = createSession({
+    sandboxName,
+    agent: "openclaw",
+    metadata: { gatewayName, fromDockerfile: null },
+  });
+  const transaction = beginSandboxRecreateTransaction(session, {
+    sandboxName,
+    gatewayName,
+    gatewayPort,
+    sourceEntry: { name: sandboxName, agent: "openclaw", gatewayName, gatewayPort },
+    observation: { state: "missing", liveIdentityFingerprint: null },
+    targetIntentFingerprint: "a".repeat(64),
+  });
+  session.checkpoint = {
+    ...session.checkpoint!,
+    sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
+    gatewayAuthority: {
+      kind: "selected",
+      value: {
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      },
+    },
+    sandboxRecreate: transaction,
+  };
+  writeJson(filePath, session);
+  fs.chmodSync(filePath, 0o600);
+  return session;
+}
+
+function recordRecovery(
+  filePath: string,
+  sandboxName: string,
+  gatewayPort: number,
+  seed: string,
+): void {
+  recordRetainedSandboxRecovery(filePath, {
+    sandboxName,
+    sandboxIdentityFingerprint: seed.repeat(64),
+    gatewayName: gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`,
+    gatewayPort,
+    lifecycleGeneration: `generation-${seed}`,
+    createAttemptNonce: seed.repeat(62),
+    resources: {
+      sharedInferenceProviders: [],
+      sandboxScopedProviders: [],
+      credentialEnvironmentVariables: [],
+    },
+    reason: "retained_after_sandbox_creation_failure",
+    recordedAt: "2026-08-29T00:00:00.000Z",
+  });
+}
+
+function expectRetainedNameBlocked(
+  records: readonly { readonly sandboxName: string }[],
+  sandboxName: string,
+): void {
+  const entryDeps: OnboardEntryOptionsDeps = {
+    isNonInteractive: () => false,
+    validateName: (name) => name,
+    reservedSandboxNames: new Set(),
+    cliDisplayName: () => "NemoClaw",
+    getNameValidationGuidance: () => [],
+    error: vi.fn(),
+    exitProcess: vi.fn(() => {
+      throw new Error("blocked retained recovery name");
+    }),
+  };
+  expect(() =>
+    resolveOnboardEntryOptions(
+      {
+        opts: { fresh: true, sandboxName },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        retainedRecoverySandboxNames: records.map((record) => record.sandboxName),
+      },
+      entryDeps,
+    ),
+  ).toThrow("blocked retained recovery name");
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
+});
+
+describe("legacy non-default gateway state migration", () => {
+  it.each([
+    { reason: "another sandbox", name: "other-box", port: 9123, mode: 0o600 },
+    { reason: "another gateway", name: "port-box", port: 8080, mode: 0o600 },
+    { reason: "public permissions", name: "port-box", port: 9123, mode: 0o644 },
+  ])(
+    "rejects retained rebuild recovery with $reason before publishing migration",
+    ({ name, port, mode }) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      const registry = path.join(shared, "sandboxes.json");
+      writeJson(registry, {
+        defaultSandbox: "port-box",
+        sandboxes: {
+          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+        },
+      });
+      const file = path.join(shared, ".onboard-rebuild-port-box.json");
+      recordRebuildSession(file, name, port);
+      fs.chmodSync(file, mode);
+      const registryBefore = fs.readFileSync(registry, "utf8");
+      const sessionBefore = fs.readFileSync(file, "utf8");
+
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        /Cannot safely migrate legacy/,
+      );
+
+      expect(fs.readFileSync(registry, "utf8")).toBe(registryBefore);
+      expect(fs.readFileSync(file, "utf8")).toBe(sessionBefore);
+      expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(false);
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
+    },
+  );
+
+  it("revalidates retained rebuild ownership when resuming a migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const registry = path.join(shared, "sandboxes.json");
+    writeJson(registry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    const file = path.join(shared, ".onboard-rebuild-port-box.json");
+    recordRebuildSession(file, "port-box", 9123);
+    const rename = fs.renameSync;
+    const failure = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === file
+        ? (() => {
+            throw new Error("interrupted retained-session move");
+          })()
+        : rename(source, destination),
+    );
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /interrupted retained-session move/,
+    );
+    failure.mockRestore();
+    recordRebuildSession(file, "port-box", 8080);
+    const registryBefore = fs.readFileSync(registry, "utf8");
+    const sessionBefore = fs.readFileSync(file, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /does not identify sandbox 'port-box' on gateway port 9123/,
+    );
+
+    expect(fs.readFileSync(registry, "utf8")).toBe(registryBefore);
+    expect(fs.readFileSync(file, "utf8")).toBe(sessionBefore);
+    expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(false);
+  });
+
+  it("moves retained rebuild sessions with the selected sandbox and preserves recovery", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    const file = ".onboard-rebuild-port-box.json";
+    const saved = recordRebuildSession(path.join(shared, file), "port-box", 9123);
+    const other = recordRebuildSession(
+      path.join(shared, ".onboard-rebuild-default-box.json"),
+      "default-box",
+      8080,
+    );
+
+    expect(migrateLegacyPortState({ home, gatewayPort: 9123 }).migratedSandboxNames).toEqual([
+      "port-box",
+    ]);
+
+    expect(fs.existsSync(path.join(shared, file))).toBe(false);
+    expect(readJson(path.join(selected, file))).toEqual(saved);
+    expect(readJson(path.join(shared, ".onboard-rebuild-default-box.json"))).toEqual(other);
+    expect(fs.statSync(path.join(selected, file)).mode & 0o777).toBe(0o600);
+    const reader = spawnSync(
+      process.execPath,
+      [
+        "--require",
+        "tsx/cjs",
+        "-e",
+        `
+      const session = require(process.argv[1]);
+      process.stdout.write(JSON.stringify(session.loadRebuildSession("port-box")?.checkpoint?.sandboxRecreate));
+    `,
+        fileURLToPath(new URL("./onboard-session.ts", import.meta.url)),
+      ],
+      {
+        env: { ...process.env, HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+        encoding: "utf8",
+        timeout: 15_000,
+      },
+    );
+    expect(reader.status, reader.stderr).toBe(0);
+    expect(JSON.parse(reader.stdout)).toEqual(saved.checkpoint?.sandboxRecreate);
+  }, 30_000);
+
+  it("refuses a retained rebuild session collision before changing registry ownership", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const registry = path.join(shared, "sandboxes.json");
+    writeJson(registry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    const file = ".onboard-rebuild-port-box.json";
+    const source = recordRebuildSession(path.join(shared, file), "port-box", 9123);
+    const destination = recordRebuildSession(path.join(selected, file), "port-box", 9123);
+    const registryBefore = fs.readFileSync(registry, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /already exists; refusing to overwrite/,
+    );
+
+    expect(readJson(path.join(shared, file))).toEqual(source);
+    expect(readJson(path.join(selected, file))).toEqual(destination);
+    expect(fs.readFileSync(registry, "utf8")).toBe(registryBefore);
+    expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(false);
+  });
+
+  it("does not delete a replacement when releasing the migration lock", () => {
+    const home = makeHome();
+    const lockPath = path.join(home, ".nemoclaw", ".gateway-state-migration.lock");
+    const handle = acquireGatewayStateMigrationLock(home);
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceAfterDetach = (source: fs.PathLike, destination: fs.PathLike) => {
+      renameSync(source, destination);
+      fs.mkdirSync(lockPath, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockPath, "owner"), String(process.pid), { mode: 0o600 });
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === lockPath && String(destination).startsWith(`${lockPath}.quarantine.`)
+        ? replaceAfterDetach(source, destination)
+        : renameSync(source, destination),
+    );
+
+    releaseGatewayStateMigrationLock(handle);
+
+    expect(fs.readFileSync(path.join(lockPath, "owner"), "utf8")).toBe(String(process.pid));
+  });
+
+  it("restores a replacement encountered while reclaiming a stale migration lock", () => {
+    const home = makeHome();
+    const lockPath = path.join(home, ".nemoclaw", ".gateway-state-migration.lock");
+    const displaced = `${lockPath}.displaced`;
+    fs.mkdirSync(lockPath, { mode: 0o700, recursive: true });
+    fs.writeFileSync(path.join(lockPath, "owner"), String(Number.MAX_SAFE_INTEGER), {
+      mode: 0o600,
+    });
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceBeforeDetach = (source: fs.PathLike, destination: fs.PathLike) => {
+      renameSync(source, displaced);
+      fs.mkdirSync(lockPath, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockPath, "owner"), String(process.pid), { mode: 0o600 });
+      renameSync(source, destination);
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === lockPath && String(destination).startsWith(`${lockPath}.quarantine.`)
+        ? replaceBeforeDetach(source, destination)
+        : renameSync(source, destination),
+    );
+
+    expect(() => acquireGatewayStateMigrationLock(home)).toThrow(/another state operation owns/);
+    expect(fs.readFileSync(path.join(lockPath, "owner"), "utf8")).toBe(String(process.pid));
+    expect(fs.readFileSync(path.join(displaced, "owner"), "utf8")).toBe(
+      String(Number.MAX_SAFE_INTEGER),
+    );
+  });
+
+  it("detects an exact migratable sandbox without changing legacy state", () => {
+    const home = makeHome();
+    const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+    writeJson(registryFile, {
+      defaultSandbox: "doctor",
+      sandboxes: {
+        doctor: { name: "doctor", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    const before = fs.readFileSync(registryFile, "utf8");
+
+    expect({
+      selected: hasMigratableLegacySandbox("doctor", { home, gatewayPort: 9123 }),
+      otherPort: hasMigratableLegacySandbox("doctor", { home, gatewayPort: 9124 }),
+      missing: hasMigratableLegacySandbox("missing", { home, gatewayPort: 9123 }),
+      unchanged: fs.readFileSync(registryFile, "utf8") === before,
+    }).toEqual({ selected: true, otherPort: false, missing: false, unchanged: true });
+  });
+
+  it("partitions a recovery-only session and mixed-gateway recovery authority", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "default-box",
+      extraProviders: ["custom-provider"],
+      sandboxes: {
+        "default-box": {
+          name: "default-box",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18789,
+        },
+        "port-box": {
+          name: "port-box",
+          gatewayName: "nemoclaw-9123",
+          gatewayPort: 9123,
+          dashboardPort: 18790,
+        },
+      },
+    });
+    writeJson(path.join(shared, "onboard-session.json"), {
+      sandboxName: "port-box",
+      status: "recovery_required",
+      metadata: { gatewayName: "nemoclaw-9123" },
+    });
+    const sharedRecovery = path.join(shared, "retained-sandbox-recovery.json");
+    recordRecovery(sharedRecovery, "port-box", 9123, "a");
+    recordRecovery(sharedRecovery, "default-box", 8080, "b");
+    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "legacy-secret" });
+    writeJson(path.join(shared, "usage-notice.json"), { acceptedVersion: "1" });
+    writeJson(path.join(shared, "state", "default-forward.json"), { pid: 123 });
+    writeJson(path.join(shared, "rebuild-backups", "default-box", "one", "manifest.json"), {});
+    writeJson(path.join(shared, "rebuild-backups", "port-box", "two", "manifest.json"), {});
+
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result).toEqual({
+      migratedSandboxNames: ["port-box"],
+      migratedSession: true,
+      warnings: [expect.stringContaining("Left ambiguous legacy state")],
+    });
+    expect(Object.keys(readJson(path.join(shared, "sandboxes.json")).sandboxes as object)).toEqual([
+      "default-box",
+    ]);
+    expect(
+      Object.keys(readJson(path.join(selected, "sandboxes.json")).sandboxes as object),
+    ).toEqual(["port-box"]);
+    expect(fs.existsSync(path.join(shared, "onboard-session.json"))).toBe(false);
+    expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
+    const selectedRecoveryRecords = listRetainedSandboxRecoveryRecords(
+      path.join(selected, "retained-sandbox-recovery.json"),
+    );
+    const remainingRecoveryRecords = listRetainedSandboxRecoveryRecords(sharedRecovery);
+    expect(selectedRecoveryRecords.map((record) => record.sandboxName)).toEqual(["port-box"]);
+    expect(remainingRecoveryRecords.map((record) => record.sandboxName)).toEqual(["default-box"]);
+    expectRetainedNameBlocked(selectedRecoveryRecords, "port-box");
+    expectRetainedNameBlocked(remainingRecoveryRecords, "default-box");
+    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
+    expect(fs.existsSync(path.join(shared, "usage-notice.json"))).toBe(true);
+    expect(fs.existsSync(path.join(selected, "usage-notice.json"))).toBe(false);
+    expect(fs.existsSync(path.join(shared, "state", "default-forward.json"))).toBe(true);
+    expect(fs.existsSync(path.join(selected, "state"))).toBe(false);
+    expect(
+      fs.existsSync(path.join(selected, "rebuild-backups", "port-box", "two", "manifest.json")),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(shared, "rebuild-backups", "default-box", "one", "manifest.json")),
+    ).toBe(true);
+
+    expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
+      migratedSandboxNames: [],
+      migratedSession: false,
+      warnings: [],
+    });
+  });
+
+  it("refuses a row whose persisted gateway name and port conflict without mutating state", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "ambiguous",
+      sandboxes: {
+        ambiguous: {
+          name: "ambiguous",
+          gatewayName: "nemoclaw-9124",
+          gatewayPort: 9123,
+        },
+      },
+    });
+    const before = fs.readFileSync(path.join(shared, "sandboxes.json"), "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /conflicting gateway identity/,
+    );
+    expect(fs.readFileSync(path.join(shared, "sandboxes.json"), "utf8")).toBe(before);
+    expect(fs.existsSync(path.join(shared, "gateways", "9123", "sandboxes.json"))).toBe(false);
+  });
+
+  it("refuses conflicting retained recovery identity without mutating state", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    recordRetainedSandboxRecovery(recoveryFile, {
+      sandboxName: "port-box",
+      sandboxIdentityFingerprint: "c".repeat(64),
+      gatewayName: "nemoclaw-9124",
+      gatewayPort: 9123,
+      lifecycleGeneration: "generation-c",
+      createAttemptNonce: "c".repeat(62),
+      resources: {
+        sharedInferenceProviders: [],
+        sandboxScopedProviders: [],
+        credentialEnvironmentVariables: [],
+      },
+      reason: "retained_after_sandbox_creation_failure",
+      recordedAt: "2026-08-29T00:00:00.000Z",
+    });
+    const before = fs.readFileSync(recoveryFile, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /conflicting gateway identity/,
+    );
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+    expect(fs.existsSync(path.join(shared, "gateways", "9123"))).toBe(false);
+  });
+
+  it("refuses an older published intent that omitted retained recovery", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const migration = path.join(shared, ".gateway-state-migration");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(migration, "intent.json"), {
+      version: 1,
+      gatewayPort: 9123,
+      selectedSandboxNames: ["port-box"],
+      sandboxBackupNames: [],
+      moveSession: false,
+      bundleEntries: [],
+      warnAmbiguousSession: false,
+      rewriteLegacyRegistry: true,
+    });
+    writeJson(path.join(migration, "selected-registry.json"), {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(migration, "remaining-registry.json"), {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+      },
+    });
+    recordRecovery(recoveryFile, "port-box", 9123, "f");
+    const registryBefore = fs.readFileSync(legacyRegistry, "utf8");
+    const recoveryBefore = fs.readFileSync(recoveryFile, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /intent predates retained recovery partitioning/,
+    );
+    expect(fs.readFileSync(legacyRegistry, "utf8")).toBe(registryBefore);
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(recoveryBefore);
+    expect(fs.existsSync(migration)).toBe(true);
+    expect(fs.existsSync(path.join(shared, "gateways", "9123"))).toBe(false);
+  });
+
+  it("preflights backup collisions before publishing the selected registry", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const selectedRegistry = path.join(selected, "sandboxes.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(shared, "rebuild-backups", "port-box", "old", "manifest.json"), {});
+    writeJson(path.join(selected, "rebuild-backups", "port-box", "existing", "manifest.json"), {});
+    const legacyBefore = fs.readFileSync(legacyRegistry, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /already exists; refusing to overwrite/,
+    );
+    expect(fs.existsSync(selectedRegistry)).toBe(false);
+    expect(fs.readFileSync(legacyRegistry, "utf8")).toBe(legacyBefore);
+    expect(
+      fs.existsSync(path.join(shared, "rebuild-backups", "port-box", "old", "manifest.json")),
+    ).toBe(true);
+  });
+
+  it.each([
+    { scenario: "migration lock" },
+    { scenario: "legacy registry lock" },
+    { scenario: "selected registry lock" },
+    { scenario: "retained rebuild session" },
+  ])(
+    "removes shared ownership before moves and resumes an interrupted migration [$scenario]",
+    ({ scenario }) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      const legacyRegistry = path.join(shared, "sandboxes.json");
+      const selectedRegistry = path.join(selected, "sandboxes.json");
+      const backupSource = path.join(shared, "rebuild-backups", "port-box");
+      const backupDestination = path.join(selected, "rebuild-backups", "port-box");
+      const rebuildSessionSource = path.join(shared, ".onboard-rebuild-port-box.json");
+      const retainedSession = recordRebuildSession(rebuildSessionSource, "port-box", 9123);
+      const failureSource =
+        scenario === "retained rebuild session" ? rebuildSessionSource : backupSource;
+      writeJson(legacyRegistry, {
+        defaultSandbox: "default-box",
+        sandboxes: {
+          "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+        },
+      });
+      recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "e");
+      writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+
+      const renameSync = fs.renameSync.bind(fs);
+      const failMove = (): never => {
+        throw new Error("injected post-registry move failure");
+      };
+      const renameSpy = vi
+        .spyOn(fs, "renameSync")
+        .mockImplementation((source, destination) =>
+          String(source) === failureSource ? failMove() : renameSync(source, destination),
+        );
+
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        /injected post-registry move failure/,
+      );
+      renameSpy.mockRestore();
+
+      expect(Object.keys(readJson(legacyRegistry).sandboxes as object)).toEqual(["default-box"]);
+      expect(fs.existsSync(selectedRegistry)).toBe(false);
+      expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
+      expect(
+        listRetainedSandboxRecoveryRecords(
+          path.join(selected, "retained-sandbox-recovery.json"),
+        ).map((record) => record.sandboxName),
+      ).toEqual(["port-box"]);
+      const pendingIntent = path.join(shared, ".gateway-state-migration", "intent.json");
+      const pendingIntentBefore = fs.readFileSync(pendingIntent, "utf8");
+      expect({
+        recognized: hasMigratableLegacySandbox("port-box", { home, gatewayPort: 9123 }),
+        unchanged: fs.readFileSync(pendingIntent, "utf8") === pendingIntentBefore,
+      }).toEqual({ recognized: true, unchanged: true });
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
+        /recoverable migration for gateway port 9123 is pending/,
+      );
+
+      const staleLock = (
+        {
+          "migration lock": path.join(shared, ".gateway-state-migration.lock"),
+          "legacy registry lock": `${legacyRegistry}.lock`,
+          "selected registry lock": `${selectedRegistry}.lock`,
+          "retained rebuild session": path.join(shared, ".gateway-state-migration.lock"),
+        } as const
+      )[scenario]!;
+      fs.mkdirSync(staleLock, { mode: 0o700, recursive: true });
+      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER), {
+        mode: 0o600,
+      });
+
+      expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
+        migratedSandboxNames: ["port-box"],
+        migratedSession: false,
+        warnings: [],
+      });
+      expect(Object.keys(readJson(selectedRegistry).sandboxes as object)).toEqual(["port-box"]);
+      expect(fs.existsSync(path.join(backupDestination, "snapshot", "manifest.json"))).toBe(true);
+      expect(fs.existsSync(rebuildSessionSource)).toBe(false);
+      expect(readJson(path.join(selected, ".onboard-rebuild-port-box.json"))).toEqual(
+        retainedSession,
+      );
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
+    },
+  );
+
+  it("attempts every lock release after a successful migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === selectedRegistryLock &&
+      String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+        ? failSelectedRelease()
+        : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/changed ownership/);
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
+  it("preserves a migration failure while attempting every lock release", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const backupSource = path.join(shared, "rebuild-backups", "port-box");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failBody = (): never => {
+      throw new Error("injected migration body failure");
+    };
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === backupSource
+        ? failBody()
+        : String(source) === selectedRegistryLock &&
+            String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+          ? failSelectedRelease()
+          : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /injected migration body failure/,
+    );
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
+  it("partitions provable rows and recovery without a session but leaves credentials", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box" },
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "ambiguous-secret" });
+
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.migratedSandboxNames).toEqual(["port-box"]);
+    expect(result.warnings.join("\n")).toContain("Left ambiguous");
+    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(true);
+    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
+    const recoveryRecords = listRetainedSandboxRecoveryRecords(
+      path.join(selected, "retained-sandbox-recovery.json"),
+    );
+    expect(recoveryRecords.map((record) => record.sandboxName)).toEqual(["port-box"]);
+    expectRetainedNameBlocked(recoveryRecords, "port-box");
+  });
+
+  it("moves singleton state when every legacy registry row belongs to the selected gateway", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
+
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.warnings).toEqual([]);
+    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
+  });
+
+  it.each([
+    ["shared", (shared: string, _selected: string) => shared],
+    ["selected", (_shared: string, selected: string) => selected],
+  ])("refuses recovery-only migration while the %s onboarding lock is present", (_scope, root) => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    const lockFile = path.join(root(shared, selected), "onboard.lock");
+    recordRecovery(recoveryFile, "port-box", 9123, "d");
+    const before = fs.readFileSync(recoveryFile, "utf8");
+    fs.mkdirSync(root(shared, selected), { recursive: true });
+    fs.writeFileSync(lockFile, "active writer");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      `onboarding lock ${lockFile} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockFile} and retry; migration will not remove it automatically`,
+    );
+    expect(fs.readFileSync(lockFile, "utf8")).toBe("active writer");
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+    expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
+  });
+
+  it.each(["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"])(
+    "keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]",
+    (entry) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      writeJson(path.join(shared, "sandboxes.json"), {
+        defaultSandbox: "port-box",
+        sandboxes: {
+          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+        },
+      });
+      writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
+      fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
+      fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
+      fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
+
+      const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+      expect(result.warnings).toEqual([]);
+
+      expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+      expect(fs.existsSync(path.join(selected, entry))).toBe(false);
+
+      expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+      expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
+    },
+  );
+
+  it.each([8080, 9123])(
+    "removes only generated stale migration-intent directories for gateway port %i",
+    (gatewayPort) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const preparing = path.join(shared, ".gateway-state-migration.preparing.999999.1");
+      const completed = path.join(shared, ".gateway-state-migration.completed.999999.2");
+      const unrelated = path.join(shared, ".gateway-state-migration.preparing.not-a-pid.3");
+      fs.mkdirSync(preparing, { recursive: true });
+      fs.mkdirSync(completed, { recursive: true });
+      fs.mkdirSync(unrelated, { recursive: true });
+
+      expect(migrateLegacyPortState({ home, gatewayPort })).toEqual({
+        migratedSandboxNames: [],
+        migratedSession: false,
+        warnings: [],
+      });
+
+      expect(fs.existsSync(preparing)).toBe(false);
+      expect(fs.existsSync(completed)).toBe(false);
+      expect(fs.existsSync(unrelated)).toBe(true);
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+    },
+  );
+
+  it("refuses to follow a stale-intent symlink", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const controlled = path.join(home, "controlled");
+    const candidate = path.join(shared, ".gateway-state-migration.completed.999999.4");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.mkdirSync(controlled);
+    fs.writeFileSync(path.join(controlled, "sentinel"), "keep");
+    fs.symlinkSync(controlled, candidate, "dir");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/symbolic link/);
+    expect(fs.readFileSync(path.join(controlled, "sentinel"), "utf8")).toBe("keep");
+    expect(fs.lstatSync(candidate).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not sweep intent directories while another migration owns the lock", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const stale = path.join(shared, ".gateway-state-migration.preparing.999999.5");
+    const lock = path.join(shared, ".gateway-state-migration.lock");
+    fs.mkdirSync(stale, { recursive: true });
+    fs.mkdirSync(lock, { mode: 0o700 });
+    fs.writeFileSync(path.join(lock, "owner"), String(process.pid), { mode: 0o600 });
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /another state operation owns/,
+    );
+    expect(fs.existsSync(stale)).toBe(true);
+  });
+
+  it("does not modify the byte-compatible default gateway root", () => {
+    const home = makeHome();
+    const registry = path.join(home, ".nemoclaw", "sandboxes.json");
+    writeJson(registry, {
+      defaultSandbox: "default-box",
+      sandboxes: { "default-box": { name: "default-box" } },
+    });
+    const before = fs.readFileSync(registry, "utf8");
+
+    expect(migrateLegacyPortState({ home, gatewayPort: 8080 })).toEqual({
+      migratedSandboxNames: [],
+      migratedSession: false,
+      warnings: [],
+    });
+    expect(fs.readFileSync(registry, "utf8")).toBe(before);
+  });
+});

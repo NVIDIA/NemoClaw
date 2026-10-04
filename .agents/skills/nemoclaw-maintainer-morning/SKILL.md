@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-morning
-description: Runs the morning maintainer standup for NemoClaw. Triages the backlog, determines the day's target version, labels selected items, surfaces stragglers from previous versions, and outputs the daily plan. Use at the start of the workday. Trigger keywords - morning, standup, start of day, daily plan, what are we shipping today.
+description: "Prepare the NemoClaw morning maintainer plan: triage the backlog, select a target version, and identify release candidates and stragglers."
 user_invocable: true
 ---
 
@@ -13,22 +13,22 @@ See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md
 ## Step 1: Determine Target Version and Stragglers
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
 ```
 
-This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — the team needs to decide: relabel to today's target, or defer further.
+This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — they indicate post-tag housekeeping was interrupted or an item slipped across multiple cycles. Decide whether to relabel them to today's target or defer them out of the daily release flow.
 
 ## Step 2: Triage
 
 Run the triage script to rank the full backlog:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
 ```
 
-If too few results, run without `--approved-only`. The script calls `gh-pr-merge-now --json`, enriches candidates with risky-area detection, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
+If too few results, run without `--approved-only`. The script fetches open PRs through `gh`, reads Project 199 Priority, enriches candidates with review, CI, file, and risky-area data, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
 
-Also use `find-review-pr` to surface PRs with `security` + `priority: high` labels. Merge these into the candidate pool.
+Also use `find-review-pr` to surface `security` PRs whose Project Priority is `Urgent` or `High`. Merge these into the candidate pool.
 
 ## Step 3: Label Version Targets
 
@@ -45,8 +45,8 @@ gh issue edit <number> --repo NVIDIA/NemoClaw --add-label "<version>"
 Pipe triage output into state:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts \
-  | node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-queue
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts \
+  | node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-queue
 ```
 
 Output the daily plan:
@@ -61,5 +61,6 @@ Include: total items targeted, how many are PRs vs issues, how many are already 
 ## Notes
 
 - This skill runs once at the start of the day. Use `/nemoclaw-maintainer-day` during the day to execute.
-- The target version label is the source of truth for "what we're shipping today."
+- On a PR, the target version label activates daily release work; actual release inclusion requires that PR to be merged with the label at cutoff.
+- On an issue, the target version label is tracking or "needs PR" coordination only.
 - Stragglers from previous versions should be addressed first — they already slipped once.

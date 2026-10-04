@@ -3,18 +3,21 @@
 #
 # Tier definitions for the NemoClaw policy selector.
 #
-# Each tier maps to a named posture. The base sandbox policy
-# (openclaw-sandbox.yaml) is always applied regardless of tier.
-# Tiers add presets on top of that baseline.
+# Each tier maps to a named posture. The base sandbox policy is always the
+# starting point. Personal then replaces overlapping port 80/443 endpoints
+# with its single broad L4 authority while preserving non-web policy.
 #
 # access values:
 #   read       — GET only (or equivalent read-only rules for that service)
-#   read-write — GET + POST/PUT/PATCH (explicitly opt-in; never the default)
+#   read-write — GET + POST/PUT/PATCH (must be explicit in the tier definition)
+#
+# A preset can define stricter or broader native OpenShell behavior than this
+# display-level access label. The Personal internet preset uses L4 passthrough.
 
 tiers:
   - name: restricted
     label: Restricted
-    description: Base sandbox only. No third-party network access beyond inference and core agent tooling.
+    description: Base sandbox only. No third-party network access beyond inference and core agent tooling. Restricted mode suppresses agent-required preset additions, such as OpenClaw pricing fetches; reapply them later with policy-add if cost recording or other agent-side features are needed.
     presets: []
 
   - name: balanced
@@ -24,20 +27,31 @@ tiers:
       - { name: npm,          access: read-write }
       - { name: pypi,         access: read-write }
       - { name: huggingface,  access: read-write }
-      - { name: brew,         access: read-write }
+      - { name: brew-balanced, access: read-write }
       - { name: brave,        access: read-write }
 
   - name: open
     label: Open
-    description: Broad access across third-party services including messaging and productivity. User accepts responsibility for the expanded scope.
+    description: Broad access across third-party services including messaging, productivity, and core weather lookups. User accepts responsibility for the expanded scope.
     presets:
       - { name: npm,          access: read-write }
       - { name: pypi,         access: read-write }
       - { name: huggingface,  access: read-write }
       - { name: brew,         access: read-write }
       - { name: brave,        access: read-write }
+      - { name: weather,      access: read }
+      - { name: public-reference, access: read }
       - { name: slack,        access: read-write }
       - { name: discord,      access: read-write }
       - { name: telegram,     access: read-write }
+      - { name: wechat,       access: read-write }
+      - { name: whatsapp,     access: read-write }
+      - { name: teams,        access: read-write }
       - { name: jira,         access: read-write }
       - { name: outlook,      access: read-write }
+
+  - name: personal
+    label: Personal
+    description: Trusted personal-use posture. Lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. Unspecified, loopback, and link-local ranges remain blocked. This broad route replaces overlapping web endpoints while active. Do not use with untrusted prompts or data.
+    presets:
+      - { name: personal-open-internet, access: read-write }

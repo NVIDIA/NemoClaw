@@ -1,0 +1,331 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const ACTION_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "src", "lib", "actions", "sandbox", "policy-channel.ts"),
+);
+const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
+const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
+const MESSAGING_PLAN_FIXTURES_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "test", "helpers", "messaging-plan-fixtures.ts"),
+);
+const SOURCE_NODE_ARGS = ["--import", "tsx"];
+
+describe("sandbox-aware messaging policy resolution", () => {
+  it("keeps standalone messaging presets egress-only while preserving configured channel bindings (#10273)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-channel-bindings-"));
+    const script = String.raw`
+(async () => {
+const YAML = require("yaml");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+const { makeMessagingPlan } = require(${MESSAGING_PLAN_FIXTURES_PATH});
+registry.registerSandbox({ name: "egress-only", agent: "openclaw", policies: [] });
+registry.registerSandbox({
+  name: "slack-configured",
+  agent: "openclaw",
+  messaging: {
+    schemaVersion: 1,
+    plan: makeMessagingPlan({ sandboxName: "slack-configured", channels: ["slack"] }),
+  },
+});
+async function inspect(name) {
+  const parsed = YAML.parse(await policies.loadPresetForSandbox(name, "slack"));
+  const endpoints = parsed.network_policies.slack.endpoints;
+  return {
+    providers: endpoints.flatMap((endpoint) =>
+      endpoint.credential_binding ? [endpoint.credential_binding.provider] : []
+    ),
+    rewriteCount: endpoints.filter((endpoint) => endpoint.request_body_credential_rewrite).length,
+  };
+}
+process.stdout.write("__RESULT__" + JSON.stringify({
+  egressOnly: await inspect("egress-only"),
+  configured: await inspect("slack-configured"),
+}));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.egressOnly).toEqual({ providers: [], rewriteCount: 4 });
+    expect(payload.configured).toEqual({
+      providers: [
+        "slack-configured-slack-app",
+        "slack-configured-slack-bridge",
+        "slack-configured-slack-bridge",
+        "slack-configured-slack-bridge",
+      ],
+      rewriteCount: 4,
+    });
+  });
+
+  it("loadPresetForSandbox fails closed for unknown messaging agents without blocking central presets", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-agent-resolution-"));
+    const script = String.raw`
+(async () => {
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "deepagents-sandbox",
+  agent: "langchain-deepagents-code",
+});
+const channelPreset = await policies.loadPresetForSandbox("deepagents-sandbox", "telegram");
+const centralPreset = await policies.loadPresetForSandbox("deepagents-sandbox", "npm");
+process.stdout.write("__RESULT__" + JSON.stringify({
+  channelPreset,
+  centralPresetHasNpmPolicy: String(centralPreset).includes("npm_yarn:"),
+}));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.channelPreset).toBeNull();
+    expect(payload.centralPresetHasNpmPolicy).toBe(true);
+    expect(result.stderr).not.toContain("Preset not found");
+  });
+
+  it("loadPresetForSandbox fails closed when WeChat policy input is invalid (#10606)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-policy-input-"));
+    const script = String.raw`
+(async () => {
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "wechat-invalid",
+  agent: "openclaw",
+});
+process.stdout.write("__RESULT__" + JSON.stringify({
+  preset: await policies.loadPresetForSandbox("wechat-invalid", "wechat", {
+    messagingConfig: { WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example" },
+  }),
+}));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({ preset: null });
+  });
+
+  it("gateway preset matching skips unsupported Deep Agents messaging policies without lookup noise (#6185)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-gateway-agent-"));
+    const openshellPath = path.join(tmpDir, "openshell");
+    fs.writeFileSync(
+      openshellPath,
+      [
+        "#!/usr/bin/env bash",
+        "cat <<'EOF'",
+        "Version: 1",
+        "---",
+        "version: 1",
+        "network_policies:",
+        "  npm_yarn:",
+        "    endpoints: []",
+        "EOF",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(openshellPath, 0o755);
+    const script = String.raw`
+(async () => {
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "deepagents-sandbox",
+  agent: "langchain-deepagents-code",
+});
+const gatewayPresets = await policies.getGatewayPresets("deepagents-sandbox");
+process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_OPENSHELL_BIN: openshellPath },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("Preset not found");
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.gatewayPresets).toEqual(["npm"]);
+  });
+
+  it("reads live presets through the gateway registry root that owns the sandbox", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-sibling-root-"));
+    const openshellPath = path.join(tmpDir, "openshell");
+    const openshellLog = path.join(tmpDir, "openshell.log");
+    const stateRoot = path.join(tmpDir, ".nemoclaw", "gateways", "9000");
+    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateRoot, "sandboxes.json"),
+      `${JSON.stringify({
+        defaultSandbox: "sibling-sandbox",
+        sandboxes: {
+          "sibling-sandbox": {
+            name: "sibling-sandbox",
+            agent: "openclaw",
+            gatewayName: "nemoclaw-9000",
+            gatewayPort: 9000,
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      openshellPath,
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        "cat <<'EOF'",
+        "Version: 1",
+        "---",
+        "version: 1",
+        "network_policies:",
+        "  npm_yarn:",
+        "    endpoints: []",
+        "EOF",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(openshellPath, 0o755);
+    const script = String.raw`
+(async () => {
+const policies = (await import(${POLICIES_PATH})).default;
+const gatewayPresets = await policies.getGatewayPresets("sibling-sandbox", undefined, {
+  name: "sibling-sandbox",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9000",
+  gatewayPort: 9000,
+});
+process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_OPENSHELL_BIN: openshellPath },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({
+      gatewayPresets: ["npm"],
+    });
+    expect(calls).toContain("policy get -g nemoclaw-9000 --full sibling-sandbox");
+  });
+
+  it("setup policy preset catalog omits unsupported Deep Agents messaging policies (#6185)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-setup-agent-"));
+    const script = String.raw`
+(async () => {
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "deepagents-sandbox",
+  agent: "langchain-deepagents-code",
+});
+const names = (await policies.listSetupPolicyPresets("deepagents-sandbox")).map((preset) => preset.name);
+process.stdout.write("__RESULT__" + JSON.stringify({ names }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.names).toContain("npm");
+    expect(payload.names).not.toContain("telegram");
+    expect(payload.names).not.toContain("discord");
+    expect(payload.names).not.toContain("slack");
+    expect(payload.names).not.toContain("teams");
+    expect(payload.names).not.toContain("whatsapp");
+    expect(payload.names).not.toContain("wechat");
+  });
+
+  it("policy-add treats unsupported Deep Agents messaging policy as unknown before preview or prompt (#6185)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-agent-gate-"));
+    const script = String.raw`
+(async () => {
+const registry = require(${REGISTRY_PATH});
+const { addSandboxPolicy } = require(${ACTION_PATH});
+const output = [];
+const errors = [];
+console.log = (...args) => output.push(args.join(" "));
+console.error = (...args) => errors.push(args.join(" "));
+process.exit = (code) => { throw new Error("EXIT:" + String(code)); };
+registry.registerSandbox({
+  name: "deepagents-sandbox",
+  agent: "langchain-deepagents-code",
+});
+(async () => {
+  let exitCode = null;
+  try {
+    await addSandboxPolicy("deepagents-sandbox", { preset: "telegram", yes: true });
+  } catch (error) {
+    exitCode = String(error && error.message) === "EXIT:1" ? 1 : "unexpected";
+    errors.push(String(error && (error.stack || error.message || error)));
+  }
+  process.stdout.write("__RESULT__" + JSON.stringify({ exitCode, output, errors }));
+})();
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    const text = [...payload.output, ...payload.errors].join("\n");
+    expect(payload.exitCode).toBe(1);
+    expect(text).toContain("Unknown preset 'telegram'.");
+    expect(text).toContain("Valid presets:");
+    expect(text).not.toContain("telegram,");
+    expect(text).not.toContain("not supported for agent");
+    expect(text).not.toContain("Terminal-runtime agents do not run inbound messaging bridges.");
+    expect(text).not.toContain("Preset not found");
+    expect(text).not.toContain("Effective egress that would be opened");
+    expect(text).not.toContain("Apply 'telegram'");
+  });
+});

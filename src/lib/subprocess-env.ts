@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withLocalNoProxy } from "./proxy/local-no-proxy";
+
 /**
  * Subprocess environment allowlist.
  *
  * Subprocesses spawned by the CLI or plugin must NOT inherit the full
- * parent process.env — that leaks secrets (NVIDIA_API_KEY, GITHUB_TOKEN,
+ * parent process.env — that leaks secrets (NVIDIA_INFERENCE_API_KEY, GITHUB_TOKEN,
  * AWS_ACCESS_KEY_ID, etc.) to child processes where they can be read and
  * exfiltrated. Instead, only forward the categories below.
  *
@@ -40,43 +42,66 @@ const TLS = [
 
 const TOOLCHAIN = ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "RUST_LOG", "RUST_BACKTRACE"];
 
-const ALLOWED_ENV_NAMES = new Set([...SYSTEM, ...TEMP, ...LOCALE, ...PROXY, ...TLS, ...TOOLCHAIN]);
+export const SUBPROCESS_ENV_ALLOWED_NAMES: readonly string[] = Object.freeze([
+  ...SYSTEM,
+  ...TEMP,
+  ...LOCALE,
+  ...PROXY,
+  ...TLS,
+  ...TOOLCHAIN,
+]);
+const ALLOWED_ENV_NAMES = new Set(SUBPROCESS_ENV_ALLOWED_NAMES);
 
 // ── Allowed prefixes ───────────────────────────────────────────
 
-const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_", "OPENSHELL_", "GRPC_"];
+export const SUBPROCESS_ENV_ALLOWED_PREFIXES: readonly string[] = Object.freeze([
+  "LC_",
+  "XDG_",
+  "OPENSHELL_",
+  "GRPC_",
+]);
 
 // ── Public API ─────────────────────────────────────────────────
 
-/**
- * When any HTTP proxy is forwarded, ensure localhost and loopback traffic is
- * not routed through it. Without this, tools that respect HTTP_PROXY (curl,
- * Node.js http, Python requests) will tunnel loopback requests to the user's
- * proxy (e.g. Privoxy), which fails with HTTP 500.
- * See: #2616
- */
-export function withLocalNoProxy(env: Record<string, string>): void {
-  const hasProxy = env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy;
-  if (!hasProxy) return;
-  for (const key of ["NO_PROXY", "no_proxy"] as const) {
-    const current = env[key] ?? "";
-    const parts = current ? current.split(",").map((s) => s.trim()) : [];
-    let changed = false;
-    for (const host of ["localhost", "127.0.0.1"]) {
-      if (!parts.includes(host)) {
-        parts.push(host);
-        changed = true;
-      }
-    }
-    if (changed) env[key] = parts.join(",");
-  }
+export function isSubprocessEnvNameAllowed(name: string): boolean {
+  return (
+    ALLOWED_ENV_NAMES.has(name) ||
+    SUBPROCESS_ENV_ALLOWED_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
 }
 
-export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+/**
+ * When any HTTP proxy is forwarded, augment NO_PROXY so the host proxy is
+ * never asked to forward traffic destined for the host loopback, the
+ * container-host aliases, or the OpenShell-managed inference hostname.
+ *
+ * Boundary: the helper covers host-side subprocesses (curl, Node.js http,
+ * Python requests) and the env forwarded into `openshell sandbox create
+ * -- env ...`. The latter is what determines whether OpenShell's L7 proxy
+ * chains a hostname through the host HTTP_PROXY when the host has one set
+ * (for example Privoxy at 127.0.0.1:8118 on macOS + Colima). Adding
+ * `inference.local` here is the seed that keeps OpenShell-internal
+ * inference traffic off the host proxy chain.
+ *
+ * The sandbox runtime's own NO_PROXY is set later by
+ * `scripts/nemoclaw-start.sh` against the OpenShell L7 proxy address and
+ * intentionally does not include `inference.local`, which is orthogonal
+ * to this seed and unaffected by the augmentation.
+ *
+ * Removal condition: when OpenShell's host-side proxy chaining no longer
+ * consults the caller's NO_PROXY for sandbox-create env decisions, this
+ * augmentation can be dropped.
+ */
+export { withLocalNoProxy };
+
+export function buildSubprocessEnvFrom(
+  source: NodeJS.ProcessEnv,
+  extra?: Record<string, string>,
+): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
-    if (ALLOWED_ENV_NAMES.has(key) || ALLOWED_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+    if (isSubprocessEnvNameAllowed(key)) {
       env[key] = value;
     }
   }
@@ -84,5 +109,74 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
     Object.assign(env, extra);
   }
   withLocalNoProxy(env);
+  return env;
+}
+
+/**
+ * Build the environment for a Docker CLI command against one explicit
+ * authority. The default authority keeps its context and config selection.
+ * An explicit socket removes both unless the caller proves it was resolved
+ * from the selected context and still needs that context's config directory.
+ */
+export function buildDockerSubprocessEnv(
+  source: NodeJS.ProcessEnv,
+  dockerHost: string | undefined,
+  extra?: Record<string, string>,
+  options: { preserveDockerConfig?: boolean } = {},
+): Record<string, string> {
+  const env = buildSubprocessEnvFrom(source, extra);
+  delete env.DOCKER_HOST;
+  delete env.DOCKER_CONFIG;
+  delete env.DOCKER_CONTEXT;
+  if (dockerHost === undefined) {
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    const dockerContext = extra?.DOCKER_CONTEXT ?? source.DOCKER_CONTEXT;
+    if (dockerConfig !== undefined) env.DOCKER_CONFIG = dockerConfig;
+    if (dockerContext !== undefined) env.DOCKER_CONTEXT = dockerContext;
+  } else {
+    env.DOCKER_HOST = dockerHost;
+    // A selected host can still depend on its client configuration for registry
+    // credentials, certificate paths, or credential helpers. Keep the exact
+    // caller-selected directory only when the caller opts into that authority.
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    if (options.preserveDockerConfig && dockerConfig !== undefined) {
+      env.DOCKER_CONFIG = dockerConfig;
+    }
+  }
+  return env;
+}
+
+export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+  return buildSubprocessEnvFrom(process.env, extra);
+}
+
+// Names a Node.js child process needs to start and to resolve its own state
+// directory consistently with the parent CLI process, independent of what
+// work the child actually does.
+const ADAPTER_RUNTIME_NAMES = ["HOME", "PATH", "NODE_ENV"];
+
+/**
+ * Purpose-built allowlist for a long-lived, detached, credential-bearing
+ * local adapter process (for example the HTTPS Pin Runtime adapter): only
+ * the Node runtime variables above, plus the variables Node itself reads to
+ * validate the adapter's own outbound HTTPS connections to the real
+ * upstream provider. Unlike `buildSubprocessEnv`, this intentionally omits
+ * `TOOLCHAIN` (`DOCKER_HOST`, `KUBECONFIG`, `SSH_AUTH_SOCK`, ...) and
+ * `PROXY`: a credential-bearing adapter with no need for those capabilities
+ * should not inherit them just because an ordinary CLI subprocess might.
+ */
+export function buildMinimalCredentialAdapterEnv(
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (ADAPTER_RUNTIME_NAMES.includes(key) || TLS.includes(key)) {
+      env[key] = value;
+    }
+  }
+  if (extra) {
+    Object.assign(env, extra);
+  }
   return env;
 }

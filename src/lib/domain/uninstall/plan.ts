@@ -1,0 +1,153 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  DEFAULT_GATEWAY_NAME,
+  gatewayVolumeCandidates,
+  NEMOCLAW_PROVIDERS,
+  type UninstallPaths,
+  uninstallStatePaths,
+} from "./paths";
+import type { ShimClassification } from "./shims";
+
+export interface UninstallPlanOptions {
+  deleteModels: boolean;
+  gatewayName?: string;
+  keepOpenShell: boolean;
+  shim?: ShimClassification;
+}
+
+export type UninstallPlanAction =
+  | { kind: "delete-docker-volume"; name: string }
+  | { kind: "delete-all-ollama-models" }
+  | { kind: "delete-hugging-face-cache-data"; path: string }
+  | { kind: "delete-managed-swap" }
+  | { kind: "verify-docker-container-cleanup" }
+  | { kind: "delete-related-docker-images" }
+  | { kind: "delete-openshell-install-path"; path: string }
+  | { kind: "delete-openshell-provider"; name: string }
+  | { kind: "delete-path"; path: string }
+  | { kind: "delete-runtime-glob"; pattern: string }
+  | { kind: "delete-shim"; reason: string }
+  | { kind: "destroy-openshell-gateway"; name: string }
+  | { kind: "preserve-hugging-face-cache-data"; path: string }
+  | { kind: "preserve-ollama-models" }
+  | { kind: "preserve-openshell-install-paths"; paths: string[] }
+  | { kind: "preserve-shim"; reason: string }
+  | { kind: "stop-helper-services" }
+  | { kind: "stop-model-router" }
+  | { kind: "stop-ollama-auth-proxy" }
+  | { kind: "stop-orphaned-openshell-processes" }
+  | { kind: "uninstall-npm-package"; name: "nemoclaw" };
+
+export interface UninstallPlanStep {
+  actions: UninstallPlanAction[];
+  name: string;
+}
+
+export interface UninstallPlan {
+  gatewayName: string;
+  steps: UninstallPlanStep[];
+}
+
+function cliActions(shim?: ShimClassification): UninstallPlanAction[] {
+  const actions: UninstallPlanAction[] = [{ kind: "uninstall-npm-package", name: "nemoclaw" }];
+  if (!shim) return actions;
+  actions.push(
+    shim.remove
+      ? { kind: "delete-shim", reason: shim.reason }
+      : { kind: "preserve-shim", reason: shim.reason },
+  );
+  return actions;
+}
+
+export function buildUninstallPlan(
+  paths: UninstallPaths,
+  options: UninstallPlanOptions,
+): UninstallPlan {
+  const gatewayName = options.gatewayName || DEFAULT_GATEWAY_NAME;
+  return {
+    gatewayName,
+    steps: [
+      {
+        name: "Stopping services",
+        actions: [
+          { kind: "stop-helper-services" },
+          { kind: "delete-runtime-glob", pattern: paths.helperServiceGlob },
+          { kind: "stop-orphaned-openshell-processes" },
+          { kind: "stop-ollama-auth-proxy" },
+          { kind: "stop-model-router" },
+        ],
+      },
+      {
+        name: "OpenShell resources",
+        actions: [
+          ...NEMOCLAW_PROVIDERS.map((name) => ({
+            kind: "delete-openshell-provider" as const,
+            name,
+          })),
+          { kind: "destroy-openshell-gateway", name: gatewayName },
+        ],
+      },
+      {
+        name: "Docker resources",
+        actions: [
+          { kind: "verify-docker-container-cleanup" },
+          { kind: "delete-related-docker-images" },
+          ...gatewayVolumeCandidates(gatewayName).map((name) => ({
+            kind: "delete-docker-volume" as const,
+            name,
+          })),
+        ],
+      },
+      {
+        name: "NemoClaw CLI",
+        actions: cliActions(options.shim),
+      },
+      {
+        name: "Model stores",
+        actions: options.deleteModels
+          ? [
+              { kind: "delete-all-ollama-models" },
+              {
+                kind: "delete-hugging-face-cache-data",
+                path: paths.huggingFaceModelCacheDir,
+              },
+            ]
+          : [
+              { kind: "preserve-ollama-models" },
+              {
+                kind: "preserve-hugging-face-cache-data",
+                path: paths.huggingFaceModelCacheDir,
+              },
+            ],
+      },
+      {
+        name: "State and binaries",
+        actions: [
+          { kind: "delete-managed-swap" },
+          ...paths.runtimeTempGlobs.map((pattern) => ({
+            kind: "delete-runtime-glob" as const,
+            pattern,
+          })),
+          ...(options.keepOpenShell
+            ? [
+                {
+                  kind: "preserve-openshell-install-paths" as const,
+                  paths: paths.openshellInstallPaths,
+                },
+              ]
+            : paths.openshellInstallPaths.map((path) => ({
+                kind: "delete-openshell-install-path" as const,
+                path,
+              }))),
+          ...uninstallStatePaths(paths).map((path) => ({ kind: "delete-path" as const, path })),
+        ],
+      },
+    ],
+  };
+}
+
+export function flattenUninstallPlan(plan: UninstallPlan): UninstallPlanAction[] {
+  return plan.steps.flatMap((step) => step.actions);
+}

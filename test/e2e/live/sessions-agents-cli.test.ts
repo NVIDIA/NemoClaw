@@ -1,0 +1,465 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Preserves the host-side CLI contract for `nemoclaw <name> sessions`
+ * and `nemoclaw <name> agents`: real Docker/OpenShell onboarding, live NVIDIA
+ * credential gating, explicit OpenClaw operator approval, JSON envelope
+ * parsing, and cleanup. OpenClaw still owns the in-sandbox session-store
+ * recovery semantics; this test stays at NemoClaw's argv translation,
+ * gateway dispatch, and JSON-envelope boundary.
+ */
+
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import fs from "node:fs";
+import path from "node:path";
+
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { registerSandboxCleanupUnlessKept } from "../fixtures/cleanup-resources.ts";
+import { resultText } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { parseJsonFromText } from "./json-envelope.ts";
+
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sessions-cli";
+const TEST_AGENT_ID = process.env.NEMOCLAW_E2E_AGENT_ID ?? "work";
+const ONBOARD_TIMEOUT_MS = execTimeout(40 * 60_000);
+const AGENT_TURN_TIMEOUT_MS = 5 * 60_000;
+const GATEWAY_RPC_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
+
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+validateSandboxName(SANDBOX_NAME);
+
+type JsonRecord = Record<string, unknown>;
+type CommandOptions = {
+  artifactName: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  redactionValues?: string[];
+};
+
+type HostedInferenceConfig = ReturnType<typeof requireHostedInferenceConfig>;
+
+function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const base = buildAvailabilityProbeEnv();
+  return {
+    ...base,
+    NODE_NO_WARNINGS: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_POLICY_TIER: "open",
+    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    PATH: [path.join(process.env.HOME ?? "", ".local", "bin"), base.PATH].filter(Boolean).join(":"),
+    ...extra,
+  };
+}
+
+async function runNemoclaw(
+  host: HostCliClient,
+  args: string[],
+  hosted: HostedInferenceConfig,
+  options: CommandOptions,
+): Promise<ShellProbeResult> {
+  return await host.command("node", [CLI_ENTRYPOINT, ...args], {
+    artifactName: options.artifactName,
+    env: commandEnv({
+      ...hosted.env,
+      ...(options.env ?? {}),
+    }),
+    redactionValues: [hosted.apiKey, ...(options.redactionValues ?? [])],
+    timeoutMs: options.timeoutMs ?? GATEWAY_RPC_TIMEOUT_MS,
+  });
+}
+
+async function ensureOpenshellAvailable(host: HostCliClient): Promise<void> {
+  const current = await host.command(
+    "bash",
+    ["-lc", "command -v openshell && openshell --version"],
+    {
+      artifactName: "prereq-openshell-version",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  if (current.exitCode === 0) return;
+
+  const install = await host.command(
+    "bash",
+    [path.join(REPO_ROOT, "scripts", "install-openshell.sh")],
+    {
+      artifactName: "prereq-install-openshell",
+      cwd: REPO_ROOT,
+      env: commandEnv(),
+      timeoutMs: 10 * 60_000,
+    },
+  );
+  expect(install.exitCode, `install-openshell.sh failed\n${resultText(install)}`).toBe(0);
+
+  const afterInstall = await host.command(
+    "bash",
+    ["-lc", "command -v openshell && openshell --version"],
+    {
+      artifactName: "prereq-openshell-version-after-install",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(
+    afterInstall.exitCode,
+    `openshell missing after install\n${resultText(afterInstall)}`,
+  ).toBe(0);
+}
+
+async function precleanSandbox(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  hosted: HostedInferenceConfig,
+): Promise<void> {
+  if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
+
+  const destroy = await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], hosted, {
+    artifactName: "cleanup-nemoclaw-destroy-sessions-agents-cli",
+    timeoutMs: 5 * 60_000,
+  });
+  expect(
+    destroy.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(destroy)),
+    `cleanup NemoClaw destroy failed\n${resultText(destroy)}`,
+  ).toBe(true);
+
+  await expect(
+    sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
+  ).resolves.toBeUndefined();
+}
+
+function isMissingSandboxCleanupOutput(text: string): boolean {
+  return /does not exist|not found|Run 'nemoclaw onboard'|no such sandbox/i.test(text);
+}
+
+function isPreContractEndpointValidationRateLimit(result: ShellProbeResult): boolean {
+  const text = resultText(result);
+  return (
+    /NVIDIA Endpoints endpoint validation failed|endpoint validation failed/i.test(text) &&
+    /HTTP 429|\b429\b|rate[- ]?limit|quota|temporarily unavailable|Validation details were omitted to avoid exposing credentials/i.test(
+      text,
+    )
+  );
+}
+
+function tailEvidence(text: string, maxLength = 2_000): string {
+  return text.length > maxLength ? text.slice(-maxLength) : text;
+}
+
+function parseJsonEnvelope(result: ShellProbeResult, label: string): unknown {
+  const candidates = [result.stdout, resultText(result)].filter((candidate) => candidate.trim());
+  for (const candidate of candidates) {
+    try {
+      const parsed = parseJsonFromText(candidate);
+      expect(
+        typeof parsed === "object" && parsed !== null,
+        `${label} JSON envelope must be an object or array`,
+      ).toBe(true);
+      return parsed;
+    } catch {
+      // Try the next candidate. stdout is preferred because stderr can carry
+      // process warnings after an otherwise valid JSON payload.
+    }
+  }
+  throw new Error(`${label} did not contain parseable JSON:\n${resultText(result)}`);
+}
+
+function asRecord(value: unknown): JsonRecord | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : undefined;
+}
+
+function sessionEntries(envelope: unknown): JsonRecord[] {
+  if (Array.isArray(envelope))
+    return envelope.filter((entry): entry is JsonRecord => !!asRecord(entry));
+  const sessions = asRecord(envelope)?.sessions;
+  return Array.isArray(sessions)
+    ? sessions.filter((entry): entry is JsonRecord => !!asRecord(entry))
+    : [];
+}
+
+function agentEntries(envelope: unknown): JsonRecord[] {
+  if (Array.isArray(envelope))
+    return envelope.filter((entry): entry is JsonRecord => !!asRecord(entry));
+  const agents = asRecord(envelope)?.agents;
+  return Array.isArray(agents)
+    ? agents.filter((entry): entry is JsonRecord => !!asRecord(entry))
+    : [];
+}
+
+function firstSessionKey(envelope: unknown): string | undefined {
+  for (const entry of sessionEntries(envelope)) {
+    if (typeof entry.key === "string" && entry.key.length > 0) return entry.key;
+  }
+  return undefined;
+}
+
+async function expectJsonCommand(
+  host: HostCliClient,
+  args: string[],
+  hosted: HostedInferenceConfig,
+  artifactName: string,
+): Promise<unknown> {
+  const result = await runNemoclaw(host, args, hosted, { artifactName });
+  expect(result.exitCode, `${args.join(" ")} failed\n${resultText(result)}`).toBe(0);
+  return parseJsonEnvelope(result, args.join(" "));
+}
+
+test(
+  "sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm CLI, selected runtime, and OpenShell prerequisites",
+        "onboard the sessions and agents sandbox",
+        "exercise main-agent session JSON and reset",
+        "add and list the secondary agent",
+        "seed and delete the secondary-agent session",
+        "delete the secondary agent and confirm absence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    await artifacts.target.declare({
+      id: "sessions-agents-cli",
+      boundary: "host-cli-openclaw-sessions-agents-gateway",
+      sandboxName: SANDBOX_NAME,
+      contracts: [
+        "NVIDIA_INFERENCE_API_KEY absence skips the live credential-gated target",
+        "nemoclaw <name> sessions --json defaults to OpenClaw sessions list",
+        "nemoclaw <name> sessions list --json returns a parseable JSON envelope",
+        "the operator approves only the current local CLI request before sessions reset/delete RPCs",
+        "nemoclaw <name> agents add/list/delete pass through to the in-sandbox OpenClaw CLI",
+        "the secondary agent session key is removed through sessions delete --json",
+        "cleanup destroys the named sandbox unless NEMOCLAW_E2E_KEEP_SANDBOX=1",
+      ],
+    });
+
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-sessions-agents-cli",
+      scenarioLabel: "sessions and agents CLI",
+    });
+
+    const hosted = requireHostedInferenceConfig(secrets);
+    await ensureOpenshellAvailable(host);
+    registerSandboxCleanupUnlessKept(process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1", () => {
+      cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+        sandbox.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
+          env: commandEnv(),
+          timeoutMs: 60_000,
+        }),
+      );
+      cleanup.trackSandbox(host, SANDBOX_NAME, {
+        artifactName: "cleanup-nemoclaw-destroy-sessions-agents-cli",
+        env: commandEnv(hosted.env),
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 5 * 60_000,
+      });
+    });
+    await precleanSandbox(host, sandbox, hosted);
+    fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
+
+    progress.phase("onboard the sessions and agents sandbox");
+    const onboard = await runNemoclaw(
+      host,
+      ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
+      hosted,
+      {
+        artifactName: "onboard-sessions-agents-cli",
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      },
+    );
+    if (onboard.exitCode !== 0 && isPreContractEndpointValidationRateLimit(onboard)) {
+      await artifacts.writeJson("onboard-endpoint-validation-skip.json", {
+        reason:
+          "NVIDIA endpoint validation was externally rate-limited or sanitized before the sessions/agents CLI contract could run.",
+        exitCode: onboard.exitCode,
+        stdoutTail: tailEvidence(onboard.stdout),
+        stderrTail: tailEvidence(onboard.stderr),
+      });
+      skip(
+        "NVIDIA endpoint validation hit HTTP 429/sanitized failure before sessions/agents CLI contract could run",
+      );
+    }
+    expect(onboard.exitCode, `onboard failed\n${resultText(onboard)}`).toBe(0);
+
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      commandEnv(hosted.env),
+      [hosted.apiKey],
+      false,
+    );
+
+    progress.phase("exercise main-agent session JSON and reset");
+    const mainSeed = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", "main", "-m", "ping"],
+      hosted,
+      {
+        artifactName: "seed-main-session",
+        timeoutMs: AGENT_TURN_TIMEOUT_MS,
+      },
+    );
+
+    expect(mainSeed.exitCode, `main-agent seed failed\n${resultText(mainSeed)}`).toBe(0);
+    await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "--json"],
+      hosted,
+      "tc-sess-01-sessions-default-json",
+    );
+    await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "list", "--json"],
+      hosted,
+      "tc-sess-02-sessions-list-json",
+    );
+
+    const reset = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "sessions", "reset", "agent:main:main", "--json"],
+      hosted,
+      { artifactName: "tc-sess-03-sessions-reset-main-json", timeoutMs: GATEWAY_RPC_TIMEOUT_MS },
+    );
+    expect(reset.exitCode, `sessions reset failed\n${resultText(reset)}`).toBe(0);
+    const resetEnvelope = parseJsonEnvelope(reset, "sessions reset --json");
+    expect(asRecord(resetEnvelope)?.key, "sessions reset JSON must include key").toBe(
+      "agent:main:main",
+    );
+
+    await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "list", "--json"],
+      hosted,
+      "tc-sess-04-sessions-list-after-reset-json",
+    );
+
+    progress.phase("add and list the secondary agent");
+    const addAgent = await runNemoclaw(
+      host,
+      [
+        SANDBOX_NAME,
+        "agents",
+        "add",
+        TEST_AGENT_ID,
+        "--workspace",
+        `/sandbox/.openclaw/workspace-${TEST_AGENT_ID}`,
+        "--non-interactive",
+      ],
+      hosted,
+      {
+        artifactName: "tc-agent-01-agents-add-passthrough",
+        timeoutMs: 120_000,
+      },
+    );
+    expect(addAgent.exitCode, `agents add failed\n${resultText(addAgent)}`).toBe(0);
+
+    await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+      hosted,
+      "tc-agent-01-sessions-list-agent-after-add-json",
+    );
+
+    const agentsList = await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "agents", "list", "--json"],
+      hosted,
+      "tc-agent-03-agents-list-json",
+    );
+    expect(
+      agentEntries(agentsList).some((entry) => entry.id === TEST_AGENT_ID),
+      `agents list --json must include '${TEST_AGENT_ID}'`,
+    ).toBe(true);
+
+    progress.phase("seed and delete the secondary-agent session");
+    const workSeed = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", TEST_AGENT_ID, "-m", "ping"],
+      hosted,
+      {
+        artifactName: "seed-work-agent-session",
+        timeoutMs: AGENT_TURN_TIMEOUT_MS,
+      },
+    );
+    expect(workSeed.exitCode, `work-agent seed failed\n${resultText(workSeed)}`).toBe(0);
+
+    const workSessions = await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+      hosted,
+      "tc-sess-05-work-agent-sessions-json",
+    );
+    const sessionKey = firstSessionKey(workSessions);
+    expect(
+      sessionKey,
+      `expected a session key for agent '${TEST_AGENT_ID}' after seed prompt`,
+    ).toBeTruthy();
+
+    const deleteSession = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "sessions", "delete", sessionKey!, "--json"],
+      hosted,
+      { artifactName: "tc-sess-05-sessions-delete-json", timeoutMs: GATEWAY_RPC_TIMEOUT_MS },
+    );
+    expect(deleteSession.exitCode, `sessions delete failed\n${resultText(deleteSession)}`).toBe(0);
+    const deleteEnvelope = parseJsonEnvelope(deleteSession, "sessions delete --json");
+    expect(asRecord(deleteEnvelope)?.key, "sessions delete JSON must include deleted key").toBe(
+      sessionKey,
+    );
+
+    const workSessionsAfterDelete = await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+      hosted,
+      "tc-sess-05-work-agent-sessions-after-delete-json",
+    );
+    expect(
+      sessionEntries(workSessionsAfterDelete).some((entry) => entry.key === sessionKey),
+      `session key '${sessionKey}' must be absent after delete`,
+    ).toBe(false);
+
+    progress.phase("delete the secondary agent and confirm absence");
+    const deleteAgent = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "agents", "delete", TEST_AGENT_ID, "--force", "--json"],
+      hosted,
+      {
+        artifactName: "tc-agent-02-agents-delete-json",
+        timeoutMs: 120_000,
+      },
+    );
+    expect(deleteAgent.exitCode, `agents delete failed\n${resultText(deleteAgent)}`).toBe(0);
+
+    const agentsAfterDelete = await expectJsonCommand(
+      host,
+      [SANDBOX_NAME, "agents", "list", "--json"],
+      hosted,
+      "tc-agent-02-agents-list-after-delete-json",
+    );
+    expect(
+      agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
+      `agent '${TEST_AGENT_ID}' still visible after delete`,
+    ).toBe(false);
+  },
+);

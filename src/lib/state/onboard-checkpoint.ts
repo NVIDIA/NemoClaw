@@ -1,0 +1,585 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+
+import { SUPPORTED_GATEWAY_CAPABILITIES } from "../core/gateway-capabilities";
+import { isObjectRecord } from "../core/json-types";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { isOnboardMachineState } from "../onboard/machine/transitions";
+import { isDecisionSelected, parseCheckpointDecision } from "./onboard-checkpoint-decision";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointBindings,
+  type CheckpointDecision,
+  type CheckpointEffectGroupName,
+  type CheckpointEffectGroupRecord,
+  type CheckpointGatewayAuthority,
+  type CheckpointGatewaySupervisor,
+  type CheckpointLoadResult,
+  type CheckpointMessagingSelection,
+  type CheckpointOnboardProfile,
+  type CheckpointProfileDecision,
+  type CheckpointProviderBinding,
+  type CheckpointResourceProfile,
+  type CheckpointRuntimeAuthorityDecision,
+  type CheckpointSandboxIdentity,
+  type CheckpointSandboxRecreatePhase,
+  type CheckpointSandboxRecreateSourceWorkload,
+  type CheckpointSandboxRecreateTransaction,
+  type OnboardCheckpoint,
+} from "./onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "./onboard/portable-runtime-authority";
+
+const EFFECT_GROUP_NAMES: readonly CheckpointEffectGroupName[] = [
+  "web_search_provider",
+  "messaging_providers",
+  "sandbox_create",
+  "sandbox_register",
+];
+const SANDBOX_RECREATE_PHASES = new Set<CheckpointSandboxRecreatePhase>([
+  "planned",
+  "deleting",
+  "deleted",
+  "creating",
+  "created",
+  "registry_committing",
+  "completed",
+]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CHECKPOINT_KEYS = [
+  "schemaVersion",
+  "sessionId",
+  "machineState",
+  "updatedAt",
+  "profile",
+  "runtimeAuthority",
+  "sandboxIdentity",
+  "webSearch",
+  "messaging",
+  "resourceProfile",
+  "gatewayAuthority",
+  "effectGroups",
+  "bindings",
+  "sandboxRecreate",
+] as const;
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function parseProfile(value: unknown): CheckpointProfileDecision | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["kind", "value"])) return null;
+  if (value.kind !== "selected" || (value.value !== "default" && value.value !== "portable")) {
+    return null;
+  }
+  return { kind: "selected", value: value.value as CheckpointOnboardProfile };
+}
+
+function parseRuntimeAuthority(value: unknown): CheckpointRuntimeAuthorityDecision | null {
+  if (!isObjectRecord(value)) return null;
+  if (hasExactKeys(value, ["kind"]) && value.kind === "unset") return { kind: "unset" };
+  if (!hasExactKeys(value, ["kind", "value"]) || value.kind !== "selected") return null;
+  const authority = parsePortableRuntimeAuthority(value.value);
+  return authority ? { kind: "selected", value: authority } : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") return null;
+    entries.push(entry);
+  }
+  return entries;
+}
+
+function readCanonicalIsoTimestamp(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return new Date(value).toISOString() === value ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSandboxIdentityValue(value: unknown): CheckpointSandboxIdentity | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["name", "agent"])) return null;
+  const name = readString(value.name);
+  const agent = readString(value.agent);
+  if (name === null || agent === null || agent.length === 0) return null;
+  if (name.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(name)) return null;
+  return { name, agent };
+}
+
+function parseResourceProfileValue(value: unknown): CheckpointResourceProfile | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["cpu", "memory"])) return null;
+  const cpu = readString(value.cpu);
+  const memory = readString(value.memory);
+  return cpu !== null && memory !== null ? { cpu, memory } : null;
+}
+
+function parseWebSearchValue(value: unknown): WebSearchConfig | null {
+  if (
+    !isObjectRecord(value) ||
+    (!hasExactKeys(value, ["fetchEnabled"]) && !hasExactKeys(value, ["fetchEnabled", "provider"]))
+  ) {
+    return null;
+  }
+  return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
+}
+
+function parseMessagingValue(value: unknown): CheckpointMessagingSelection | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["selectedChannels", "disabledChannels"])) {
+    return null;
+  }
+  const selectedChannels = readStringArray(value.selectedChannels);
+  const disabledChannels = readStringArray(value.disabledChannels);
+  if (selectedChannels === null || disabledChannels === null) return null;
+  return { selectedChannels, disabledChannels };
+}
+
+function parseEffectGroupRecord(value: unknown): CheckpointEffectGroupRecord | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["completedAt", "fingerprint"])) {
+    return null;
+  }
+  const completedAt = readCanonicalIsoTimestamp(value.completedAt);
+  const fingerprint = readString(value.fingerprint);
+  if (completedAt === null || fingerprint === null || fingerprint.length === 0) return null;
+  return { completedAt, fingerprint };
+}
+
+function parseEffectGroups(
+  value: unknown,
+): Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> | null {
+  if (!isObjectRecord(value)) return null;
+  if (
+    Object.keys(value).some(
+      (name) => !EFFECT_GROUP_NAMES.includes(name as CheckpointEffectGroupName),
+    )
+  ) {
+    return null;
+  }
+  const groups: Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> = {};
+  for (const name of EFFECT_GROUP_NAMES) {
+    const raw = value[name];
+    if (raw === undefined) continue;
+    const record = parseEffectGroupRecord(raw);
+    if (!record) return null;
+    groups[name] = record;
+  }
+  return groups;
+}
+
+function parseProviderBinding(value: unknown): CheckpointProviderBinding | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["name", "type", "credentialEnv"])) {
+    return null;
+  }
+  const name = readString(value.name);
+  const type = readString(value.type);
+  const credentialEnv = readString(value.credentialEnv);
+  if (!name || !type || !credentialEnv) return null;
+  return { name, type, credentialEnv };
+}
+
+function parseProviderBindings(value: unknown): CheckpointProviderBinding[] | null {
+  if (!Array.isArray(value)) return null;
+  const bindings: CheckpointProviderBinding[] = [];
+  for (const entry of value) {
+    const binding = parseProviderBinding(entry);
+    if (!binding) return null;
+    bindings.push(binding);
+  }
+  return bindings;
+}
+
+function parseGatewaySupervisor(value: unknown): CheckpointGatewaySupervisor | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["kind", "serviceName", "execPath"])) {
+    return null;
+  }
+  const kind = value.kind;
+  const serviceName = readString(value.serviceName);
+  const execPath = readString(value.execPath);
+  if (kind !== "systemd-system" && kind !== "systemd-user") return null;
+  if (!serviceName || !/^[A-Za-z0-9][A-Za-z0-9:_.@-]*\.service$/.test(serviceName)) return null;
+  if (!execPath || !path.isAbsolute(execPath)) return null;
+  return { kind, serviceName, execPath };
+}
+
+function canonicalGatewayName(gatewayPort: number): string {
+  return gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
+}
+
+function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority | null {
+  if (
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, [
+      "gatewayName",
+      "gatewayPort",
+      "mode",
+      "source",
+      "endpoint",
+      "stateDir",
+      "supervisor",
+      "requiredCapabilities",
+    ])
+  ) {
+    return null;
+  }
+  const gatewayName = readString(value.gatewayName);
+  const gatewayPort = value.gatewayPort;
+  const mode = value.mode;
+  const source = value.source;
+  const endpoint = value.endpoint === null ? null : readString(value.endpoint);
+  const stateDir = value.stateDir === null ? null : readString(value.stateDir);
+  const requiredCapabilities = readStringArray(value.requiredCapabilities);
+  if (
+    !gatewayName ||
+    !Number.isInteger(gatewayPort) ||
+    Number(gatewayPort) < 1 ||
+    Number(gatewayPort) > 65535
+  ) {
+    return null;
+  }
+  const canonicalName = canonicalGatewayName(Number(gatewayPort));
+  if (gatewayName !== canonicalName) return null;
+  if (mode !== "nemoclaw-managed" && mode !== "externally-supervised") return null;
+  if (source !== "declared" && source !== "packaged-service" && source !== "standalone")
+    return null;
+  if (!requiredCapabilities) return null;
+  if (
+    requiredCapabilities.some(
+      (capability) =>
+        !SUPPORTED_GATEWAY_CAPABILITIES.includes(
+          capability as (typeof SUPPORTED_GATEWAY_CAPABILITIES)[number],
+        ),
+    )
+  ) {
+    return null;
+  }
+
+  if (mode === "nemoclaw-managed") {
+    if (endpoint !== null || stateDir !== null || value.supervisor !== null) return null;
+    return {
+      gatewayName,
+      gatewayPort: Number(gatewayPort),
+      mode,
+      source,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities,
+    };
+  }
+
+  if (source !== "declared" || !endpoint || !stateDir || !path.isAbsolute(stateDir)) return null;
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  if (
+    (parsedEndpoint.protocol !== "http:" && parsedEndpoint.protocol !== "https:") ||
+    !["127.0.0.1", "[::1]", "::1"].includes(parsedEndpoint.hostname) ||
+    parsedEndpoint.username ||
+    parsedEndpoint.password ||
+    parsedEndpoint.search ||
+    parsedEndpoint.hash ||
+    (parsedEndpoint.pathname && parsedEndpoint.pathname !== "/")
+  ) {
+    return null;
+  }
+  const endpointPort = parsedEndpoint.port
+    ? Number(parsedEndpoint.port)
+    : parsedEndpoint.protocol === "https:"
+      ? 443
+      : 80;
+  if (endpointPort !== gatewayPort) return null;
+  const supervisor = parseGatewaySupervisor(value.supervisor);
+  if (!supervisor) return null;
+  return {
+    gatewayName,
+    gatewayPort: Number(gatewayPort),
+    mode,
+    source,
+    endpoint: parsedEndpoint.origin,
+    stateDir,
+    supervisor,
+    requiredCapabilities,
+  };
+}
+
+function parseBindings(value: unknown): CheckpointBindings | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["credentialEnvs", "registeredProviders"])) {
+    return null;
+  }
+  const credentialEnvs = readStringArray(value.credentialEnvs);
+  const registeredProviders = parseProviderBindings(value.registeredProviders);
+  if (credentialEnvs === null || registeredProviders === null) return null;
+  return { credentialEnvs, registeredProviders };
+}
+
+function readNullableSha256(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && SHA256_PATTERN.test(value) ? value : undefined;
+}
+
+function readBoundedJournalString(value: unknown, maxLength: number): string | null {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    !/[\u0000\r\n]/u.test(value)
+    ? value
+    : null;
+}
+
+function parseSandboxRecreateSourceWorkload(
+  value: unknown,
+): CheckpointSandboxRecreateSourceWorkload | null | undefined {
+  // Journals written before the source-workload cleanup receipt remain resumable.
+  if (value === undefined || value === null) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["openshellDriver", "imageTag", "workload"])) {
+    return undefined;
+  }
+  const rawOpenshellDriver = value.openshellDriver;
+  const openshellDriver =
+    rawOpenshellDriver === null ? null : readBoundedJournalString(rawOpenshellDriver, 128);
+  if (
+    openshellDriver === null
+      ? rawOpenshellDriver !== null
+      : !/^[a-z0-9][a-z0-9._-]*$/u.test(openshellDriver)
+  ) {
+    return undefined;
+  }
+  const imageTag = readBoundedJournalString(value.imageTag, 4096);
+  if (!imageTag) return undefined;
+  const rawWorkload = value.workload;
+  if (rawWorkload === null) return { openshellDriver, imageTag, workload: null };
+  if (
+    !isObjectRecord(rawWorkload) ||
+    !hasExactKeys(rawWorkload, ["kind", "reference", "shared"]) ||
+    rawWorkload.kind !== "legacy-dockerfile" ||
+    typeof rawWorkload.shared !== "boolean"
+  ) {
+    return undefined;
+  }
+  const rawReference = rawWorkload.reference;
+  const reference = rawReference === null ? null : readBoundedJournalString(rawReference, 4096);
+  if (reference === null ? rawReference !== null : reference !== imageTag) {
+    return undefined;
+  }
+  return {
+    openshellDriver,
+    imageTag,
+    workload: { kind: "legacy-dockerfile", reference, shared: rawWorkload.shared },
+  };
+}
+
+function parseSandboxRecreateTransaction(
+  value: unknown,
+): CheckpointSandboxRecreateTransaction | null {
+  if (
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, [
+      "version",
+      "id",
+      "revision",
+      "sandboxName",
+      "gatewayName",
+      "gatewayPort",
+      "sourceRegistryFingerprint",
+      "sourceLiveIdentityFingerprint",
+      "sourceWorkload",
+      "targetIntentFingerprint",
+      "targetGeneration",
+      "targetLiveIdentityFingerprint",
+      "phase",
+      "startedAt",
+      "updatedAt",
+    ])
+  ) {
+    return null;
+  }
+  const id = readString(value.id);
+  const sandboxName = readString(value.sandboxName);
+  const gatewayName = readString(value.gatewayName);
+  const gatewayPort = value.gatewayPort;
+  const sourceRegistryFingerprint = readString(value.sourceRegistryFingerprint);
+  const sourceLiveIdentityFingerprint = readNullableSha256(value.sourceLiveIdentityFingerprint);
+  const sourceWorkload = parseSandboxRecreateSourceWorkload(value.sourceWorkload);
+  const targetIntentFingerprint = readString(value.targetIntentFingerprint);
+  const targetGeneration = readString(value.targetGeneration);
+  const targetLiveIdentityFingerprint = readNullableSha256(value.targetLiveIdentityFingerprint);
+  const phase = value.phase;
+  const startedAt = readCanonicalIsoTimestamp(value.startedAt);
+  const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
+  const revision = value.revision;
+  if (
+    value.version !== 1 ||
+    !id ||
+    !UUID_PATTERN.test(id) ||
+    !sandboxName ||
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    !gatewayName ||
+    !Number.isInteger(gatewayPort) ||
+    Number(gatewayPort) < 1 ||
+    Number(gatewayPort) > 65535 ||
+    gatewayName !== canonicalGatewayName(Number(gatewayPort)) ||
+    !sourceRegistryFingerprint ||
+    !SHA256_PATTERN.test(sourceRegistryFingerprint) ||
+    sourceLiveIdentityFingerprint === undefined ||
+    sourceWorkload === undefined ||
+    !targetIntentFingerprint ||
+    !SHA256_PATTERN.test(targetIntentFingerprint) ||
+    !targetGeneration ||
+    !UUID_PATTERN.test(targetGeneration) ||
+    targetLiveIdentityFingerprint === undefined ||
+    typeof phase !== "string" ||
+    !SANDBOX_RECREATE_PHASES.has(phase as CheckpointSandboxRecreatePhase) ||
+    !Number.isSafeInteger(revision) ||
+    Number(revision) < 0 ||
+    startedAt === null ||
+    updatedAt === null
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    id,
+    revision: Number(revision),
+    sandboxName,
+    gatewayName,
+    gatewayPort: Number(gatewayPort),
+    sourceRegistryFingerprint,
+    sourceLiveIdentityFingerprint,
+    sourceWorkload,
+    targetIntentFingerprint,
+    targetGeneration,
+    targetLiveIdentityFingerprint,
+    phase: phase as CheckpointSandboxRecreatePhase,
+    startedAt,
+    updatedAt,
+  };
+}
+
+function requireDecision<T>(
+  raw: unknown,
+  parseValue: (value: unknown) => T | null,
+): CheckpointDecision<T> | null {
+  return parseCheckpointDecision(raw, parseValue);
+}
+
+function parseSchema(
+  value: Record<string, unknown>,
+  gatewayAuthorityRaw: unknown,
+  sandboxRecreateRaw: unknown,
+): OnboardCheckpoint | null {
+  if (!hasExactKeys(value, CHECKPOINT_KEYS)) return null;
+  const sessionId = readString(value.sessionId);
+  const machineState = value.machineState;
+  const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
+  if (sessionId === null || updatedAt === null) return null;
+  if (typeof machineState !== "string" || !isOnboardMachineState(machineState)) return null;
+
+  const profile = parseProfile(value.profile);
+  const runtimeAuthority = parseRuntimeAuthority(value.runtimeAuthority);
+  if (!profile || !runtimeAuthority) return null;
+  if (
+    (profile.value === "default" && runtimeAuthority.kind !== "unset") ||
+    (profile.value === "portable" && runtimeAuthority.kind !== "selected")
+  ) {
+    return null;
+  }
+
+  const sandboxIdentity = requireDecision(value.sandboxIdentity, parseSandboxIdentityValue);
+  const webSearch = requireDecision(value.webSearch, parseWebSearchValue);
+  const messaging = requireDecision(value.messaging, parseMessagingValue);
+  const resourceProfile = requireDecision(value.resourceProfile, parseResourceProfileValue);
+  const gatewayAuthority = requireDecision(gatewayAuthorityRaw, parseGatewayAuthorityValue);
+  const effectGroups = parseEffectGroups(value.effectGroups);
+  const bindings = parseBindings(value.bindings);
+  const sandboxRecreate =
+    sandboxRecreateRaw === null ? null : parseSandboxRecreateTransaction(sandboxRecreateRaw);
+  if (!sandboxIdentity || !webSearch || !messaging || !resourceProfile || !gatewayAuthority) {
+    return null;
+  }
+  if (!effectGroups || !bindings || (sandboxRecreateRaw !== null && !sandboxRecreate)) return null;
+  if (sandboxRecreate) {
+    if (
+      !isDecisionSelected(sandboxIdentity) ||
+      sandboxIdentity.value.name !== sandboxRecreate.sandboxName ||
+      !isDecisionSelected(gatewayAuthority) ||
+      gatewayAuthority.value.gatewayName !== sandboxRecreate.gatewayName ||
+      gatewayAuthority.value.gatewayPort !== sandboxRecreate.gatewayPort
+    ) {
+      return null;
+    }
+  }
+
+  return {
+    schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    sessionId,
+    machineState,
+    updatedAt,
+    profile,
+    runtimeAuthority,
+    sandboxIdentity,
+    webSearch,
+    messaging,
+    resourceProfile,
+    gatewayAuthority,
+    effectGroups,
+    bindings,
+    sandboxRecreate,
+  };
+}
+
+export function inspectCheckpoint(raw: unknown): CheckpointLoadResult {
+  if (raw === undefined || raw === null) return { status: "none" };
+  if (!isObjectRecord(raw)) return { status: "corrupt" };
+
+  const version = raw.schemaVersion;
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
+    return { status: "corrupt" };
+  }
+  if (version > CHECKPOINT_SCHEMA_VERSION) {
+    return { status: "unsupported_future", foundVersion: version };
+  }
+  if (version === CHECKPOINT_SCHEMA_VERSION) {
+    const checkpoint = parseSchema(raw, raw.gatewayAuthority, raw.sandboxRecreate);
+    return checkpoint ? { status: "loaded", checkpoint } : { status: "corrupt" };
+  }
+  if (version === 1 || version === 2 || version === 3)
+    return { status: "legacy", foundVersion: version };
+  return { status: "corrupt" };
+}
+
+export function serializeCheckpoint(checkpoint: OnboardCheckpoint): Record<string, unknown> {
+  return {
+    schemaVersion: checkpoint.schemaVersion,
+    sessionId: checkpoint.sessionId,
+    machineState: checkpoint.machineState,
+    updatedAt: checkpoint.updatedAt,
+    profile: checkpoint.profile,
+    runtimeAuthority: checkpoint.runtimeAuthority,
+    sandboxIdentity: checkpoint.sandboxIdentity,
+    webSearch: checkpoint.webSearch,
+    messaging: checkpoint.messaging,
+    resourceProfile: checkpoint.resourceProfile,
+    gatewayAuthority: checkpoint.gatewayAuthority,
+    effectGroups: checkpoint.effectGroups,
+    bindings: checkpoint.bindings,
+    sandboxRecreate: checkpoint.sandboxRecreate,
+  };
+}

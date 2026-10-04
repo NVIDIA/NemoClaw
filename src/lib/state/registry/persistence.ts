@@ -1,0 +1,268 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+import { isObjectRecord } from "../../core/json-types";
+import { GATEWAY_PORT } from "../../core/ports";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
+import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
+import { readConfigFile, writeConfigFile } from "../config-io";
+import { normalizeExtraProviders } from "../extra-providers";
+import {
+  cloneSandboxMessagingState,
+  serializeSandboxMessagingStateForDisk,
+} from "../registry-messaging";
+import {
+  normalizeSandboxPolicyAttribution,
+  parseSandboxRegistryEntries,
+  retainedDefaultSandbox,
+} from "../registry-normalization";
+import * as reversibleRemoval from "../registry-reversible-removal";
+import { nemoclawStateRoot } from "../state-root";
+import {
+  cloneSandboxHostLocalInferenceProvenance,
+  cloneSandboxHostLocalInferenceReceipt,
+  requireSandboxHostLocalInferenceProvenance,
+} from "./host-local-inference";
+import type { SandboxEntry, SandboxRegistry } from "./types";
+import { cloneSandboxWorkloadReceipt } from "./workload";
+
+function cloneSandboxWorkloadReceiptOrThrow(
+  value: SandboxEntry["workload"],
+  operation: "load" | "save",
+): SandboxEntry["workload"] {
+  const workload = cloneSandboxWorkloadReceipt(value);
+  if (value !== undefined && workload === undefined) {
+    throw new Error(`Cannot ${operation} a sandbox entry with an invalid workload receipt`);
+  }
+  return workload;
+}
+
+function cloneHostLocalInferenceReceiptOrThrow(
+  value: SandboxEntry["hostLocalInferenceReceipt"],
+  operation: "load" | "save",
+): SandboxEntry["hostLocalInferenceReceipt"] {
+  const receipt = cloneSandboxHostLocalInferenceReceipt(value);
+  if (value !== undefined && receipt === undefined) {
+    throw new Error(
+      `Cannot ${operation} a sandbox entry with an invalid host-local inference receipt`,
+    );
+  }
+  return receipt;
+}
+
+function cloneHostLocalInferenceProvenanceOrThrow(
+  value: SandboxEntry["hostLocalInferenceProvenance"],
+  receipt: SandboxEntry["hostLocalInferenceReceipt"],
+  operation: "load" | "save",
+): SandboxEntry["hostLocalInferenceProvenance"] {
+  if (value === undefined) return undefined;
+  const provenance = cloneSandboxHostLocalInferenceProvenance(value);
+  if (!provenance || typeof receipt !== "string") {
+    throw new Error(
+      `Cannot ${operation} a sandbox entry with invalid host-local inference provenance`,
+    );
+  }
+  try {
+    return requireSandboxHostLocalInferenceProvenance(provenance, receipt);
+  } catch {
+    throw new Error(
+      `Cannot ${operation} a sandbox entry with invalid host-local inference provenance`,
+    );
+  }
+}
+
+function cloneServingProfileProvenanceOrThrow(
+  value: SandboxEntry["servingProfileProvenance"],
+  operation: "load" | "save",
+): SandboxEntry["servingProfileProvenance"] {
+  const provenance = parseServingProfileProvenance(value);
+  if (value !== undefined && !provenance) {
+    throw new Error(`Cannot ${operation} a sandbox entry with invalid serving profile provenance`);
+  }
+  return provenance ?? undefined;
+}
+
+function normalizeDeferredN1xManagedVllmAcceptance(
+  entry: SandboxEntry,
+  operation: "load" | "save",
+): SandboxEntry["deferredN1xManagedVllmAccepted"] {
+  const value = entry.deferredN1xManagedVllmAccepted;
+  if (value !== undefined && (value !== true || !isDeferredN1xManagedVllmAcceptanceRoute(entry))) {
+    throw new Error(`Cannot ${operation} a sandbox entry with invalid N1x preview acceptance`);
+  }
+  return value;
+}
+
+export const REGISTRY_FILE = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
+  "sandboxes.json",
+);
+export function load(): SandboxRegistry {
+  return normalizeRegistry(
+    readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+  );
+}
+
+export function save(data: SandboxRegistry): void {
+  const serialized = serializeRegistryForDisk(data);
+  const previous = readConfigFile<unknown>(REGISTRY_FILE, {});
+  // Legacy MCP ownership is disk-only compatibility evidence, not runtime
+  // authority. Ordinary writes must retain it until an explicit migration or
+  // verified removal retires it. Never accept a caller-supplied replacement.
+  if (isObjectRecord(previous) && isObjectRecord(previous.sandboxes)) {
+    for (const [name, entry] of Object.entries(serialized.sandboxes)) {
+      const prior = previous.sandboxes[name];
+      if (isObjectRecord(prior) && Object.hasOwn(prior, "mcp")) {
+        Object.assign(entry, { mcp: prior.mcp });
+      }
+    }
+  }
+  writeConfigFile(REGISTRY_FILE, serialized);
+}
+
+function normalizeRegistry(value: unknown): SandboxRegistry {
+  const data = isObjectRecord(value) ? value : {};
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
+      name,
+      normalizeSandboxEntryForRuntime(entry),
+    ]),
+  );
+  const base: SandboxRegistry = {
+    // Preserve a stale string pointer at read time so diagnostics can explain
+    // which sandbox disappeared. Mutation paths repair it before persistence.
+    defaultSandbox: typeof data.defaultSandbox === "string" ? data.defaultSandbox : null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
+    sandboxes,
+  };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
+}
+
+function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    Object.entries(data.sandboxes).map(([name, entry]) => [
+      name,
+      serializeSandboxEntryForDisk(entry),
+    ]),
+  );
+  const defaultSandbox = retainedDefaultSandbox(data.defaultSandbox, sandboxes);
+  const currentDefaultSelectionRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
+    data.defaultSelectionRevision,
+  );
+  const base: SandboxRegistry = {
+    defaultSandbox,
+    defaultSelectionRevision:
+      defaultSandbox === data.defaultSandbox
+        ? currentDefaultSelectionRevision
+        : reversibleRemoval.incrementDefaultSelectionRevision(currentDefaultSelectionRevision),
+    sandboxes,
+  };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
+}
+
+function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  const messaging = cloneSandboxMessagingState(entry.messaging);
+  const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    entry.hostLocalInferenceReceipt,
+    "load",
+  );
+  const hostLocalInferenceProvenance = cloneHostLocalInferenceProvenanceOrThrow(
+    entry.hostLocalInferenceProvenance,
+    hostLocalInferenceReceipt,
+    "load",
+  );
+  const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
+    entry.servingProfileProvenance,
+    "load",
+  );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
+  const policyEntry = normalizeSandboxPolicyAttribution(entry);
+  const {
+    cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
+    messaging: _messaging,
+    workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
+    hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
+    servingProfileProvenance: _servingProfileProvenance,
+    deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    mcp: _legacyMcp,
+    ...rest
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  return {
+    ...rest,
+    ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
+    ...(messaging ? { messaging } : {}),
+  };
+}
+
+/**
+ * Prepare a sandbox entry for persistence: canonicalize a no-dashboard port to
+ * null, normalize messaging state, and drop transient #5714 display-only
+ * markers plus legacy provider credential hashes that must never reach
+ * sandboxes.json.
+ */
+function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  // Defensively drop non-durable recovery markers and legacy
+  // providerCredentialHashes so they can never reach sandboxes.json even if a
+  // caller force-passed them through updateSandbox().
+  const {
+    recoveredFromGateway: _recovered,
+    livePhase: _phase,
+    providerCredentialHashes: _legacyProviderCredentialHashes,
+    ...durable
+  } = entry as SandboxEntry & {
+    recoveredFromGateway?: boolean;
+    livePhase?: string | null;
+    providerCredentialHashes?: unknown;
+  };
+  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
+  const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    durable.hostLocalInferenceReceipt,
+    "save",
+  );
+  const hostLocalInferenceProvenance = cloneHostLocalInferenceProvenanceOrThrow(
+    durable.hostLocalInferenceProvenance,
+    hostLocalInferenceReceipt,
+    "save",
+  );
+  const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
+    durable.servingProfileProvenance,
+    "save",
+  );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
+  const policyEntry = normalizeSandboxPolicyAttribution(durable);
+  const {
+    cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
+    messaging: _messaging,
+    workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
+    hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
+    servingProfileProvenance: _servingProfileProvenance,
+    deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    mcp: _legacyMcp,
+    ...rest
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  return {
+    ...rest,
+    ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
+    ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
+    ...(messaging ? { messaging } : {}),
+  };
+}

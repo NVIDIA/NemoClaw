@@ -1,0 +1,174 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Apply Policy Presets"
+sidebar-title: "Apply Policy Presets"
+description: "Add, reapply, list, or remove policy presets for a running NemoClaw sandbox."
+description-agent: "Applies and manages policy presets in the current OpenShell policy for a running sandbox."
+keywords: ["nemoclaw policy presets", "policy add", "policy remove", "openshell policy"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+
+Use policy presets to add reviewed network access to one running sandbox without replacing its current policy. NemoClaw provides the convenient merge and removal commands; OpenShell remains the only durable policy state.
+
+<Warning>
+Use `$$nemoclaw <name> policy add` to merge a preset into the running policy.
+The OpenShell `policy set` command replaces the live policy instead of merging it.
+Follow [Replace the Live Network Policy](replace-live-network-policy) only when you need full-policy replacement.
+</Warning>
+
+## Choose a Maintained Preset
+
+During onboarding, the selected [policy tier](../../reference/network-policies#policy-tiers) determines which maintained presets are enabled by default. The interactive preset screen lets you add or remove individual presets. Messaging channel choices are scoped to the active agent, so unsupported channel presets do not appear.
+
+List the presets available to the sandbox:
+
+```bash
+$$nemoclaw <name> policy list
+```
+
+<AgentOnly variant="openclaw,hermes">
+  For the maintained preset catalog and guided service workflows, refer to [Common Integration
+  Policy Examples](../integration-policy-examples).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  For Deep Agents baseline, tier, Tavily, and observability preset behavior, refer to [Network
+  Policies](../../reference/network-policies#policy-tiers).
+</AgentOnly>
+
+## Preview and Apply a Preset
+
+Use `--dry-run` to review the endpoints, rules, and binaries before applying the preset:
+
+<AgentOnly variant="openclaw,hermes">
+
+```bash
+$$nemoclaw my-assistant policy add pypi --dry-run
+$$nemoclaw my-assistant policy add pypi --yes
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+$$nemoclaw my-assistant policy add weather --dry-run
+$$nemoclaw my-assistant policy add weather --yes
+```
+
+</AgentOnly>
+
+Omit the preset name to use the interactive picker:
+
+```bash
+$$nemoclaw my-assistant policy add
+```
+
+The picker requires a terminal on stdin. A run without a terminal, such as an SSH command without `-t`, a service unit, or a CI job, exits non-zero and reports that no input is available on stdin.
+
+Pass a preset name with `--yes` for scripted workflows. Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to use the same non-interactive flow through an environment variable. With that variable set, a missing preset name instead reports that non-interactive mode requires a preset name.
+
+## Reapply an Edited Preset
+
+Run the same `policy add` command after you edit a maintained preset or a custom source file. NemoClaw compares the preset with the live policy. If the content differs, it applies the changed content. You do not need to remove the preset first.
+
+The merge starts from the round-trippable base policy returned by `openshell policy get --base`. It excludes provider-composed `_provider_*` entries because OpenShell reserves that namespace and rejects it in `policy set`. Existing presets and baseline entries remain in place.
+
+<AgentOnly variant="hermes">
+
+### Remove the Previous Hermes Discord Node Grant
+
+A Hermes sandbox that was created with an older Discord preset keeps its live policy during rebuild.
+Reapply the maintained `discord` preset before the next rebuild to remove the previous `/usr/local/bin/node` grant.
+
+Preview and apply the current preset:
+
+```bash
+$$nemoclaw <name> policy add discord --dry-run
+$$nemoclaw <name> policy add discord --yes
+```
+
+Inspect the resulting live policy:
+
+```bash
+$$nemoclaw <name> policy get
+```
+
+The `discord` binary list must contain `/opt/hermes/.venv/bin/python3`, `/opt/hermes/.venv/bin/python`, `/usr/bin/python3`, and the managed image's resolved interpreter `/usr/bin/python3.13`.
+It must not contain the broad `/usr/bin/python3*` wildcard or `/usr/local/bin/node`.
+The reapply operation retains the Discord credential binding and all policy entries outside the maintained `discord` entry.
+A later rebuild preserves this reconciled live policy.
+
+If the apply command fails, NemoClaw leaves the live policy unchanged.
+Resolve the reported policy or gateway error, then rerun the preview and apply commands.
+
+</AgentOnly>
+
+## List and Remove Presets
+
+List available presets and identify which ones match the current OpenShell policy:
+
+```bash
+$$nemoclaw <name> policy list
+```
+
+Remove a preset when the sandbox no longer needs its access:
+
+<AgentOnly variant="openclaw,hermes">
+
+```bash
+$$nemoclaw my-assistant policy remove pypi --yes
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+$$nemoclaw my-assistant policy remove weather --yes
+```
+
+</AgentOnly>
+
+`policy remove` accepts maintained and custom preset names.
+
+## OpenShell Is the Source of Truth
+
+`policy list` derives applied state by comparing preset content with the current OpenShell policy:
+
+```bash
+$$nemoclaw my-assistant policy list
+```
+
+`policy remove` reads the live policy, removes the keys defined by the selected preset, writes the complete result, and verifies it:
+
+```bash
+$$nemoclaw my-assistant policy remove github --yes
+```
+
+When NemoClaw cannot read the OpenShell policy, it refuses the mutation rather than falling back to local policy state.
+
+## Understand Persistence
+
+Dynamic changes exist only in the current live OpenShell policy. Maintained preset names are inferred by comparing their current content. Custom presets applied through `--from-file` or `--from-dir` use namespaced keys in that same live document so `policy list` and `policy remove` can discover them without a second registry.
+
+`$$nemoclaw <name> rebuild` hands the complete current OpenShell policy to sandbox creation. It does not reconstruct the policy from preset records, so trusted changes made through the OpenShell TUI or another host process are preserved too. For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).
+
+## Approve One Request
+
+For one-off access, approve a blocked request in the OpenShell TUI:
+
+```bash
+openshell term
+```
+
+Use the TUI to test a destination before deciding whether it belongs in a maintained or custom preset. For the complete approval workflow, refer to [Approve or Deny Network Requests](../approve-network-requests).
+
+## Related Topics
+
+- [Create Custom Policy Presets](create-custom-policy-presets) adds an endpoint that no maintained preset covers.
+<AgentOnly variant="openclaw,hermes">
+- [Explain Network Policy to Agents](../explain-network-policy-to-agents) summarizes active and missing presets.
+</AgentOnly>
+- [Commands](../../reference/commands#$$nemoclaw-name-policy-add) lists every policy command flag.

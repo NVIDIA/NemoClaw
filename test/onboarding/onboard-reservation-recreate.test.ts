@@ -1,0 +1,772 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { describe, it, vi } from "vitest";
+import {
+  createOnboardProcessWorkspace,
+  runOnboardProcessAsync,
+  trailingJsonPayload,
+  workspaceEnv,
+} from "../helpers/onboard-child-process-harness";
+import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
+
+const repoRoot = path.join(import.meta.dirname, "../..");
+const onboardScriptMocksPath = JSON.stringify(
+  path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+);
+const sandboxCommandCliPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+);
+const managedWorkloadOnboardPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "onboard", "managed-workload", "onboard-orchestration.ts"),
+);
+
+// Each case loads CLI source in a child process; limit overlap to bound memory.
+vi.setConfig({ maxConcurrency: 2 });
+
+describe("onboard sandbox recreate reservation safety", () => {
+  it.concurrent.for([
+    {
+      name: "preserves a current-session pending route reservation across a not-ready recreate",
+      reservationSessionId: "session-owner",
+      expectedRemoval: false,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: {
+        name: "my-assistant",
+        gpuEnabled: false,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      },
+    },
+    {
+      name: "removes a foreign-session pending route reservation before a not-ready recreate",
+      reservationSessionId: "session-other",
+      expectedRemoval: true,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: null,
+    },
+    {
+      name: "removes an unstamped pending route reservation before a not-ready recreate",
+      reservationSessionId: null,
+      expectedRemoval: true,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: null,
+    },
+    {
+      name: "preserves a replacement written after stale reservation classification",
+      reservationSessionId: "session-other",
+      expectedRemoval: false,
+      replaceBeforeCleanup: true,
+      expectedRetainedReservation: {
+        name: "my-assistant",
+        gpuEnabled: false,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-replacement",
+        model: "replacement-model",
+      },
+    },
+  ] as const)(
+    "$name (#6562)",
+    { timeout: 60_000 },
+    async (
+      { reservationSessionId, expectedRemoval, replaceBeforeCleanup, expectedRetainedReservation },
+      context,
+    ) => {
+      const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
+      context.onTestFinished(() => workspace.remove());
+      const scriptPath = workspace.path("reservation-survives.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const onboardSessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+
+      writeOkOpenshell(workspace.binDir);
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+const onboardSession = require(${onboardSessionPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  lifecycleState: "created",
+  phase: "NotReady",
+});
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+runner.run = (command) => {
+  const cmd = _n(command);
+  events.push({ kind: "run", cmd });
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedProviderPreparationRun(command, "nemoclaw");
+  if (profileResult !== null) return profileResult;
+  if (cmd.includes("sandbox delete")) {
+    createdSandbox.delete();
+    forwardService.release();
+    return { status: 0 };
+  }
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
+  {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (mockedCapture !== null) return mockedCapture;
+  }
+  return "";
+};
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+
+onboardSession.saveSession(onboardSession.createSession({
+  sessionId: "session-owner",
+  sandboxName: "my-assistant",
+  agent: "openclaw",
+}));
+
+const reservationSessionId = ${JSON.stringify(reservationSessionId)};
+const initialSourceEntry = {
+  name: "my-assistant",
+  gpuEnabled: false,
+  pendingRouteReservation: true,
+  ...(reservationSessionId === null ? {} : { reservationSessionId }),
+};
+registry.save({ defaultSandbox: null, sandboxes: { "my-assistant": initialSourceEntry } });
+let sourceEntry = registry.getSandbox("my-assistant");
+if (!sourceEntry) throw new Error("failed to seed the stale route reservation");
+const removeReservationIfCurrent = registry.removeSandboxRouteReservationIfCurrent;
+registry.removeSandboxRouteReservationIfCurrent = (expected) => {
+  if (${JSON.stringify(replaceBeforeCleanup)}) {
+    const data = registry.load();
+    data.sandboxes[expected.name] = {
+      ...expected,
+      reservationSessionId: "session-replacement",
+      model: "replacement-model",
+    };
+    registry.save(data);
+    events.push({ kind: "replacementWritten", name: expected.name });
+  }
+  const removed = removeReservationIfCurrent(expected);
+  events.push({ kind: "removeReservation", name: expected.name, removed });
+  return removed;
+};
+registry.getSandbox = () => sourceEntry;
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+const removeSandbox = (name) => {
+  events.push({ kind: "removeSandbox", name });
+  sourceEntry = null;
+  return true;
+};
+registry.removeSandbox = removeSandbox;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+  sessionId: "session-owner",
+  getSandbox: registry.getSandbox,
+  removeSandbox,
+  sourceSandboxId: createdSandbox.state.sandboxId,
+});
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
+    createdSandbox.recreate(args.flat());
+    createdSandbox.setPhase("Ready");
+  }
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4246;
+  events.push({ kind: "spawn", cmd: command });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  const lock = onboardSession.acquireOnboardLock("integration recreate reservation cleanup");
+  if (!lock.acquired) throw new Error("failed to acquire the real onboarding writer lock");
+  try {
+    const sandboxName = await createSandbox(
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "gpt-5.4",
+          "nvidia-prod",
+          null,
+          "my-assistant",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          [],
+        ],
+        createFixture,
+      ),
+    );
+    console.log(JSON.stringify({
+      sandboxName,
+      events,
+      retainedReservation: registry.load().sandboxes["my-assistant"] || null,
+    }));
+  } finally {
+    onboardSession.releaseOnboardLock();
+  }
+})().catch((error) => {
+  console.log(JSON.stringify({
+    sandboxName: null,
+    error: error instanceof Error ? error.message : String(error),
+    events,
+    retainedReservation: registry.load().sandboxes["my-assistant"] || null,
+  }));
+  process.exitCode = 1;
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = await runOnboardProcessAsync([scriptPath], {
+        env: workspaceEnv(workspace, {
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+        }),
+        timeoutMs: 30_000,
+        context,
+      });
+
+      assert.equal(
+        result.status,
+        replaceBeforeCleanup ? 1 : 0,
+        result.stderr ||
+          result.error?.message ||
+          "onboarding subprocess returned an unexpected status",
+      );
+      assert.equal(result.error, undefined, "a completed child exit is not a spawn error");
+      const payload = trailingJsonPayload<{
+        sandboxName: string | null;
+        error?: string;
+        events: Array<{ kind: string; cmd?: string; name?: string; removed?: boolean }>;
+        retainedReservation: { reservationSessionId?: string; model?: string } | null;
+      }>(result.stdout);
+      assert.equal(payload.sandboxName, replaceBeforeCleanup ? null : "my-assistant");
+      assert.match(
+        payload.error ?? "completed",
+        replaceBeforeCleanup
+          ? /pending create recovery state.*--resume.*only when that session retains authority/u
+          : /^completed$/u,
+      );
+
+      const events = payload.events;
+      const removedReservation = events.some(
+        (e) => e.kind === "removeReservation" && e.name === "my-assistant" && e.removed === true,
+      );
+      assert.equal(
+        removedReservation,
+        expectedRemoval,
+        expectedRemoval
+          ? "must delete abandoned pending route reservations during recreate"
+          : "must not delete the current session's pending route reservation during recreate",
+      );
+      assert.ok(
+        events.some((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete")),
+        "should still delete the not-ready gateway sandbox before rebuilding",
+      );
+      assert.equal(
+        events.some(
+          (event) => event.kind === "spawn" && (event.cmd ?? "").includes("sandbox create"),
+        ),
+        !replaceBeforeCleanup,
+        "must refuse before creating after the reservation snapshot changes",
+      );
+      assert.deepEqual(payload.retainedReservation, expectedRetainedReservation);
+    },
+  );
+
+  it.concurrent.for([
+    { scenario: "same-session", resumes: true },
+    { scenario: "legacy-checkpoint", resumes: true },
+    { scenario: "foreign-reservation", resumes: false },
+    { scenario: "changed-checkpoint", resumes: false },
+    { scenario: "changed-gateway-directory", resumes: false },
+  ] as const)(
+    "recovers a verified create in a new process for $scenario authority (#9833)",
+    { timeout: 90_000 },
+    async ({ scenario, resumes }, context) => {
+      const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-verified-create-resume-");
+      context.onTestFinished(() => workspace.remove());
+      const scriptPath = workspace.path("verified-create-resume.js");
+      const customGatewayStateDir = workspace.path("custom-gateway-state");
+      const createCountPath = workspace.path("sandbox-create-count.txt");
+      const effectCountPath = workspace.path("deferred-effect-count.txt");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const onboardSessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+      const recreateJournalPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "onboard-recreate-journal.ts"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const dockerExecPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
+      );
+
+      writeOkOpenshell(workspace.binDir);
+
+      const script = String.raw`
+const fs = require("node:fs");
+const { EventEmitter } = require("node:events");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+const registry = require(${registryPath});
+const onboardSession = require(${onboardSessionPath});
+const recreateJournal = require(${recreateJournalPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const dockerExec = require(${dockerExecPath});
+const mode = process.argv[2];
+const scenario = process.argv[3];
+const createCountPath = ${JSON.stringify(createCountPath)};
+const effectCountPath = ${JSON.stringify(effectCountPath)};
+const normalize = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
+const keepAlive = setInterval(() => {}, 1000);
+
+process.env.OPENSHELL_GATEWAY = "nemoclaw";
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+dockerExec.dockerSpawn = () => {
+  const child = new EventEmitter();
+  process.nextTick(() => child.emit("close", 0));
+  return child;
+};
+
+if (mode === "seed") {
+  onboardSession.saveSession(onboardSession.createSession({
+    sessionId: "session-owner",
+    sandboxName: "my-assistant",
+    agent: "openclaw",
+  }));
+  registry.save({
+    defaultSandbox: null,
+    sandboxes: {
+      "my-assistant": {
+        name: "my-assistant",
+        gatewayName: "nemoclaw",
+        provider: null,
+        model: null,
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      },
+    },
+  });
+  recreateJournal.openOnboardRecreateJournal({
+    target: { sandboxName: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+    agentName: "openclaw",
+    note: () => {},
+    observe: () => ({ state: "missing", liveIdentityFingerprint: null }),
+    intent: {
+      agent: "openclaw",
+      fromDockerfile: null,
+      provider: null,
+      model: null,
+      preferredInferenceApi: null,
+      sandboxGpuConfig: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: null,
+      observabilityEnabled: false,
+    },
+  });
+}
+
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: null,
+  model: null,
+  sessionId: "session-owner",
+  durableRegistry: true,
+});
+
+if (mode === "resume" && scenario === "foreign-reservation") {
+  const data = registry.load();
+  data.sandboxes["my-assistant"].reservationSessionId = "session-foreign";
+  registry.save(data);
+}
+if (mode === "resume" && scenario === "legacy-checkpoint") {
+  const data = registry.load();
+  delete data.sandboxes["my-assistant"].pendingCreateIdentity.openshellGatewayStateDir;
+  registry.save(data);
+}
+if (mode === "resume" && scenario === "changed-checkpoint") {
+  const requireCurrent = registry.requireCurrentPendingSandboxCreateIdentity;
+  let reads = 0;
+  registry.requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
+    const current = requireCurrent(reservation, checkpoint);
+    reads += 1;
+    if (reads === 1) {
+      const data = registry.load();
+      const changed = data.sandboxes["my-assistant"].pendingCreateIdentity;
+      changed.route = changed.route === "native" ? "none" : "native";
+      registry.save(data);
+    }
+    return current;
+  };
+}
+
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  sandboxId: "sbx-resumable-create",
+  lifecycleState: mode === "resume" ? "created" : "absent",
+});
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+let createChild = null;
+runner.run = (command) => {
+  const cmd = normalize(command);
+  const profile = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profile !== null) return profile;
+  return createdSandbox.run(command) ?? { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = normalize(command);
+  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
+  if (cmd.includes("policy get") && cmd.includes("--output json")) {
+    return JSON.stringify({
+      scope: "sandbox",
+      sandbox: "my-assistant",
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "fixture-policy",
+      active_version: 1,
+      policy: {},
+    });
+  }
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
+  const mocked = fixtureMocks.mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
+  return mocked === null ? "" : mocked;
+};
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
+
+const realProcessKill = process.kill.bind(process);
+process.kill = (pid, signal) => {
+  if (pid < 0 && createChild) {
+    process.nextTick(() => createChild.emit("close", signal === "SIGTERM" ? 0 : 1));
+    return true;
+  }
+  return realProcessKill(pid, signal);
+};
+childProcess.spawn = (...args) => {
+  const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
+    fs.appendFileSync(createCountPath, "create\n");
+    createdSandbox.create(args.flat());
+  }
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdout.destroy = () => {};
+  child.stderr.destroy = () => {};
+  child.unref = () => {};
+  child.kill = (signal) => {
+    process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
+    return true;
+  };
+  child.pid = 4248;
+  createChild = child;
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+if (!transaction) throw new Error("verified-create recovery has no lifecycle journal");
+const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+  [null, null, null, null, "my-assistant", null, null, null, null, null, null, null, []],
+  createFixture,
+);
+createArgs[15] = {
+  deferSandboxEffectsUntilIdentityVerification: true,
+  recreate: false,
+  toolDisclosure: "progressive",
+  observabilityEnabled: false,
+  recreateTransaction: {
+    id: transaction.id,
+    targetGeneration: transaction.targetGeneration,
+    targetIntentFingerprint: transaction.targetIntentFingerprint,
+  },
+};
+createArgs[16] = async () => {
+  fs.appendFileSync(effectCountPath, mode + "\n");
+  if (mode === "seed") throw new Error("injected deferred effect failure");
+};
+
+(async () => {
+  let sandboxName = null;
+  let error = null;
+  try {
+    sandboxName = await createSandbox(...createArgs);
+  } catch (caught) {
+    error = caught instanceof Error ? (caught.stack ?? caught.message) : String(caught);
+  }
+  if (mode === "seed" && !error) throw new Error("expected the injected effect failure");
+  const resumes = scenario === "same-session" || scenario === "legacy-checkpoint";
+  if (mode === "resume" && resumes && error) throw new Error(error);
+  if (mode === "resume" && !resumes && !error) {
+    throw new Error("expected changed recovery authority to be refused");
+  }
+  clearInterval(keepAlive);
+  console.log(JSON.stringify({
+    sandboxName,
+    error,
+    registryEntry: registry.getSandbox("my-assistant"),
+    journal: onboardSession.loadSession()?.checkpoint?.sandboxRecreate || null,
+  }));
+})().catch((error) => {
+  clearInterval(keepAlive);
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+      const env = workspaceEnv(workspace, {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
+      });
+
+      const first = await runOnboardProcessAsync([scriptPath, "seed", scenario], {
+        env: { ...env, NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayStateDir },
+        timeoutMs: 40_000,
+        context,
+      });
+      assert.equal(first.status, 0, first.stderr || first.error?.message);
+      const retained = trailingJsonPayload<{
+        error: string;
+        registryEntry: {
+          pendingRouteReservation?: boolean;
+          pendingCreateIdentity?: { openshellGatewayStateDir?: string };
+          lifecycleLiveIdentityFingerprint?: string;
+        };
+        journal: { phase: string; targetLiveIdentityFingerprint?: string };
+      }>(first.stdout);
+      assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
+      assert.equal(retained.registryEntry.pendingRouteReservation, true);
+      assert.ok(retained.registryEntry.pendingCreateIdentity);
+      assert.equal(
+        retained.registryEntry.pendingCreateIdentity.openshellGatewayStateDir,
+        customGatewayStateDir,
+      );
+      assert.match(
+        retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
+        /^[0-9a-f]{64}$/u,
+      );
+      assert.equal(retained.journal.phase, "created");
+      assert.equal(
+        retained.journal.targetLiveIdentityFingerprint,
+        retained.registryEntry.lifecycleLiveIdentityFingerprint,
+      );
+
+      const second = await runOnboardProcessAsync([scriptPath, "resume", scenario], {
+        env: {
+          ...env,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:
+            scenario === "legacy-checkpoint"
+              ? customGatewayStateDir
+              : scenario === "changed-gateway-directory"
+                ? workspace.path("other-gateway-state")
+                : "",
+        },
+        timeoutMs: 40_000,
+        context,
+      });
+      assert.equal(second.status, 0, second.stderr || second.error?.message);
+      const recovered = trailingJsonPayload<{
+        sandboxName: string | null;
+        error: string | null;
+        registryEntry: {
+          openshellGatewayStateDir?: string;
+          pendingRouteReservation?: boolean;
+          pendingCreateIdentity?: unknown;
+        };
+      }>(second.stdout);
+      const createEvents = fs
+        .readFileSync(createCountPath, "utf8")
+        .trim()
+        .split(/\n/u)
+        .filter(Boolean);
+      const effectEvents = fs
+        .readFileSync(effectCountPath, "utf8")
+        .trim()
+        .split(/\n/u)
+        .filter(Boolean);
+      assert.equal(createEvents.length, 1, "recovery must never create a second sandbox");
+      assert.match(
+        recovered.error ?? "completed",
+        resumes ? /^completed$/u : /changed|journal|reservation|checkpoint|authority/u,
+      );
+      assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
+      assert.equal(
+        recovered.registryEntry.openshellGatewayStateDir,
+        resumes && scenario !== "legacy-checkpoint" ? customGatewayStateDir : undefined,
+      );
+      assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
+      assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);
+      assert.deepEqual(effectEvents, resumes ? ["seed", "resume"] : ["seed"]);
+    },
+  );
+});

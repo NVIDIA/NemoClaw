@@ -1,0 +1,4 @@
+interface:
+  display_name: "Validate Brev Launchable"
+  short_description: "Validate the user-facing Launchable journey"
+  default_prompt: "Use $nemoclaw-maintainer-validate-launchable to validate a staged Brev Launchable deployment and report any blocked checks."

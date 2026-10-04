@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-plugin-coverage
+description: Run shared plugin Vitest coverage and ratchet checks.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "24.18.1"
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
+
+    - name: Run plugin coverage
+      shell: bash
+      run: |
+        npx vitest run --project plugin \
+          --coverage \
+          --coverage.reporter=text-summary \
+          --coverage.reporter=json-summary \
+          --coverage.reporter=cobertura \
+          --coverage.reportsDirectory=coverage/plugin \
+          --coverage.include="nemoclaw/src/**/*.ts" \
+          --coverage.include="nemoclaw/src/**/*.cts" \
+          --coverage.exclude="**/*.test.ts"
+        npx tsx scripts/check-coverage-ratchet.mts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
+
+    - name: Upload plugin coverage report
+      if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      uses: actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3 # v1
+      with:
+        file: coverage/plugin/cobertura-coverage.xml
+        language: TypeScript
+        label: code-coverage/plugin

@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: gmail
+  description: "Gmail IMAP and SMTP access for Python App Password workflows"
+
+network_policies:
+  gmail_mail:
+    name: gmail_mail
+    endpoints:
+      # IMAP and SMTP use TLS protocols that OpenShell cannot inspect as
+      # HTTP. Keep the encrypted bytes end-to-end and constrain egress by
+      # exact Gmail host, port, and interpreter instead.
+      - host: imap.gmail.com
+        port: 993
+        access: full
+        tls: skip
+      - host: smtp.gmail.com
+        port: 465
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/bin/python3 }

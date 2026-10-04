@@ -1,197 +1,63 @@
 ---
 name: nemoclaw-contributor-create-pr
-description: Create GitHub pull requests that follow the NemoClaw PR template. Use when the user wants to create a new PR, submit code for review, open a pull request, or push changes for review. Trigger keywords - create PR, pull request, new PR, submit for review, open PR, push for review.
+description: "Publish or update a NemoClaw pull request and follow its CI and automated reviews to completion."
 ---
 
-# Create GitHub Pull Request
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Create pull requests on the NemoClaw GitHub repository using the `gh` CLI. This skill ensures every PR follows the project's PR template exactly.
+# Create or Update a Pull Request
 
-## Prerequisites
+Publish the requested NemoClaw change and follow required CI and scheduled automated reviews until
+one unchanged latest PR commit has a complete disposition. A successful push alone is not completion.
+Preserve the user's scope and any explicit instruction to stop at a draft or withhold approval.
 
-- The `gh` CLI must be authenticated (`gh auth status`).
-- You must be in the NemoClaw git repository.
-- You must have commits on a branch that is pushed to the remote.
+## Select the stage
 
-## Step 1: Verify Branch State
+- **Initial publication:** read [Validation](references/validation.md), then
+  [Publication](references/publication.md). Use the implementation evidence already collected.
+- **Update an open PR:** first complete the [PR follow-up contract](../_shared/pr-follow-up.md).
+  Repair valid in-scope findings through `nemoclaw-contributor-implement-issue`, then apply the
+  validation and publication references. These are stages of the same authorized task.
+- **Inspect CI or review feedback:** use the shared follow-up contract. Load publication procedures
+  only if an authorized branch or PR write is needed.
+- **Mark a draft ready:** use the ready-state requirements in
+  [Publication](references/publication.md#assignment) after the latest commit completes follow-up.
 
-Before creating a PR, verify the branch.
+## Publication requirements
 
-1. **Not on main.** Never create PRs from main.
+Use the canonical NVIDIA/NemoClaw base, template, sensitive-path policy, and trusted validation
+surface described in the references. Publish from a clean feature branch. Every published commit
+must be GitHub `Verified`; the PR body must contain the configured identity's DCO declaration.
 
-   ```bash
-   git branch --show-current
-   ```
+Before declaring the source repository, apply the trusted-base source-repository eligibility gate in
+[Publication](references/publication.md#select-the-source-repository). Never open a fork PR when a
+required CI or E2E path for the candidate is restricted to same-repository pull requests.
 
-2. **Branch has commits ahead of main.**
+Bind branch writes to the declared repository, branch, local commit, and expected remote state.
+Preserve the atomic prior-state guard, fast-forward ancestry check, and readback requirements.
+Reconcile inconclusive writes before any permitted bounded retry. Never infer success from a write
+response alone or weaken the reference's concurrency and recovery rules.
 
-   ```bash
-   git log main..HEAD --oneline
-   ```
+Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
+unobserved approval. Do not select labels or request maintainer reviews in this workflow.
+A workflow or live E2E file change does not require separate approval. Manual live E2E dispatch
+still requires authority for the selected target. Missing dispatch authority does not block draft
+publication unless the accepted scope requires that live evidence before publication.
+When the diff adds, expands, or repairs live E2E evidence, require the implementation handoff to apply
+[Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). When it
+prunes or relocates live assertions, require the handoff to apply
+[Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence). Route a handoff
+that omits any required field back to implementation before publication.
+Follow [GitHub access](../_shared/git-github-hard-stop.md) for access errors and
+[Writing and review](../_shared/documentation-writing-review.md) for PR text.
 
-3. **Working tree is clean.** Stage or stash any uncommitted changes first.
+## Completion
 
-   ```bash
-   git status
-   ```
+Carry the original objective, accepted scope, deferred scope, tested commit, and validation evidence
+through repairs and publication. Continue authorized work without asking the user to restate the PR
+request. Ask only for a decision outside that scope or a required authorization that is still missing.
 
-## Step 2: Run Pre-PR Checks
-
-Run both checks and confirm they pass before proceeding. Do not skip this step.
-
-```bash
-npx prek run --all-files
-npm test
-```
-
-If either fails, fix the issues before creating the PR.
-
-## Step 3: Push the Branch
-
-Ensure the branch is pushed to the remote.
-
-```bash
-git push -u origin HEAD
-```
-
-## Step 4: Determine PR Metadata
-
-### Title
-
-PR titles must follow Conventional Commits format:
-
-```text
-<type>(<scope>): <description>
-```
-
-Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `perf`
-
-Scope is typically the component name (e.g., `cli`, `blueprint`, `plugin`, `policy`, `docs`).
-
-Examples:
-
-- `feat(cli): add offline mode for onboarding`
-- `fix(blueprint): prevent SSRF bypass via redirect`
-- `docs: update quickstart for Windows prerequisites`
-
-### Type of Change
-
-Determine which type applies based on the diff:
-
-- **Code change for a new feature, bug fix, or refactor** — most PRs.
-- **Code change with doc updates** — code plus changes under `docs/`.
-- **Doc only, prose changes without code sample modifications** — only Markdown prose.
-- **Doc only, includes code sample changes** — doc changes that modify fenced code blocks.
-
-### Related Issue
-
-Check the branch name and commit messages for issue references. If an issue exists, use `Fixes #NNN` or `Closes #NNN`.
-
-### DCO Sign-Off
-
-The PR body must include a DCO sign-off line. Determine the user's name and email from git config:
-
-```bash
-git config user.name
-git config user.email
-```
-
-## Step 5: Compose the PR Body
-
-Use the exact template structure below. Fill in each section based on the diff (`git diff main...HEAD`). Check the applicable boxes and leave others unchecked. Do not add, remove, or reorganize sections.
-
-```markdown
-## Summary
-<!-- 1-3 sentences: what this PR does and why. -->
-
-## Related Issue
-<!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->
-
-## Changes
-<!-- Bullet list of key changes. -->
-
-## Type of Change
-- [ ] Code change (feature, bug fix, or refactor)
-- [ ] Code change with doc updates
-- [ ] Doc only (prose changes, no code sample modifications)
-- [ ] Doc only (includes code sample changes)
-
-## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. -->
-- [ ] `npx prek run --all-files` passes
-- [ ] `npm test` passes
-- [ ] Tests added or updated for new or changed behavior
-- [ ] No secrets, API keys, or credentials committed
-- [ ] Docs updated for user-facing behavior changes
-- [ ] `make docs` builds without warnings (doc changes only)
-- [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
-- [ ] New doc pages include SPDX header and frontmatter (new pages only)
-
-## AI Disclosure
-<!-- If an AI agent authored or co-authored this PR, check the box and name the tool. Remove this section for fully human-authored PRs. -->
-- [ ] AI-assisted — tool: <!-- e.g., Claude Code, Cursor, GitHub Copilot -->
-
----
-<!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->
-Signed-off-by: {name} <{email}>
-```
-
-### Populating the Template
-
-Follow these rules when filling in the template:
-
-- **Summary:** Write 1-3 sentences describing what the PR does and why. Derive this from the commit messages and diff, not from generic descriptions.
-- **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
-- **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
-- **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify.
-- **AI Disclosure:** As an AI agent, always check this box and name yourself (e.g., "Claude Code", "Cursor"). Do not remove this section. (Note: Human contributors may remove this section if the PR is fully human-authored.)
-- **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
-
-## Step 6: Create the PR
-
-Use `gh pr create` with the `--assignee @me` flag and a HEREDOC for the body to preserve formatting.
-
-```bash
-gh pr create \
-  --title "<type>(<scope>): <description>" \
-  --assignee "@me" \
-  --body "$(cat <<'EOF'
-<full PR body from Step 5>
-EOF
-)"
-```
-
-### Labels
-
-Add labels when applicable:
-
-```bash
---label "documentation"   # for doc-only or doc-inclusive PRs
---label "topic:security"  # for security-related changes
-```
-
-### Draft PRs
-
-For work-in-progress that is not ready for review:
-
-```bash
-gh pr create --draft --title "..." --assignee "@me" --body "..."
-```
-
-## Step 7: Report the Result
-
-After the PR is created, display the PR URL as a clickable markdown link:
-
-```text
-Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
-```
-
-## Common Mistakes to Avoid
-
-- **Do not invent your own PR body format.** Use the template from Step 5 exactly.
-- **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
-- **Do not check boxes for steps you did not run.** If you did not run `make docs`, leave that box unchecked.
-- **Do not forget the DCO sign-off.** CI will reject the PR without it.
-- **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
-- **Do not create PRs from main.** Always use a feature branch.
+Report the PR URL, current commit, CI and automated-review results, and any remaining human decision
+or external blocker. Distinguish pending evidence from completed evaluation. This skill does not
+grant merge authority.

@@ -1,0 +1,1407 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { AgentDefinition } from "../../agent/defs";
+import * as agentDefinitions from "../../agent/defs";
+import { loadAgent } from "../../agent/defs";
+import type { SandboxEntry } from "../../state/registry";
+
+const mocks = vi.hoisted(() => ({
+  calls: [] as string[],
+  prepareInteractiveSession: vi.fn(),
+  printInteractiveSessionHints: vi.fn(),
+  completeInteractiveSessionSetup: vi.fn(),
+  completeReadinessQualifiedInteractiveSessionSetup: vi.fn(),
+  startSandboxExec: vi.fn(),
+  startSandboxSession: vi.fn(),
+  createSessionExecutor: vi.fn(),
+  releaseSession: vi.fn(),
+  prepareHermesLightTerminalSkin: vi.fn(),
+  inspectLaunchReadiness: vi.fn(),
+  publishLaunchReadiness: vi.fn(),
+  withLaunchReadinessMutationGate: vi.fn(),
+  emitPortableOpenClawAlreadyRunningTiming: vi.fn(),
+  inspectPortableReceiptDisposition: vi.fn(),
+  recoverPortableLifecycle: vi.fn(),
+  qualifyAcceptedReadinessAuthority: vi.fn(),
+  requireActiveLifecycleAuthority: vi.fn(),
+  requalifyPortableAuthority: vi.fn(),
+  assertCommandCurrent: vi.fn(),
+  captureAcceptedReadinessObservation: vi.fn(),
+}));
+
+vi.mock("./connect", () => ({
+  prepareInteractiveSession: mocks.prepareInteractiveSession,
+  printInteractiveSessionHints: mocks.printInteractiveSessionHints,
+  completeInteractiveSessionSetup: mocks.completeInteractiveSessionSetup,
+  completeReadinessQualifiedInteractiveSessionSetup:
+    mocks.completeReadinessQualifiedInteractiveSessionSetup,
+}));
+vi.mock("./exec", () => ({
+  startSandboxExec: mocks.startSandboxExec,
+  wrapExecCommandWithRuntimeEnv: (command: readonly string[]) => command,
+}));
+vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-command-cli")>()),
+  createCliOpenShellSandboxSessionExecutor: mocks.createSessionExecutor,
+}));
+vi.mock("./connect-hermes-light-skin", () => ({
+  prepareHermesLightTerminalSkin: mocks.prepareHermesLightTerminalSkin,
+}));
+vi.mock("./launch-readiness", () => ({
+  createBoundLaunchReadinessDeps: (capture: unknown, commandExecutor: unknown) => ({
+    boundReadinessCapture: true,
+    capture,
+    commandExecutor,
+  }),
+  formatLaunchReadinessUnsafeAuthorityEvidence: (evidence?: { observedMode?: string | null }) =>
+    evidence
+      ? ` persistent receipt evidence: observed mode ${evidence.observedMode}`
+      : " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+  inspectLaunchReadiness: mocks.inspectLaunchReadiness,
+  publishLaunchReadiness: mocks.publishLaunchReadiness,
+  withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
+  publicationFromDecision: (sandboxName: string, decision: { fence?: { epochId: string } }) => ({
+    sandboxName,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    epochId: decision.fence?.epochId ?? null,
+  }),
+}));
+vi.mock("../../onboard/experimental/portable-demo-lifecycle-timing", () => ({
+  emitPortableOpenClawAlreadyRunningTiming: mocks.emitPortableOpenClawAlreadyRunningTiming,
+}));
+vi.mock("./gateway-state", async () => {
+  const lifecycle = await vi.importActual<
+    typeof import("../../onboard/experimental/hermes-portable-lifecycle")
+  >("../../onboard/experimental/hermes-portable-lifecycle");
+  return {
+    captureHermesPortableAcceptedReadinessObservation: mocks.captureAcceptedReadinessObservation,
+    policyObservationRecoveryAction: (
+      error: { kind: string },
+      sandboxName: string,
+      gatewayName: string,
+      retryAction: string,
+    ) => `recovery:${error.kind}:${sandboxName}:${gatewayName}:${retryAction}`,
+    buildHermesPortableCommandAuthority: () => ({
+      env: lifecycle.hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
+        {
+          ...process.env,
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+        {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid: process.getuid!(),
+          homeDir: "/home/test",
+          configHome: "/home/test/.config",
+          runtimeDir: "/run/user/1000",
+          socketPath: "/run/user/1000/podman/podman.sock",
+        },
+      ),
+      executablePath: "/usr/bin/openshell",
+    }),
+    qualifyHermesPortableOperatingCommandAuthority: () => ({
+      env: lifecycle.hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
+        {
+          ...process.env,
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+        {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid: process.getuid!(),
+          homeDir: "/home/test",
+          configHome: "/home/test/.config",
+          runtimeDir: "/run/user/1000",
+          socketPath: "/run/user/1000/podman/podman.sock",
+        },
+      ),
+      executablePath: "/usr/bin/openshell",
+      assertCurrent: mocks.assertCommandCurrent,
+    }),
+    buildHermesPortableCommandEnvironment: () => ({
+      HOME: "/home/test",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    }),
+    inspectPortableAgentReceiptDisposition: mocks.inspectPortableReceiptDisposition,
+    qualifyHermesPortableAcceptedReadinessAuthority: mocks.qualifyAcceptedReadinessAuthority,
+    requireHermesPortableActiveLifecycleAuthority: mocks.requireActiveLifecycleAuthority,
+    requalifyPortableAgentSandboxAuthority: mocks.requalifyPortableAuthority,
+    recoverPortableDemoSandboxLifecycleForConnect: mocks.recoverPortableLifecycle,
+    withSandboxLifecycleLock: async (_sandboxName: string, operation: () => unknown) => operation(),
+  };
+});
+
+import { launchSandbox } from "./launch";
+
+function sandboxEntry(agentName: string | null): SandboxEntry {
+  return {
+    name: "alpha",
+    agent: agentName,
+    gatewayName: "gateway-alpha",
+    lifecycleGeneration: "generation-alpha",
+    lifecycleLiveIdentityFingerprint: "f".repeat(64),
+    openshellDriver: "docker",
+    openshellVersion: "0.0.106",
+    provider: null,
+    model: null,
+    gpuEnabled: false,
+  } as SandboxEntry;
+}
+
+function activeHermesDisposition() {
+  return {
+    kind: "hermes" as const,
+    phase: "active" as const,
+    gatewayName: "gateway-alpha",
+    lifecycleGeneration: "generation-alpha",
+    liveIdentityFingerprint: "f".repeat(64),
+  };
+}
+
+function prepareSession(
+  agentName: string,
+  agent: AgentDefinition | null,
+  hermesPortable = false,
+): void {
+  mocks.prepareInteractiveSession.mockImplementation(async () => {
+    mocks.calls.push("prepareInteractiveSession");
+    return { agent, sb: sandboxEntry(agentName), hermesPortable };
+  });
+}
+
+function launchedCommand(): readonly string[] {
+  return mocks.startSandboxExec.mock.calls[0]?.[1] as readonly string[];
+}
+
+type AsyncTestLock = <T>(name: string, operation: () => Promise<T> | T) => Promise<T>;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function createSerialTestLock(events: string[], label: string): AsyncTestLock {
+  let tail = Promise.resolve();
+  return async <T>(_name: string, operation: () => Promise<T> | T): Promise<T> => {
+    const previous = tail;
+    const release = deferred();
+    tail = previous.then(() => release.promise);
+    await previous;
+    events.push(`${label}:acquired`);
+    try {
+      return await operation();
+    } finally {
+      events.push(`${label}:released`);
+      release.resolve();
+    }
+  };
+}
+
+describe("launchSandbox", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.calls.length = 0;
+    mocks.startSandboxExec.mockImplementation(async () => {
+      mocks.calls.push("startSandboxExec");
+      return async () => undefined;
+    });
+    mocks.createSessionExecutor.mockReturnValue({ start: mocks.startSandboxSession });
+    mocks.startSandboxSession.mockImplementation(() => {
+      mocks.calls.push("startSandboxSession");
+      return {
+        completion: Promise.resolve({
+          outcome: { kind: "exited", exitCode: 0 },
+          stdout: "",
+          stderr: "",
+          release: mocks.releaseSession,
+        }),
+        cancel: vi.fn(),
+      };
+    });
+    mocks.prepareHermesLightTerminalSkin.mockImplementation(() => {
+      mocks.calls.push("prepareHermesLightTerminalSkin");
+    });
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "missing",
+      fence: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: true,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({ kind: "published" });
+    mocks.withLaunchReadinessMutationGate.mockImplementation(async (_publication, operation) => ({
+      kind: "entered",
+      value: await operation(),
+    }));
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+    mocks.recoverPortableLifecycle.mockReturnValue({ kind: "already-running" });
+    mocks.qualifyAcceptedReadinessAuthority.mockReturnValue({
+      kind: "current",
+      commandAuthority: {
+        env: {},
+        executablePath: "/usr/bin/openshell",
+        assertCurrent: mocks.assertCommandCurrent,
+      },
+    });
+    mocks.requireActiveLifecycleAuthority.mockImplementation((_sandboxName, expected, deps) => {
+      const currentEntry =
+        deps.readRegistry("alpha") ??
+        (() => {
+          throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+        })();
+      expected === undefined ||
+        JSON.stringify(currentEntry) === JSON.stringify(expected.entry) ||
+        (() => {
+          throw new Error("Hermes portable lifecycle authority changed during verification");
+        })();
+      return expected ?? { ...activeHermesDisposition(), entry: currentEntry };
+    });
+    mocks.requalifyPortableAuthority.mockReturnValue({
+      kind: "hermes",
+      assertCurrent: vi.fn(),
+    });
+    // Production keeps OpenClaw null in getSessionAgent so its recovery path
+    // continues to use the legacy defaults. The launch resolver must still
+    // load OpenClaw's trusted manifest before choosing the interactive command.
+    prepareSession("openclaw", null);
+  });
+
+  it("starts the OpenClaw TUI for an OpenClaw sandbox (#6006)", async () => {
+    await launchSandbox("alpha");
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+  });
+
+  it("uses the OpenClaw manifest command when the session agent is null (#6006)", async () => {
+    const openclaw = loadAgent("openclaw");
+    vi.spyOn(agentDefinitions, "loadAgent").mockReturnValueOnce({
+      ...openclaw,
+      runtime: { ...openclaw.runtime!, interactive_command: "openclaw manifest-test-tui" },
+    });
+
+    await launchSandbox("alpha");
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw manifest-test-tui"]);
+  });
+
+  it("starts dcode for a Deep Agents Code sandbox (#6006)", async () => {
+    prepareSession("langchain-deepagents-code", loadAgent("langchain-deepagents-code"));
+
+    await launchSandbox("alpha");
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "dcode"]);
+  });
+
+  it("starts hermes for a Hermes sandbox (#6006)", async () => {
+    prepareSession("hermes", loadAgent("hermes"));
+
+    await launchSandbox("alpha");
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
+  });
+
+  it("preserves a portable transport exit and releases session ownership", async () => {
+    prepareSession("hermes", loadAgent("hermes"), true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.startSandboxSession.mockReturnValueOnce({
+      completion: Promise.resolve({
+        outcome: {
+          kind: "failed",
+          reason: "transport",
+          message: "Gateway connection lost",
+          exitCode: 255,
+        },
+        stdout: "",
+        stderr: "",
+        release: mocks.releaseSession,
+      }),
+      cancel: vi.fn(),
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      expect(mocks.releaseSession).toHaveBeenCalledOnce();
+      throw new Error(`exit:${code}`);
+    });
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => sandboxEntry("hermes"),
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => operation(),
+      }),
+    ).rejects.toThrow("exit:255");
+    expect(exit).toHaveBeenCalledWith(255);
+    expect(mocks.releaseSession).toHaveBeenCalledOnce();
+  });
+
+  it("holds schema-5 authority through dispatch and releases it while the child runs (#11647)", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
+    vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    const events: string[] = [];
+    const childStarted = deferred();
+    const releaseChild = deferred();
+    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
+    mocks.startSandboxSession.mockImplementationOnce(() => {
+      events.push("child");
+      childStarted.resolve();
+      return {
+        completion: releaseChild.promise.then(() => ({
+          outcome: { kind: "exited", exitCode: 0 },
+          stdout: "",
+          stderr: "",
+          release: mocks.releaseSession,
+        })),
+        cancel: vi.fn(),
+      };
+    });
+
+    const launch = launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock,
+    });
+    await childStarted.promise;
+    const contender = withSandboxMutationLock("alpha", () => events.push("contender"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
+    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledWith("alpha", entry, "gateway-alpha");
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "child",
+      "sandbox:released",
+      "sandbox:acquired",
+      "contender",
+      "sandbox:released",
+    ]);
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).toHaveBeenCalledWith({
+      kind: "command",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "gateway-alpha" },
+      command: ["bash", "-lc", "hermes"],
+      tty: true,
+      output: "inherit",
+      timeoutSeconds: 0,
+    });
+    expect(mocks.createSessionExecutor.mock.calls[0]?.[0].resolveBinary()).toBe(
+      "/usr/bin/openshell",
+    );
+    expect(mocks.createSessionExecutor.mock.calls[0]?.[0]).toMatchObject({
+      environment: expect.not.objectContaining({
+        NVIDIA_INFERENCE_API_KEY: expect.anything(),
+        GITHUB_TOKEN: expect.anything(),
+        AWS_SECRET_ACCESS_KEY: expect.anything(),
+      }),
+    });
+
+    releaseChild.resolve();
+    await launch;
+    await contender;
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "child",
+      "sandbox:released",
+      "sandbox:acquired",
+      "contender",
+      "sandbox:released",
+    ]);
+  });
+
+  it("rejects ordinary-to-schema-5 publication inside the launch lifecycle fence (#9203)", async () => {
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", loadAgent("hermes"));
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_sandboxName, operation) => {
+          mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+          return await operation();
+        },
+      }),
+    ).rejects.toThrow("lifecycle authority changed");
+
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("qualifies schema-5 published before the launch fence without ordinary setup (#9203)", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_sandboxName, operation) => {
+          mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+          return await operation();
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
+    expect(mocks.requireActiveLifecycleAuthority).toHaveBeenCalled();
+  });
+
+  it("rejects schema-5 retirement inside the launch lifecycle fence (#9203)", async () => {
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", loadAgent("hermes"), true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => entry,
+        withSandboxMutationLock: async (_sandboxName, operation) => {
+          mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+          return await operation();
+        },
+      }),
+    ).rejects.toThrow("lifecycle authority changed");
+
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("launches NemoCUA through the ordinary terminal-agent path (#9649)", async () => {
+    const nemocua = {
+      ...loadAgent("hermes"),
+      name: "nemocua",
+      runtime: {
+        kind: "terminal" as const,
+        interactive_command: "/bin/bash",
+        headless_command: "python3 /app/run_with_harness.py",
+      },
+    };
+    const cuaEntry = sandboxEntry("nemocua");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: nemocua,
+      sb: cuaEntry,
+    });
+    await launchSandbox("alpha", {
+      getSandbox: () => cuaEntry,
+    });
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "/bin/bash"]);
+  });
+
+  it("rejects an untrusted registry agent before starting an in-sandbox command (#6006)", async () => {
+    prepareSession("mystery-agent; echo pwned", null);
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      'Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned".',
+    );
+
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  // Regression guard for #6291: startSandboxExec wraps every command in
+  // wrapExecCommandWithRuntimeEnv, which unsets OPENCLAW_GATEWAY_TOKEN after
+  // sourcing the runtime env file. Only a login shell re-sources the file
+  // through the profile, so a bare argv would start the agent with different
+  // auth than `connect` gives it.
+  it("runs the agent command through a login shell rather than bare argv (#6006)", async () => {
+    await launchSandbox("alpha");
+
+    const command = launchedCommand();
+    expect(command).toEqual(["bash", "-lc", "openclaw tui"]);
+    expect(command).not.toEqual(["openclaw", "tui"]);
+  });
+
+  // `connect` retires the managed light skin before opening its SSH session, so
+  // `launch` must run the same Hermes compatibility cleanup.
+  it("retires the Hermes light terminal skin before starting the agent (#6006)", async () => {
+    const hermes = loadAgent("hermes");
+    prepareSession("hermes", hermes);
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledWith("alpha", hermes, process.env);
+    expect(mocks.calls).toEqual([
+      "prepareInteractiveSession",
+      "prepareHermesLightTerminalSkin",
+      "startSandboxExec",
+    ]);
+  });
+
+  it("requests an interactive session with no timeout (#6006)", async () => {
+    await launchSandbox("alpha");
+
+    expect(mocks.startSandboxExec.mock.calls[0]?.[2]).toEqual({
+      tty: true,
+      stdin: true,
+      timeoutSeconds: 0,
+    });
+  });
+
+  it("forwards the sandbox name unmodified (#6006)", async () => {
+    await launchSandbox("beta-01");
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledWith("beta-01");
+    expect(mocks.startSandboxExec.mock.calls[0]?.[0]).toBe("beta-01");
+  });
+
+  // Without the preflight, the agent starts over exec while gateway process
+  // recovery never runs, so the TUI renders but sits disconnected.
+  it("runs the interactive preflight before starting the agent (#6006)", async () => {
+    await launchSandbox("alpha");
+
+    expect(mocks.calls).toEqual([
+      "prepareInteractiveSession",
+      "prepareHermesLightTerminalSkin",
+      "startSandboxExec",
+    ]);
+    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+      expect.objectContaining({ epochId: null }),
+      expect.any(Function),
+    );
+  });
+
+  it("rejects a sandbox missing from local state before readiness recovery (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "missing",
+      fence: null,
+      gatewayName: null,
+      gatewayPort: null,
+      fenceFailed: true,
+      recoveryBlocked: true,
+    });
+
+    await expect(launchSandbox("alpha;echo pwned")).rejects.toThrow(
+      "Sandbox 'alpha;echo pwned' is not registered in the local NemoClaw state.",
+    );
+
+    expect(mocks.withLaunchReadinessMutationGate).not.toHaveBeenCalled();
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("skips the complete OpenClaw pairing pass after current lease qualification (#9023)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry("openclaw");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: openclaw,
+      sb,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "openclaw" });
+
+    let finishProbe!: () => void;
+    const probe = new Promise<void>((resolve) => {
+      finishProbe = resolve;
+    });
+    mocks.printInteractiveSessionHints.mockReturnValueOnce(probe);
+    const launch = launchSandbox("alpha");
+    await vi.waitFor(() => expect(mocks.printInteractiveSessionHints).toHaveBeenCalledOnce());
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    finishProbe();
+    await launch;
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.printInteractiveSessionHints).toHaveBeenCalledWith("alpha");
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      openclaw,
+      sb,
+    );
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.printInteractiveSessionHints).toHaveBeenCalledBefore(
+      mocks.completeReadinessQualifiedInteractiveSessionSetup,
+    );
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledBefore(
+      mocks.prepareHermesLightTerminalSkin,
+    );
+    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.startSandboxExec);
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+    expect(mocks.emitPortableOpenClawAlreadyRunningTiming).toHaveBeenCalledOnce();
+  });
+
+  it("launches accepted Hermes readiness without entering recovery (#9203)", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    const writeLaunchTiming = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(37);
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+      now,
+      writeLaunchTiming,
+    });
+
+    expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(4);
+    expect(mocks.inspectLaunchReadiness).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ boundReadinessCapture: true }),
+    );
+    expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
+    expect(writeLaunchTiming).toHaveBeenCalledWith(
+      "  Launch timing: preExec=27ms readinessAction=accepted",
+    );
+    expect(writeLaunchTiming).toHaveBeenCalledBefore(mocks.startSandboxSession);
+  });
+
+  it("requalifies schema-5 before accepted Hermes readiness skips recovery (#9203)", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.qualifyAcceptedReadinessAuthority
+      .mockReturnValueOnce({ kind: "requalification-required" })
+      .mockReturnValueOnce({
+        kind: "current",
+        commandAuthority: {
+          env: {},
+          executablePath: "/usr/bin/openshell",
+          assertCurrent: mocks.assertCommandCurrent,
+        },
+      });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+
+    expect(mocks.requalifyPortableAuthority).toHaveBeenCalledOnce();
+    expect(mocks.qualifyAcceptedReadinessAuthority).toHaveBeenCalledTimes(2);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
+  });
+
+  it("rejects Hermes receipt drift after accepted readiness and before execution", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition
+      .mockReturnValueOnce(activeHermesDisposition())
+      .mockReturnValueOnce(activeHermesDisposition())
+      .mockReturnValueOnce({ kind: "absent" });
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => await operation(),
+      }),
+    ).rejects.toThrow("lifecycle authority changed before agent launch");
+
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalled();
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects Hermes registry drift during accepted readiness", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    const changed = { ...entry, lifecycleGeneration: "generation-new" };
+    const readSandbox = vi
+      .fn()
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(changed);
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: readSandbox,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => await operation(),
+      }),
+    ).rejects.toThrow("lifecycle authority changed during verification");
+
+    expect(readSandbox).toHaveBeenCalledTimes(3);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(2);
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects Hermes operating-command drift after readiness and before execution", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.assertCommandCurrent
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("operating authority changed");
+      });
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => await operation(),
+      }),
+    ).rejects.toThrow("operating authority changed");
+
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects full registry drift after readiness and before execution", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    const changed = { ...entry, provider: "compatible-endpoint", model: "model-new" };
+    const readSandbox = vi
+      .fn()
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(changed);
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: readSandbox,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => await operation(),
+      }),
+    ).rejects.toThrow("lifecycle authority changed during verification");
+
+    expect(readSandbox).toHaveBeenCalledTimes(5);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("recovers one stopped Hermes lifecycle after readiness fallback", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.recoverPortableLifecycle.mockReturnValue({ kind: "recovered" });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+
+    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
+    expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
+  });
+
+  it("passes the qualified OpenClaw identity for legacy registry state (#9023)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry(null);
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: openclaw,
+      sb,
+    });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      openclaw,
+      sb,
+    );
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+  });
+
+  it("does not mutate after its epoch is replaced by a newer accepted lease (#8942)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry("openclaw");
+    mocks.inspectLaunchReadiness
+      .mockResolvedValueOnce({
+        kind: "fallback",
+        category: "config",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      })
+      .mockResolvedValueOnce({
+        kind: "accepted",
+        category: "accepted",
+        agent: openclaw,
+        sb,
+      });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValueOnce({ kind: "changed" });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.inspectLaunchReadiness).toHaveBeenCalledTimes(2);
+    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+      expect.objectContaining({ epochId: "a".repeat(64) }),
+      expect.any(Function),
+    );
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      openclaw,
+      sb,
+    );
+    expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
+  });
+
+  it("keeps repeated launch and exit cycles on the accepted non-sliding lease (#8942)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry("openclaw");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: openclaw,
+      sb,
+    });
+
+    await launchSandbox("alpha");
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).toHaveBeenCalledTimes(2);
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledTimes(2);
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+  });
+
+  it("runs the existing complete pairing path once after qualification fallback (#9023)", async () => {
+    mocks.prepareInteractiveSession.mockImplementationOnce(async () => {
+      mocks.completeInteractiveSessionSetup("alpha", sandboxEntry("openclaw"));
+      return { agent: loadAgent("openclaw"), sb: sandboxEntry("openclaw") };
+    });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledOnce();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
+  });
+
+  it("publishes recaptured final state only after successful complete preflight (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledBefore(mocks.publishLaunchReadiness);
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledBefore(mocks.startSandboxExec);
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
+      }),
+    );
+  });
+
+  it("keeps fenced Hermes fallback publication on retained command authority", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.qualifyAcceptedReadinessAuthority.mockReturnValueOnce({
+      kind: "current",
+      commandAuthority: {
+        env: { HERMES_AUTHORITY_ENV: "retained" },
+        executablePath: "/usr/bin/openshell",
+        assertCurrent: mocks.assertCommandCurrent,
+      },
+    });
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "gateway-alpha",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockImplementation(async (_publication, publicationDeps) => {
+      publicationDeps.capture?.(["sandbox", "get", "alpha"]);
+      return { kind: "published" };
+    });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        assertPublicationCurrent: expect.any(Function),
+        boundReadinessCapture: true,
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
+      }),
+    );
+    expect(mocks.captureAcceptedReadinessObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executablePath: "/usr/bin/openshell",
+        env: { HERMES_AUTHORITY_ENV: "retained" },
+      }),
+      ["sandbox", "get", "alpha"],
+      {},
+    );
+    expect(mocks.assertCommandCurrent).toHaveBeenCalled();
+  });
+
+  it("rejects Hermes authority drift after async fallback publication", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    const publicationStarted = deferred();
+    const publicationRelease = deferred();
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "gateway-alpha",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockImplementation(async () => {
+      publicationStarted.resolve();
+      await publicationRelease.promise;
+      return { kind: "published" };
+    });
+
+    const launch = launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+    const rejection = expect(launch).rejects.toThrow(
+      "Hermes portable command authority changed during fallback publication",
+    );
+    await publicationStarted.promise;
+    mocks.assertCommandCurrent.mockImplementation(() => {
+      throw new Error("Hermes portable command authority changed during fallback publication");
+    });
+    publicationRelease.resolve();
+
+    await rejection;
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("stops before readiness publication and agent execution when recovery rejects launch (#9364)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    const recoveryFailure = new Error("process.exit(1)");
+    mocks.prepareInteractiveSession.mockRejectedValueOnce(recoveryFailure);
+
+    await expect(launchSandbox("alpha")).rejects.toBe(recoveryFailure);
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("keeps ordinary launch available when evidence observation, hashing, or storage fails (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({ kind: "evidence-failed" });
+
+    await expect(launchSandbox("alpha")).resolves.toBeUndefined();
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
+    expect(mocks.startSandboxExec).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["current", {}],
+    ["missing generation", { lifecycleGeneration: undefined }],
+    ["missing live identity", { lifecycleLiveIdentityFingerprint: undefined }],
+    [
+      "missing both",
+      { lifecycleGeneration: undefined, lifecycleLiveIdentityFingerprint: undefined },
+    ],
+  ])(
+    "checks %s cleanup identity when macOS evidence is unavailable (#8942, #11647)",
+    async (_label, identity) => {
+      const agent = loadAgent("openclaw");
+      const entry = { ...sandboxEntry(agent.name), gatewayName: "nemoclaw-8081", ...identity };
+      const before = structuredClone(entry);
+      mocks.inspectLaunchReadiness.mockResolvedValue({
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      });
+      mocks.prepareInteractiveSession.mockResolvedValue({
+        agent,
+        sb: entry,
+        hermesPortable: false,
+      });
+
+      await expect(
+        launchSandbox("alpha", {
+          getSandbox: () => entry,
+          observeSandbox: () => ({ state: "ready", liveIdentityFingerprint: "f".repeat(64) }),
+        }),
+      ).resolves.toBeUndefined();
+      expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+      expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+      expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+        expect.objectContaining({ epochId: null }),
+        expect.any(Function),
+      );
+      expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
+      expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+      expect(entry).toEqual(before);
+    },
+  );
+
+  it("stops before the complete preflight when a prior launch-readiness epoch may remain acceptable (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: true,
+      recoveryBlocked: true,
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness evidence could not be safely invalidated",
+    );
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("stops before the complete preflight when the fenced epoch cannot be revalidated (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "config",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValue({
+      kind: "unsafe",
+      evidence: { observedMode: "0640" },
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness evidence could not be safely invalidated. persistent receipt evidence: observed mode 0640",
+    );
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("does not launch after final semantic validation reports unhealthy state (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "health",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "validation-failed",
+      category: "health",
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness final validation failed due to health",
+    );
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("does not launch after final live-policy validation fails", async () => {
+    const error = {
+      kind: "transport" as const,
+      reason: "unreachable" as const,
+      message: "OpenShell could not reach the selected gateway.",
+    };
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "policy-observation-failed",
+      error,
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      [
+        `Launch readiness final policy validation failed for sandbox 'alpha' on gateway 'nemoclaw': ${error.message}`,
+        `recovery:${error.kind}:alpha:nemoclaw:launch`,
+      ].join("\n"),
+    );
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+  });
+
+  it("does not print connect's in-sandbox command hint (#6006)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await launchSandbox("alpha");
+
+      const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      expect(output).not.toContain("Inside the sandbox, run");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+  it("holds lifecycle authority from ordinary readiness through dispatch (#11647)", async () => {
+    const events: string[] = [];
+    const lock = createSerialTestLock(events, "sandbox");
+    const inspected = deferred();
+    const continueInspection = deferred();
+    const childStarted = deferred();
+    const sessionEnded = deferred();
+    mocks.inspectLaunchReadiness.mockImplementationOnce(async () => {
+      events.push("readiness");
+      inspected.resolve();
+      await continueInspection.promise;
+      return {
+        kind: "accepted",
+        category: "accepted",
+        agent: loadAgent("openclaw"),
+        sb: sandboxEntry("openclaw"),
+      };
+    });
+    mocks.startSandboxExec.mockImplementationOnce(async () => {
+      events.push("dispatch");
+      childStarted.resolve();
+      return () => sessionEnded.promise;
+    });
+    const launch = launchSandbox("alpha", { withSandboxMutationLock: lock });
+    await inspected.promise;
+    const contender = lock("alpha", () => {
+      events.push("contender");
+    });
+    continueInspection.resolve();
+    await childStarted.promise;
+    await contender;
+    sessionEnded.resolve();
+    await launch;
+    expect(
+      events.filter((event) => ["readiness", "dispatch", "contender"].includes(event)),
+    ).toEqual(["readiness", "dispatch", "contender"]);
+  });
+
+  it.each([
+    {
+      scenario: "hermes-accepted",
+      agentName: "hermes",
+      portable: true,
+      readiness: "accepted",
+      disposition: activeHermesDisposition(),
+    },
+    {
+      scenario: "hermes-prepared",
+      agentName: "hermes",
+      portable: true,
+      readiness: "fallback",
+      disposition: activeHermesDisposition(),
+    },
+    {
+      scenario: "openclaw-prepared",
+      agentName: "openclaw",
+      portable: false,
+      readiness: "fallback",
+      disposition: { kind: "absent" },
+    },
+  ])(
+    "permits another lifecycle operation while $scenario TUI remains open (#11647)",
+    async ({ agentName, portable, readiness, disposition }) => {
+      mocks.assertCommandCurrent.mockReset().mockImplementation(() => undefined);
+      const agent = loadAgent(agentName);
+      const entry = sandboxEntry(agent.name);
+      prepareSession(agent.name, agent, portable);
+      mocks.inspectPortableReceiptDisposition.mockReturnValue(disposition);
+      mocks.inspectLaunchReadiness.mockResolvedValue({
+        kind: readiness,
+        category: "missing",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        agent,
+        sb: entry,
+      });
+      const sessionEnded = deferred();
+      const childStarted = deferred();
+      mocks.startSandboxSession.mockImplementation(() => {
+        childStarted.resolve();
+        return {
+          completion: sessionEnded.promise.then(() => ({
+            outcome: { kind: "exited", exitCode: 0 },
+            stdout: "",
+            stderr: "",
+            release: mocks.releaseSession,
+          })),
+          cancel: vi.fn(),
+        };
+      });
+      mocks.startSandboxExec.mockImplementation(async () => {
+        childStarted.resolve();
+        return async () => {
+          await sessionEnded.promise;
+        };
+      });
+      const events: string[] = [];
+      const lock = createSerialTestLock(events, "sandbox");
+      const launch = launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: lock,
+      });
+      await Promise.race([
+        childStarted.promise,
+        launch.then(() => {
+          throw new Error("launch ended without starting a session");
+        }),
+      ]);
+      let anotherOperationEntered = false;
+      const anotherOperation = lock("alpha", () => {
+        anotherOperationEntered = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const enteredWhileSessionOpen = anotherOperationEntered;
+      sessionEnded.resolve();
+      await Promise.all([launch, anotherOperation]);
+      expect(anotherOperationEntered).toBe(true);
+      expect(enteredWhileSessionOpen).toBe(true);
+    },
+  );
+});

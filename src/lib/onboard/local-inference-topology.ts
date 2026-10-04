@@ -1,0 +1,267 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import {
+  applyOllamaRuntimeContextWindow,
+  findReachableOllamaHost,
+  isLocalProviderHostHealthy,
+  loadPersistedOllamaHost,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  shouldFrontOllamaWithProxy,
+  validateOllamaModel,
+} from "../inference/local";
+import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  resolveOllamaContextWindowFloor,
+} from "../inference/ollama-runtime-context";
+import type { ContainerRuntime } from "../platform";
+import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
+
+export function getContainerRuntime(): ContainerRuntime {
+  return detectContainerRuntimeFromDockerInfo();
+}
+
+function describeContainerRuntime(runtime: ContainerRuntime): string {
+  switch (runtime) {
+    case "docker-desktop":
+      return "Docker Desktop";
+    case "docker":
+      return "native Docker Engine";
+    case "podman":
+      return "Podman";
+    case "colima":
+      return "Colima";
+    case "unknown":
+      return "unknown container runtime";
+    default:
+      const _exhaustive: never = runtime;
+      return _exhaustive;
+  }
+}
+
+type WindowsHostOllamaStartLabel = (opts: { reachable: boolean; loopbackOnly: boolean }) => string;
+
+type WindowsHostOllamaReject = (
+  providerKey: string,
+  isNonInteractive: () => boolean,
+  abortNonInteractive: (reason: string, hint?: string) => never,
+) => boolean;
+
+export type WindowsHostOllamaDockerRequirement =
+  | {
+      supported: true;
+      detectedRuntime: string;
+      installLabel: string;
+      startLabel: WindowsHostOllamaStartLabel;
+    }
+  | {
+      supported: false;
+      detectedRuntime: string;
+      labelSuffix: string;
+      installLabel: string;
+      startLabel: WindowsHostOllamaStartLabel;
+      reason: string;
+      hint: string;
+      reject: WindowsHostOllamaReject;
+    };
+
+export function getWindowsHostOllamaDockerRequirement(
+  runtime: ContainerRuntime | null,
+): WindowsHostOllamaDockerRequirement {
+  if (runtime === null) {
+    return {
+      supported: true,
+      detectedRuntime: "not applicable",
+      installLabel: "Install Ollama on Windows host (loopback only)",
+      startLabel(opts) {
+        if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
+        if (opts.loopbackOnly) return "Restart loopback-only Ollama on Windows host";
+        return "Restart Ollama on Windows host with loopback-only binding";
+      },
+    };
+  }
+  const detectedRuntime = describeContainerRuntime(runtime);
+  if (runtime === "docker-desktop") {
+    return {
+      supported: true,
+      detectedRuntime,
+      installLabel: "Install Ollama on Windows host (loopback only)",
+      startLabel(opts) {
+        if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
+        if (opts.loopbackOnly) return "Restart loopback-only Ollama on Windows host";
+        return "Restart Ollama on Windows host with loopback-only binding";
+      },
+    };
+  }
+
+  const labelSuffix = " (requires Docker Desktop WSL integration)";
+  const reason =
+    `Windows-host Ollama requires Docker Desktop WSL integration; ` +
+    `detected ${detectedRuntime} in WSL.`;
+  const hint = "Choose WSL-local Ollama, or enable Docker Desktop WSL integration for this distro.";
+  return {
+    supported: false,
+    detectedRuntime,
+    labelSuffix,
+    installLabel: `Install Ollama on Windows host with loopback-only binding${labelSuffix}`,
+    startLabel(opts) {
+      if (opts.reachable) return `Use Ollama on Windows host - running${labelSuffix}`;
+      if (opts.loopbackOnly) {
+        return `Restart loopback-only Ollama on Windows host${labelSuffix}`;
+      }
+      return `Restart Ollama on Windows host with loopback-only binding${labelSuffix}`;
+    },
+    reason,
+    hint,
+    reject(providerKey, isNonInteractive, abortNonInteractive) {
+      if (isNonInteractive()) {
+        abortNonInteractive(
+          `${providerKey} requires Docker Desktop WSL integration; detected ${detectedRuntime} in WSL.`,
+          hint,
+        );
+      }
+      console.error(`  ${reason}`);
+      console.error(
+        "  Native Docker-in-WSL cannot reliably route sandbox containers to Windows-host Ollama.",
+      );
+      console.error(`  ${hint}`);
+      console.log("");
+      return true;
+    },
+  };
+}
+
+export function rejectUnsupportedWindowsHostOllama(
+  requirement: WindowsHostOllamaDockerRequirement,
+  providerKey: string,
+  isWindowsHostOllama: boolean,
+  isNonInteractive: () => boolean,
+  abortNonInteractive: (reason: string, hint?: string) => never,
+): boolean {
+  if (!isWindowsHostOllama || requirement.supported) return false;
+  return requirement.reject(providerKey, isNonInteractive, abortNonInteractive);
+}
+
+export interface RepairLocalInferenceSystemdOverrideOptions {
+  provider: string | null | undefined;
+  model: string | null | undefined;
+  contextWindowFloor: number;
+  isNonInteractive: () => boolean;
+}
+
+function failOllamaResumeRepair(message: string): never {
+  console.error(`  ${message}`);
+  throw new Error(message);
+}
+
+// Discovery returns host.docker.internal only after revalidating the Windows
+// listener, Docker Desktop route, Ollama response, and hostile Host rejection.
+// Under mirrored networking it also distinguishes a Windows-forwarded loopback
+// response from a Linux-owned listener before returning that qualified route.
+function protectedWindowsHostOllamaIsReachable(): boolean {
+  const host = findReachableOllamaHost(undefined, {}, undefined, { revalidate: true });
+  return host === OLLAMA_HOST_DOCKER_INTERNAL;
+}
+
+// Repair the Ollama systemd loopback override for recorded ollama-local
+// providers. Agents with a strict context floor also warm the exact recorded
+// model and verify the running daemon before resume can skip provider setup.
+// No-ops for any other provider and fails closed on incomplete runtime proof.
+export function repairLocalInferenceSystemdOverrideOrExit(
+  options: RepairLocalInferenceSystemdOverrideOptions,
+): void {
+  const { provider, model, isNonInteractive } = options;
+  if (provider !== "ollama-local") return;
+  const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
+  const recordedWindowsHost = loadPersistedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
+  // A Windows-host Ollama daemon reached at host.docker.internal is not a Linux
+  // systemd service, so the override restarts an unrelated ollama.service and
+  // exits 1. Provider selection already skips it, but it records the same
+  // "ollama-local" provider for both topologies, so resume carries no Windows
+  // marker and has to re-derive the distinction here (#8596).
+  const windowsHostReachable = protectedWindowsHostOllamaIsReachable();
+  if (!windowsHostReachable && recordedWindowsHost) {
+    failOllamaResumeRepair(
+      "Recorded Windows-host Ollama no longer passes its loopback listener, local Docker " +
+        "Desktop route, and Host-header validation checks. Repair the Windows-host Ollama " +
+        "route, then run `nemoclaw onboard --resume` again.",
+    );
+  }
+  if (!windowsHostReachable) {
+    const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
+    if (state === "failed") {
+      failOllamaResumeRepair(
+        "Ollama systemd restart did not recover after applying the loopback override.",
+      );
+    }
+  }
+  if (contextWindowFloor <= MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return;
+  if (!model) {
+    failOllamaResumeRepair(
+      "The recorded Ollama model is missing, so its runtime context window cannot be verified.",
+    );
+  }
+  if (!findReachableOllamaHost()) {
+    failOllamaResumeRepair(
+      "Ollama is not reachable, so the recorded model's runtime context window cannot be verified.",
+    );
+  }
+  const validation = validateOllamaModel(model);
+  if (!validation.ok) {
+    failOllamaResumeRepair(
+      validation.message || `Selected Ollama model '${model}' failed runtime validation.`,
+    );
+  }
+  const runtimeContext = applyOllamaRuntimeContextWindow(model, { contextWindowFloor });
+  if (!runtimeContext.ok) failOllamaResumeRepair(runtimeContext.message);
+}
+
+export interface LocalProviderReachabilityDeps {
+  shouldFrontOllamaWithProxy: () => boolean;
+  ensureOllamaAuthProxy: () => void;
+  isProxyHealthy: () => boolean;
+  isLocalProviderHostHealthy: (provider: string) => boolean;
+}
+
+const defaultLocalProviderReachabilityDeps: LocalProviderReachabilityDeps = {
+  shouldFrontOllamaWithProxy,
+  ensureOllamaAuthProxy,
+  isProxyHealthy,
+  isLocalProviderHostHealthy,
+};
+
+// Decide whether a local inference provider is genuinely reachable, so the
+// caller can skip OpenShell's host-side verification without trusting a route
+// blindly.
+//
+// INVALID STATE: `openshell inference set` verifies by POSTing to the
+//   provider's sandbox-facing base URL, http://host.openshell.internal:<port>.
+//   That hostname is container-scoped (k3s CoreDNS / NodeHosts) and does NOT
+//   resolve from the host where the CLI runs — so the verify ALWAYS fails for
+//   ollama-local/vllm-local even when the route is valid at runtime.
+//
+// SOURCE BOUNDARY: the verifier is owned by OpenShell and runs in its CLI
+//   process; NemoClaw cannot change where OpenShell runs the probe. NemoClaw
+//   therefore substitutes its own POSITIVE reachability check and passes
+//   --no-verify, the same posture as onboard/connect.
+//
+// POSITIVE SIGNAL ONLY: proceed only on real evidence the provider is up — a
+//   healthy auth proxy (ollama proxy topology) or a responding host endpoint
+//   (isLocalProviderHostHealthy). Never treat a failed container probe's
+//   diagnostic as reachability.
+//
+// REMOVAL CONDITION: drop this workaround once OpenShell verifies from the
+//   gateway/sandbox routing context (where host.openshell.internal resolves),
+//   or exposes a definitive sandbox-path probe.
+export function ensureLocalProviderReachable(
+  provider: string,
+  deps: LocalProviderReachabilityDeps = defaultLocalProviderReachabilityDeps,
+): boolean {
+  if (provider === "ollama-local" && deps.shouldFrontOllamaWithProxy()) {
+    deps.ensureOllamaAuthProxy();
+    return deps.isProxyHealthy();
+  }
+  return deps.isLocalProviderHostHealthy(provider);
+}

@@ -1,0 +1,175 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+
+import { describe, it } from "vitest";
+
+import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./summary";
+
+describe("onboard summary helpers", () => {
+  it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
+    const summary = formatOnboardConfigSummary({
+      provider: "gemini-api",
+      model: "gemini-2.5-flash",
+      credentialEnv: "GEMINI_API_KEY",
+      webSearchConfig: { fetchEnabled: true },
+      enabledChannels: ["telegram", "slack"],
+      sandboxName: "my-assistant",
+      notes: ["Sandbox build typically takes 5–15 minutes on this host."],
+    });
+
+    assert.ok(summary.includes("Review configuration"), "summary has review heading");
+    assert.ok(summary.includes("gemini-api"), "summary includes provider");
+    assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
+    assert.ok(
+      summary.includes("configured for OpenShell gateway registration"),
+      "summary shows API key staging state without printing env var names",
+    );
+    assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
+    assert.ok(summary.includes("Brave Search"), "legacy web-search config defaults to Brave");
+    assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
+    assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
+    assert.ok(
+      summary.includes("Note:          Sandbox build typically takes 5–15 minutes on this host."),
+      "summary renders notes under sandbox name",
+    );
+
+    const bareSummary = formatOnboardConfigSummary({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      webSearchConfig: null,
+      enabledChannels: [],
+      sandboxName: "test",
+    });
+    assert.ok(bareSummary.includes("Messaging:     none"), "empty channels renders as 'none'");
+    assert.ok(
+      bareSummary.includes("Web search:    disabled"),
+      "null webSearch renders as 'disabled'",
+    );
+
+    const localSummary = formatOnboardConfigSummary({
+      provider: "ollama-local",
+      model: "llama3:8b",
+      credentialEnv: null,
+      webSearchConfig: null,
+      enabledChannels: [],
+      sandboxName: "local",
+    });
+    assert.ok(
+      localSummary.includes("(not required for ollama-local)"),
+      "null credentialEnv falls back to a provider-specific message",
+    );
+
+    const orphanSummary = formatOnboardConfigSummary({
+      provider: null,
+      model: null,
+      webSearchConfig: null,
+      enabledChannels: null,
+      sandboxName: "orphan",
+    });
+    assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
+    assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
+
+    const tavilySummary = formatOnboardConfigSummary({
+      provider: "nvidia-prod",
+      model: "test-model",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      sandboxName: "tavily-agent",
+    });
+    assert.ok(tavilySummary.includes("enabled (Tavily Search)"));
+  });
+
+  it("shows resolved serving profile provenance and download estimates (#8384)", () => {
+    const summary = formatOnboardConfigSummary({
+      provider: "vllm-local",
+      model: "example/model",
+      webSearchConfig: null,
+      sandboxName: "profile-test",
+      servingProfileProvenance: {
+        schemaVersion: 1,
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        preset: {
+          id: "vllm.dgx-spark-gb10.single.example",
+          digest: `sha256:${"2".repeat(64)}`,
+          displayName: "Example Spark profile",
+          supportState: "experimental",
+        },
+        recipe: {
+          id: "vllm.dgx-spark-gb10.single.example",
+          digest: `sha256:${"3".repeat(64)}`,
+          backend: "vllm",
+        },
+        model: { id: "example/model", revision: "revision-1" },
+        runtimeImage: `example.invalid/vllm@sha256:${"4".repeat(64)}`,
+        estimatedImageDownloadBytes: 1024 ** 3,
+        estimatedModelDownloadBytes: 2 * 1024 ** 3,
+      },
+    });
+
+    assert.match(summary, /Example Spark profile.*vllm\.dgx-spark-gb10\.single\.example/u);
+    assert.match(summary, /Recipe:.*vllm\.dgx-spark-gb10\.single\.example/u);
+    assert.match(summary, /Support:.*experimental/u);
+    assert.match(summary, /Runtime image:.*example\.invalid\/vllm@sha256/u);
+    assert.match(summary, /Downloads:.*image 1\.0 GiB, model 2\.0 GiB/u);
+  });
+
+  it("names the declared model beside the served alias the route carries (#9563)", () => {
+    const summary = formatOnboardConfigSummary({
+      provider: "vllm-local",
+      model: "muse-glimmer",
+      webSearchConfig: null,
+      sandboxName: "profile-test",
+      servingProfileProvenance: {
+        schemaVersion: 1,
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        preset: {
+          id: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
+          digest: `sha256:${"2".repeat(64)}`,
+          displayName: "Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark",
+          supportState: "experimental",
+        },
+        recipe: {
+          id: "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+          digest: `sha256:${"3".repeat(64)}`,
+          backend: "vllm",
+        },
+        model: { id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4", revision: "revision-1" },
+        runtimeImage: `example.invalid/vllm@sha256:${"4".repeat(64)}`,
+        estimatedImageDownloadBytes: 1024 ** 3,
+        estimatedModelDownloadBytes: 2 * 1024 ** 3,
+      },
+    });
+
+    assert.match(summary, /Model: {9}Inferact\/Muse-Glimmer-30B-NVFP4-W4A4/u);
+    assert.match(summary, /Served model: {2}muse-glimmer/u);
+  });
+
+  it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: true,
+      dockerCpus: 2,
+      dockerMemTotalBytes: 2 * 1024 ** 3,
+    });
+    assert.ok(note != null && note.length > 0, "returns a note");
+    assert.match(note as string, /under-provisioned/i, "note flags under-provisioned host");
+  });
+
+  it("formatSandboxBuildEstimateNote returns a tighter range on a generous host (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 32 * 1024 ** 3,
+    });
+    assert.ok(note != null, "returns a note");
+    assert.match(note ?? "", /\b3[–-]\d+\s+minutes\b/, "tight range starts at 3 minutes");
+  });
+
+  it("formatSandboxBuildEstimateNote returns null when no runtime resource signal is available (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+    });
+    assert.strictEqual(note, null);
+  });
+});

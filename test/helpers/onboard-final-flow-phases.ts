@@ -1,0 +1,436 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { vi } from "vitest";
+import type { PreparedExternalComponent } from "../../src/lib/onboard/external-component";
+import {
+  activateExternalComponent,
+  type ExternalComponentActivationProof,
+} from "../../src/lib/onboard/external-component/activation";
+import { prepareFinalOnboardFlowContext } from "../../src/lib/onboard/machine/flow-handoff";
+import type { DashboardDeliveryChain } from "../../src/lib/dashboard/contract";
+import type { OnboardMachineEvent } from "../../src/lib/onboard/machine/events";
+import {
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+} from "../../src/lib/onboard/machine/final-flow-phases";
+import type { OnboardFlowContext } from "../../src/lib/onboard/machine/flow-context";
+import type { PoliciesStateOptions } from "../../src/lib/onboard/machine/handlers/policies";
+import type { FinalizationStateOptions } from "../../src/lib/onboard/machine/handlers/finalization";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "../../src/lib/onboard/machine/runtime";
+import type { OnboardMachineState } from "../../src/lib/onboard/machine/types";
+import { OnboardRuntimeBoundary } from "../../src/lib/onboard/runtime-boundary";
+import {
+  createSession,
+  filterSafeUpdates,
+  MACHINE_SNAPSHOT_VERSION,
+  normalizeSession,
+  type Session,
+  type SessionUpdates,
+} from "../../src/lib/state/onboard-session";
+import type { VerifyDeploymentResult } from "../../src/lib/verify-deployment";
+
+export type Agent = { name: string };
+type WebSearchConfig = NonNullable<OnboardFlowContext["webSearchConfig"]>;
+
+export type RecorderOverrides = {
+  finalizationDeps?: Partial<
+    FinalizationStateOptions<Agent | null, DashboardDeliveryChain, VerifyDeploymentResult>["deps"]
+  >;
+  loadSession?: () => Session | null;
+  updateSession?: (mutator: (session: Session) => Session | void) => Session;
+  recordStepSkipped?: (stepName: string) => Promise<Session>;
+  recordStateSkipped?: (
+    state: OnboardMachineState,
+    metadata?: Record<string, unknown> | null,
+  ) => Promise<Session>;
+  startRecordedStep?: (
+    stepName: string,
+    updates?: {
+      sandboxName?: string | null;
+      provider?: string | null;
+      model?: string | null;
+    },
+  ) => Promise<void>;
+  recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
+  setupOpenclaw?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["setupOpenclaw"];
+  waitForStartedOpenclawGatewayProcess?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["waitForStartedOpenclawGatewayProcess"];
+  settleStartedOpenclawGatewayForConfiguration?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["settleStartedOpenclawGatewayForConfiguration"];
+  mergePolicyMessagingChannels?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["mergePolicyMessagingChannels"];
+  verifyDeployment?: (
+    sandboxName: string,
+    chain: DashboardDeliveryChain,
+  ) => Promise<VerifyDeploymentResult>;
+  isDeploymentHealthy?: (result: VerifyDeploymentResult) => boolean;
+  printDashboard?: (
+    sandboxName: string,
+    model: string,
+    provider: string,
+    nimContainer: string | null,
+    agent: Agent | null,
+  ) => Promise<void>;
+  reportDeploymentReadiness?: (healthy: boolean) => void;
+  getActiveSandbox?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["getActiveSandbox"];
+  setupPoliciesWithSelection?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["setupPoliciesWithSelection"];
+};
+
+function cloneSession(session: Session): Session {
+  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+}
+
+function sessionWithUpdates(updates: SessionUpdates = {}): Session {
+  const session = createSession();
+  Object.assign(session, updates);
+  if (updates.metadata) session.metadata = { ...session.metadata, ...updates.metadata };
+  return session;
+}
+
+export function sessionAt(state: OnboardMachineState): Session {
+  return createSession({
+    sandboxName: "my-sandbox",
+    provider: "nim",
+    model: "nvidia/test",
+    machine: {
+      version: MACHINE_SNAPSHOT_VERSION,
+      state,
+      stateEnteredAt: "2026-06-10T00:00:00.000Z",
+      revision: 0,
+    },
+  });
+}
+
+export function createRuntimeHarness(initialSession: Session) {
+  let session = cloneSession(initialSession);
+  const events: OnboardMachineEvent[] = [];
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    const current = cloneSession(session);
+    session = cloneSession(mutator(current) ?? current);
+    return cloneSession(session);
+  };
+  const deps: OnboardRuntimeDeps = {
+    loadSession: () => cloneSession(session),
+    createSession,
+    saveSession: (next) => {
+      session = cloneSession(next);
+      return cloneSession(session);
+    },
+    updateSession,
+    markStepStarted: () => cloneSession(session),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepSkipped: (stepName) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+          return current;
+        step.status = "skipped";
+        step.startedAt = null;
+        step.completedAt = null;
+        step.error = null;
+        return current;
+      }),
+    markStepFailed: () => cloneSession(session),
+    completeSession: (updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        current.status = "complete";
+        current.resumable = false;
+        return current;
+      }),
+    filterSafeUpdates,
+    emitEvent: (event) => events.push(event),
+    now: () => "2026-06-10T00:00:00.000Z",
+  };
+  const boundary = new OnboardRuntimeBoundary({
+    toSessionUpdates: (updates: Record<string, unknown>) =>
+      filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+    maybeForceE2eStepFailure: () => undefined,
+    createRuntime: () => new OnboardRuntime(deps),
+  });
+  return {
+    boundary,
+    events,
+    getSession: () => cloneSession(session),
+  };
+}
+
+export function context(
+  patch: Partial<OnboardFlowContext<Agent | null>> = {},
+): OnboardFlowContext<Agent | null> {
+  return {
+    resume: false,
+    fresh: false,
+    session: createSession(),
+    agent: null,
+    recordedSandboxName: null,
+    requestedSandboxName: null,
+    sandboxName: "my-sandbox",
+    fromDockerfile: null,
+    model: "nvidia/test",
+    provider: "nim",
+    endpointUrl: "https://example.test/v1",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    hermesAuthMethod: null,
+    hermesToolGateways: ["local"],
+    preferredInferenceApi: "chat",
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: "nim-test",
+    webSearchConfig: null,
+    webSearchSupported: true,
+    selectedMessagingChannels: ["slack"],
+    gpu: null,
+    sandboxGpuConfig: null,
+    gpuPassthrough: false,
+    ...patch,
+  };
+}
+
+export function createPhases(
+  branchState: "agent_setup" | "openclaw",
+  order: string[] = [],
+  recorders: RecorderOverrides = {},
+) {
+  return createFinalOnboardFlowPhases<
+    OnboardFlowContext<Agent | null>,
+    DashboardDeliveryChain,
+    VerifyDeploymentResult
+  >({
+    branchState,
+    agentSetupDeps: {
+      handleAgentSetup: vi.fn(async () => {
+        order.push("agent-setup");
+      }),
+      agentSetupContext: () => ({ gatewayName: "nemoclaw-19090" }),
+      ensureAgentDashboardForward: vi.fn(() => {
+        order.push("agent-forward");
+        return 45123;
+      }),
+      persistDashboardPort: vi.fn(),
+      recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
+      isOpenclawReady: async () => false,
+      waitForSandboxControlPlaneReady: async () => true,
+      waitForStartedOpenclawGatewayProcess:
+        recorders.waitForStartedOpenclawGatewayProcess ?? (async () => true),
+      settleStartedOpenclawGatewayForConfiguration:
+        recorders.settleStartedOpenclawGatewayForConfiguration ?? (async () => true),
+      skippedStepMessage: vi.fn(),
+      recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
+      startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
+      setupOpenclaw:
+        recorders.setupOpenclaw ??
+        vi.fn(async () => {
+          order.push("openclaw");
+        }),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
+      recordStepComplete:
+        recorders.recordStepComplete ??
+        vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
+          sessionWithUpdates(updates),
+        ),
+      toSessionUpdates: (updates) => updates as SessionUpdates,
+    },
+    policiesDeps: {
+      loadSession: recorders.loadSession ?? (() => createSession()),
+      getActiveSandbox: recorders.getActiveSandbox ?? (() => null),
+      mergePolicyMessagingChannels:
+        recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
+      detectUnconfiguredMessagingChannels: () => [],
+      inspectGatewayCredential: () => ({ kind: "missing" }),
+      verifyCompatibleEndpointSandboxSmoke: vi.fn(),
+      preparePolicyPresetResumeSelection: () => ({
+        policyPresets: ["balanced"],
+        livePolicyPresetsNeedUpdate: false,
+        disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
+      }),
+      arePolicyPresetsApplied: () => false,
+      skippedStepMessage: vi.fn(),
+      recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
+      startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
+      setupPoliciesWithSelection:
+        recorders.setupPoliciesWithSelection ??
+        vi.fn(async () => {
+          order.push("policies");
+          return ["balanced"];
+        }),
+      recordStepComplete:
+        recorders.recordStepComplete ??
+        vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
+          sessionWithUpdates(updates),
+        ),
+      toSessionUpdates: (updates) => updates as SessionUpdates,
+    },
+    finalization: {
+      stagedLegacyKeys: [],
+      migratedLegacyKeys: new Set(),
+      webSearchEnabled: () => false,
+      webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
+    },
+    finalizationDeps: {
+      setDefaultSandbox: vi.fn(() => {
+        order.push("set-default");
+      }),
+      toSessionUpdates: (updates) => updates as NonNullable<SessionUpdates>,
+      removeLegacyCredentialsFile: vi.fn(),
+      cleanupStaleHostFiles: vi.fn(),
+      checkAndRecoverSandboxProcesses: vi.fn(async () => true),
+      settleOrdinaryOpenClawPairing: vi.fn(async () => ({ kind: "settled" as const })),
+      ordinaryOpenClawPairingIncompleteMessage: vi.fn(
+        () => "OpenClaw onboarding is incomplete; resume onboarding.",
+      ),
+      readRegistryAgent: vi.fn(() => "openclaw"),
+      settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
+      portablePairingIncompleteMessage: vi.fn(
+        () => "Portable onboarding is incomplete; resume onboarding.",
+      ),
+      isDeploymentHealthy:
+        recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
+      reportDeploymentReadiness: recorders.reportDeploymentReadiness ?? vi.fn(),
+      getChatUiUrl: () => "http://127.0.0.1:45123",
+      buildVerifyChain: (): DashboardDeliveryChain => ({
+        accessUrl: "http://127.0.0.1:45123",
+        fallbackUrls: [],
+        corsOrigins: ["http://127.0.0.1:45123"],
+        forwardTarget: "45123",
+        healthEndpoint: "/health",
+        dashboardHealthEndpoint: "/health",
+        gatewayPort: 45124,
+        gatewayHealthEndpoint: "/health",
+        port: 45123,
+        bindAddress: "127.0.0.1",
+        shouldDisableDeviceAuth: false,
+      }),
+      verifyDeployment:
+        recorders.verifyDeployment ??
+        vi.fn(async (): Promise<VerifyDeploymentResult> => {
+          order.push("verify");
+          return {
+            healthy: true,
+            verification: {
+              gatewayReachable: true,
+              gatewayVersion: "test",
+              inferenceRouteWorking: true,
+              dashboardReachable: true,
+              agentApiReachable: null,
+              messagingBridgesHealthy: true,
+              messagingRuntimeChannelsMissing: null,
+              messagingConfigChannelsMissing: null,
+              accessMethod: "localhost" as const,
+            },
+            diagnostics: [],
+          };
+        }),
+      formatVerificationDiagnostics: () => [],
+      verifyWebSearchInsideSandbox: vi.fn(),
+      printDashboard: recorders.printDashboard ?? vi.fn(async () => undefined),
+      error: vi.fn(),
+      log: vi.fn(),
+      ...recorders.finalizationDeps,
+    },
+  });
+}
+
+export function createProviderlessComponentFlow(agentName = "openclaw") {
+  const order: string[] = [];
+  const branchState = agentName === "openclaw" ? "openclaw" : "agent_setup";
+  const harness = createRuntimeHarness(sessionAt(branchState));
+  const revalidate = vi.fn();
+  const revalidateEndpoint = vi.fn();
+  const proof: ExternalComponentActivationProof = {
+    gatewayName: "nemoclaw",
+    sandboxId: "sandbox-123",
+    sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+    lifecycleGeneration: "generation-1",
+    policySource: "sandbox",
+    policyHash: `sha256:${"a".repeat(64)}`,
+    policyActiveVersion: 1,
+    revalidate,
+  };
+  const component: PreparedExternalComponent = {
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/component/interceptor.sock",
+      activationSocketPath: "/run/component/activation.sock",
+    },
+    revalidateBeforeGateway: vi.fn(),
+    revalidateBeforeActivation: revalidateEndpoint,
+  };
+  const activationId = "4b5a8e18-f967-4e27-a3b2-f2cc315abe21";
+  const response = {
+    schemaVersion: 1,
+    activationId,
+    componentId: component.declaration.componentId,
+    sandboxId: proof.sandboxId,
+    policyHash: proof.policyHash,
+    result: "activated",
+  };
+  const transport = vi.fn(async (_socket: string, _body: string) => JSON.stringify(response));
+  const evidence = vi.fn();
+  const createProof = vi.fn(() => {
+    order.push("verify-proof");
+    return proof;
+  });
+  const phases = createPhases(branchState, order, {
+    finalizationDeps: {
+      createExternalComponentActivationProof: createProof,
+      createExternalComponentActivationId: () => activationId,
+      activateExternalComponent: (registered, verified, id) =>
+        activateExternalComponent(
+          registered,
+          verified,
+          (socket, body) => {
+            order.push("activate");
+            return transport(socket, body);
+          },
+          id,
+        ),
+      setExternalComponentActivationEvidence: evidence,
+    },
+  });
+  const initial = prepareFinalOnboardFlowContext({
+    context: context({
+      agent: { name: agentName },
+      providerlessApf: true,
+      externalComponent: component,
+      model: null,
+      provider: null,
+    }),
+    session: harness.getSession(),
+  });
+  return {
+    order,
+    proof,
+    response,
+    transport,
+    evidence,
+    createProof,
+    revalidate,
+    revalidateEndpoint,
+    initial,
+    run: () =>
+      runFinalOnboardFlowSlice({
+        context: initial,
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: vi.fn(),
+      }),
+  };
+}

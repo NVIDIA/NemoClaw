@@ -13,8 +13,43 @@ export interface ValidationClassification {
 }
 
 export interface SandboxCreateFailure {
-  kind: "image_transfer_timeout" | "image_transfer_reset" | "sandbox_create_incomplete" | "unknown";
+  kind:
+    | "image_transfer_timeout"
+    | "image_transfer_reset"
+    | "image_upload_container_missing"
+    | "sandbox_create_incomplete"
+    | "tls_cert_mismatch"
+    | "gpu_cdi_injection_failed"
+    | "plugin_install_network_denied"
+    | "unknown";
   uploadedToGateway: boolean;
+}
+
+export interface SandboxCreateRecoveryPlan {
+  /**
+   * Emit the Linux ARM64 (aarch64) local-registry / image-ref workaround for
+   * the misleading "failed to upload image tar into container" Docker 404. The
+   * gateway container is healthy; OpenShell's large-tar upload path is the
+   * problem, and pushing the built image to a local registry then creating
+   * from the image ref bypasses it. See #3266.
+   */
+  arm64ImageRefWorkaround: boolean;
+}
+
+export interface GatewayStartFailure {
+  /**
+   * - `docker_unreachable`: the underlying Docker daemon (Colima on macOS,
+   *   dockerd on Linux) is not responding. Retrying the openshell health
+   *   poll cannot recover from this — the user must start Docker first.
+   * - `database_migration_incompatible`: the gateway database records a
+   *   migration that the installed OpenShell version does not include, or
+   *   defines with different contents. Both sqlx signatures mean the database
+   *   was written by a newer OpenShell than the one now starting (#8797,
+   *   #9293).
+   * - `unknown`: any other failure; callers should fall through to the
+   *   normal retry/health-wait behavior.
+   */
+  kind: "database_migration_incompatible" | "docker_unreachable" | "unknown";
 }
 
 export function classifyValidationFailure({
@@ -53,6 +88,19 @@ export function classifyValidationFailure({
   if (httpStatus === 404 || httpStatus === 405) {
     return { kind: "endpoint", retry: "selection" };
   }
+  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
+    return { kind: "credential", retry: "credential" };
+  }
+  if (
+    /cannot resolve endpoint host|did not resolve to any address|could not resolve host|name or service not known|enotfound|eai_again|no http response/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "transport", retry: "retry" };
+  }
+  if (/ssl|tls|certificate|handshake/i.test(normalized)) {
+    return { kind: "transport", retry: "retry" };
+  }
   return { kind: "unknown", retry: "selection" };
 }
 
@@ -72,20 +120,147 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   if (/Connection reset by peer/i.test(text)) {
     return { kind: "image_transfer_reset", uploadedToGateway };
   }
+  if (
+    /invalid peer certificate|BadSignature|handshake verification failed|certificate verify failed|SSL certificate problem|x509: certificate|unknown authority/i.test(
+      text,
+    )
+  ) {
+    return { kind: "tls_cert_mismatch", uploadedToGateway };
+  }
+  // Misleading "container does not exist" 404 raised while OpenShell streams the
+  // built image tar into the (healthy) gateway container. Reported on Linux
+  // ARM64 with large images: the gateway is up and a same-size archive PUT
+  // succeeds directly, so the Docker 404 is a symptom of the tar-upload path,
+  // not a missing gateway. Match the distinctive upload-tar phrase, or the
+  // combined 404 + container-missing + gateway-container-name shape. See #3266.
+  if (
+    /failed to upload image tar into container/i.test(text) ||
+    (/status code 404/i.test(text) &&
+      /(container does not exist|no container with name or ID)/i.test(text) &&
+      /openshell-cluster-nemoclaw/i.test(text))
+  ) {
+    return { kind: "image_upload_container_missing", uploadedToGateway };
+  }
+  if (
+    /(CDI device injection failed|unresolvable CDI devices?)[^\n]*nvidia\.com\/gpu/i.test(text) ||
+    /nvidia\.com\/gpu[^\n]*(CDI device injection failed|unresolvable CDI devices?)/i.test(text)
+  ) {
+    return { kind: "gpu_cdi_injection_failed", uploadedToGateway };
+  }
+  // Require BOTH the failed Docker command block containing the plugin-install
+  // step AND npm-prefixed network evidence for the same plugin package. Docker
+  // prints subprocess stderr before its final failed-command summary, so a
+  // prefix-only search can misattribute a later npm command in the same RUN
+  // block. Package correlation keeps that failure on the generic recovery path.
+  // OpenShell exposes only combined Docker text here, so this classifier is the
+  // source boundary until callers can consume a structured plugin-install
+  // failure with package identity; remove the text classifier at that point.
+  // In JavaScript, [^'] matches every character except a single quote,
+  // including newlines (unlike `.` without the dotAll flag), so multi-line
+  // command text is handled correctly. See #4127 / follow-up from #4125.
+  const pluginInstallErrorMatch =
+    /The command '[^']*openclaw plugins install[^']*'\s*returned a non-zero code/i.exec(text);
+  if (pluginInstallErrorMatch) {
+    const segment = text.slice(
+      0,
+      pluginInstallErrorMatch.index + pluginInstallErrorMatch[0].length,
+    );
+    const pluginPackages = [
+      ...pluginInstallErrorMatch[0].matchAll(/(?:npm:)?(@openclaw\/[a-z0-9._-]+)/gi),
+    ].map((match) => match[1].toLowerCase());
+    const npmErrorText = segment
+      .split(/\r?\n/)
+      .filter((line) => /^\s*npm error\b/i.test(line))
+      .join("\n")
+      .toLowerCase();
+    // npm output may print the scoped-package slash literally or percent-
+    // encoded. Normalize comparisons to lowercase so %2F and %2f both match.
+    const hasMatchingPluginPackage = pluginPackages.some((packageName) =>
+      [packageName, packageName.replaceAll("/", "%2f"), encodeURIComponent(packageName)].some(
+        (candidate) => npmErrorText.includes(candidate.toLowerCase()),
+      ),
+    );
+    if (
+      hasMatchingPluginPackage &&
+      /npm error.*(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|network request.*failed|getaddrinfo|fetch failed|socket hang up|network timeout)/i.test(
+        npmErrorText,
+      )
+    ) {
+      return { kind: "plugin_install_network_denied", uploadedToGateway };
+    }
+  }
   if (/Created sandbox:/i.test(text)) {
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };
   }
   return { kind: "unknown", uploadedToGateway };
 }
 
+/**
+ * Decide how to recover from a classified sandbox-create failure. Pure: takes
+ * the classification plus the host platform/arch, returns a typed plan. Kept
+ * separate from the I/O hint printer so the retry/workaround decision can be
+ * unit-tested without spying on the console.
+ *
+ * Today the only special-cased recovery is the Linux ARM64 image-tar-upload
+ * 404 (#3266); every other failure leaves the plan flags false so callers fall
+ * through to the existing generic resume guidance.
+ */
+export function planSandboxCreateRecovery(
+  failure: SandboxCreateFailure,
+  {
+    platform = process.platform,
+    arch = process.arch,
+  }: { platform?: NodeJS.Platform; arch?: NodeJS.Architecture } = {},
+): SandboxCreateRecoveryPlan {
+  return {
+    arm64ImageRefWorkaround:
+      failure.kind === "image_upload_container_missing" && platform === "linux" && arch === "arm64",
+  };
+}
+
+/**
+ * Classify a failed gateway start so the onboard retry loop can short-circuit
+ * on unrecoverable failures.
+ *
+ * The classifier identifies failures for which callers can select a supported
+ * recovery instead of generic retry or health-wait behavior.
+ */
+export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
+  const text = String(output || "");
+  // Both sqlx migrate signatures for a database written by a newer OpenShell:
+  // the newer build appended a migration this build does not resolve
+  // ("is missing in the resolved migrations"), or it rewrote an applied
+  // migration so the checksum no longer matches ("has been modified").
+  if (
+    /migration\s+\d+\s+was previously applied[\s\S]{0,512}\b(?:is missing in the resolved migrations|has been modified)\b/i.test(
+      text,
+    )
+  ) {
+    return { kind: "database_migration_incompatible" };
+  }
+  // Match both macOS (Colima / Docker Desktop) and Linux docker daemon-down
+  // signatures. The openshell CLI echoes these verbatim from the underlying
+  // Docker client error when the gateway controller starts.
+  if (
+    /Socket not found:\s*\/var\/run\/docker\.sock/i.test(text) ||
+    /Cannot connect to the Docker daemon/i.test(text) ||
+    /^\s*(?:Error:\s*)?Failed to create Docker client(?:[.:]|\b)/im.test(text) ||
+    /docker daemon.*(is not running|not responding|unreachable)/i.test(text)
+  ) {
+    return { kind: "docker_unreachable" };
+  }
+  return { kind: "unknown" };
+}
+
 export function validateNvidiaApiKeyValue(
   key: string,
-  credentialEnv: string = "NVIDIA_API_KEY",
+  credentialEnv: string = "NVIDIA_INFERENCE_API_KEY",
 ): string | null {
   // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
   // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
   // a valid Anthropic key is not rejected with an NVIDIA-specific error.
-  const isNvidia = credentialEnv === "NVIDIA_API_KEY";
+  const isNvidia =
+    credentialEnv === "NVIDIA_INFERENCE_API_KEY" || credentialEnv === "NVIDIA_API_KEY";
   if (!key) {
     return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
   }
@@ -95,43 +270,27 @@ export function validateNvidiaApiKeyValue(
   return null;
 }
 
+export function validateOpenRouterApiKeyValue(key: string): string | null {
+  if (!key) {
+    return "  OpenRouter API Key is required.";
+  }
+  if (!key.startsWith("sk-or-")) {
+    return "  Invalid OpenRouter API key. Must start with sk-or-";
+  }
+  return null;
+}
+
 export function isSafeModelId(value: string): boolean {
   return /^[A-Za-z0-9._:/-]+$/.test(value);
 }
 
-/**
- * Detect NVIDIA Cloud Functions "Function not found for account" errors.
- *
- * NVIDIA Build (integrate.api.nvidia.com) returns this when a model is in the
- * public catalog but is not deployed for the caller's account/org. The raw
- * body looks like:
- *
- *   {"status":404,"title":"Not Found",
- *    "detail":"Function '<uuid>': Not found for account '<account-id>'"}
- *
- * Detecting this lets the wizard surface an actionable error instead of the
- * raw NVCF body. See issue #1601.
- */
-export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
-  return /Function\s+'[^']+':\s*Not found for account/i.test(String(message || ""));
-}
-
-/**
- * Build the user-facing message for an NVCF "Function not found for account"
- * failure. The model is in the catalog but cannot be invoked from this key.
- *
- * The wording deliberately starts with "Model '<id>' not found" so that
- * `classifyValidationFailure()` matches its `model.+not found` regex and
- * routes the user into the model-selection recovery path instead of
- * collapsing to the generic `unknown`/`selection` branch.
- */
-export function nvcfFunctionNotFoundMessage(model: string): string {
-  return (
-    `Model '${model}' not found — it is in the NVIDIA Build catalog but is not deployed ` +
-    "for your account. Pick a different model, or check the model card on " +
-    "https://build.nvidia.com to see if it requires org-level access."
-  );
-}
+// Re-exported so existing importers keep one validation entry point while the
+// NVIDIA Cloud Functions classification lives with the inference layer that
+// owns both of its callers.
+export {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+} from "./inference/nvcf-model-access";
 
 /**
  * Whether the wizard should skip probing the OpenAI Responses API entirely
@@ -143,7 +302,13 @@ export function nvcfFunctionNotFoundMessage(model: string): string {
  * See issue #1601 (Bug 1) and issue #1960.
  */
 export function shouldSkipResponsesProbe(provider: string): boolean {
-  return provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "gemini-api";
+  return (
+    provider === "nvidia-prod" ||
+    provider === "nvidia-nim" ||
+    provider === "gemini-api" ||
+    provider === "openrouter-api" ||
+    provider === "llama-cpp-local"
+  );
 }
 
 /**

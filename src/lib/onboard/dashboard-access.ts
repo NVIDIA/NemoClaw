@@ -1,0 +1,174 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { WslDetectionOptions } from "../platform";
+import { isWsl } from "../platform";
+import { DASHBOARD_PORT } from "../core/ports";
+import { buildChain, buildControlUiUrls } from "../dashboard/contract";
+
+type RunCapture = (args: string[], options: { ignoreError: true }) => string;
+
+export type DashboardAccessOptions = WslDetectionOptions & {
+  chatUiUrl?: string;
+  token?: string | null;
+  wslHostAddress?: string | null;
+  runCapture?: RunCapture;
+  fetchGatewayAuthToken?: (sandboxName: string) => string | null;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type DashboardAccessEntry = {
+  label: string;
+  url: string;
+};
+
+const CONTROL_UI_PORT = DASHBOARD_PORT;
+
+function defaultChatUiUrl(options: DashboardAccessOptions = {}): string {
+  return (
+    options.chatUiUrl ||
+    options.env?.CHAT_UI_URL ||
+    process.env.CHAT_UI_URL ||
+    `http://127.0.0.1:${CONTROL_UI_PORT}`
+  );
+}
+
+export function getWslHostAddress(options: DashboardAccessOptions = {}): string | null {
+  if (options.wslHostAddress) {
+    return options.wslHostAddress;
+  }
+  if (!isWsl(options)) {
+    return null;
+  }
+  const runCaptureFn = options.runCapture;
+  if (!runCaptureFn) return null;
+  const output = runCaptureFn(["hostname", "-I"], { ignoreError: true });
+  return (
+    String(output || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)[0] || null
+  );
+}
+
+/**
+ * Read the operator-opt-in remote-bind env var. Only "0.0.0.0" enables the
+ * remote bind; anything else (empty, "127.0.0.1", invalid IPs) leaves the
+ * default loopback bind. (#3259)
+ */
+function readBindOverride(options: DashboardAccessOptions): string | undefined {
+  const raw = options.env?.NEMOCLAW_DASHBOARD_BIND ?? process.env.NEMOCLAW_DASHBOARD_BIND;
+  return typeof raw === "string" ? raw : undefined;
+}
+
+/**
+ * I/O-boundary wrapper around the pure `buildChain` function. Resolves the
+ * platform hints (`isWsl`, `wslHostAddress`, `bindOverride`) from the host
+ * environment and config, then delegates the actual decision to `buildChain`
+ * so the contract stays a pure function and tests can call `buildChain`
+ * directly without env mocks. Callers in onboard / status / doctor share
+ * this entry point so the same hints apply consistently across the CLI.
+ */
+export function buildDashboardChain(
+  chatUiUrl = defaultChatUiUrl(),
+  options: DashboardAccessOptions = {},
+) {
+  return buildChain({ chatUiUrl, ...resolveDashboardPlatformHints(options) });
+}
+
+/**
+ * Resolve the host-derived half of `buildChain`'s input on its own.
+ *
+ * `buildDashboardChain` derives the port from the URL, which is right for
+ * every caller that only has a URL. A caller that has already resolved the
+ * port needs to pass it explicitly while still getting `isWsl` and
+ * `bindOverride` from the same place, and re-reading those two at the call
+ * site is how a caller silently loses them (#10861).
+ */
+export function resolveDashboardPlatformHints(options: DashboardAccessOptions = {}): {
+  isWsl: boolean;
+  wslHostAddress: string | null;
+  bindOverride: string | undefined;
+} {
+  return {
+    isWsl: isWsl(options),
+    wslHostAddress: getWslHostAddress(options),
+    bindOverride: readBindOverride(options),
+  };
+}
+
+export function getDashboardForwardPort(
+  chatUiUrl = defaultChatUiUrl(),
+  options: DashboardAccessOptions = {},
+): string {
+  return String(buildDashboardChain(chatUiUrl, options).port);
+}
+
+export function getDashboardForwardTarget(
+  chatUiUrl = defaultChatUiUrl(),
+  options: DashboardAccessOptions = {},
+): string {
+  return buildDashboardChain(chatUiUrl, options).forwardTarget;
+}
+
+export function buildAuthenticatedDashboardUrl(
+  baseUrl: string,
+  token: string | null = null,
+): string {
+  if (!token) return baseUrl;
+  return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+export function dashboardUrlForDisplay(
+  url: string,
+  redact: (value: string) => string = (value) => value,
+): string {
+  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
+}
+
+export function getDashboardAccessInfo(
+  sandboxName: string,
+  options: DashboardAccessOptions = {},
+): DashboardAccessEntry[] {
+  const token = Object.prototype.hasOwnProperty.call(options, "token")
+    ? options.token
+    : (options.fetchGatewayAuthToken?.(sandboxName) ?? null);
+  const chatUiUrl = defaultChatUiUrl(options);
+  const chain = buildDashboardChain(chatUiUrl, options);
+  const dashboardAccess = buildControlUiUrls(token ?? null, chain.port, chain.accessUrl).map(
+    (url, index) => ({
+      label: index === 0 ? "Dashboard" : `Alt ${index}`,
+      url: buildAuthenticatedDashboardUrl(url, null),
+    }),
+  );
+
+  for (const fallback of chain.fallbackUrls) {
+    const wslUrl = buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token ?? null);
+    const existing = dashboardAccess.find((access) => access.url === wslUrl);
+    if (existing) {
+      existing.label = "WSL fallback";
+    } else {
+      dashboardAccess.push({ label: "WSL fallback", url: wslUrl });
+    }
+  }
+
+  return dashboardAccess;
+}
+
+export function getDashboardGuidanceLines(
+  dashboardAccess: DashboardAccessEntry[] = [],
+  options: DashboardAccessOptions = {},
+): string[] {
+  const chatUiUrl = defaultChatUiUrl(options);
+  const chain = buildDashboardChain(chatUiUrl, options);
+  const guidance = [`Port ${String(chain.port)} must be forwarded before opening these URLs.`];
+  if (isWsl(options)) {
+    guidance.push(
+      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
+    );
+  }
+  if (dashboardAccess.length === 0) {
+    guidance.push("No dashboard URLs were generated.");
+  }
+  return guidance;
+}

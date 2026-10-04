@@ -1,0 +1,345 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Sandbox State"
+sidebar-title: "Understand Sandbox State"
+description: "What agent workspace, sandbox state, and read-only host mounts are, where they live, and how they persist."
+description-agent: "Explains OpenClaw workspace files, Hermes state, Deep Agents state, and read-only host mounts. Use when preparing to edit, mount, rebuild, or transfer sandbox state."
+keywords: ["nemoclaw workspace files", "deepagents state", "soul.md", "agents.md", "sandbox persistence", "read-only host mount"]
+content:
+  type: "concept"
+---
+NemoClaw sandboxes keep agent workspace and state files across ordinary restarts.
+You can also expose selected host directories for live, read-only access when copying files into the sandbox is not appropriate.
+
+## Mount a Host Directory for Read-Only Access
+
+Onboarding can expose an existing host directory inside a sandbox when the selected runtime provider and host platform support read-only host mounts.
+The same command works with OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+
+### Runtime Support
+
+The runtime provider and host platform determine whether NemoClaw can create the mount:
+
+| Runtime Provider | Host Platform | Status |
+|---|---|---|
+| Docker | Linux or Windows Subsystem for Linux 2 (WSL2) | Supported with a NemoClaw-managed Docker-driver gateway. |
+| Docker | macOS or native Windows | Unsupported. |
+| Kubernetes | Any host | Unsupported because host directories are node-local and require separately qualified scheduling, policy, and security rules. |
+| Podman | Any host | Unsupported because read-only host mounts have not passed runtime-provider qualification. |
+| OpenShell MXC | Any host | Unsupported because OpenShell MXC does not expose a qualified native host-sharing contract. |
+
+When you request `--host-mount`, NemoClaw checks the selected runtime provider and host platform before it records onboarding state or changes runtime resources.
+NemoClaw reports the reason that the unsupported provider declares.
+For a supported provider on an unqualified host, NemoClaw reports that the host platform is not qualified.
+NemoClaw does not fall back to Docker bind-mount configuration.
+
+A runtime-provider implementation must meet these requirements before it can declare support:
+
+- Declare qualified host platforms when supported, or declare an explicit reason when unsupported.
+- Preserve the source, target, symbolic-link, duplication, and read-only validation described on this page.
+- Revalidate the source path identity immediately before sandbox creation.
+- Implement provider-specific create configuration and host-side activation without a Docker fallback.
+- Test requested and persisted mounts across onboarding, resume, rebuild, and failure paths.
+
+<Warning>
+The mount crosses the sandbox boundary and gives every sandbox process read access to the complete host directory tree.
+Read-only access prevents sandbox writes, but it does not protect confidential host files from being read.
+Do not mount a directory that contains credentials, private keys, or other files the agent must not read.
+</Warning>
+
+Before onboarding, confirm that each source is an existing absolute host directory with no symbolic link in any path component.
+Choose a normalized absolute target strictly below `/sandbox`, such as `/sandbox/project`.
+
+Repeat `--host-mount` to expose more than one directory:
+
+```bash
+$$nemoclaw onboard \
+  --host-mount /home/user/project:/sandbox/project \
+  --host-mount /home/user/reference:/sandbox/reference
+```
+
+Onboarding rejects relative paths, missing source directories, symbolic link path components, targets outside `/sandbox`, duplicate sources, and duplicate targets.
+NemoClaw rejects a mount declaration that contains control characters, Unicode formatting controls, or Unicode line and paragraph separators.
+This validation happens before onboarding or a diagnostic report displays either path.
+Every accepted host mount is read-only, and the command does not provide a read-write option.
+
+The sandbox reads the live host directory instead of a copied snapshot.
+Host-side file changes remain visible inside the sandbox while the mount exists.
+
+Onboarding enables the OpenShell Docker bind-mount capability only when a requested or registered host mount requires it.
+NemoClaw stores accepted mount declarations in the sandbox registry and reuses them during `$$nemoclaw <name> rebuild`.
+If onboarding stops before sandbox creation, `$$nemoclaw onboard --resume` reuses the recorded declarations.
+Destroying the sandbox removes its registry entry and the corresponding mount declaration, but it does not delete host files.
+
+After onboarding, inspect the registered host mounts:
+
+```bash
+$$nemoclaw <name> status
+```
+
+The `Host mounts` section lists each source and target with `(read-only)`.
+Connect to the sandbox:
+
+```bash
+$$nemoclaw <name> connect
+```
+
+At the sandbox prompt, inspect the mount options from the Linux mount table:
+
+```bash
+awk '$2 == "/sandbox/project" { print $2, $4 }' /proc/mounts
+```
+
+The mount is active when the output includes `/sandbox/project` and the `ro` option.
+Read a known file under `/sandbox/project` to confirm that the expected host directory is visible.
+
+<AgentOnly variant="openclaw">
+
+OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.
+These files live at `/sandbox/.openclaw/workspace/` and are collectively called **workspace files**.
+
+## File Reference
+
+NemoClaw seeds the first six template files in the table below when the default workspace directory exists, is not a symbolic link, and is empty.
+The remaining entries appear later, when the policy step or the agent's own memory writes create them.
+Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.
+
+| File | Purpose |
+|---|---|
+| `SOUL.md` | Defines the agent's persona, tone, and communication style. |
+| `USER.md` | Stores information about the human the agent assists. |
+| `IDENTITY.md` | Short identity card with name, language, emoji, and creature type. |
+| `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
+| `TOOLS.md` | Records workspace-specific tool guidance and operational notes. |
+| `HEARTBEAT.md` | Defines recurring heartbeat checks when heartbeat processing is enabled. |
+| `POLICY.md` | Redacted network-policy context for the in-sandbox agent. NemoClaw writes this file during the onboarding policy step and refreshes it when a preset changes. |
+| `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
+| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
+
+## Where They Live
+
+All workspace files reside inside the sandbox filesystem:
+
+```text
+/sandbox/.openclaw/workspace/
+├── AGENTS.md
+├── HEARTBEAT.md
+├── IDENTITY.md
+├── MEMORY.md             # created on first long-term memory use
+├── POLICY.md             # written by the onboarding policy step
+├── SOUL.md
+├── TOOLS.md
+├── USER.md
+└── memory/               # created on first daily memory use
+    ├── 2026-03-18.md
+    └── 2026-03-19.md
+```
+
+<Warning>
+Inside an OpenClaw sandbox, `~` expands to `/sandbox`, not to the OpenClaw workspace.
+Do not create workspace files as `~/USER.md` or `~/SOUL.md`.
+Those paths resolve to `/sandbox/USER.md` and `/sandbox/SOUL.md`. They are part of the OpenShell-provided native home and transfer with the rest of that tree during rebuild.
+Use `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOUL.md` instead.
+</Warning>
+
+## Multi-Agent Deployments
+
+A single NemoClaw sandbox can host more than one OpenClaw agent.
+When you configure OpenClaw with multiple named agents, each agent gets its own workspace directory alongside the default `workspace/`.
+For example, a Teams-integrated deployment can use a shared `main` agent plus per-user agents.
+
+```text
+/sandbox/.openclaw/
+├── workspace/           # default agent (single-agent deployments)
+├── workspace-main/      # named agent "main"
+├── workspace-support/   # named agent "support"
+└── workspace-ops/       # named agent "ops"
+```
+
+A named workspace does not receive the same seeded Markdown file structure as the default workspace: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `HEARTBEAT.md`.
+NemoClaw seeds these files only in the default `workspace/`.
+The sandbox entrypoint provisions each named workspace directory without copying the default templates into it.
+OpenClaw creates `MEMORY.md` and `memory/` separately in each workspace when that agent first uses long-term or daily memory.
+Files are per-agent.
+Changes in `workspace-main/AGENTS.md` are not visible to `workspace-support/`.
+
+OpenShell handles persistence automatically for per-agent workspaces.
+The sandbox entrypoint provisions each `workspace-<name>/` directly under the writable `.openclaw/` tree so state survives sandbox restart.
+An unavoidable rebuild transfers the complete native home, including every `workspace-<name>/` directory and the default `workspace/`.
+
+<Note>
+Files that operators typically want consistent across every agent workspace, such as `AGENTS.md`, shared skills, and common templates, are not synced automatically.
+Each workspace is independent, and changes in one do not propagate.
+NVIDIA tracks shared-file tooling (shared mount, `workspaces list` command) in [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+</Note>
+
+## Persistence Behavior
+
+Workspace files live in the sandbox's persistent state volume, not in the container image.
+They survive normal container restarts, but NemoClaw deletes them when you destroy the sandbox.
+
+OpenShell-managed OpenClaw uses its home, `/sandbox`, for user configuration in `~/.config` and `~/.gitconfig`, and application data in `~/.local/share` and `~/.local/state`.
+npm `--global` and Python `--user` installations use `~/.local`, with commands available through `~/.local/bin` on the agent's `PATH`.
+These settings and tools survive restarts and are included in the complete native-state transfer used by rebuilds and upgrades.
+The direct Docker topology’s separate gateway process retains `/tmp/.gitconfig` because it cannot create files in the sandbox-owned home.
+Connect sessions and one-shot commands use native Git configuration.
+Existing files in the old `/tmp` locations remain untouched.
+To retain older preferences, manually transfer only reviewed, non-secret values without overwriting current configuration.
+Do not copy authentication stores or raw credentials.
+
+### Preserved During Restart, Rebuild, and Upgrade
+
+Sandbox restarts preserve workspace files because the persistent state volume outlives individual container restarts.
+
+The `$$nemoclaw <name> rebuild` command and the sandbox upgrade flow also preserve workspace state.
+Before replacing the sandbox, NemoClaw transfers the complete native home and workspace into the replacement.
+
+If NemoClaw cannot archive the complete native state, it reports the failure and stops before replacing the sandbox.
+It does not continue with a partial backup.
+
+### Deleted During Sandbox Destroy
+
+Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
+OpenShell removes the native home and workspace with the sandbox.
+
+<Warning>
+Back up your workspace files before running `$$nemoclaw <name> destroy`.
+Refer to [Persist Sandbox State](create-and-restore-snapshots) for the supported boundaries.
+</Warning>
+
+## Editing Workspace Files
+
+The agent reads these files at the start of every session.
+You can edit them in two ways:
+
+1. Ask your agent to update its persona, memory, or user context.
+2. Use `$$nemoclaw <name> connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+
+## Next Steps
+
+- [Set Up Task-Specific Sub-Agents](../../configure-agents/set-up-sub-agent)
+- [Persist Sandbox State](create-and-restore-snapshots)
+- [Commands reference](../../reference/commands)
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes stores durable agent state under `/sandbox/.hermes/`, not in the OpenClaw workspace directory.
+The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`.
+
+Environment settings live in `/sandbox/.hermes/.env`.
+Runtime state, such as logs, memory, platform sessions, and the SQLite state database, lives under the same `.hermes` tree.
+
+## Important Hermes State
+
+| Path | Purpose |
+|---|---|
+| `/sandbox/.hermes/config.yaml` | NemoClaw-generated Hermes runtime configuration. |
+| `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
+| `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
+| `/sandbox/.hermes/kanban.db` | Default Hermes kanban board database. It persists as part of the complete native home. |
+| `/sandbox/.hermes/profiles/` | User-created named Hermes profiles. The Web Dashboard uses the shared native Hermes home instead of a separate profile. |
+| `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
+| `/sandbox/.hermes/logs/` | Hermes runtime logs. |
+| `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by OpenShell storage. |
+
+## Persistence Behavior
+
+Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
+Normal restarts preserve that state.
+Rebuilds and upgrades transfer the complete OpenShell-provided native home, including `SOUL.md`, user-created named profiles, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Named boards, attachments, worker logs, and scratch workspaces under `.hermes/kanban/` are included because they are under the native home. External directory or worktree targets are included only when they are also under the OpenShell-provided native home/workspace.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
+Startup consumes an older reserved `.hermes/profiles/dashboard-home/` as a one-time migration source, moves safe contents into the shared native home, and removes the retired profile.
+
+Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
+Back up important state before destroying a Hermes sandbox.
+
+## Editing State
+
+Prefer NemoClaw host commands for generated configuration such as model, provider, messaging, and policy settings.
+Direct edits to `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` can be overwritten by rebuilds.
+Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively.
+Use `$$nemoclaw <name> download` for manual host downloads, or use `openshell sandbox upload` when you intentionally need the raw OpenShell upload path.
+
+## Next Steps
+
+- [Persist Sandbox State](create-and-restore-snapshots)
+- [Commands reference](../../reference/commands)
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+Deep Agents Code stores durable agent configuration, memory, skills, MCP state, and conversation state under its home directory.
+In a NemoClaw sandbox, `dcode` runs with `HOME=/sandbox`, so the upstream `~/.deepagents` layout maps to `/sandbox/.deepagents`.
+
+For upstream behavior, refer to the official Deep Agents Code pages for [memory and skills](https://docs.langchain.com/oss/python/deepagents/code/memory-and-skills), [MCP tools](https://docs.langchain.com/oss/python/deepagents/code/mcp-tools), and [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview).
+
+## Important Deep Agents State
+
+Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below when you start the first `dcode` session.
+`nemoclaw <name> skill install` can create `/sandbox/.deepagents/agent/skills/` earlier.
+
+| Path | Purpose |
+|---|---|
+| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration for the managed `inference.local` route. |
+| `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
+| `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
+| `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
+| `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
+| `/sandbox/.deepagents/agent/skills/` | Canonical writable user-skill root declared by the Deep Agents Code integration. The agent owns discovery and activation; OpenShell preserves this agent state. |
+| `/sandbox/.deepagents/hooks.json` | User-authored native hook configuration. It persists with the native home; review its executable commands before transferring it into another workspace. |
+| `/sandbox/.deepagents/.mcp.json` | Agent-native MCP configuration. NemoClaw-managed entries contain OpenShell credential placeholders and are read directly during status, migration, and rebuild. The file persists as part of the complete native home. |
+| `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
+| `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
+| `/sandbox/.deepagents/.env` | User-managed Deep Agents Code environment file. It persists as agent-written native-home state; do not place raw credentials here when an OpenShell credential binding is available. |
+
+Project-level Deep Agents files can also exist inside the working repository, such as `.deepagents/AGENTS.md`, `.deepagents/skills/`, and `.deepagents/.mcp.json`.
+Those files are ordinary project files.
+They persist when they live under your sandbox workspace because the entire native home/workspace is OpenShell-owned storage.
+
+## Persistence Behavior
+
+Deep Agents state lives in the sandbox's persistent state volume, not in the container image alone.
+Normal restarts preserve that state.
+Rebuilds and upgrades transfer the complete native home/workspace as one opaque archive.
+NemoClaw does not apply a Deep Agents path or config-key allowlist during that transfer, so unknown files, `config.toml`, hooks, skills, memories, histories, packages, and project state all move together.
+OpenShell-managed credential material remains under OpenShell ownership rather than entering the archive.
+
+Managed MCP state is rebuilt from the agent-native file and current OpenShell policy, provider, and attachment state. NemoClaw keeps no host-side MCP desired state.
+Memory files such as `/sandbox/.deepagents/agent/AGENTS.md` and `/sandbox/.deepagents/agent/memories/` are upstream Deep Agents Code files.
+
+They transfer with the complete native home during rebuild. Copy them manually with `$$nemoclaw <name> download` before destroying the sandbox when you also need an independent backup.
+
+Running `$$nemoclaw <name> destroy` clears the complete Deep Agents `/sandbox` persistence root before it asks OpenShell to delete the sandbox. If NemoClaw cannot prove that cleanup completed, it preserves the registry entry and stops before deletion so you can retry safely.
+Back up important Deep Agents state before destroying the sandbox.
+
+## Editing State
+
+Prefer NemoClaw host commands for generated configuration such as model, provider, managed MCP, and policy settings.
+Direct edits to `/sandbox/.deepagents/config.toml` persist through rebuild. A later explicit configuration command can still change fields it owns.
+
+Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively.
+Use `$$nemoclaw <name> download` for manual host downloads, or use `openshell sandbox upload` when you intentionally need the raw OpenShell upload path.
+
+Use Deep Agents Code commands for upstream-managed memories and skills.
+For example, run `dcode skills create <name>` inside the sandbox to create a user skill, or use `/remember` inside an interactive `dcode` session to update memory.
+
+OpenShell preserves the complete native home, but NemoClaw does not maintain a skill inventory or infer which skills are visible or active. Use `$$nemoclaw <name> skill list` for the selected agent's native view.
+
+## Python Environment
+
+Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
+The sandbox places `/opt/venv/bin` before system Python directories on `PATH`, so `python3` and `pip3` resolve to the managed environment by default.
+
+NemoClaw keeps `/opt/venv` read-only to protect the pinned `dcode` harness.
+Create project-specific virtual environments under `/sandbox` when a task needs additional Python packages.
+
+## Next Steps
+
+- [Persist Sandbox State](create-and-restore-snapshots) explains OpenShell persistence and whole-home rebuild transfer.
+- [Add an MCP Server](../mcp-servers/add-an-mcp-server) explains the NemoClaw-managed MCP path for Deep Agents sandboxes.
+- [Deep Agents Code memory and skills](https://docs.langchain.com/oss/python/deepagents/code/memory-and-skills) explains upstream memory, `AGENTS.md`, and skill behavior.
+
+</AgentOnly>

@@ -1,0 +1,179 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  listMessagingPolicyPresetsByChannel,
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel,
+} from "../messaging/channels";
+
+const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel();
+
+const ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL = listMessagingPolicyPresetsByChannel();
+
+const REPOSITORY_MESSAGING_POLICY_PRESETS = new Set(
+  Object.values(ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL).flatMap((presets) => presets),
+);
+
+function normalizedNames(values: string[] | null | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  const names: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const name = value.trim().toLowerCase();
+    if (!name || names.includes(name)) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+export function mergePolicyMessagingChannels(
+  selectedChannels: string[] | null | undefined,
+  recordedChannels: string[] | null | undefined,
+  activeChannels: string[] | null | undefined,
+  disabledChannels: string[] | null | undefined = null,
+): string[] {
+  const disabled = new Set(normalizedNames(disabledChannels));
+  const merged: string[] = [];
+  for (const channels of [selectedChannels, recordedChannels, activeChannels]) {
+    for (const channel of normalizedNames(channels)) {
+      if (!channel || disabled.has(channel) || merged.includes(channel)) continue;
+      merged.push(channel);
+    }
+  }
+  return merged;
+}
+
+export function requiredMessagingChannelPolicyPresets(
+  channels: string[] | null | undefined,
+): string[] {
+  const required: string[] = [];
+  for (const channel of normalizedNames(channels)) {
+    for (const preset of REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL[channel] || []) {
+      if (!required.includes(preset)) required.push(preset);
+    }
+  }
+  return required;
+}
+
+// Merge the policy presets every enabled messaging channel needs into a
+// selection. An enabled channel cannot function without its network-egress
+// preset, so that preset must survive policy finalization regardless of how the
+// operator arrived at the selection (interactive tier, env-driven custom list,
+// or a live-policy-derived resume set). We intentionally merge *all* of a channel's
+// presets, not just the create-time `requiredAtCreate` ones: `requiredAtCreate`
+// governs whether a preset is injected into the boot policy at sandbox-create
+// time (Discord and Slack today), while finalization applies any newly-merged preset
+// to the live gateway itself. Using only the create-time-required set here drops
+// every other channel's preset (Telegram, WhatsApp, Teams, WeChat) from
+// the command-time selection, so `policy-list` shows them unapplied even though the
+// channel was configured during onboard. See #5967.
+export function mergeEnabledMessagingChannelPolicyPresets(
+  selectedPresets: string[],
+  channels: string[] | null | undefined,
+  knownPresetNames?: Iterable<string> | null,
+): string[] {
+  const merged = [...selectedPresets];
+  const selected = new Set(merged);
+  const known = knownPresetNames ? new Set(knownPresetNames) : null;
+
+  for (const preset of allMessagingChannelPolicyPresets(channels)) {
+    if (known && !known.has(preset)) continue;
+    if (selected.has(preset)) continue;
+    merged.push(preset);
+    selected.add(preset);
+  }
+
+  return merged;
+}
+
+export function allMessagingChannelPolicyPresets(channels: string[] | null | undefined): string[] {
+  const all: string[] = [];
+  for (const channel of normalizedNames(channels)) {
+    for (const preset of ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL[channel] || []) {
+      if (!all.includes(preset)) all.push(preset);
+    }
+  }
+  return all;
+}
+
+// An array means the caller knows the complete enabled-channel set. Remove only
+// repository-owned messaging presets outside that set; null preserves an
+// unknown selection, and a custom preset with the same name keeps user intent.
+export function pruneInactiveMessagingPolicyPresets(
+  selectedPresets: string[],
+  enabledChannels: string[] | null | undefined,
+  customPresetNames?: ReadonlySet<string> | null,
+): string[] {
+  if (!Array.isArray(enabledChannels)) {
+    return selectedPresets;
+  }
+
+  const activePresets = new Set(allMessagingChannelPolicyPresets(enabledChannels));
+  const customPresets = new Set(normalizedNames(customPresetNames ? [...customPresetNames] : []));
+  return selectedPresets.filter((preset) => {
+    const name = preset.trim().toLowerCase();
+    return (
+      customPresets.has(name) ||
+      !REPOSITORY_MESSAGING_POLICY_PRESETS.has(name) ||
+      activePresets.has(name)
+    );
+  });
+}
+
+/**
+ * Name the channels a set of preset names carries network egress for. The
+ * applied preset list outlives the messaging plan that justified it, so a
+ * caller holding only preset names can still ask whether the host still
+ * configures the channel behind each one.
+ */
+export function messagingChannelsForPolicyPresets(
+  presetNames: string[] | null | undefined,
+): string[] {
+  const presets = new Set(normalizedNames(presetNames));
+  if (presets.size === 0) return [];
+  const channels: string[] = [];
+  for (const [channel, channelPresets] of Object.entries(ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL)) {
+    if (channelPresets.some((preset) => presets.has(preset.trim().toLowerCase()))) {
+      channels.push(channel);
+    }
+  }
+  return channels;
+}
+
+export function pruneDisabledMessagingPolicyPresets(
+  selectedPresets: string[],
+  disabledChannels: string[] | null | undefined,
+): string[] {
+  const disabledChannelPresets = new Set(allMessagingChannelPolicyPresets(disabledChannels));
+  if (disabledChannelPresets.size === 0) return selectedPresets;
+  return selectedPresets.filter(
+    (preset) => !disabledChannelPresets.has(preset.trim().toLowerCase()),
+  );
+}
+
+export function hasDisabledMessagingPolicyPreset(
+  selectedPresets: string[],
+  disabledChannels: string[] | null | undefined,
+): boolean {
+  return (
+    pruneDisabledMessagingPolicyPresets(selectedPresets, disabledChannels).length !==
+    selectedPresets.length
+  );
+}
+
+export function mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
+  selectedPresets: string[],
+  appliedPresets: string[],
+  disabledChannels: string[] | null | undefined,
+): string[] {
+  if (!hasDisabledMessagingPolicyPreset(appliedPresets, disabledChannels)) {
+    return selectedPresets;
+  }
+
+  const merged = [...selectedPresets];
+  for (const preset of pruneDisabledMessagingPolicyPresets(appliedPresets, disabledChannels)) {
+    if (!merged.includes(preset)) merged.push(preset);
+  }
+  return merged;
+}

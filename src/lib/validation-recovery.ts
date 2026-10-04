@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ValidationFailureLike } from "./onboard-types";
-import { compactText } from "./url-utils";
+import type { ValidationFailureLike } from "./onboard/types";
+import { compactText } from "./core/url-utils";
 import { classifyValidationFailure, type ValidationClassification } from "./validation";
 
 export interface ProbeRecoveryOptions {
@@ -32,7 +32,12 @@ export function getTransportRecoveryMessage(failure: ValidationFailureLike = {})
   if (failure.httpStatus && failure.httpStatus >= 500 && failure.httpStatus < 600) {
     return "  The provider endpoint is reachable but currently failing upstream.";
   }
-  if (failure.curlStatus === 6 || /could not resolve host|name or service not known/.test(text)) {
+  if (
+    failure.curlStatus === 6 ||
+    /cannot resolve endpoint host|did not resolve to any address|could not resolve host|name or service not known|enotfound|eai_again/.test(
+      text,
+    )
+  ) {
     return "  Validation could not resolve the provider hostname. Check DNS, VPN, or the endpoint URL.";
   }
   if (failure.curlStatus === 7 || /connection refused|failed to connect/.test(text)) {
@@ -44,9 +49,9 @@ export function getTransportRecoveryMessage(failure: ValidationFailureLike = {})
   if (
     failure.curlStatus === 35 ||
     failure.curlStatus === 60 ||
-    /ssl|tls|certificate/.test(text)
+    /ssl|tls|certificate|handshake/.test(text)
   ) {
-    return "  Validation hit a TLS/certificate error. Check HTTPS trust and whether the endpoint URL is correct.";
+    return "  Validation hit a TLS/certificate error. If the endpoint uses plain HTTP, a proxy or middleware may be upgrading the connection to HTTPS. Check proxy settings, VPN, and the endpoint URL scheme.";
   }
   if (/proxy/.test(text)) {
     return "  Validation hit a proxy/connectivity error. Check proxy environment settings and endpoint reachability.";
@@ -72,7 +77,10 @@ export function getProbeRecovery(
   if (transportFailure) {
     return { kind: "transport", retry: "retry", failure: transportFailure };
   }
-  if (allowModelRetry && failures.some((failure) => classifyValidationFailure(failure).kind === "model")) {
+  if (
+    allowModelRetry &&
+    failures.some((failure) => classifyValidationFailure(failure).kind === "model")
+  ) {
     return { kind: "model", retry: "model" };
   }
   if (failures.some((failure) => classifyValidationFailure(failure).kind === "endpoint")) {

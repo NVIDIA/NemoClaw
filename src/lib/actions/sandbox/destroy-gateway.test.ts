@@ -1,0 +1,720 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  dockerRemoveVolumesByPrefix: vi.fn(),
+  resolveGatewayTeardownAuthority: vi.fn(),
+  resolveOwnedHostGatewayRuntimeProviderId: vi.fn((): string | null => null),
+  stopHostGatewayProcesses: vi.fn(),
+  GatewayAuthorityError: class GatewayAuthorityError extends Error {},
+}));
+
+vi.mock("../../adapters/docker/volume", () => ({
+  dockerRemoveVolumesByPrefix: mocks.dockerRemoveVolumesByPrefix,
+}));
+vi.mock("../../onboard/host-gateway-process", () => ({
+  resolveOwnedHostGatewayRuntimeProviderId: mocks.resolveOwnedHostGatewayRuntimeProviderId,
+  stopHostGatewayProcesses: mocks.stopHostGatewayProcesses,
+}));
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
+  resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
+  GatewayAuthorityError: mocks.GatewayAuthorityError,
+  gatewayAuthorityFailureLines: (error: unknown, operation: string) => [
+    `  Refusing ${operation}: ${String((error as Error).message)}`,
+  ],
+}));
+import {
+  cleanupGatewayAfterLastSandbox,
+  resolveGatewayCleanupRuntimeProviderId,
+} from "./destroy-gateway";
+
+function packagedServiceOwner({
+  gatewayName,
+  gatewayPort,
+}: {
+  gatewayName: string;
+  gatewayPort: number;
+}) {
+  return {
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "packaged-service" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  };
+}
+
+function serviceStopResult(stopped: boolean, reason?: string, standaloneFallbackAllowed = false) {
+  return {
+    attempted: true,
+    standaloneFallbackAllowed,
+    manager: "systemd" as const,
+    serviceName: "nemoclaw-openshell-gateway",
+    statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
+    stopped,
+    ...(reason === undefined ? {} : { reason }),
+  };
+}
+
+function idleHostReaperResult() {
+  return {
+    failed: [],
+    skippedDeadPids: [],
+    skippedNonMatchingPids: [],
+    stopped: [],
+    sudoRemediationPids: [],
+  };
+}
+
+describe("cleanupGatewayAfterLastSandbox", () => {
+  beforeEach(() => {
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(
+      ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+    );
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [],
+      stopped: [],
+      sudoRemediationPids: [],
+    });
+  });
+
+  it("recovers Podman cleanup authority after the sandbox registry row is gone", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("podman");
+    expect(mocks.resolveOwnedHostGatewayRuntimeProviderId).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+      stateDir: expect.stringContaining("openshell-docker-gateway-8081"),
+    });
+  });
+
+  it("rejects disagreement between sandbox and gateway provider authority", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
+
+    expect(() => resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "podman")).toThrow(
+      "gateway 'nemoclaw-8081': registered runtime provider 'podman' does not match recorded gateway runtime provider 'docker'",
+    );
+  });
+
+  it("uses the selected provider before sandbox registration", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("podman");
+  });
+
+  it("uses recorded authority instead of a conflicting configured provider", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
+
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", undefined, {
+        configuredRuntimeProviderId: "podman",
+      }),
+    ).toBe("docker");
+  });
+
+  it("uses registered authority instead of a conflicting configured provider", () => {
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "podman", {
+        configuredRuntimeProviderId: "docker",
+      }),
+    ).toBe("podman");
+  });
+
+  it("preserves Portable precedence for a registry-absent configured fallback", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("docker");
+  });
+
+  it.each(["systemd-system", "systemd-user"] as const)(
+    "does not stop or destroy a %s-supervised gateway during final-sandbox cleanup (#6576)",
+    async (kind) => {
+      mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(
+        ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+          stateDir: "/var/lib/openshell/gateway",
+          supervisor: {
+            kind,
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+      );
+      const runOpenshell = vi.fn((args: string[]) =>
+        args[1] === "remove"
+          ? { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" }
+          : { status: 0, stdout: "", stderr: "" },
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+
+      expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith(
+        { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        { env: process.env },
+      );
+      expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+      expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: 1048576,
+        suppressOutput: true,
+        timeout: 30000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect(runOpenshell).not.toHaveBeenCalledWith(
+        ["gateway", "destroy", "-g", "nemoclaw"],
+        expect.anything(),
+      );
+      expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("will not use the legacy gateway destroy command"),
+      );
+    },
+  );
+
+  it("does not use legacy destroy after a current gateway-removal failure", async () => {
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "remove"
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+          }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+
+    let thrown: unknown;
+    try {
+      await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(
+      new Error(
+        "OpenShell could not reach the selected gateway. Resolve the reported OpenShell error, then rerun destroy.",
+      ),
+    );
+    expect(String(thrown)).not.toContain("must-not-be-logged");
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("continues volume cleanup only after a reported absence is verified", async () => {
+    const results = new Map([
+      ["gateway remove nemoclaw", { status: 1, stdout: "", stderr: "gateway nemoclaw not found" }],
+      ["gateway list -o json", { status: 0, stdout: "[]", stderr: "" }],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => results.get(args.join(" "))!);
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "list", "-o", "json"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
+      ignoreError: true,
+    });
+  });
+
+  it("fails before local cleanup when the gateway authority cannot be revalidated (#6576)", async () => {
+    // A failure that is not an authority refusal still aborts outright: #6576's
+    // contract is that nothing may touch the gateway before authority is proven.
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(() => {
+      throw new Error("authority drift");
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).rejects.toThrow(
+      "authority drift",
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("reports an authority migration and skips cleanup without aborting destroy (#8103)", async () => {
+    // Same #6576 guarantee — no gateway effect runs — but the typed refusal is
+    // reported instead of thrown, so `destroy` can still finish removing the
+    // sandbox it has already deleted.
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(() => {
+      throw new mocks.GatewayAuthorityError("authority changed since onboarding");
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("authority changed since onboarding"),
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+  });
+
+  it("uses the PID-file-scoped host gateway reaper for macOS final destroy (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const stateDir = path.join(
+      "/home/tester",
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-8081",
+    );
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell);
+
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
+      {},
+      {
+        usePgrepFallback: false,
+        stateDir,
+        pidFile: path.join(stateDir, "openshell-gateway.pid"),
+        openShellGatewayName: "nemoclaw-8081",
+        openShellGatewayPort: 8081,
+        preserveRuntimeFilesOnNonMatching: true,
+      },
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
+      "openshell-cluster-nemoclaw-8081",
+      {
+        ignoreError: true,
+      },
+    );
+  });
+
+  it("keeps the PID-file-scoped host gateway reaper active for Linux final destroy", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const stateDir = path.join(
+      "/home/tester",
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-8081",
+    );
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell);
+
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
+      {},
+      {
+        usePgrepFallback: false,
+        stateDir,
+        pidFile: path.join(stateDir, "openshell-gateway.pid"),
+        openShellGatewayName: "nemoclaw-8081",
+        openShellGatewayPort: 8081,
+        preserveRuntimeFilesOnNonMatching: true,
+      },
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
+      "openshell-cluster-nemoclaw-8081",
+      {
+        ignoreError: true,
+      },
+    );
+  });
+
+  it("keeps host gateway reaping disabled for non-Docker-driver platforms", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  });
+
+  it("does not remove Docker volumes for a native Podman gateway", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      runtimeProviderId: "podman",
+      resolveRuntimeProvider: () => ({ gateway: { ownsHostReadiness: true } }) as never,
+    });
+
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("fails before gateway and volume removal when the owned host listener survives (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [123],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [],
+      stopped: [],
+      sudoRemediationPids: [123],
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).rejects.toThrow(
+      /PID\(s\) 123.*rerun destroy/,
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("fails before gateway and volume removal when PID-file ownership is unverifiable (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [456],
+      stopped: [],
+      sudoRemediationPids: [],
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).rejects.toThrow(
+      /PID-file process\(es\) 456.*do not prove ownership.*rerun destroy/,
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("stops the packaged gateway service before the host reaper on final destroy (#7904)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const events: string[] = [];
+    mocks.stopHostGatewayProcesses.mockImplementationOnce(() => {
+      events.push("host-reaper");
+      return idleHostReaperResult();
+    });
+    const stopService = vi.fn(() => {
+      events.push("service-stop");
+      return serviceStopResult(true);
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      stopOpenShellGatewayUserService: stopService,
+    });
+
+    expect(events).toEqual(["service-stop", "host-reaper"]);
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
+      ignoreError: true,
+    });
+  });
+
+  it("fails destroy when the packaged gateway service survives the stop (#7904)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const stopService = vi.fn(() =>
+      serviceStopResult(false, "systemctl --user stop nemoclaw-openshell-gateway failed: timeout"),
+    );
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        stopOpenShellGatewayUserService: stopService,
+      }),
+    ).rejects.toThrow("systemctl --user status nemoclaw-openshell-gateway");
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("stops the recorded standalone gateway when the systemd user manager is unavailable", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses.mockReturnValueOnce({
+      ...idleHostReaperResult(),
+      stopped: [4242],
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      clearGatewayRuntimeFiles,
+      isGatewayPortFree,
+      stopOpenShellGatewayUserService: () =>
+        serviceStopResult(
+          false,
+          "systemctl --user stop failed: Failed to connect to bus: No medium found",
+          true,
+        ),
+    });
+
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        clearRuntimeFiles: false,
+        openShellGatewayName: "nemoclaw",
+        openShellGatewayPort: 8080,
+        usePgrepFallback: false,
+      }),
+    );
+    expect(isGatewayPortFree).toHaveBeenCalledWith(8080);
+    expect(clearGatewayRuntimeFiles).toHaveBeenCalledWith(
+      "/home/tester/.local/state/nemoclaw/openshell-docker-gateway",
+      "/home/tester/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid",
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 1048576,
+      suppressOutput: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  });
+
+  it("fails closed when a headless service stop has no recorded standalone owner", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        isGatewayPortFree,
+        stopOpenShellGatewayUserService: () =>
+          serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+      }),
+    ).rejects.toThrow(/no recorded standalone gateway process proved ownership/);
+    expect(isGatewayPortFree).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
+  it("fails closed when the gateway port stays occupied after headless fallback cleanup", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses.mockReturnValueOnce({
+      ...idleHostReaperResult(),
+      stopped: [4242],
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await expect(
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        clearGatewayRuntimeFiles,
+        isGatewayPortFree: () => false,
+        stopOpenShellGatewayUserService: () =>
+          serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+      }),
+    ).rejects.toThrow(/gateway port 8080 remains occupied/);
+    expect(clearGatewayRuntimeFiles).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
+  it("retries headless fallback cleanup after volume removal fails", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        stopped: [4242],
+      })
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        skippedDeadPids: [4242],
+      });
+    mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
+      throw new Error("injected volume cleanup failure");
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      clearGatewayRuntimeFiles,
+      isGatewayPortFree,
+      stopOpenShellGatewayUserService: () =>
+        serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+    };
+
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps)).rejects.toThrow(
+      "injected volume cleanup failure",
+    );
+    expect(clearGatewayRuntimeFiles).not.toHaveBeenCalled();
+
+    await expect(
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps),
+    ).resolves.toBeUndefined();
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledTimes(2);
+    expect(isGatewayPortFree).toHaveBeenCalledTimes(2);
+    expect(clearGatewayRuntimeFiles).toHaveBeenCalledOnce();
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the service manager alone for a standalone NemoClaw gateway (#7904)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    const stopService = vi.fn(() => serviceStopResult(true));
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      stopOpenShellGatewayUserService: stopService,
+    });
+
+    expect(stopService).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "host reaper",
+      () =>
+        mocks.stopHostGatewayProcesses.mockImplementationOnce(() => {
+          throw new Error("injected host reaper failure");
+        }),
+    ],
+    [
+      "gateway remove",
+      (runOpenshell: ReturnType<typeof vi.fn>) =>
+        runOpenshell.mockImplementationOnce(() => {
+          throw new Error("injected gateway remove failure");
+        }),
+    ],
+    [
+      "volume cleanup",
+      () =>
+        mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
+          throw new Error("injected volume cleanup failure");
+        }),
+    ],
+  ] as const)(
+    "converges on retry after a partial %s failure (#4662)",
+    async (_stage, injectFailure) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+      vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      injectFailure(runOpenshell);
+
+      await expect(cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).rejects.toThrow();
+      await expect(
+        cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell),
+      ).resolves.toBeUndefined();
+      expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: 1048576,
+        suppressOutput: true,
+        timeout: 30000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
+        "openshell-cluster-nemoclaw-8081",
+        { ignoreError: true },
+      );
+    },
+  );
+});

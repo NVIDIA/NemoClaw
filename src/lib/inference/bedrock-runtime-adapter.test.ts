@@ -1,0 +1,995 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const runCaptureMock = vi.hoisted(() => vi.fn(() => ""));
+
+// Only the process- and disk-touching helpers are replaced; every pure helper this file also
+// exercises keeps its real implementation.
+vi.mock("./local-adapter-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./local-adapter-lifecycle")>()),
+  killLocalAdapterPid: vi.fn(),
+  loadLocalAdapterPid: vi.fn(() => null),
+  persistLocalAdapterPid: vi.fn(),
+  probeLocalAdapterHealth: vi.fn(async () => false),
+  readLocalAdapterJsonFile: vi.fn(() => null),
+  readLocalAdapterTextFile: vi.fn(() => null),
+  spawnDetachedNodeAdapter: vi.fn(() => ({ pid: 4242 })),
+  waitForLocalAdapterHealth: vi.fn(async () => false),
+  writeLocalAdapterSecretFile: vi.fn(),
+}));
+
+vi.mock("./bedrock-runtime/lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./bedrock-runtime/lifecycle")>()),
+  bedrockRuntimeAdapterProcessPresence: vi.fn(() => "absent"),
+  observeBedrockRuntimeAdapterProcess: vi.fn((_pid, _runtime, expected) =>
+    expected ? { ...expected } : null,
+  ),
+  removeDurableBedrockRuntimeFile: vi.fn(),
+  resolveBedrockRuntimeAdapterLifecyclePaths: vi.fn(() => ({
+    directory: "/__nemoclaw_test__/bedrock-runtime-adapter/8080",
+    journalPath: "/__nemoclaw_test__/bedrock-runtime-adapter/8080/uninstall.json",
+    lockName: "bedrock-runtime-adapter-test-8080",
+    lockPath: "/__nemoclaw_test__/bedrock-runtime-adapter/8080/lifecycle.lock",
+    lockStateDir: "/__nemoclaw_test__/bedrock-runtime-adapter-locks",
+  })),
+  withBedrockRuntimeAdapterLifecycleLockAsync: vi.fn(async (_lifecycle, operation) => operation()),
+  stopExactBedrockRuntimeAdapterProcess: vi.fn(() => ({ ok: true, status: "stopped" })),
+  writeDurablePrivateBedrockRuntimeJson: vi.fn(),
+}));
+
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
+  run: vi.fn(),
+  runCapture: runCaptureMock,
+}));
+
+vi.mock("../state/mcp-lifecycle-lock-identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/mcp-lifecycle-lock-identity")>()),
+  readMcpLockProcessIdentity: vi.fn(() => "linux:test-boot:4242"),
+}));
+
+import {
+  __test,
+  buildBedrockConverseRequest,
+  createBedrockRuntimeAdapterServer,
+  createOpenAiChatCompletion,
+  ensureBedrockRuntimeAdapter,
+  streamOpenAiChatCompletion,
+} from "./bedrock-runtime-adapter";
+import {
+  BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV,
+  observeBedrockRuntimeAdapterProcess,
+  removeDurableBedrockRuntimeFile,
+  stopExactBedrockRuntimeAdapterProcess,
+  writeDurablePrivateBedrockRuntimeJson,
+} from "./bedrock-runtime/lifecycle";
+import {
+  isLocalAdapterProcess,
+  killLocalAdapterPid,
+  persistLocalAdapterPid,
+  probeLocalAdapterHealth,
+  readLocalAdapterJsonFile,
+  readLocalAdapterTextFile,
+  spawnDetachedNodeAdapter,
+  waitForLocalAdapterHealth,
+  writeLocalAdapterSecretFile,
+} from "./local-adapter-lifecycle";
+
+const US_EAST_1_CLASSIFICATION = {
+  kind: "bedrock-runtime",
+  endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+  hostname: "bedrock-runtime.us-east-1.amazonaws.com",
+  region: "us-east-1",
+  fips: false,
+} as const;
+
+const servers: http.Server[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    servers.map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        }),
+    ),
+  );
+  servers.length = 0;
+  vi.clearAllMocks();
+});
+
+function listen(server: http.Server): Promise<string> {
+  servers.push(server);
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("expected TCP address");
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+describe("Bedrock Runtime OpenAI adapter", () => {
+  it("converts text chat completions to Converse and back", async () => {
+    const send = vi.fn(async (command: any) => {
+      expect(command.constructor.name).toBe("ConverseCommand");
+      expect(command.input).toMatchObject({
+        modelId: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        messages: [{ role: "user", content: [{ text: "hello" }] }],
+        inferenceConfig: { temperature: 0.2, maxTokens: 128 },
+      });
+      return {
+        output: { message: { content: [{ text: "OK" }] } },
+        stopReason: "end_turn",
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+      };
+    });
+
+    const response = await createOpenAiChatCompletion(
+      {
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        messages: [{ role: "user", content: "hello" }],
+        temperature: 0.2,
+        max_tokens: 128,
+      },
+      { send },
+    );
+
+    expect(response.choices[0].message.content).toBe("OK");
+    expect(response.choices[0].finish_reason).toBe("stop");
+    expect(response.usage).toEqual({
+      prompt_tokens: 3,
+      completion_tokens: 2,
+      total_tokens: 5,
+    });
+  });
+
+  it("streams text deltas as OpenAI chat completion chunks", async () => {
+    async function* stream() {
+      yield { messageStart: { role: "assistant" } };
+      yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "hel" } } };
+      yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "lo" } } };
+      yield { messageStop: { stopReason: "end_turn" } };
+    }
+    const send = vi.fn(async (command: any) => {
+      expect(command.constructor.name).toBe("ConverseStreamCommand");
+      return { stream: stream() };
+    });
+
+    const chunks: any[] = [];
+    for await (const chunk of await streamOpenAiChatCompletion(
+      {
+        model: "anthropic.claude-3-haiku-20240307-v1:0",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      { send },
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.map((chunk: any) => chunk.choices[0].delta.content).filter(Boolean)).toEqual([
+      "hel",
+      "lo",
+    ]);
+    expect(new Set(chunks.map((chunk: any) => chunk.id)).size).toBe(1);
+    expect(chunks.at(-1)?.choices[0].finish_reason).toBe("stop");
+  });
+
+  it("marks streamed tool calls with the tool_calls finish reason", async () => {
+    async function* stream() {
+      yield {
+        contentBlockStart: {
+          contentBlockIndex: 0,
+          start: { toolUse: { toolUseId: "toolu_stream", name: "get_weather" } },
+        },
+      };
+      yield {
+        contentBlockDelta: {
+          contentBlockIndex: 0,
+          delta: { toolUse: { input: '{"city":"Seattle"}' } },
+        },
+      };
+      yield { messageStop: { stopReason: "end_turn" } };
+    }
+    const send = vi.fn(async () => ({ stream: stream() }));
+
+    const chunks: any[] = [];
+    for await (const chunk of await streamOpenAiChatCompletion(
+      {
+        model: "anthropic.claude-3-haiku-20240307-v1:0",
+        stream: true,
+        messages: [{ role: "user", content: "weather" }],
+      },
+      { send },
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(
+      chunks.find((chunk) => chunk.choices[0].delta.tool_calls)?.choices[0].delta.tool_calls,
+    ).toEqual([
+      {
+        index: 0,
+        id: "toolu_stream",
+        type: "function",
+        function: { name: "get_weather", arguments: "" },
+      },
+    ]);
+    expect(chunks.at(-1)?.choices[0].finish_reason).toBe("tool_calls");
+  });
+
+  it("round-trips tool calls and tool results", async () => {
+    const input = buildBedrockConverseRequest({
+      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      messages: [
+        { role: "user", content: "weather" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "toolu_1",
+              type: "function",
+              function: { name: "get_weather", arguments: '{"city":"Seattle"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "toolu_1", content: '{"temperature":55}' },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get weather",
+            parameters: { type: "object", properties: { city: { type: "string" } } },
+          },
+        },
+      ],
+    });
+
+    expect(input.messages?.[1]?.content?.[0]).toEqual({
+      toolUse: { toolUseId: "toolu_1", name: "get_weather", input: { city: "Seattle" } },
+    });
+    expect(input.messages?.[2]?.content?.[0]).toEqual({
+      toolResult: { toolUseId: "toolu_1", content: [{ json: { temperature: 55 } }] },
+    });
+    expect(input.toolConfig?.tools?.[0]).toMatchObject({
+      toolSpec: { name: "get_weather" },
+    });
+
+    const response = await createOpenAiChatCompletion(
+      { model: "anthropic.claude", messages: [{ role: "user", content: "weather" }] },
+      {
+        send: vi.fn(async () => ({
+          output: {
+            message: {
+              content: [
+                {
+                  toolUse: {
+                    toolUseId: "toolu_2",
+                    name: "get_weather",
+                    input: { city: "Portland" },
+                  },
+                },
+              ],
+            },
+          },
+          stopReason: "tool_use",
+        })),
+      },
+    );
+    expect(response.choices[0].message.tool_calls).toEqual([
+      {
+        id: "toolu_2",
+        type: "function",
+        function: { name: "get_weather", arguments: '{"city":"Portland"}' },
+      },
+    ]);
+    expect(response.choices[0].finish_reason).toBe("tool_calls");
+  });
+
+  it("returns a clear 400 for unsupported OpenAI request fields", async () => {
+    const server = createBedrockRuntimeAdapterServer({
+      token: "local-token",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      client: { send: vi.fn() },
+    });
+    const baseUrl = await listen(server);
+
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer local-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "anthropic.claude",
+        messages: [{ role: "user", content: "hello" }],
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as any;
+    expect(body.error.message).toContain("Unsupported OpenAI chat field");
+  });
+
+  it("tolerates OpenAI stream_options metadata from compatible clients", async () => {
+    const response = await createOpenAiChatCompletion(
+      {
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        messages: [{ role: "user", content: "hello" }],
+        stream_options: { include_usage: true },
+      },
+      {
+        send: vi.fn(async () => ({
+          output: { message: { content: [{ text: "OK" }] } },
+          stopReason: "end_turn",
+        })),
+      },
+    );
+
+    expect(response.choices[0].message.content).toBe("OK");
+  });
+
+  it("lists only models served successfully by the authenticated adapter", async ({
+    onTestFinished,
+  }) => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_740_000_000_000);
+    onTestFinished(() => now.mockRestore());
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        output: { message: { content: [{ text: "OK" }] } },
+        stopReason: "end_turn",
+      })
+      .mockRejectedValueOnce(new Error("model unavailable"))
+      .mockResolvedValueOnce({
+        output: { message: { content: [{ text: "OK" }] } },
+        stopReason: "end_turn",
+      });
+    const baseUrl = await listen(
+      createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send },
+      }),
+    );
+    const headers = { Authorization: "Bearer local-token", "Content-Type": "application/json" };
+    expect((await fetch(`${baseUrl}/v1/models`)).status).toBe(401);
+    const empty = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ object: "list", data: [] });
+    const served = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "served-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(served.status).toBe(200);
+    await served.json();
+    const rejected = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "rejected-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(rejected.status).toBe(502);
+    await rejected.json();
+    const catalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(await catalog.json()).toEqual({
+      object: "list",
+      data: [
+        { id: "served-model", object: "model", created: 1_740_000_000, owned_by: "amazon-bedrock" },
+      ],
+    });
+    now.mockReturnValue(1_740_000_010_000);
+    const servedAgain = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "served-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(servedAgain.status).toBe(200);
+    await servedAgain.json();
+    const repeatedCatalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(await repeatedCatalog.json()).toMatchObject({ data: [{ created: 1_740_000_000 }] });
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    {
+      name: "completed",
+      send: async () => ({
+        stream: (async function* () {
+          yield { messageStart: { role: "assistant" } };
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "OK" } } };
+          yield { messageStop: { stopReason: "end_turn" } };
+        })(),
+      }),
+      expectedModels: ["stream-model"],
+    },
+    {
+      name: "failed",
+      send: async () => Promise.reject(new Error("upstream unavailable")),
+      expectedModels: [],
+    },
+  ])("tracks successful models after a $name stream", async ({ send, expectedModels }) => {
+    const baseUrl = await listen(
+      createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send },
+      }),
+    );
+    const headers = { Authorization: "Bearer local-token", "Content-Type": "application/json" };
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "stream-model",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    await response.text();
+    const catalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    const body = (await catalog.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((entry) => entry.id)).toEqual(expectedModels);
+  });
+
+  it("rejects reuse of a completions-only adapter through its capability health probe", async () => {
+    const tokenHash = crypto.createHash("sha256").update("local-token").digest("hex");
+    const baseUrl = await listen(
+      http.createServer((req, res) => {
+        res.writeHead(req.url === "/health" ? 200 : 404);
+        res.end(JSON.stringify({ ok: true, tokenHash }));
+      }),
+    );
+    const real = await vi.importActual<typeof import("./local-adapter-lifecycle")>(
+      "./local-adapter-lifecycle",
+    );
+    vi.mocked(probeLocalAdapterHealth).mockImplementationOnce(real.probeLocalAdapterHealth);
+    await expect(
+      __test.probeAdapterHealth({ port: Number(new URL(baseUrl).port), tokenHash }),
+    ).resolves.toBe(false);
+  });
+
+  it.each(["/health", "/health/model-catalog"])(
+    "exposes loopback %s without leaking or requiring the adapter bearer token",
+    async (healthPath) => {
+      const server = createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send: vi.fn() },
+      });
+      const baseUrl = await listen(server);
+
+      const health = await fetch(`${baseUrl}${healthPath}`);
+      expect(health.status).toBe(200);
+      const body = (await health.json()) as any;
+      expect(body).toMatchObject({
+        ok: true,
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+      });
+      expect(body.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(body)).not.toContain("local-token");
+
+      const chat = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "anthropic.claude",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      });
+      expect(chat.status).toBe(401);
+    },
+  );
+
+  it("emits safe request breadcrumbs without tokens or upstream hostnames", async () => {
+    const events: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const server = createBedrockRuntimeAdapterServer({
+      token: "local-token",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      logger: (event, fields) => events.push({ event, fields }),
+      client: {
+        send: vi.fn(async () => ({
+          output: { message: { content: [{ text: "OK" }] } },
+          stopReason: "end_turn",
+        })),
+      },
+    });
+    const baseUrl = await listen(server);
+
+    const unauthorized = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic.claude",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer local-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "anthropic.claude",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "request_rejected",
+          fields: expect.objectContaining({ status: 401, reason: "unauthorized" }),
+        }),
+        expect.objectContaining({
+          event: "request_completed",
+          fields: expect.objectContaining({
+            operation: "converse",
+            model: "anthropic.claude",
+            status: 200,
+          }),
+        }),
+      ]),
+    );
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("local-token");
+    expect(serialized).not.toContain("bedrock-runtime.us-east-1.amazonaws.com");
+    expect(serialized).not.toContain("AWS_BEARER_TOKEN_BEDROCK");
+  });
+
+  it("maps Bedrock auth and region failures to adapter errors", async () => {
+    const server = createBedrockRuntimeAdapterServer({
+      token: "local-token",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      client: {
+        send: vi.fn(async () => {
+          throw new Error("Could not load credentials from any providers");
+        }),
+      },
+    });
+    const baseUrl = await listen(server);
+
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer local-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "anthropic.claude",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as any;
+    expect(body.error.message).toContain("Could not load credentials");
+  });
+
+  it("stops the exact spawned generation when startup never becomes healthy", async () => {
+    vi.mocked(killLocalAdapterPid).mockClear();
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("did not become healthy");
+
+    expect(vi.mocked(killLocalAdapterPid).mock.calls).toHaveLength(0);
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: 4242,
+        processStart: "linux:test-boot:4242",
+        generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("uses the in-memory process identity when its PID file cannot be persisted", async () => {
+    vi.mocked(persistLocalAdapterPid).mockImplementationOnce(() => {
+      throw new Error("ENOSPC: no space left on device");
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("ENOSPC");
+
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 4242, processStart: "linux:test-boot:4242" }),
+      expect.any(Object),
+    );
+  });
+
+  it("persists the exact Bedrock process generation after startup becomes healthy", async () => {
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+
+    const result = await ensureBedrockRuntimeAdapter({
+      classification: US_EAST_1_CLASSIFICATION,
+    });
+
+    expect(result.token).toMatch(/^[a-f0-9]{48}$/u);
+    const spawnOptions = vi.mocked(spawnDetachedNodeAdapter).mock.calls.at(-1)?.[0];
+    const generation = spawnOptions?.env[BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV];
+    expect(generation).toMatch(/^[a-f0-9]{32}$/u);
+    const persisted = vi.mocked(writeDurablePrivateBedrockRuntimeJson).mock.calls.at(-1)?.[1];
+    expect(persisted).toMatchObject({
+      version: 2,
+      generation,
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      executablePath: expect.any(String),
+      scriptPath: expect.stringMatching(/bedrock-runtime-adapter\.mts$/u),
+      adapterPort: 11_436,
+      tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+  });
+
+  it("preserves exact lifecycle evidence when durable state publication fails", async () => {
+    const journalPath = "/__nemoclaw_test__/bedrock-runtime-adapter/8080/uninstall.json";
+    let journalPublished = false;
+    const existsSync = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation((target) => (String(target) === journalPath ? journalPublished : false));
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        journalPublished = true;
+      });
+
+    try {
+      await expect(
+        ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+      ).rejects.toThrow("PID and token evidence were preserved");
+
+      const [tokenPath, token] = vi.mocked(writeLocalAdapterSecretFile).mock.calls.at(-1) ?? [];
+      expect(tokenPath).toMatch(/bedrock-runtime-adapter-token$/u);
+      expect(token).toMatch(/^[a-f0-9]{48}$/u);
+      expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
+      expect(vi.mocked(writeDurablePrivateBedrockRuntimeJson).mock.calls).toEqual([
+        [
+          expect.stringMatching(/bedrock-runtime-adapter\.json$/u),
+          expect.objectContaining({
+            version: 2,
+            generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+            pid: 4242,
+            processStart: "linux:test-boot:4242",
+            tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+        ],
+        [
+          journalPath,
+          expect.objectContaining({
+            version: 1,
+            phase: "prepared",
+            gatewayPort: 8080,
+            generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+            pid: 4242,
+            processStart: "linux:test-boot:4242",
+            tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+        ],
+      ]);
+
+      await expect(
+        ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+      ).rejects.toThrow("uninstall cleanup is incomplete");
+      expect(spawnDetachedNodeAdapter).toHaveBeenCalledTimes(1);
+    } finally {
+      existsSync.mockRestore();
+    }
+  });
+
+  it("stops and retires the exact generation when state and journal publication both fail", async () => {
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: uninstall journal write failed");
+      });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("state and uninstall journal could not be published");
+
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: 4242,
+        processStart: "linux:test-boot:4242",
+        generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+        executablePath: process.execPath,
+        adapterPort: 11_436,
+      }),
+      expect.any(Object),
+    );
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson).mockReset();
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).resolves.toMatchObject({ region: "us-east-1" });
+  });
+
+  it("preserves available evidence when publication and exact stop both fail", async () => {
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: uninstall journal write failed");
+      });
+    vi.mocked(stopExactBedrockRuntimeAdapterProcess).mockReturnValueOnce({
+      ok: false,
+      reason: "unresolved",
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow(
+      "exact spawned process could not be stopped; lifecycle evidence was preserved",
+    );
+
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a running PID whose stable identity disagrees with lifecycle state", async () => {
+    const token = "prior-token";
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:prior",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: "a".repeat(64),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("lifecycle state does not match the running process");
+
+    expect(killLocalAdapterPid).not.toHaveBeenCalled();
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("does not signal a prior generation when a failed health check requires replacement", async () => {
+    const token = "prior-token";
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("running generation cannot be reused");
+
+    expect(killLocalAdapterPid).not.toHaveBeenCalled();
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("retries a transient reuse probe and revalidates identity before returning", async () => {
+    const token = "prior-token";
+    const priorState = {
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    };
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+    vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    vi.mocked(waitForLocalAdapterHealth).mockImplementationOnce(async (probe, options) => {
+      expect(options).toEqual({ attempts: 3, intervalMs: 100 });
+      expect(await probe()).toBe(false);
+      return probe();
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).resolves.toMatchObject({ token, region: "us-east-1" });
+
+    expect(observeBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      4242,
+      expect.any(Object),
+      priorState,
+    );
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a process replaced after the health probe", async () => {
+    const token = "prior-token";
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    vi.mocked(observeBedrockRuntimeAdapterProcess).mockReturnValueOnce(null);
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("running generation cannot be reused");
+
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
+  });
+
+  it("spawns the typed .mts launcher entrypoint", () => {
+    expect(__test.getAdapterScriptPath().endsWith("bedrock-runtime-adapter.mts")).toBe(true);
+  });
+
+  it("recognizes adapter processes launched from the old and new launcher filenames", () => {
+    const needle = __test.adapterProcessNeedle;
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.mts",
+      ),
+    ).toBe(true);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.js",
+      ),
+    ).toBe(true);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js",
+      ),
+    ).toBe(false);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/my-bedrock-runtime-adapter.mts",
+      ),
+    ).toBe(false);
+  });
+
+  it("includes forwarded AWS environment in the adapter reuse hash", () => {
+    const savedContainerCredentials = process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+    const savedSharedCredentials = process.env.AWS_SHARED_CREDENTIALS_FILE;
+    try {
+      delete process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+      delete process.env.AWS_SHARED_CREDENTIALS_FILE;
+      const base = __test.adapterCredentialHash({
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        compatibleCredential: null,
+      });
+
+      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI = "/v2/credentials/old";
+      const withContainerCredentials = __test.adapterCredentialHash({
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        compatibleCredential: null,
+      });
+
+      process.env.AWS_SHARED_CREDENTIALS_FILE = "/tmp/bedrock-credentials";
+      const withSharedCredentialsFile = __test.adapterCredentialHash({
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        compatibleCredential: null,
+      });
+
+      expect(withContainerCredentials).not.toBe(base);
+      expect(withSharedCredentialsFile).not.toBe(withContainerCredentials);
+    } finally {
+      if (savedContainerCredentials === undefined) {
+        delete process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+      } else {
+        process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI = savedContainerCredentials;
+      }
+      if (savedSharedCredentials === undefined) {
+        delete process.env.AWS_SHARED_CREDENTIALS_FILE;
+      } else {
+        process.env.AWS_SHARED_CREDENTIALS_FILE = savedSharedCredentials;
+      }
+    }
+  });
+});

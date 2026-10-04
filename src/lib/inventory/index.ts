@@ -1,0 +1,880 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { CLI_NAME } from "../cli/branding";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
+import type { GatewayInference } from "../inference/config";
+import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
+import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
+import { redactFullWithUrls } from "../security/redact";
+import {
+  getSandboxEntryDisplayInference,
+  isPendingReservationForSession,
+  isPublishedSandboxRegistration,
+  isRouteOnlySandboxReservation,
+  type SandboxMessagingState,
+} from "../state/registry";
+import { resolveDefaultSandboxName } from "../tunnel/service-command";
+
+export interface SandboxEntry {
+  name: string;
+  model?: string | null;
+  provider?: string | null;
+  gpuEnabled?: boolean;
+  hostGpuDetected?: boolean;
+  sandboxGpuEnabled?: boolean;
+  sandboxGpuMode?: string | null;
+  sandboxGpuDevice?: string | null;
+  openshellDriver?: string | null;
+  openshellVersion?: string | null;
+  messaging?: SandboxMessagingState | null;
+  agent?: string | null;
+  dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
+  // Passthrough of the durable registry reservation marker so list and status
+  // hide registrations that have not committed their lifecycle yet.
+  pendingRouteReservation?: true;
+  reservationSessionId?: string;
+  createdAt?: string;
+  // #5714: display-only markers for a sandbox recovered directly from the live
+  // gateway. `recoveredFromGateway` flags that agent/GPU are genuinely unknown
+  // (the gateway sandbox list does not expose them) so the renderer shows
+  // "unknown" instead of the OpenClaw/CPU default; `livePhase` carries the
+  // trusted PHASE column (e.g. Ready) from `openshell sandbox list`. Neither is
+  // part of the durable registry type — they ride only on ephemeral list rows.
+  recoveredFromGateway?: boolean;
+  livePhase?: string | null;
+}
+
+export interface MessagingBridgeHealth {
+  channel: string;
+  conflicts: number;
+}
+
+export interface RecoveryResult {
+  sandboxes: SandboxEntry[];
+  defaultSandbox?: string | null;
+  recoveredFromSession?: boolean;
+  recoveredFromGateway?: number;
+}
+
+interface OnboardingSessionSummary {
+  sessionId?: string | null;
+  resumable?: boolean;
+  status?: string | null;
+  sandboxName?: string | null;
+  lastStepStarted?: string | null;
+  lastCompletedStep?: string | null;
+  failure?: { step?: string | null; interrupted?: boolean } | null;
+  steps?: { sandbox?: { status?: string } | null } | null;
+}
+
+export interface IncompleteOnboarding {
+  name: string;
+  status: "failed" | "in_progress";
+  step: string | null;
+  interrupted: boolean;
+  resumable: true;
+}
+
+export interface ListSandboxesCommandDeps {
+  recoverRegistryEntries: () => Promise<RecoveryResult>;
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
+  /**
+   * Returns the last onboard session's sandbox name and step state. The
+   * step state is needed to filter out phantom names from interrupted
+   * onboards — see #2753.
+   */
+  loadLastSession: () => OnboardingSessionSummary | null;
+  /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
+  log?: (message?: string) => void;
+}
+
+export interface SandboxInventoryRow {
+  name: string;
+  model: string | null;
+  provider: string | null;
+  gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
+  policies: string[];
+  agent: string;
+  dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
+  isDefault: boolean;
+  activeSessionCount: number | null;
+  // #5714: row recovered display-only from the live gateway. Its agent/GPU/
+  // inference state is unknown (the gateway sandbox list does not expose it),
+  // so the renderer shows "unknown" rather than asserting OpenClaw/CPU defaults.
+  // `livePhase` is the trusted PHASE (e.g. Ready) carried from the sandbox list.
+  recoveredFromGateway?: boolean;
+  livePhase?: string | null;
+}
+
+export interface SandboxInventoryResult {
+  schemaVersion: 1;
+  defaultSandbox: string | null;
+  recovery: {
+    recoveredFromSession: boolean;
+    recoveredFromGateway: number;
+  };
+  lastOnboardedSandbox: string | null;
+  incompleteOnboarding: IncompleteOnboarding | null;
+  sandboxes: SandboxInventoryRow[];
+}
+
+export interface MessagingOverlap {
+  channel: string;
+  sandboxes: [string, string];
+  reason?: "matching-token" | "unknown-token" | string;
+  message?: string;
+  port?: number;
+}
+
+export interface GatewayHealth {
+  healthy: boolean;
+  state: string;
+  reason?: string;
+}
+
+export interface ShowStatusCommandDeps {
+  listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
+  showServiceStatus: (options: { sandboxName?: string }) => void;
+  getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
+  /**
+   * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
+   * emits an `SSH sessions:` line under each sandbox row. Returns null when the
+   * probe is not available (e.g. no openshell binary); the line is omitted in
+   * that case. #2604.
+   */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
+  /**
+   * Report whether the named NemoClaw gateway is reachable. When omitted,
+   * `showStatusCommand` keeps its legacy 0-exit behaviour; when provided and
+   * the gateway is unhealthy, `showStatusCommand` emits a `gateway: down`
+   * diagnostic and sets `process.exitCode = 1` so shell and CI callers can
+   * detect the degraded state from `$?` (#3386).
+   */
+  getGatewayHealth?: () => GatewayHealth | Promise<GatewayHealth>;
+  /** Render lifecycle-aware recovery guidance after an unhealthy gateway probe. */
+  getGatewayStartGuidance?: () => string;
+  /** Last authority durably selected by onboarding, with secret-free identity fields. */
+  getGatewayAuthority?: () => GatewayOwnerDescription | null;
+  loadLastSession?: () => OnboardingSessionSummary | null;
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+    agent?: string | null,
+  ) => MessagingBridgeHealth[];
+  findMessagingOverlaps?: () => MessagingOverlap[];
+  readGatewayLog?: (sandboxName: string) => string | null;
+  /** Receipt-only schema-5 phase lookup held by the global portable host fence. */
+  getHermesPortablePhase?: (sandboxName: string) => "pending" | "configuring" | "active" | null;
+  /** Count receipt-root authority so an unregistered phase cannot permit ambient probes. */
+  getHermesPortableHostAuthorityCount?: () => number;
+  log?: (message?: string) => void;
+}
+
+export interface StatusSandboxRow {
+  name: string;
+  model: string | null;
+  provider: string | null;
+  gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
+  policies: string[];
+  agent: string;
+  configuredInference: {
+    provider: string | null;
+    model: string | null;
+  };
+  phase?: "pending" | "configuring" | "active";
+  dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
+  isDefault: boolean;
+}
+
+export interface StatusServiceRow {
+  name: string;
+  running: boolean;
+  pid: number | null;
+}
+
+export interface StatusReport {
+  schemaVersion: 1;
+  defaultSandbox: string | null;
+  liveInference: {
+    provider: string | null;
+    model: string | null;
+  } | null;
+  gatewayHealth: GatewayHealth | null;
+  gatewayAuthority: GatewayOwnerDescription | null;
+  incompleteOnboarding: IncompleteOnboarding | null;
+  sandboxes: StatusSandboxRow[];
+  services: StatusServiceRow[];
+}
+
+function safeStatusString(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return redactFullWithUrls(value);
+}
+
+function projectIncompleteOnboarding(
+  sandboxes: readonly SandboxEntry[],
+  session: OnboardingSessionSummary | null | undefined,
+): IncompleteOnboarding | null {
+  if (
+    !session?.sandboxName ||
+    !session.sessionId ||
+    session.resumable !== true ||
+    (session.status !== "failed" && session.status !== "in_progress")
+  ) {
+    return null;
+  }
+  const reservation = sandboxes.find((sandbox) => sandbox.name === session.sandboxName) ?? null;
+  if (
+    !reservation ||
+    !isRouteOnlySandboxReservation(reservation) ||
+    !isPendingReservationForSession(reservation, session.sessionId)
+  ) {
+    return null;
+  }
+  return {
+    name: safeStatusString(reservation.name) ?? reservation.name,
+    status: session.status,
+    step: safeStatusString(
+      session.failure?.step ?? session.lastStepStarted ?? session.lastCompletedStep,
+    ),
+    interrupted: session.failure?.interrupted === true,
+    resumable: true,
+  };
+}
+
+function renderIncompleteOnboardingText(
+  incomplete: IncompleteOnboarding,
+  log: (message?: string) => void,
+): void {
+  const state = incomplete.interrupted
+    ? "interrupted"
+    : incomplete.status === "failed"
+      ? "failed"
+      : "in progress";
+  const step = incomplete.step ? ` at ${incomplete.step}` : "";
+  log("  Incomplete onboarding:");
+  log(`    ${incomplete.name}  ${state}${step}`);
+  log("      NemoClaw reserved the inference route but did not register the sandbox.");
+  log(`      Resume with \`${CLI_NAME} onboard --resume\`.`);
+  log("");
+}
+
+/**
+ * Resolve the agent every inventory surface reports. The registry stores `null`
+ * or omits `agent` for an OpenClaw sandbox, so text and JSON must resolve that
+ * marker here or they report different agents for the same sandbox.
+ *
+ * #5714: a sandbox recovered display-only from the live gateway has an unknown
+ * agent (the gateway sandbox list does not expose it). Surface "unknown" rather
+ * than the OpenClaw default, which would misrepresent a Hermes or Deep Agents
+ * Code sandbox as OpenClaw.
+ */
+function resolveDisplayAgent(sandbox: SandboxEntry): string {
+  if (sandbox.agent) return sandbox.agent;
+  return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
+}
+
+type PublicSandboxFields = Omit<StatusSandboxRow, "configuredInference" | "phase" | "isDefault">;
+
+async function projectPublicSandboxFields(
+  sandbox: SandboxEntry,
+  inference: { model?: string | null; provider?: string | null },
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<PublicSandboxFields> {
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
+  const dashboardPort =
+    typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
+      ? sandbox.dashboardPort
+      : null;
+  const dashboardExternalUrl = safeStatusString(sandbox.dashboardExternalUrl);
+  return {
+    name: safeStatusString(sandbox.name) ?? sandbox.name,
+    model: safeStatusString(inference.model),
+    provider: safeStatusString(inference.provider),
+    gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice),
+    openshellDriver: safeStatusString(sandbox.openshellDriver),
+    openshellVersion: safeStatusString(sandbox.openshellVersion),
+    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
+      (policy) => safeStatusString(policy) ?? policy,
+    ),
+    agent: safeStatusString(resolveDisplayAgent(sandbox)) ?? "unknown",
+    ...(dashboardPort != null ? { dashboardPort } : {}),
+    ...(dashboardExternalUrl != null ? { dashboardExternalUrl } : {}),
+  };
+}
+
+/**
+ * Project a stored or recovered {@link SandboxEntry} into a display row,
+ * resolving inference/GPU fields and marking gateway-recovered rows so unknown
+ * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
+ */
+async function buildSandboxInventoryRow(
+  sandbox: SandboxEntry,
+  defaultSandbox: string | null,
+  getActiveSessionCount?: (sandboxName: string) => number | null,
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<SandboxInventoryRow> {
+  const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
+  const inference = getSandboxEntryDisplayInference(sandbox);
+  const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
+
+  const row: SandboxInventoryRow = {
+    ...publicFields,
+    isDefault: sandbox.name === defaultSandbox,
+    activeSessionCount,
+    ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
+    ...(sandbox.recoveredFromGateway
+      ? { livePhase: safeStatusString(sandbox.livePhase ?? null) }
+      : {}),
+  };
+  return row;
+}
+
+async function buildSandboxInventory(
+  deps: ListSandboxesCommandDeps,
+  recovery: RecoveryResult,
+): Promise<SandboxInventoryResult> {
+  const resolvedDefault =
+    resolveDefaultSandboxName(() => ({ defaultSandbox: recovery.defaultSandbox ?? null })) ?? null;
+  const lastSession = deps.loadLastSession();
+  // #2753: only surface the last-onboarded name when its sandbox step
+  // actually completed. Otherwise an interrupted onboard would leave the
+  // name in the session and the empty-state hint would resurrect it.
+  const lastOnboardedSandbox =
+    lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
+      ? lastSession.sandboxName
+      : null;
+  const incompleteOnboarding = projectIncompleteOnboarding(recovery.sandboxes, lastSession);
+
+  const rows = await Promise.all(
+    recovery.sandboxes
+      .filter(isPublishedSandboxRegistration)
+      .map((sandbox) =>
+        buildSandboxInventoryRow(
+          sandbox,
+          resolvedDefault,
+          deps.getActiveSessionCount,
+          deps.getPolicyPresets,
+        ),
+      ),
+  );
+  return {
+    schemaVersion: 1,
+    defaultSandbox: safeStatusString(resolvedDefault),
+    recovery: {
+      recoveredFromSession: recovery.recoveredFromSession === true,
+      recoveredFromGateway: recovery.recoveredFromGateway || 0,
+    },
+    lastOnboardedSandbox: safeStatusString(lastOnboardedSandbox),
+    incompleteOnboarding,
+    // Pending rows are internal lifecycle state. They remain readable by their
+    // recovery authority, but must not appear as completed sandboxes.
+    sandboxes: rows,
+  };
+}
+
+export async function getSandboxInventory(
+  deps: ListSandboxesCommandDeps,
+): Promise<SandboxInventoryResult> {
+  return buildSandboxInventory(deps, await deps.recoverRegistryEntries());
+}
+
+interface InventoryRouteDrift {
+  model: boolean;
+  provider: boolean;
+}
+
+/**
+ * Render the `nemoclaw list` output. For the default sandbox (the one the
+ * cluster-wide gateway is currently serving) the live gateway `model`/
+ * `provider` take precedence over the onboarded snapshot so the CLI agrees
+ * with `openshell inference get` (#2369); when they drift from stored values
+ * an explicit live-gateway annotation is appended. Non-default sandboxes keep
+ * their stored config — the gateway only applies to one sandbox at a time,
+ * and each non-default sandbox swaps the gateway back to its stored config on
+ * its next `connect`. Falls back to stored values when `liveInference` is
+ * `null` (gateway unreachable).
+ */
+export function renderSandboxInventoryText(
+  inventory: SandboxInventoryResult,
+  log: (message?: string) => void = console.log,
+  liveInference: GatewayInference | null = null,
+  routeDrift?: InventoryRouteDrift,
+): void {
+  if (inventory.sandboxes.length === 0) {
+    log("");
+    if (inventory.incompleteOnboarding) {
+      renderIncompleteOnboardingText(inventory.incompleteOnboarding, log);
+      return;
+    } else if (inventory.lastOnboardedSandbox) {
+      log(
+        `  No sandboxes registered locally, but the last onboarded sandbox was '${inventory.lastOnboardedSandbox}'.`,
+      );
+      log(
+        `  Retry \`${CLI_NAME} <name> connect\` or \`${CLI_NAME} <name> status\` once the gateway/runtime is healthy.`,
+      );
+    } else {
+      log(`  No sandboxes registered. Run \`${CLI_NAME} onboard\` to get started.`);
+    }
+    log("");
+    return;
+  }
+
+  log("");
+  if (inventory.recovery.recoveredFromSession) {
+    log("  Recovered sandbox inventory from the last onboard session.");
+    log("");
+  }
+  if (inventory.recovery.recoveredFromGateway > 0) {
+    const count = inventory.recovery.recoveredFromGateway;
+    log(
+      `  Recovered ${count} sandbox entr${count === 1 ? "y" : "ies"} from the live OpenShell gateway.`,
+    );
+    log("");
+  }
+  if (inventory.incompleteOnboarding) {
+    renderIncompleteOnboardingText(inventory.incompleteOnboarding, log);
+  }
+  log("  Sandboxes:");
+  for (const sandbox of inventory.sandboxes) {
+    const liveModel = sandbox.isDefault ? safeStatusString(liveInference?.model) : null;
+    const liveProvider = sandbox.isDefault ? safeStatusString(liveInference?.provider) : null;
+    const def = sandbox.isDefault ? " *" : "";
+    const model = liveModel || sandbox.model || "unknown";
+    const provider = liveProvider || sandbox.provider || "unknown";
+    const modelDrifted = sandbox.isDefault
+      ? (routeDrift?.model ?? !!(liveModel && liveModel !== sandbox.model))
+      : false;
+    const providerDrifted = sandbox.isDefault
+      ? (routeDrift?.provider ?? !!(liveProvider && liveProvider !== sandbox.provider))
+      : false;
+    // #5714: a gateway-recovered row's GPU state is unknown — the gateway
+    // sandbox list does not expose it — so don't assert "CPU sandbox" (which
+    // would mislead DGX users whose GPU sandbox's registry entry was lost).
+    const gpu = sandbox.recoveredFromGateway
+      ? "GPU: unknown"
+      : sandbox.sandboxGpuEnabled
+        ? "sandbox GPU"
+        : "CPU sandbox";
+    const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
+    const sessionDot = (sandbox.activeSessionCount ?? 0) > 0 ? " ●" : "";
+    const agent = sandbox.agent;
+    // #5714: for a gateway-recovered row, surface the trusted live PHASE
+    // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
+    // `nemoclaw <name> status`; normal registry rows have no live phase.
+    const phase = sandbox.recoveredFromGateway ? `  phase: ${sandbox.livePhase || "unknown"}` : "";
+    log(`    ${sandbox.name}${def}${sessionDot}`);
+    log(
+      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}${phase}  policies: ${presets}`,
+    );
+    if (modelDrifted || providerDrifted) {
+      const parts: string[] = [];
+      if (modelDrifted) parts.push(`model=${sandbox.model || "unknown"}`);
+      if (providerDrifted) parts.push(`provider=${sandbox.provider || "unknown"}`);
+      log(`      (live OpenShell gateway differs from onboarded: ${parts.join(", ")})`);
+    }
+    if (sandbox.dashboardExternalUrl != null) {
+      log(`      dashboard: ${sandbox.dashboardExternalUrl}`);
+    } else if (sandbox.dashboardPort != null) {
+      log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/`);
+    }
+  }
+  log("");
+  log("  * = default sandbox");
+  log("");
+}
+
+export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Promise<void> {
+  const log = deps.log ?? console.log;
+  const recovery = await deps.recoverRegistryEntries();
+  const inventory = await buildSandboxInventory(deps, recovery);
+  const liveInference = inventory.sandboxes.length > 0 ? await deps.getLiveInference() : null;
+  const resolvedDefault = resolveDefaultSandboxName(() => ({
+    defaultSandbox: recovery.defaultSandbox ?? null,
+  }));
+  const defaultEntry = recovery.sandboxes.find((sandbox) => sandbox.name === resolvedDefault);
+  const storedInference = defaultEntry ? getSandboxEntryDisplayInference(defaultEntry) : null;
+  const routeDrift = liveInference
+    ? {
+        model: !!(liveInference.model && liveInference.model !== storedInference?.model),
+        provider: !!(
+          liveInference.provider && liveInference.provider !== storedInference?.provider
+        ),
+      }
+    : undefined;
+  renderSandboxInventoryText(inventory, log, liveInference, routeDrift);
+}
+
+async function buildStatusSandboxRow(
+  sandbox: SandboxEntry,
+  defaultSandbox: string | null,
+  liveInference: GatewayInference | null,
+  portablePhase: "pending" | "configuring" | "active" | null,
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<StatusSandboxRow> {
+  const isDefault = sandbox.name === defaultSandbox;
+  const liveModel = isDefault ? liveInference?.model : null;
+  const liveProvider = isDefault ? liveInference?.provider : null;
+  const configuredInference = getSandboxEntryDisplayInference(sandbox);
+  // Preserve schema-version-1 `model`/`provider` semantics for existing
+  // consumers while publishing this sandbox's recorded route explicitly.
+  const publicFields = await projectPublicSandboxFields(
+    sandbox,
+    {
+      model: liveModel || configuredInference.model,
+      provider: liveProvider || configuredInference.provider,
+    },
+    getPolicyPresets,
+  );
+  return {
+    ...publicFields,
+    configuredInference: {
+      provider: safeStatusString(configuredInference.provider),
+      model: safeStatusString(configuredInference.model),
+    },
+    ...(portablePhase ? { phase: portablePhase } : {}),
+    isDefault,
+  };
+}
+
+function normalizeServiceStatus(service: StatusServiceRow): StatusServiceRow {
+  return {
+    name: safeStatusString(service.name) || service.name,
+    running: service.running === true,
+    pid: service.running && Number.isFinite(service.pid) ? service.pid : null,
+  };
+}
+
+function normalizeGatewayHealth(health: GatewayHealth | null | undefined): GatewayHealth | null {
+  if (!health) return null;
+  return {
+    healthy: health.healthy === true,
+    state: safeStatusString(health.state) || "unknown",
+    ...(health.reason ? { reason: safeStatusString(health.reason) || "unknown" } : {}),
+  };
+}
+
+function normalizeGatewayAuthority(
+  authority: GatewayOwnerDescription | null | undefined,
+): GatewayOwnerDescription | null {
+  if (!authority) return null;
+  const gatewayName = safeStatusString(authority.gatewayName);
+  const source = safeStatusString(authority.source);
+  const endpoint = safeStatusString(authority.endpoint);
+  const supervisor = authority.supervisor
+    ? {
+        kind: authority.supervisor.kind,
+        serviceName: safeStatusString(authority.supervisor.serviceName) ?? "unknown",
+        execPath: safeStatusString(authority.supervisor.execPath) ?? "unknown",
+      }
+    : null;
+  return {
+    gatewayName: gatewayName ?? "unknown",
+    gatewayPort: authority.gatewayPort,
+    mode: authority.mode,
+    source:
+      source === "declared" || source === "packaged-service" || source === "standalone"
+        ? source
+        : "standalone",
+    endpoint,
+    supervisor,
+    requiredCapabilities: authority.requiredCapabilities.map(
+      (capability) => safeStatusString(capability) ?? "unknown",
+    ),
+  };
+}
+
+export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<StatusReport> {
+  const sandboxList = deps.listSandboxes();
+  // Pending registrations are recovery state, not normal sandbox inventory.
+  const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
+  const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
+  const portablePhases = new Map(
+    sandboxes.flatMap((sandbox) => {
+      const phase = deps.getHermesPortablePhase?.(sandbox.name) ?? null;
+      return phase ? ([[sandbox.name, phase]] as const) : [];
+    }),
+  );
+  const portableAuthorityCount = deps.getHermesPortableHostAuthorityCount?.() ?? 0;
+  if (portableAuthorityCount !== portablePhases.size) {
+    throw new Error(
+      "Global status cannot inspect an experimental Hermes portable receipt without an exact registry row. Resume its existing onboarding transaction first.",
+    );
+  }
+  const hasHermesPortable = portableAuthorityCount > 0;
+  const incompleteOnboarding = projectIncompleteOnboarding(
+    sandboxList.sandboxes,
+    deps.loadLastSession?.(),
+  );
+  const liveInference =
+    sandboxes.length > 0 && !hasHermesPortable ? await deps.getLiveInference() : null;
+  const gatewayHealth =
+    deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
+      ? await deps.getGatewayHealth()
+      : null;
+  const services = !hasHermesPortable
+    ? (deps
+        .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
+        .map(normalizeServiceStatus) ?? [])
+    : [];
+
+  const rows = await Promise.all(
+    sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(
+        sandbox,
+        resolvedDefault,
+        liveInference,
+        portablePhases.get(sandbox.name) ?? null,
+        deps.getPolicyPresets,
+      ),
+    ),
+  );
+  return {
+    schemaVersion: 1,
+    defaultSandbox: safeStatusString(resolvedDefault),
+    liveInference: liveInference
+      ? {
+          provider: safeStatusString(liveInference.provider),
+          model: safeStatusString(liveInference.model),
+        }
+      : null,
+    gatewayHealth: normalizeGatewayHealth(gatewayHealth),
+    gatewayAuthority: hasHermesPortable
+      ? null
+      : normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
+    incompleteOnboarding,
+    sandboxes: rows,
+    services,
+  };
+}
+
+/**
+ * Render the `nemoclaw status` output (no sandbox name): a compact per-row
+ * listing followed by gateway/service status and messaging-bridge warnings.
+ * For the default sandbox the per-row `(model)` prefers the live gateway
+ * model so it agrees with `openshell inference get` (#2369); when it drifts
+ * from the stored onboarded model a `(onboarded: …)` line is appended.
+ * Non-default rows and the unreachable-gateway case fall back to stored.
+ * The labeled `Inference (configured): …` line always reports this
+ * sandbox's own recorded provider/model, never the shared live gateway
+ * route, so a different sandbox's stop/start cannot change what this line
+ * reports (#11412).
+ */
+export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<void> {
+  const log = deps.log ?? console.log;
+  const sandboxList = deps.listSandboxes();
+  // Pending registrations are recovery state, not normal sandbox inventory.
+  const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
+  const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
+  const portablePhases = new Map(
+    sandboxes.flatMap((sandbox) => {
+      const phase = deps.getHermesPortablePhase?.(sandbox.name) ?? null;
+      return phase ? ([[sandbox.name, phase]] as const) : [];
+    }),
+  );
+  const portableAuthorityCount = deps.getHermesPortableHostAuthorityCount?.() ?? 0;
+  if (portableAuthorityCount !== portablePhases.size) {
+    throw new Error(
+      "Global status cannot inspect an experimental Hermes portable receipt without an exact registry row. Resume its existing onboarding transaction first.",
+    );
+  }
+  const hasHermesPortable = portableAuthorityCount > 0;
+  const incompleteOnboarding = projectIncompleteOnboarding(
+    sandboxList.sandboxes,
+    deps.loadLastSession?.(),
+  );
+  log("");
+  log("  Global status (registered sandboxes and host services):");
+  if (sandboxes.length > 0) {
+    const live = hasHermesPortable ? null : await deps.getLiveInference();
+    log("  Sandboxes:");
+    for (const sb of sandboxes) {
+      const isDefault = sb.name === resolvedDefault;
+      const def = isDefault ? " *" : "";
+      // Prefer the live gateway model for the default sandbox so `status`
+      // agrees with `openshell inference get` (#2369).
+      const liveModel = safeStatusString(isDefault && live ? live.model : null);
+      const liveProvider = safeStatusString(isDefault && live ? live.provider : null);
+      const inference = getSandboxEntryDisplayInference(sb);
+      const storedModel = safeStatusString(inference.model);
+      const storedProvider = safeStatusString(inference.provider);
+      const liveRouteDrifted = Boolean(
+        (liveModel && liveModel !== storedModel) ||
+        (liveProvider && liveProvider !== storedProvider),
+      );
+      const model = liveModel || storedModel;
+      const name = safeStatusString(sb.name) ?? "unknown";
+      const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
+      log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      const externalDashboardUrl = safeStatusString(sb.dashboardExternalUrl);
+      if (externalDashboardUrl) {
+        log(`      Dashboard URL: ${externalDashboardUrl}`);
+      }
+      const portablePhase = portablePhases.get(sb.name);
+      if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
+      if (isDefault && live?.model && live.model !== inference.model) {
+        log(`      (onboarded: ${storedModel || "unknown"})`);
+      }
+      // #2604: surface the configured Inference (provider/model) and the
+      // SSH-session count as labeled fields. Bare `nemoclaw status` previously
+      // only had the model in parens above — users had to run
+      // `nemoclaw <name> status` to see provider and session state.
+      // #11412: this line is documented and labeled "configured", so it must
+      // always show this sandbox's own recorded provider/model, never the
+      // shared live gateway route (that would silently show one sandbox's
+      // "configured" line as another sandbox's route after a stop/start
+      // realigns the one shared route).
+      const configuredParts = [storedProvider ?? "unknown", storedModel ?? "unknown"];
+      log(`      Inference (configured): ${configuredParts.join(" / ")}`);
+      if (liveRouteDrifted) {
+        const parts = [liveProvider, liveModel].filter(Boolean).join(" / ");
+        log(`      Inference (live): ${parts}`);
+      }
+      if (deps.getActiveSessionCount && !portablePhase) {
+        const count = deps.getActiveSessionCount(sb.name);
+        if (count !== null) {
+          log(`      SSH sessions: ${count > 0 ? count : "none"}`);
+        }
+      }
+    }
+    log("");
+  }
+  if (incompleteOnboarding) {
+    renderIncompleteOnboardingText(incompleteOnboarding, log);
+  }
+
+  const gatewayAuthority = hasHermesPortable
+    ? null
+    : normalizeGatewayAuthority(deps.getGatewayAuthority?.());
+  if (gatewayAuthority) {
+    const owner = gatewayAuthority.supervisor
+      ? `${gatewayAuthority.supervisor.kind} ${gatewayAuthority.supervisor.serviceName} (${gatewayAuthority.supervisor.execPath})`
+      : gatewayAuthority.source;
+    log(`  Gateway authority: ${gatewayAuthority.mode}`);
+    log(`    Owner: ${owner}`);
+    if (gatewayAuthority.endpoint) {
+      log(`    Endpoint: ${gatewayAuthority.endpoint}`);
+    }
+    log("");
+  }
+
+  // Surface gateway health between the sandbox list and the host-service
+  // list, since the gateway sits logically between the two. When the named
+  // gateway is unhealthy we also set process.exitCode = 1 so shell scripts
+  // and CI can detect the degraded state from `$?` (#3386). The exit code is
+  // set, not thrown — JSON callers (`status --json`) remain unaffected and
+  // the rest of the report keeps printing. A clean machine with no registered
+  // sandboxes has no expectation of a configured gateway, so the check is
+  // suppressed in that case to avoid a spurious failure exit code.
+  if (deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable) {
+    const health = await deps.getGatewayHealth();
+    if (!health.healthy) {
+      log("");
+      const detail = health.reason ? ` (${health.reason})` : "";
+      log(`  gateway: down [${health.state}]${detail}`);
+      log(`    ${(deps.getGatewayStartGuidance ?? gatewayStartGuidance)()}`);
+      process.exitCode = 1;
+    }
+  }
+
+  if (!hasHermesPortable) deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
+
+  if (deps.findMessagingOverlaps && !hasHermesPortable) {
+    const overlaps = deps.findMessagingOverlaps();
+    if (overlaps.length > 0) {
+      log("");
+      for (const { channel, sandboxes: pair, reason, message, port } of overlaps) {
+        if (message) {
+          log(`  ⚠ ${formatMessagingOverlapMessage(message, channel, pair, { port })}`);
+          continue;
+        }
+        const detail =
+          reason === "matching-token"
+            ? `share the same ${channel} credential`
+            : `may share a ${channel} credential; stored credential hashes are incomplete`;
+        log(
+          `  ⚠ '${pair[0]}' and '${pair[1]}' ${detail}. Only one bridge can poll/connect per credential.`,
+        );
+      }
+      log(
+        `    Run \`${CLI_NAME} <sandbox> channels stop <channel>\` to pause one bridge, or \`${CLI_NAME} <sandbox> channels remove <channel>\` to remove stale bridge metadata.`,
+      );
+    }
+  }
+
+  if (deps.checkMessagingBridgeHealth && resolvedDefault && !hasHermesPortable) {
+    const refreshed = deps.listSandboxes().sandboxes;
+    const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
+    const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);
+    if (channels.length > 0) {
+      const degraded = deps.checkMessagingBridgeHealth(
+        resolvedDefault,
+        channels,
+        defaultEntry?.agent,
+      );
+      if (degraded.length > 0) {
+        log("");
+        for (const { channel, conflicts } of degraded) {
+          log(`  ⚠ ${channel} bridge: degraded (${conflicts} conflict errors in /tmp/gateway.log)`);
+        }
+        log(
+          "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.mdx.",
+        );
+
+        // Surface gateway log tail for Hermes sandboxes when messaging is degraded.
+        if (deps.readGatewayLog && defaultEntry?.agent === "hermes") {
+          const logTail = deps.readGatewayLog(resolvedDefault);
+          if (logTail) {
+            log("");
+            log("  Messaging gateway log (last 10 lines):");
+            for (const line of logTail.split("\n")) {
+              log(`    ${line}`);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+function formatMessagingOverlapMessage(
+  template: string,
+  channel: string,
+  pair: readonly [string, string],
+  values: { readonly port?: number } = {},
+): string {
+  return template
+    .replaceAll("{channel}", channel)
+    .replaceAll("{first}", pair[0])
+    .replaceAll("{second}", pair[1])
+    .replaceAll("{port}", values.port === undefined ? "" : String(values.port));
+}

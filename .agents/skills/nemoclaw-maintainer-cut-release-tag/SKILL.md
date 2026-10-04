@@ -1,136 +1,70 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Cut a new semver release — bump all version strings via bump-version.ts, open a release PR, and after merge tag main and push. Use when cutting a release, tagging a version, shipping a build, or preparing a deployment. Trigger keywords - cut tag, release tag, new tag, cut release, tag version, ship it.
+description: "Prepare and cut one signed NemoClaw semver release tag, then follow release workflows and draft the Announcement."
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Cut Release Tag
 
-Bump all version strings, open a release PR, and after merge create annotated semver + `latest` tags on `origin/main`.
+Cut one signed annotated semver tag from a generated plan. Use the release scripts for tag writes.
+Use [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for maintainer-requested workflow
+dispatches. Do not improvise tag, push, version-bump, or other release-state GitHub writes.
 
-This skill delegates the version-bump work to `scripts/bump-version.ts` (invoked via `npm run bump:version`). That script updates package.json (root + plugin), blueprint.yaml, installer defaults, docs config, and versioned doc links — then runs the build and tests before opening a PR.
+Treat these as separate states:
 
-## Prerequisites
+- **Tag can be cut:** the release entry and required image checks pass.
+  The maintainer chooses to proceed with the displayed documentation coverage and general E2E state.
+  The release brief records both decisions and contains no unresolved prompts.
+- **Tag cut:** the remote signed tag exists and peels to the planned candidate.
+- **Post-tag follow-through:** after reporting the tag as cut, continue the same task. Monitor
+  `latest`, release labels, public documentation, and release images. Draft the Announcement and
+  report `lkg` state.
 
-- You must be in the NemoClaw git repository.
-- You must have push access to `origin` (NVIDIA/NemoClaw).
-- The nightly E2E suite should have passed before tagging. Check with the user if unsure.
+## Hard Rules
 
-## Step 1: Determine the Current Version
+- Use the requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
+- Tag only the candidate captured in the plan.
+- By default, plan `origin/main` without an exception. For urgent QA qualification, a maintainer may
+  select a historical ancestor with `--candidate <full-sha> --exception <reason>`.
+- Require the release entry for a current-main plan. A historical plan records its explicit
+  release-entry exception in the signed release brief.
+- Treat documentation coverage as maintainer context, not a tag gate. Show the coverage point,
+  later commits and PRs, review and check state, changed paths, and open managed docs PRs.
+- Record the maintainer's documentation decision in the signed release brief.
+- Require applicable GHCR base and managed-image publication evidence.
+- Treat E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
+  maintainer run focused tests, run the full suite, or proceed with the displayed status.
+- Record every displayed or requested E2E result and the decision in the release brief, the signed
+  Markdown release record. Record a plain-language exception reason when the status is exceptional
+  or a requested run remains unresolved.
+- Pass the final release brief to `release:cut` with `--message-file`. The file becomes the
+  signed tag annotation; do not maintain another exception record.
+- Ask the maintainer to paste the plan's full confirmation phrase before cutting.
+- Push only the planned semver tag. Never push or move `latest` or `lkg` here.
+- Report the tag as cut immediately after remote readback. This report is a progress checkpoint, not
+  the final response.
+- Continue the same task through post-tag follow-through. Do not make a post-tag result a tag gate.
+- Ask before a workflow rerun. Never create a GitHub Discussion.
+- Never move, delete, or replace an existing remote semver tag unless the maintainer starts a
+  protected-tag remediation.
+- Follow the [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md) and
+  the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
 
-Fetch all tags and find the latest semver tag:
+## Work to the requested outcome
 
-```bash
-git fetch origin --tags
-git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1
-```
+- **Prepare:** follow [Prepare the Release](references/prepare-release.md) and its linked candidate
+  evidence. Start independent read-only checks early and prepare authorized documentation during
+  image waits. Keep the planned candidate immutable.
+- **Cut:** after the final brief is reviewable and the required confirmation is supplied, follow
+  [Cut and Follow Through](references/cut-and-follow-through.md). Its tag readback establishes tag success.
+- **Follow through:** continue the same task through automatic release workflows, the local
+  Announcement draft, and `lkg` classification using the same reference.
+- **Recover:** use [Recovery](references/recovery.md) for failed evidence or post-tag work. Retain the
+  specific rerun authorization and immutable-tag boundaries.
 
-Parse the major, minor, and patch components from this tag.
-
-## Step 2: Ask the User Which Bump
-
-Present the options with the **patch bump as default**:
-
-- **Patch** (default): `vX.Y.(Z+1)` — bug fixes, small changes
-- **Minor**: `vX.(Y+1).0` — new features, larger changes
-- **Major**: `v(X+1).0.0` — breaking changes
-
-Show the concrete version strings. Example prompt:
-
-> Current tag: `v0.0.2`
->
-> Which version bump?
->
-> 1. **Patch** → `v0.0.3` (default)
-> 2. **Minor** → `v0.1.0`
-> 3. **Major** → `v1.0.0`
-
-Wait for the user to confirm before proceeding. If they just say "yes", "go", "do it", or similar, use the patch default.
-
-## Step 3: Show What's Being Tagged
-
-Show the user the commit that will be tagged and the changelog since the last tag:
-
-```bash
-git log --oneline origin/main -1
-git log --oneline <previous-tag>..origin/main
-```
-
-Ask for confirmation before proceeding.
-
-## Step 4: Run the Version Bump Script
-
-First, preview the plan with `--dry-run`:
-
-```bash
-npm run bump:version -- <version-without-v-prefix> --dry-run
-```
-
-Show the dry-run output to the user. After confirmation, ask the user which mode they want:
-
-### Option A: PR mode (default, recommended)
-
-```bash
-npm run bump:version -- <version-without-v-prefix>
-```
-
-This will:
-
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Create a `release/<version>` branch and open a release PR against `main`
-
-In PR mode, tagging is deferred — proceed to Step 5 after the PR merges.
-
-### Option B: Direct mode (no PR)
-
-```bash
-npm run bump:version -- <version-without-v-prefix> --no-create-pr --push
-```
-
-This will:
-
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Commit directly on `main`
-4. Create annotated `v<version>` and `latest` tags
-5. Push the commit and both tags to origin
-
-In direct mode, tagging and pushing are handled by the script — skip to Step 6.
-
-If the user wants to skip tests (e.g., they already ran them), add `--skip-tests` to either mode.
-
-## Step 5: Create and Push Tags (PR mode only, after PR merge)
-
-Skip this step if you used direct mode in Step 4 — the script already tagged and pushed.
-
-Once the release PR is merged into `main`, create the annotated tag, move `latest`, and push:
-
-```bash
-git fetch origin main --tags
-git tag -a <new-version> origin/main -m "<new-version>"
-
-# Move the latest tag (delete old, create new)
-git tag -d latest 2>/dev/null || true
-git tag -a latest origin/main -m "latest"
-
-# Push both tags (force-push latest since it moves)
-git push origin <new-version>
-git push origin latest --force
-```
-
-## Step 6: Verify
-
-```bash
-git ls-remote --tags origin | grep -E '(<new-version>|latest)'
-```
-
-Confirm both tags point to the same commit on the remote.
-
-## Important Notes
-
-- NEVER tag without explicit user confirmation of the version.
-- NEVER tag a branch other than `origin/main`.
-- Always use annotated tags (`-a`), not lightweight tags.
-- The `latest` tag is a floating tag that always points to the most recent release — it requires `--force` to push.
-- The version string passed to `npm run bump:version` should NOT have a `v` prefix (e.g., `0.0.3`, not `v0.0.3`). The script adds the `v` prefix for tags internally.
+The release confirmation protects a signed public tag. Do not apply that confirmation requirement
+to preliminary reads or already-authorized preparation. Report tag success as a progress checkpoint;
+report final completion only after the follow-through conditions are classified.

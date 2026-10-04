@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Data-only reference for the experimental runtime identity contract.
+# The direct runner validates this complete credential-delivery shape before
+# import, including the Microsoft-controlled destinations, exact executable
+# allowlist, and Graph /v1.0/me endpoint rule. OpenShell owns refresh-token
+# custody, access-token rotation, sandbox placeholders, and post-policy
+# injection. Copy this file and replace "organizations" in the token URL with
+# the Microsoft Entra tenant ID used by the delegated application.
+id: entra-runtime-v1
+display_name: Microsoft Entra Runtime Credentials v1
+description: Gateway-managed Microsoft Graph access-token refresh for an attached sandbox
+category: agent
+credentials:
+  - name: ENTRA_ACCESS_TOKEN
+    description: Short-lived delegated Microsoft Graph access token
+    env_vars:
+      - ENTRA_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://login.microsoftonline.com/organizations/oauth2/v2.0/token
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: refresh_token
+          required: true
+          secret: true
+        - name: client_secret
+          required: false
+          secret: true
+endpoints:
+  - host: graph.microsoft.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/v1.0/me" }
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

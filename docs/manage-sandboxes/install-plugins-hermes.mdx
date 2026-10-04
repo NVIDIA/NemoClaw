@@ -1,0 +1,117 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Install Hermes Plugins"
+sidebar-title: "Install Hermes Plugins"
+description: "Install and manage Hermes plugins and lazy dependencies inside a NemoClaw sandbox."
+description-agent: "Explains native Hermes user-plugin discovery, durable lazy dependencies, restarts and rebuilds, network policy, and the OpenShell credential boundary."
+keywords: ["install hermes plugins", "hermes lazy dependencies", "nemoclaw hermes plugins", "Hermes user plugins"]
+content:
+  type: "how_to"
+skill:
+  priority: 40
+agent-variants: ["hermes"]
+---
+
+Hermes owns its plugin and package lifecycle after NemoClaw onboarding.
+NemoClaw sets `HERMES_HOME` to `/sandbox/.hermes`; Hermes discovers user plugins
+under `$HERMES_HOME/plugins` and uses `$HERMES_HOME/lazy-packages` for native
+lazy dependencies.
+
+NemoClaw does not maintain a plugin allowlist, reset user packages, or require
+user plugins to be baked into the sandbox image. Its built-in integration
+remains part of the shipped runtime, while user-installed plugins and packages
+remain ordinary Hermes state.
+
+## Install and Discover a User Plugin
+
+Follow the plugin's Hermes installation instructions and place its complete
+plugin directory under the native user-plugin root:
+
+```bash
+nemohermes <name> exec -- mkdir -p /sandbox/.hermes/plugins
+nemohermes <name> exec -- hermes plugins list
+```
+
+Use the plugin identifier reported by Hermes when a plugin documents an
+enablement step. For example:
+
+```bash
+nemohermes <name> exec -- hermes plugins enable <plugin-id>
+nemohermes <name> gateway restart
+nemohermes <name> exec -- hermes plugins list
+```
+
+Update or remove the plugin through its native Hermes/package installation
+mechanism, then restart the gateway when the plugin requires it. NemoClaw does
+not copy, reconcile, or restore an image-owned version over the user plugin.
+
+`nemohermes <name> skill install <path>` installs an agent skill, not a Hermes
+runtime plugin.
+
+## Install Lazy Dependencies
+
+Hermes' durable lazy package target is:
+
+```text
+/sandbox/.hermes/lazy-packages
+```
+
+The direct root-entrypoint and OpenShell-managed topologies use this same
+native location. The directory is shared with the Hermes gateway through the
+container's supported group permissions; it is not copied into a private
+NemoClaw runtime directory and it is not reset at startup.
+
+Hermes commands that support lazy dependencies populate this target themselves.
+For package downloads, first add the relevant policy, such as `pypi`, or a
+custom policy for the approved package host.
+
+Do not install user dependencies into `/opt/hermes/.venv`, and do not put
+`HERMES_LAZY_INSTALL_TARGET` in `/sandbox/.hermes/.env`. NemoClaw supplies the
+native target when it starts the runtime.
+
+## Restart and Rebuild
+
+Apply startup-time plugin changes through the supervised controller:
+
+```bash
+nemohermes <name> gateway restart
+nemohermes <name> status
+```
+
+Hermes user plugins and lazy packages live in the agent's native home, so they
+survive native restart and the complete native-home transfer performed by a
+state-preserving rebuild or restore without a NemoClaw plugin ownership record:
+
+```bash
+nemohermes <name> rebuild --yes
+nemohermes <name> exec -- hermes plugins list
+```
+
+A fresh onboarding with `--fresh` intentionally creates a new state boundary.
+
+## Network and Credential Boundaries
+
+Hermes plugins still run inside OpenShell network policy. Permit only the
+package registries and runtime endpoints the plugin needs. Python-backed plugins
+usually require the policy to name `/opt/hermes/.venv/bin/python` as an allowed
+binary.
+
+Never copy credentials into `/sandbox/.hermes/plugins`,
+`/sandbox/.hermes/lazy-packages`, `.env`, or `config.yaml`. Use the supported
+NemoClaw/OpenShell credential flow. OpenShell-held credential values must not be
+projected into plugin-visible files or ordinary process environments.
+
+## Common Mistakes
+
+- Do not use `skill install` for Hermes runtime plugins.
+- Do not put Hermes plugins under `/sandbox/.openclaw/extensions`.
+- Do not create a second NemoClaw-side plugin inventory or allowlist.
+- Do not bake user plugins into a custom image solely for persistence.
+- Do not install lazy dependencies into the root Hermes virtual environment.
+- Do not assume package or service egress is allowed without a policy.
+
+## Next Steps
+
+- Review [Customize Network Policy](../network-policy/customize-network-policy) if a plugin needs package or service egress.
+- Review [Understand Runtime Changes](configure-sandboxes/understand-runtime-changes) before changing runtime configuration.

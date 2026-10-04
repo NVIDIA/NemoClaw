@@ -8,6 +8,7 @@
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -15,6 +16,27 @@
     "moduleDetection": "force",
     "types": ["node"]
   },
-  "include": ["bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts", "nemoclaw-blueprint/scripts/**/*.ts"],
-  "exclude": ["node_modules", "nemoclaw", "scripts/gbrain-patches", "scripts/chad-smithers"]
+  "include": [
+    ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/**/*.mts",
+    ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+    ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
+    "agents/hermes/**/*.ts",
+    "bin/**/*.ts",
+    "scripts/**/*.ts",
+    "scripts/**/*.mts",
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "tools/**/*.ts",
+    "tools/**/*.mts",
+    "nemoclaw-blueprint/scripts/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "nemoclaw",
+    "test/e2e/fixtures/plugins/weather",
+    "tools/mcp-tool-discovery-runtime/mcp-tool-discovery.ts",
+    "tools/mcp-tool-discovery-runtime/streamable-http-client.test.ts",
+    "scripts/gbrain-patches",
+    "scripts/chad-smithers"
+  ]
 }

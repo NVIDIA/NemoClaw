@@ -1,35 +1,26 @@
 <!-- markdownlint-disable MD041 -->
-## Summary
-<!-- 1-3 sentences: what this PR does and why. -->
+## Outcome
+<!-- State the result first. Describe the before-and-after behavior in 1–3 sentences. -->
 
-## Related Issue
-<!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->
+## Reason
+<!-- Explain why this change is needed. -->
+
+### Related issues
+<!-- Name each issue relationship with the keyword that applies, such as Fixes, Closes, Resolves, Refs, Relates to, or Part of. Remove this subsection if no issue applies. -->
 
 ## Changes
-<!-- Bullet list of key changes. -->
-
-## Type of Change
-
-- [ ] Code change (feature, bug fix, or refactor)
-- [ ] Code change with doc updates
-- [ ] Doc only (prose changes, no code sample modifications)
-- [ ] Doc only (includes code sample changes)
+<!-- List the concrete changes that produce the stated outcome. If this adds a mechanism, name its current requirement and consumer. Explain why a direct change is insufficient. Identify the test that protects the mechanism. -->
 
 ## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. -->
-- [ ] `npx prek run --all-files` passes
-- [ ] `npm test` passes
-- [ ] Tests added or updated for new or changed behavior
-- [ ] No secrets, API keys, or credentials committed
-- [ ] Docs updated for user-facing behavior changes
-- [ ] `make docs` builds without warnings (doc changes only)
-- [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
-- [ ] New doc pages include SPDX header and frontmatter (new pages only)
+<!-- List each completed command or manual check and its result. If no test applies, explain why. For a broad change, record the applicable broad gate and result. Do not claim a gate that you did not run. For documentation changes, record the docs build result and applicable style or new-page checks. Confirm that the diff contains no secrets, API keys, or credentials. -->
+- `command or check` — result
 
-## AI Disclosure
-<!-- If an AI agent authored or co-authored this PR, check the box and name the tool. Remove this section for fully human-authored PRs. -->
-- [ ] AI-assisted — tool: <!-- e.g., Claude Code, Cursor, GitHub Copilot -->
+## Review notes
+<!-- Remove this section if no note applies.
+For a sensitive-path change, record the review context or maintainer-approved waiver.
+For an accepted non-success, skipped, or missing CI check, name the check, approval link, and follow-up issue.
+If scripts/prepare-dgx-station-host.sh changes, identify the tested commit, Station profile or scenario, result, and supporting link. Maintainers must review that evidence before merge. If repository governance permits an exception, document the reason. -->
 
 ---
-<!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->
+<!-- DCO sign-off is required in this PR description. Every commit must appear as Verified in GitHub. -->
 Signed-off-by: Your Name <your-email@example.com>

@@ -1,0 +1,21 @@
+{
+  "$schema": "../schema.json",
+  "id": "gemini-3-managed-inference",
+  "agent": "openclaw",
+  "description": "Classifies the managed inference.local route as Google Generative AI for Gemini 3.x tool-call thought-signature compatibility.",
+  "match": {
+    "modelIdPrefixes": ["gemini-3"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawPlugins": [
+      {
+        "id": "nemoclaw-gemini-inference-compat",
+        "path": "openclaw-plugins/gemini-inference-compat",
+        "loadPath": "/usr/local/share/nemoclaw/openclaw-plugins/gemini-inference-compat"
+      }
+    ]
+  }
+}

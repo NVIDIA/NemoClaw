@@ -1,0 +1,1040 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const dockerMocks = vi.hoisted(() => ({
+  build: vi.fn(),
+  capture: vi.fn(),
+  imageInspect: vi.fn(),
+  imageInspectFormat: vi.fn(),
+  infoFormat: vi.fn(),
+  pull: vi.fn(),
+}));
+const traceMocks = vi.hoisted(() => ({
+  add: vi.fn(),
+}));
+const sourceMocks = vi.hoisted(() => ({
+  inputsDirty: vi.fn(),
+  inputsChanged: vi.fn(),
+  nearestTags: vi.fn(),
+}));
+const heartbeatMocks = vi.hoisted(() => ({
+  run: vi.fn((operation: () => unknown, _options?: { activity?: string }) => operation()),
+}));
+
+vi.mock("./adapters/docker", () => ({
+  dockerBuild: dockerMocks.build,
+  dockerCapture: dockerMocks.capture,
+  dockerImageInspect: dockerMocks.imageInspect,
+  dockerImageInspectFormat: dockerMocks.imageInspectFormat,
+  dockerInfoFormat: dockerMocks.infoFormat,
+  dockerPull: dockerMocks.pull,
+}));
+
+vi.mock("./trace", () => ({
+  addTraceEvent: traceMocks.add,
+}));
+
+vi.mock("./sandbox-base-image/local-build-heartbeat", () => ({
+  withLocalBuildHeartbeat: heartbeatMocks.run,
+}));
+
+vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
+  baseImageInputsDirty: sourceMocks.inputsDirty,
+  baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
+}));
+
+import {
+  createSandboxBaseImageBuildProvenanceKey,
+  createSandboxBaseImageResolutionKey,
+  OPENSHELL_SANDBOX_MIN_GLIBC,
+  resolveSandboxBaseImage,
+  SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
+  SandboxBaseImageResolutionError,
+  type SandboxBaseImageResolutionMetadata,
+} from "./sandbox-base-image";
+
+const IMAGE_NAME = "ghcr.io/nvidia/nemoclaw/sandbox-base";
+const DIGEST = `sha256:${"a".repeat(64)}`;
+const REF = `${IMAGE_NAME}@${DIGEST}`;
+const IMAGE_ID = `sha256:${"b".repeat(64)}`;
+
+function resolutionOptions() {
+  return {
+    imageName: IMAGE_NAME,
+    dockerfilePath: path.join(process.cwd(), "Dockerfile.base"),
+    localTag: "nemoclaw-sandbox-base-local:test",
+    rootDir: process.cwd(),
+    env: {
+      ...process.env,
+      GITHUB_SHA: "1234567890abcdef1234567890abcdef12345678",
+    },
+    requireOpenshellSandboxAbi: false,
+  };
+}
+
+function mockLocalFallback(
+  options: ReturnType<typeof resolutionOptions>,
+  provenance: string,
+): void {
+  dockerMocks.imageInspect.mockImplementation((imageRef: string) => ({
+    status: imageRef === options.localTag ? 0 : 1,
+  }));
+  dockerMocks.imageInspectFormat.mockReturnValue(
+    JSON.stringify({
+      Id: IMAGE_ID,
+      RepoDigests: [],
+      Os: "linux",
+      Architecture: "amd64",
+      Config: {
+        Labels: {
+          [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance,
+        },
+      },
+    }),
+  );
+  dockerMocks.pull.mockReturnValue({ status: 1 });
+}
+
+function localResolutionHint(
+  options: ReturnType<typeof resolutionOptions>,
+  key = createSandboxBaseImageResolutionKey(options),
+): SandboxBaseImageResolutionMetadata {
+  return {
+    schema: 1,
+    key,
+    imageName: IMAGE_NAME,
+    ref: options.localTag,
+    digest: null,
+    source: "local",
+    imageId: IMAGE_ID,
+    os: "linux",
+    architecture: "amd64",
+    glibcVersion: null,
+    requireOpenshellSandboxAbi: false,
+    minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+  };
+}
+
+describe("sandbox base-image warm resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
+    sourceMocks.inputsDirty.mockReturnValue(false);
+    sourceMocks.inputsChanged.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: IMAGE_ID,
+        RepoDigests: [REF],
+        Os: "linux",
+        Architecture: "amd64",
+      }),
+    );
+  });
+
+  it("reuses locally proven RepoDigests metadata without inspecting candidates or pulling (#4680)", () => {
+    dockerMocks.pull.mockImplementation(() => {
+      throw new Error("network unavailable");
+    });
+    const options = resolutionOptions();
+    const metadata: SandboxBaseImageResolutionMetadata = {
+      schema: 1,
+      key: createSandboxBaseImageResolutionKey(options),
+      imageName: IMAGE_NAME,
+      ref: REF,
+      digest: DIGEST,
+      source: "version-tag",
+      imageId: IMAGE_ID,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: null,
+      requireOpenshellSandboxAbi: false,
+      minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+    };
+
+    const resolved = resolveSandboxBaseImage({ ...options, resolutionHint: metadata });
+
+    expect(resolved).toEqual({
+      ref: REF,
+      digest: DIGEST,
+      source: "version-tag",
+      glibcVersion: null,
+      metadata,
+    });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(dockerMocks.capture).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_hit", {
+      source: "version-tag",
+      digest_pinned: true,
+    });
+    expect(traceMocks.add).not.toHaveBeenCalledWith(
+      "nemoclaw.sandbox_base_image.cache_miss",
+      expect.anything(),
+    );
+  });
+
+  it("lets force refresh bypass a valid rebuild hint (#4680)", () => {
+    const options = resolutionOptions();
+    const metadata: SandboxBaseImageResolutionMetadata = {
+      schema: 1,
+      key: createSandboxBaseImageResolutionKey(options),
+      imageName: IMAGE_NAME,
+      ref: REF,
+      digest: DIGEST,
+      source: "version-tag",
+      imageId: IMAGE_ID,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: null,
+      requireOpenshellSandboxAbi: false,
+      minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(
+      resolveSandboxBaseImage({ ...options, resolutionHint: metadata, forceRefresh: true }),
+    ).toBeNull();
+    expect(dockerMocks.imageInspect).toHaveBeenCalled();
+    expect(dockerMocks.pull).toHaveBeenCalled();
+    expect(heartbeatMocks.run).toHaveBeenCalledTimes(dockerMocks.pull.mock.calls.length);
+    expect(heartbeatMocks.run.mock.calls.every((call) => call[1]?.activity === "pull")).toBe(true);
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_miss", {
+      has_hint: true,
+    });
+  });
+
+  it("resolves an explicit override instead of reusing a stale default hint (#4680)", () => {
+    const options = {
+      ...resolutionOptions(),
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: REF,
+      },
+    };
+    const staleHint: SandboxBaseImageResolutionMetadata = {
+      schema: 1,
+      key: "stale-default-key",
+      imageName: IMAGE_NAME,
+      ref: REF,
+      digest: DIGEST,
+      source: "latest",
+      imageId: IMAGE_ID,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: null,
+      requireOpenshellSandboxAbi: false,
+      minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({ ...options, resolutionHint: staleHint });
+
+    expect(resolved).toMatchObject({ ref: REF, digest: DIGEST, source: "override" });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "key_mismatch",
+    });
+  });
+
+  it("rejects a local alias that only retains an upstream repository digest (#7144)", () => {
+    const localRef = "nemoclaw-sandbox-base-local:e2e-current";
+    const options = {
+      ...resolutionOptions(),
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: localRef,
+      },
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    expect(() => resolveSandboxBaseImage(options)).toThrowError("outside the trusted repository");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("rejects an override outside the trusted base-image repository (#5896)", () => {
+    const options = resolutionOptions();
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "registry.example/unreviewed/base:latest",
+        },
+      }),
+    ).toThrow("outside the trusted repository 'ghcr.io/nvidia/nemoclaw/sandbox-base'");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("rejects a floating trusted override when Docker cannot prove its digest (#5896)", () => {
+    const options = resolutionOptions();
+    const floatingRef = `${IMAGE_NAME}:published`;
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.imageInspectFormat.mockReturnValue("[]");
+    dockerMocks.pull.mockReturnValue({ status: 0 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: floatingRef,
+        },
+      }),
+    ).toThrow("could not be resolved to an immutable trusted digest");
+    expect(dockerMocks.pull).toHaveBeenCalledWith(floatingRef, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  });
+
+  it("refreshes a floating override before reading its repository digest (#5896)", () => {
+    const options = resolutionOptions();
+    const floatingRef = `${IMAGE_NAME}:published`;
+    const refreshedDigest = `sha256:${"d".repeat(64)}`;
+    const events: string[] = [];
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.pull.mockImplementation(() => {
+      events.push("pull");
+      return { status: 0 };
+    });
+    dockerMocks.imageInspectFormat.mockImplementation(() => {
+      events.push("inspect-digest");
+      return JSON.stringify([`${IMAGE_NAME}@${refreshedDigest}`]);
+    });
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...options.env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: floatingRef,
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: `${IMAGE_NAME}@${refreshedDigest}`,
+      digest: refreshedDigest,
+      source: "override",
+    });
+    expect(events[0]).toBe("pull");
+    expect(events).toContain("inspect-digest");
+  });
+
+  it("accepts a local override backed by the current build proof (#5896)", () => {
+    const options = resolutionOptions();
+    const imageId = `sha256:${"c".repeat(64)}`;
+    const localRef = `nemoclaw-sandbox-base-local:image-${"c".repeat(64)}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockImplementation((format: string) =>
+      format === "{{.Id}}"
+        ? imageId
+        : JSON.stringify({
+            Id: imageId,
+            RepoDigests: [],
+            Os: "linux",
+            Architecture: "amd64",
+            Config: {
+              Labels: {
+                [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance,
+              },
+            },
+          }),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...options.env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: localRef,
+      },
+      trustedLocalOverride: { ref: localRef, provenance },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: localRef,
+      digest: null,
+      source: "local",
+      metadata: { imageId, source: "local" },
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("accepts a temporary rebuild handoff override backed by the current build proof", () => {
+    const options = resolutionOptions();
+    const imageId = `sha256:${"c".repeat(64)}`;
+    const handoffRef = `nemoclaw-sandbox-base-local:rebuild-343338-${"a".repeat(16)}-image-${"c".repeat(64)}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockImplementation((format: string) =>
+      format === "{{.Id}}"
+        ? imageId
+        : JSON.stringify({
+            Id: imageId,
+            RepoDigests: [],
+            Os: "linux",
+            Architecture: "amd64",
+            Config: {
+              Labels: {
+                [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance,
+              },
+            },
+          }),
+    );
+
+    try {
+      const resolved = resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
+        },
+        trustedLocalOverride: { ref: handoffRef, provenance },
+      });
+
+      expect(resolved).toMatchObject({
+        ref: handoffRef,
+        digest: null,
+        source: "local",
+        metadata: { imageId, source: "local" },
+      });
+      expect(dockerMocks.pull).not.toHaveBeenCalled();
+    } finally {
+      dockerMocks.imageInspectFormat.mockReset();
+    }
+  });
+
+  it.each([
+    ["zero process ID", `rebuild-0-${"a".repeat(16)}-image-${"c".repeat(64)}`],
+    ["leading-zero process ID", `rebuild-0343338-${"a".repeat(16)}-image-${"c".repeat(64)}`],
+    ["short nonce", `rebuild-343338-${"a".repeat(15)}-image-${"c".repeat(64)}`],
+    ["non-hex nonce", `rebuild-343338-${"z".repeat(16)}-image-${"c".repeat(64)}`],
+    ["extra suffix", `rebuild-343338-${"a".repeat(16)}-image-${"c".repeat(64)}-moved`],
+  ])("rejects a temporary handoff with a malformed %s", (_case, tag) => {
+    const options = resolutionOptions();
+    const handoffRef = `nemoclaw-sandbox-base-local:${tag}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: `sha256:${"c".repeat(64)}`,
+        RepoDigests: [],
+        Os: "linux",
+        Architecture: "amd64",
+        Config: { Labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } },
+      }),
+    );
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
+        },
+        trustedLocalOverride: { ref: handoffRef, provenance },
+      }),
+    ).toThrow("outside the trusted repository");
+  });
+
+  it("rejects a copied provenance label without the current build proof (#5896)", () => {
+    const options = resolutionOptions();
+    const imageId = `sha256:${"c".repeat(64)}`;
+    const localRef = `nemoclaw-sandbox-base-local:image-${"c".repeat(64)}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: imageId,
+        RepoDigests: [],
+        Os: "linux",
+        Architecture: "amd64",
+        Config: { Labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } },
+      }),
+    );
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: localRef,
+        },
+      }),
+    ).toThrow("is not backed by the current NemoClaw build operation");
+  });
+
+  it("rejects a matching image-ID override without current-checkout provenance (#5896)", () => {
+    const options = resolutionOptions();
+    const imageId = `sha256:${"c".repeat(64)}`;
+    const localRef = `nemoclaw-sandbox-base-local:image-${"c".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: imageId,
+        RepoDigests: [],
+        Os: "linux",
+        Architecture: "amd64",
+        Config: { Labels: {} },
+      }),
+    );
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: localRef,
+        },
+      }),
+    ).toThrow("is not backed by the current NemoClaw build operation");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("rejects a local override whose image-ID tag is stale (#5896)", () => {
+    const options = resolutionOptions();
+    const localRef = `nemoclaw-sandbox-base-local:image-${"c".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({ Id: `sha256:${"d".repeat(64)}` }),
+    );
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: localRef,
+        },
+      }),
+    ).toThrow("does not match its content-addressed image ID");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when offline and no cached image can be validated (#4680)", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+      },
+    });
+
+    expect(resolved).toBeNull();
+    expect(dockerMocks.pull).toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_validation", {
+      source: "source-sha",
+      present: false,
+    });
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.remote_pull", {
+      source: "source-sha",
+    });
+  });
+
+  it("rebuilds a local fallback when corporate CA build inputs change (#8119)", () => {
+    const buildArgs = { NEMOCLAW_CORPORATE_CA_B64: "second-public-ca" };
+    const options = {
+      ...resolutionOptions(),
+      buildArgs,
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+      validateImage: () => true,
+    };
+    const previousProvenance = `${createSandboxBaseImageBuildProvenanceKey({
+      ...options,
+      buildArgs: { NEMOCLAW_CORPORATE_CA_B64: "first-public-ca" },
+    })}.${"c".repeat(64)}`;
+    mockLocalFallback(options, previousProvenance);
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    expect(resolveSandboxBaseImage(options)).toMatchObject({ source: "local" });
+    expect(dockerMocks.build).toHaveBeenCalledWith(
+      options.dockerfilePath,
+      options.localTag,
+      options.rootDir,
+      expect.objectContaining({
+        buildArgs,
+        labels: {
+          [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: expect.stringMatching(
+            new RegExp(`^${createSandboxBaseImageBuildProvenanceKey(options)}\\.[0-9a-f]{64}$`),
+          ),
+        },
+      }),
+    );
+  });
+
+  it("rebuilds a local fallback when the current build omits the previous corporate CA input (#8119)", () => {
+    const options = {
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+      validateImage: () => true,
+    };
+    const previousProvenance = `${createSandboxBaseImageBuildProvenanceKey({
+      ...options,
+      buildArgs: { NEMOCLAW_CORPORATE_CA_B64: "first-public-ca" },
+    })}.${"c".repeat(64)}`;
+    mockLocalFallback(options, previousProvenance);
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    expect(resolveSandboxBaseImage(options)).toMatchObject({ source: "local" });
+    expect(dockerMocks.build).toHaveBeenCalledWith(
+      options.dockerfilePath,
+      options.localTag,
+      options.rootDir,
+      expect.objectContaining({
+        buildArgs: undefined,
+        labels: {
+          [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: expect.stringMatching(
+            new RegExp(`^${createSandboxBaseImageBuildProvenanceKey(options)}\\.[0-9a-f]{64}$`),
+          ),
+        },
+      }),
+    );
+  });
+
+  it("reuses a local fallback with current build provenance (#8119)", () => {
+    const options = {
+      ...resolutionOptions(),
+      buildArgs: { NEMOCLAW_CORPORATE_CA_B64: "current-public-ca" },
+      validateImage: () => true,
+    };
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"c".repeat(64)}`;
+    mockLocalFallback(options, provenance);
+
+    expect(resolveSandboxBaseImage(options)).toMatchObject({ source: "local" });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_fallback_reuse");
+  });
+
+  it("fails closed instead of trusting an existing local tag when base inputs are dirty (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when base inputs changed and the local rebuild fails (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({ status: 1, stderr: "local rebuild failed" });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith("local rebuild failed");
+    error.mockRestore();
+  });
+
+  it("redacts a local rebuild spawn error before logging it", () => {
+    const token = ["spawn", "secret", "token"].join("-");
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({
+      status: null,
+      error: new Error(`spawn docker EACCES: Bearer ${token}`),
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    const logged = error.mock.calls.flat().join("\n");
+    expect(logged).toContain("spawn docker EACCES");
+    expect(logged).toContain("process launch failed");
+    expect(logged).not.toContain(token);
+    error.mockRestore();
+  });
+
+  it("rebuilds dirty base inputs before considering published or existing local candidates (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_INSTALL_REF: "v0.0.31",
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: "nemoclaw-sandbox-base-local:test",
+      source: "local",
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the image rebuilt from changed inputs misses the required ABI (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.build.mockReturnValue({ status: 0 });
+    dockerMocks.capture.mockReturnValue("ldd (GNU libc) 2.38");
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+        requireOpenshellSandboxAbi: true,
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an exact cached version image before committed branch divergence (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.pull.mockImplementation(() => {
+      throw new Error("air-gapped");
+    });
+    const options = resolutionOptions();
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      env: { ...options.env, NEMOCLAW_INSTALL_REF: "v0.0.31" },
+    });
+
+    expect(resolved).toMatchObject({ source: "version-tag" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:v0.0.31`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("uses an exact source-SHA image before rebuilding committed branch inputs (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage(resolutionOptions());
+
+    expect(resolved).toMatchObject({ source: "source-sha" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:12345678`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("uses a Dockerfile-pinned remote image before moving published tags (#4680)", () => {
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === REF ? 0 : 1,
+    }));
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+    });
+
+    expect(resolved).toMatchObject({
+      ref: REF,
+      source: "pinned",
+      pinnedRemoteRef: REF,
+      metadata: expect.objectContaining({
+        pinnedRemoteRef: REF,
+      }),
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicitly trusted pin instead of an available source-SHA image", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+    });
+
+    expect(resolved).toMatchObject({ ref: REF, source: "pinned" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rejects required pin mode without a pinned remote reference (#10826)", () => {
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        requirePinnedRemoteRef: true,
+      }),
+    ).toThrow("Sandbox base image requires a non-empty pinned remote reference.");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("uses a proven local image after a required remote pin fails (#10826)", () => {
+    const options = resolutionOptions();
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"c".repeat(64)}`;
+    mockLocalFallback(options, provenance);
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+    });
+
+    expect(resolved).toMatchObject({ ref: options.localTag, source: "local" });
+    const dockerOptions = { ignoreError: true, suppressOutput: true };
+    expect(dockerMocks.pull.mock.calls).toEqual([[REF, dockerOptions]]);
+    expect(dockerMocks.imageInspect.mock.calls).toEqual([
+      [REF, dockerOptions],
+      [options.localTag, dockerOptions],
+    ]);
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("reuses a validated local hint when new fallback is disabled (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(
+      options,
+      createSandboxBaseImageResolutionKey(requestOptions),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...requestOptions,
+      resolutionHint: metadata,
+    });
+
+    expect(resolved).toMatchObject({ ref: options.localTag, source: "local", metadata });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith("{{json .}}", options.localTag, {
+      ignoreError: true,
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rejects local fallback after a stale resolution key fails validation (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(options, "stale-resolution-key");
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() => resolveSandboxBaseImage({ ...requestOptions, resolutionHint: metadata })).toThrow(
+      "Local base image fallback is disabled for this operation.",
+    );
+
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspectFormat).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "key_mismatch",
+    });
+  });
+
+  it("rejects local fallback after the recorded local image changes (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = {
+      ...localResolutionHint(options, createSandboxBaseImageResolutionKey(requestOptions)),
+      imageId: `sha256:${"c".repeat(64)}`,
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() => resolveSandboxBaseImage({ ...requestOptions, resolutionHint: metadata })).toThrow(
+      "Local base image fallback is disabled for this operation.",
+    );
+
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "local_image_changed",
+    });
+  });
+
+  it("rejects local fallback when forced refresh bypasses a valid hint (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(
+      options,
+      createSandboxBaseImageResolutionKey(requestOptions),
+    );
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...requestOptions,
+        resolutionHint: metadata,
+        forceRefresh: true,
+      }),
+    ).toThrow("Local base image fallback is disabled for this operation.");
+
+    expect(dockerMocks.imageInspectFormat).not.toHaveBeenCalled();
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.force_refresh");
+  });
+
+  it("rejects a local fallback when a rebuild requires the pinned image (#10903)", () => {
+    const options = resolutionOptions();
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"c".repeat(64)}`;
+    mockLocalFallback(options, provenance);
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        pinnedRemoteRef: REF,
+        requirePinnedRemoteRef: true,
+        allowLocalFallback: false,
+      }),
+    ).toThrow("Local base image fallback is disabled for this operation.");
+
+    expect(dockerMocks.pull).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds changed inputs before using a Dockerfile-pinned baseline (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+      pinnedRemoteRef: REF,
+    });
+
+    expect(resolved).toMatchObject({
+      ref: "nemoclaw-sandbox-base-local:test",
+      source: "local",
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(REF, expect.anything());
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an exact source-SHA image only when no release tag is discoverable (#4680)", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage(resolutionOptions());
+
+    expect(resolved).toMatchObject({ source: "source-sha" });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+});

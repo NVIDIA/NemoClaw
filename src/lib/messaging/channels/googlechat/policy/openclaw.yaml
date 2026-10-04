@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: googlechat
+  description: "Google Chat (Chat API) message send and inbound JWT verification certs; the outbound token is minted gateway-side, never in the sandbox"
+
+network_policies:
+  googlechat:
+    name: googlechat
+    endpoints:
+      # Chat REST API: send/update/delete messages and read spaces.
+      - host: chat.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        # Write methods are scoped to the Chat REST `spaces` tree (not "/**") so
+        # the bot can only send/edit/delete within Chat spaces. Mutations are
+        # POST/PATCH/DELETE — the Chat API defines no PUT for these resources.
+        rules:
+          # Reads: spaces, messages, members across the Chat REST v1 tree.
+          - allow: { method: GET, path: "/v1/**" }
+          # Send a message: POST /v1/spaces/{space}/messages.
+          - allow: { method: POST, path: "/v1/spaces/**" }
+          # PATCH is how OpenClaw edits a message in place while streaming a
+          # reply (spaces.messages.patch): it POSTs a placeholder ("… is
+          # typing"), then PATCHes that message as tokens arrive. Without this
+          # the edit is policy-denied (403), the placeholder is never replaced,
+          # and the final text lands as a separate message.
+          - allow: { method: PATCH, path: "/v1/spaces/**" }
+          # Delete a message: DELETE /v1/spaces/{space}/messages/{id}.
+          - allow: { method: DELETE, path: "/v1/spaces/**" }
+      # Inbound JWT verification certs: public keys, GET-only, no credential
+      # rewrite. Broad GET /** (not pinned) because google-auth-library owns the
+      # cert paths and switches URL/format by version — pinning risks breaking
+      # inbound verification on a plugin bump. Matches other presets' /**.
+      - host: www.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

@@ -1,226 +1,174 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to NVIDIA NemoClaw
 
-Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
+Thank you for contributing to NVIDIA NemoClaw. A contribution is ready for review when it makes
+the smallest complete change, includes appropriate validation, and follows the pull request
+template. Substantive product, architecture, security, integration, or supported-surface work also
+requires an accepted scope decision.
 
-## Before You Open an Issue
+All participants must follow our [Code of Conduct](CODE_OF_CONDUCT.md). Report security
+vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue.
 
-Open an issue when you encounter one of the following situations.
+## Choose a Contribution Path
 
-- A real bug that you confirmed and could not fix.
-- A feature proposal with a design — not a "please build this" request.
-- Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
+Start with an existing accepted issue when possible. New contributors can browse
+[good first issues](https://github.com/NVIDIA/NemoClaw/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
+Search open issues and pull requests before proposing new work.
 
-## Prerequisites
+Use the path that matches your contribution:
 
-Install the following before you begin.
+- **Bug or focused improvement:** Open an issue with observable behavior, reproduction evidence, and
+  the desired outcome.
+- **Larger feature or design:** Start a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions)
+  so the problem and design can settle before implementation.
+- **Documentation correction:** Open a focused pull request and follow the
+  [documentation contributor guide](docs/CONTRIBUTING.md).
+- **Integration, recipe, custom image, or supported solution:** Confirm an accepted product decision
+  before implementation. The [product scope gate](AGENTS.md#product-scope-gate) defines this
+  requirement and the route for independent community solutions.
 
-- Node.js 22.16+ and npm 10+
-- Python 3.11+ (for blueprint and documentation builds)
-- Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for Python dependency management)
-- [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
+Before substantive work begins, a maintainer must record the decision, reason, placement, accountable
+maintainer, and validation plan in the issue or linked discussion. Small documentation corrections
+and low-risk fixes can proceed directly to a pull request.
 
-## Getting Started
+Questions also belong in [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) or on
+a related issue.
 
-Install the root dependencies and build the TypeScript plugin:
+NemoClaw is under active development. Maintainers review issues, discussions, and pull requests on a
+best-effort basis; the project does not guarantee response or review times. See
+[Current Priorities](README.md#current-priorities) for planning context, not a delivery commitment.
 
-```bash
-# Install root dependencies (OpenClaw + CLI entry point)
-npm install
+## Prepare Your Checkout
 
-# Install and build the TypeScript plugin
-cd nemoclaw && npm install && npm run build && cd ..
-
-# Install Python deps for the blueprint
-cd nemoclaw-blueprint && uv sync && cd ..
-```
-
-## Building
-
-The TypeScript plugin lives in `nemoclaw/` and compiles with `tsc`:
-
-```bash
-cd nemoclaw
-npm run build        # one-time compile
-npm run dev          # watch mode
-```
-
-The CLI (`bin/`, `scripts/`) is type-checked separately:
+Install the prerequisites reported by the contributor doctor, then run the supported setup from the
+repository root:
 
 ```bash
-npm run typecheck:cli   # or: npx tsc -p tsconfig.cli.json
+npm run dev:setup
+npm run dev:doctor
 ```
 
-## Main Tasks
+The setup command installs repository-local dependencies, builds and type-checks the CLI and plugin,
+and installs Git hooks. It does not install host packages, change accounts or global Git
+configuration, accept licenses, create credentials, or create a runtime sandbox. The doctor reports
+host, Docker, GitHub authentication, contributor identity, and commit-signing problems without
+changing them. Follow its remediation and rerun the doctor until it
+passes.
 
-These are the primary `make` and `npm` targets for day-to-day development:
+Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
+SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.
+See the [SDK archive guidance](scripts/vendor/openshell-sdk/README.md) for direct dependency installation and SDK updates.
 
-| Task | Purpose |
-|------|---------|
-| `make check` | Run all linters (TypeScript + Python) |
-| `make lint` | Same as `make check` |
-| `make format` | Auto-format TypeScript and Python source |
-| `npm run typecheck:cli` | Type-check CLI TypeScript (`bin/`, `scripts/`) |
-| `npm test` | Run root-level tests (`test/*.test.js`) |
-| `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
-| `make docs` | Build documentation (Sphinx/MyST) |
-| `make docs-live` | Serve docs locally with auto-rebuild |
-| `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
+Use `./scripts/dev-setup.sh --with-runtime` only when the change needs runtime validation. Use
+`./scripts/dev-setup.sh --expose-cli` only when you need a development `nemoclaw` command. Run
+`npm run agent` to launch the repository-pinned coding agent.
 
-### Git hooks (prek)
+The [setup script](scripts/dev-setup.sh) is the source of truth for setup modes. Contributors who use
+a compatible coding agent can use the optional
+[onboarding skill](.agents/skills/nemoclaw-contributor-onboard/SKILL.md). The
+[agent instructions](AGENTS.md#quick-reference) provide a compact command index.
 
-All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-binary pre-commit hook runner installed as a devDependency (`@j178/prek`). The `npm install` step runs `prek install` automatically via the `prepare` script, which wires up the following hooks from [`.pre-commit-config.yaml`](.pre-commit-config.yaml):
+## Make the Change
 
-| Hook | What runs |
-|------|-----------|
-| **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
-| **commit-msg** | commitlint (Conventional Commits) |
-| **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
+Translate the accepted issue or proposed change into observable success criteria. Define the change
+boundary and record assumptions that affect behavior, security, data safety, or a supported contract.
+Get alignment when reasonable interpretations would produce different outcomes.
 
-For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
+Keep every changed line within that boundary. Disclose a necessary scope deviation before making it,
+and report unrelated debt separately. Then implement the smallest complete change. Follow the active `AGENTS.md` files and README files for every path you
+change; the nearest file owns component-specific rules.
 
-If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+Use these guides to find the relevant contract:
 
-`make check` remains the primary documented linter entry point.
+| Work | Owning guidance |
+|---|---|
+| Repository architecture, code conventions, and product scope | [`AGENTS.md`](AGENTS.md) |
+| Ordinary and package-contract tests | [`test/README.md`](test/README.md) |
+| Live E2E selection, authoring, and evidence | [`test/e2e/README.md`](test/e2e/README.md) |
+| E2E logs and artifacts | [`test/e2e/docs/README.md`](test/e2e/docs/README.md) |
+| User documentation | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) |
+| Messaging architecture | [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md) |
+| Explanatory text and test titles | [`WRITING.md`](WRITING.md) |
+| Available npm commands | [`package.json`](package.json) |
+| Git-hook configuration | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) |
+| Blueprint image pins | [`AGENTS.md`](AGENTS.md#blueprint-image-pins) |
 
-## Project Structure
+Do not copy detailed component rules into this guide. Update the owning guide when a change alters a
+component contract.
 
-The repository is organized as follows.
+## Validate the Change
 
-| Path | Purpose |
-|------|---------|
-| `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
-| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
-| `bin/` | CLI entry point (`nemoclaw.js`) |
-| `scripts/` | Install helpers and automation scripts |
-| `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Sphinx/MyST) |
-
-## Language Policy
-
-All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
-
-Existing JavaScript in `bin/` and `scripts/` is being incrementally migrated (see `src/lib/` for completed migrations). Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
-
-Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
-
-## Documentation
-
-If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
-
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `/update-docs` skill that drafts doc updates. Use them before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-
-To build and preview docs locally:
+Run the narrowest tests and checks that prove the outcome. The owning guides above define test
+placement and specialized evidence. Common starting points are:
 
 ```bash
-make docs       # build the docs
-make docs-live  # serve locally with auto-rebuild
+npm run test:changed
 ```
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
+Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
+changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
+changes with `origin/main` and requires a clean worktree. It checks formatting without applying fixes.
+Complete formatting and generated-file updates before the final commit.
+When adding or renaming a hook, classify its read-only behavior in
+`scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
 
-### Doc-to-Skills Pipeline
+Repository checks report per-check durations and select checks from the hook file list, including
+deletions. `npm run checks:repository` still runs every repository check. Compiler checks reuse a
+successful local result only while the recorded inputs and required generated outputs remain unchanged.
 
-The `docs/` directory is the source of truth for user-facing documentation.
-The script `scripts/docs-to-skills.py` converts doc pages into agent skills under `.agents/skills/`.
-These generated skills let AI agents answer user questions and walk through procedures without reading raw doc pages.
+Use the commands defined in [`package.json`](package.json) for component type-checking, builds,
+documentation validation, or focused test projects. Use repository-wide validation only when the
+change has repository-wide impact or targeted validation cannot prove the outcome:
 
-Always edit pages in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-*/` — your changes will be overwritten on the next run.
+- `npm test` runs every non-live test project.
+- `npm run check` runs the repository-wide pre-commit and coverage baseline.
 
-Hand-authored operational workflows belong under `.github/skills/`. Use that path for repo-specific agent procedures, helper scripts, and non-doc skills that must not be regenerated by the docs pipeline.
+Most focused changes do not require both. Record only checks that actually ran and their results.
 
-After changing any page in `docs/`, regenerate the skills. Run the canonical command from the repo root:
+### Reviewed SDK archives in PR CI
 
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
-```
+`CI / Main Branch` packages the approved OpenShell SDK and any approved replacement without executing PR code.
+The package token exists only in that job's download step. PR jobs receive no package credentials.
+They select a retained archive by the base policy's package identities and verify its checksum against that policy and their lockfiles.
+Archives are retained for 90 days and can serve multiple PR commits.
 
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw`) so skill names and locations stay consistent.
+If the archive is missing, run `gh workflow run main.yaml --ref main` and wait for `package-openshell-sdk` to succeed.
+Then rerun PR CI. If the base package policy changed, update the PR against `main` before rerunning.
+A new SDK version must be approved in the base policy before a PR can install it.
 
-Preview what would change before writing files:
+## Submit the Pull Request
 
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --dry-run
-```
+Every pull request requires maintainer review. The applicable open-PR limit is defined in
+[`.github/pr-limits.json`](.github/pr-limits.json); automation closes a pull request that exceeds it.
 
-Other useful flags:
+Do not add links to unofficial repositories, community collections, wrappers, or templates. The
+NVIDIA NemoClaw Community repository is the designated destination for independent solutions; it is
+an NVIDIA repository, not an external project. Link to it directly for examples or contribution
+instructions. Use [Community Solutions](docs/resources/community-contributions.mdx) when readers
+need help choosing the appropriate repository.
 
-| Flag | Purpose |
-|------|---------|
-| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
-| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
-| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.md"`). |
+Before publication:
 
-#### Generated skill structure
+1. Rebase or merge the current target branch as required by the repository workflow.
+2. Run the applicable validation and keep the branch focused.
+3. Use a Conventional Commit message and ensure each commit appears as `Verified` on GitHub.
+4. Complete [the pull request template](.github/PULL_REQUEST_TEMPLATE.md), including the Developer
+   Certificate of Origin declaration and completed validation evidence.
+5. Confirm the diff contains no secrets, API keys, credentials, or unrelated changes.
 
-Each skill directory contains:
+Contributors must repair commit-signature failures. If a published unverified commit cannot be
+replaced, create a compliant branch and pull request. GitHub documents
+[commit verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+and [commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits).
 
-```text
-.agents/skills/<skill-name>/
-├── SKILL.md              # Frontmatter + procedures + related skills
-└── references/           # Detailed concept and reference content (loaded on demand)
-    ├── <concept-page>.md
-    └── <reference-page>.md
-```
+The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) is the source of truth for description
+content and conditional evidence. The [contributor PR skill](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md)
+owns the automated publication and review-follow-up workflow. The root
+[PR requirements](AGENTS.md#pr-requirements) own repository-specific exceptions.
 
-Agents load the `references/` directory only when needed (progressive disclosure).
-The `SKILL.md` itself stays under 500 lines so agents can read it quickly.
-
-## Pull Requests
-
-We welcome contributions. Every PR requires maintainer review. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
-
-> [!WARNING]
-> Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
-
-### No External Project Links
-
-Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
-
-Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
-
-**Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
-
-If you believe an external resource belongs in our docs, open an issue to discuss it with maintainers first.
-
-### Submitting a Pull Request
-
-Follow these steps to submit a pull request.
-
-1. Create a feature branch from `main`.
-2. Make your changes with tests.
-3. Run `make check` and `npm test` to verify.
-4. Open a PR.
-
-### Commit Messages
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow the format:
-
-```text
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer(s)]
-```
-
-**Types:**
-
-- `feat` - New feature
-- `fix` - Bug fix
-- `docs` - Documentation only
-- `chore` - Maintenance tasks (dependencies, build config)
-- `refactor` - Code change that neither fixes a bug nor adds a feature
-- `test` - Adding or updating tests
-- `ci` - CI/CD changes
-- `perf` - Performance improvements
-
-**Examples:**
-
-```text
-feat(cli): add --profile flag to nemoclaw onboard
-fix(blueprint): handle missing API key gracefully
-docs: update quickstart for new install wizard
-chore(deps): bump commander to 13.2
-```
+After each revision, follow CI and review to completion. Address valid findings with a change, or
+explain why they do not apply. Keep the PR description and validation evidence current.

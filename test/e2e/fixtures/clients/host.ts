@@ -1,0 +1,393 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { isAbsolute } from "node:path";
+
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import {
+  assertStockManagedImageReceipt,
+  shouldAssertStockManagedImageReceipt,
+} from "../managed-image-receipt.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
+import { trustedShellCommand } from "../shell-probe.ts";
+import {
+  artifactLabel,
+  assertExitZero,
+  type CommandRunner,
+  outputContainsSandbox,
+  resultText,
+} from "./command.ts";
+
+export interface HostClientOptions {
+  cliPath?: string;
+  cwd?: string;
+  openshellPath?: string;
+}
+
+export interface ForwardCleanupOptions extends ShellProbeRunOptions {
+  gatewayName?: string;
+  sandboxName?: string;
+}
+
+export interface ForwardListenerEvidence {
+  valid: boolean;
+  pid?: number;
+  identity: string;
+  output: string;
+}
+
+const GATEWAY_ALREADY_ABSENT =
+  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
+const GATEWAY_REMOVE_UNSUPPORTED =
+  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+const FORWARD_ALREADY_ABSENT =
+  /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
+
+async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
+  gatewayEndpoint: string;
+  gatewayName: string;
+  workspace: string;
+}> {
+  const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
+    import("../../../../src/lib/core/ports.ts"),
+    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
+    import("../../../../src/lib/onboard/gateway-management.ts"),
+  ]);
+  const { DEFAULT_GATEWAY_PORT, parsePort } = ports;
+  const { getGatewayHttpsEndpoint } = gatewayEnv;
+  const { resolveGatewayName } = gatewayIdentity;
+  const { loadGatewayManagementDeclaration } = gatewayManagement;
+  const gatewayPort = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
+  const configuredDeclaration = env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim();
+  const loaded = configuredDeclaration ? loadGatewayManagementDeclaration({ env }) : null;
+  if (loaded && !loaded.ok) {
+    throw new Error(`Forward listener gateway authority is invalid: ${loaded.reason}`);
+  }
+  const externalEndpoint =
+    loaded?.ok && loaded.declaration?.mode === "externally-supervised"
+      ? loaded.declaration.endpoint
+      : null;
+  return {
+    gatewayEndpoint: externalEndpoint
+      ? new URL(externalEndpoint).origin
+      : new URL(getGatewayHttpsEndpoint(gatewayPort)).origin,
+    gatewayName: env.OPENSHELL_GATEWAY?.trim() || resolveGatewayName(gatewayPort),
+    workspace: env.OPENSHELL_WORKSPACE?.trim() || "default",
+  };
+}
+
+export class HostCliClient {
+  private readonly runner: CommandRunner;
+  private readonly cliPath: string;
+  private readonly cwd?: string;
+  private openshellPath: string;
+
+  constructor(runner: CommandRunner, options: HostClientOptions = {}) {
+    this.runner = runner;
+    this.cliPath = options.cliPath ?? process.env.NEMOCLAW_CLI_BIN ?? "nemoclaw";
+    this.cwd = options.cwd;
+    this.openshellPath = options.openshellPath ?? process.env.OPENSHELL_BIN ?? "openshell";
+  }
+
+  get commandPath(): string {
+    return this.cliPath;
+  }
+
+  get openshellCommandPath(): string {
+    return this.openshellPath;
+  }
+
+  async command(
+    command: string,
+    args: string[] = [],
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const merged: ShellProbeRunOptions = { ...options };
+    if (this.cwd && !merged.cwd) {
+      merged.cwd = this.cwd;
+    }
+    const result = await this.runner.run(
+      trustedShellCommand({
+        command,
+        args,
+        reason: `run host command ${command}`,
+      }),
+      merged,
+    );
+    const environment = merged.env ?? {};
+    if (result.exitCode === 0 && shouldAssertStockManagedImageReceipt(command, args, environment)) {
+      const sandboxName = environment.NEMOCLAW_SANDBOX_NAME?.trim();
+      if (!sandboxName) {
+        throw new Error("stock managed-image receipt assertion requires a sandbox name");
+      }
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: environment.NEMOCLAW_AGENT?.trim(),
+        sandboxName,
+      });
+    }
+    return result;
+  }
+
+  async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {
+    const result = await this.command(
+      "bash",
+      ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", command],
+      {
+        artifactName: `command-available-${artifactLabel(command)}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+        ...options,
+      },
+    );
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === 1) return false;
+    assertExitZero(result, `probe command availability for ${command}`);
+    return false;
+  }
+
+  async resolveOpenShellCommandPath(options: ShellProbeRunOptions = {}): Promise<string> {
+    const result = await this.command(
+      "bash",
+      ["-lc", 'command -v -- "$1"', "resolve-openshell-command", this.openshellPath],
+      {
+        artifactName: "resolve-openshell-command",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+        ...options,
+      },
+    );
+    assertExitZero(result, "resolve OpenShell command path");
+    const candidates = result.stdout.split(/\r?\n/u).filter((line) => line.length > 0);
+    const resolvedPath = candidates[0];
+    if (
+      candidates.length !== 1 ||
+      resolvedPath === undefined ||
+      !isAbsolute(resolvedPath) ||
+      resolvedPath.includes("\0")
+    ) {
+      throw new Error(
+        "resolve OpenShell command path failed: expected exactly one non-empty absolute path",
+      );
+    }
+    this.openshellPath = resolvedPath;
+    return resolvedPath;
+  }
+
+  nemoclaw(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    return this.command(this.cliPath, args, {
+      artifactName: `nemoclaw-${artifactLabel(args.join("-") || "default")}`,
+      ...options,
+    });
+  }
+
+  async expectNemoclawAvailable(): Promise<ShellProbeResult> {
+    const result = await this.nemoclaw(["--version"], {
+      artifactName: "nemoclaw-version",
+      env: buildAvailabilityProbeEnv(),
+    });
+    assertExitZero(result, "nemoclaw --version");
+    return result;
+  }
+
+  async expectListed(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const result = await this.nemoclaw(["list"], {
+      artifactName: `nemoclaw-list-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      ...options,
+    });
+    assertExitZero(result, "nemoclaw list");
+    if (!outputContainsSandbox(result, sandboxName)) {
+      throw new Error(`nemoclaw list did not include '${sandboxName}': ${resultText(result)}`);
+    }
+    return result;
+  }
+
+  async expectStatus(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const result = await this.nemoclaw([sandboxName, "status"], {
+      artifactName: `nemoclaw-status-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      ...options,
+    });
+    assertExitZero(result, `nemoclaw ${sandboxName} status`);
+    return result;
+  }
+
+  async inspectOpenShellForwardListener(
+    port: string,
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ForwardListenerEvidence> {
+    const artifactName = options.artifactName ?? `forward-listener-${port}`;
+    const probeOptions = { ...options, timeoutMs: options.timeoutMs ?? 15_000 };
+    const [before, command] = await Promise.all([
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-before`,
+      }),
+      this.command("which", [this.openshellPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command`,
+      }),
+    ]);
+    const pids = [
+      ...new Set(
+        before.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const pid = pids.length === 1 && /^[1-9]\d*$/u.test(pids[0]!) ? pids[0]! : "";
+    const commandPath = command.stdout.trim();
+    if (!pid || !commandPath) {
+      return {
+        valid: false,
+        identity: "",
+        output: `${resultText(before)}\n${resultText(command)}`,
+      };
+    }
+
+    const [actualExecutable, expectedExecutable, commandLine, after] = await Promise.all([
+      this.command("readlink", ["-f", `/proc/${pid}/exe`], {
+        ...probeOptions,
+        artifactName: `${artifactName}-actual-executable`,
+      }),
+      this.command("readlink", ["-f", commandPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-expected-executable`,
+      }),
+      this.command("ps", ["-ww", "-p", pid, "-o", "args="], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command-line`,
+      }),
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-after`,
+      }),
+    ]);
+    const [{ buildCliOpenShellForwardServiceArgs }, authority] = await Promise.all([
+      import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
+      forwardListenerAuthority(options.env ?? process.env),
+    ]);
+    const target = {
+      ...authority,
+      sandboxName,
+      localHost: "127.0.0.1" as const,
+      port: Number(port),
+    };
+    const expectedCommandLine = [commandPath, ...buildCliOpenShellForwardServiceArgs(target)].join(
+      " ",
+    );
+    const afterPids = [
+      ...new Set(
+        after.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const probes = [before, command, actualExecutable, expectedExecutable, commandLine, after];
+    const identity = `${pid}\t${actualExecutable.stdout.trim()}\t${commandLine.stdout.trim()}`;
+    const valid =
+      probes.every((probe) => probe.exitCode === 0 && !probe.timedOut) &&
+      actualExecutable.stdout.trim() === expectedExecutable.stdout.trim() &&
+      commandLine.stdout.trim() === expectedCommandLine &&
+      afterPids.length === 1 &&
+      afterPids[0] === pid;
+    return {
+      valid,
+      ...(valid ? { pid: Number(pid) } : {}),
+      identity,
+      output: probes.map(resultText).filter(Boolean).join("\n"),
+    };
+  }
+
+  async destroySandbox(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    return await this.nemoclaw([sandboxName, "destroy", "--yes"], {
+      artifactName: `destroy-sandbox-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 15 * 60_000,
+      ...options,
+    });
+  }
+
+  async cleanupSandbox(sandboxName: string, options: ShellProbeRunOptions = {}): Promise<void> {
+    const result = await this.destroySandbox(sandboxName, options);
+    if (result.exitCode === 0) return;
+    const text = resultText(result);
+    if (
+      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i.test(
+        text,
+      )
+    ) {
+      return;
+    }
+    assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+  }
+
+  async cleanupGatewayRegistration(
+    gatewayName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    const artifactName = options.artifactName ?? `cleanup-gateway-${artifactLabel(gatewayName)}`;
+    const remove = await this.command(this.openshellPath, ["gateway", "remove", gatewayName], {
+      ...options,
+      artifactName: `${artifactName}-remove`,
+    });
+    if (remove.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(remove))) return;
+    if (!GATEWAY_REMOVE_UNSUPPORTED.test(resultText(remove))) {
+      assertExitZero(remove, `cleanup gateway registration ${gatewayName}`);
+    }
+
+    // Remove this fallback once the supported OpenShell floor no longer
+    // includes builds whose local-registration verb was `gateway destroy`.
+    const destroy = await this.command(
+      this.openshellPath,
+      ["gateway", "destroy", "-g", gatewayName],
+      {
+        ...options,
+        artifactName: `${artifactName}-legacy-destroy`,
+      },
+    );
+    if (destroy.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(destroy))) return;
+    assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
+  }
+
+  async cleanupForward(port: number, options: ForwardCleanupOptions = {}): Promise<void> {
+    const { gatewayName, sandboxName, ...probeOptions } = options;
+    const scoped = gatewayName !== undefined || sandboxName !== undefined;
+    if (scoped && (!gatewayName?.trim() || !sandboxName?.trim())) {
+      throw new Error("Scoped forward cleanup requires a gateway name and sandbox name.");
+    }
+    const args = ["forward", "stop", String(port)];
+    if (scoped) args.push(sandboxName!.trim(), "--gateway", gatewayName!.trim());
+    const result = await this.command(this.openshellPath, args, {
+      ...probeOptions,
+      artifactName: probeOptions.artifactName ?? `cleanup-forward-${port}`,
+    });
+    if (result.exitCode === 0 || FORWARD_ALREADY_ABSENT.test(resultText(result))) return;
+    assertExitZero(result, `cleanup forward ${port}`);
+  }
+
+  async bestEffortCleanupSandbox(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    try {
+      await this.cleanupSandbox(sandboxName, options);
+    } catch {
+      // Best-effort cleanup must not mask the primary setup or assertion failure.
+    }
+  }
+}

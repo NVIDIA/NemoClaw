@@ -1,0 +1,259 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, it } from "vitest";
+
+describe("ollama auth proxy route ownership", () => {
+  it("preserves a recorded backend and process when its credential is missing", () => {
+    const repoRoot = path.join(import.meta.dirname, "../../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proxy-missing-token-"));
+    const scriptPath = path.join(tmpDir, "missing-token.js");
+    const proxyPath = JSON.stringify(path.join(repoRoot, "src/lib/inference/ollama/proxy.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src/lib/runner.ts"));
+    fs.writeFileSync(
+      scriptPath,
+      String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+const mutations = [];
+childProcess.spawn = () => { mutations.push("spawn"); throw new Error("unexpected spawn"); };
+runner.run = () => { mutations.push("run"); return { status: 0 }; };
+runner.runCapture = () => "";
+require("node:module").syncBuiltinESMExports();
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n");
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n");
+const proxy = require(${proxyPath});
+const errors = [];
+for (const start of [
+  () => proxy.noAuthProxy("http://127.0.0.1:8000/v1"),
+  () => proxy.noAuthProxy("http://127.0.0.1:11434/v1"),
+  () => proxy.startOllamaAuthProxy("http://127.0.0.1:8000"),
+  () => proxy.startOllamaAuthProxy("http://127.0.0.1:11434"),
+]) {
+  try { start(); errors.push(null); } catch (error) { errors.push(error.message); }
+}
+console.log(JSON.stringify({ errors, mutations,
+  backend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8"),
+  pid: fs.readFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "utf8"),
+  tokenExists: fs.existsSync(path.join(stateDir, "ollama-proxy-token")),
+}));
+`,
+    );
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, HOME: tmpDir },
+        timeout: 15000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+      assert.match(payload.errors[0], /already serves another inference backend/);
+      assert.match(payload.errors[1], /credential is missing/);
+      assert.match(payload.errors[2], /already serves another inference backend/);
+      assert.match(payload.errors[3], /credential is missing/);
+      assert.deepEqual(payload.mutations, []);
+      assert.equal(payload.backend, "http://127.0.0.1:11434\n");
+      assert.equal(payload.pid, "4242\n");
+      assert.equal(payload.tokenExists, false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses an identical committed route and rejects a different backend before mutation", () => {
+    const repoRoot = path.join(import.meta.dirname, "../../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-rollback-"));
+    const scriptPath = path.join(tmpDir, "rollback-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+
+const proxySpawns = [];
+const runCommands = [];
+childProcess.spawn = (_cmd, _args, options = {}) => {
+  const pid = [5000, 6000, 7000, 8000][proxySpawns.length];
+  proxySpawns.push({
+    pid,
+    token: options.env && options.env.OLLAMA_PROXY_TOKEN,
+    backendUrl: options.env && options.env.OLLAMA_BACKEND_URL,
+  });
+  return { pid, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (/ps -p (4000|5000|6000|8000)/.test(text)) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("lsof") && text.includes("11435")) return "";
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(command);
+  return { status: 0, stdout: "", stderr: "" };
+};
+
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") return { error: null, status: 0, stdout: "", stderr: "" };
+  if (args[0] === "curl") {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    return { status: 0, stdout: argv.includes("--config") ? "200" : "401", stderr: "" };
+  }
+  return originalSpawnSync(...args);
+};
+require("node:module").syncBuiltinESMExports();
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "committed-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:7000\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4000\n", { mode: 0o600 });
+
+const proxy = require(${proxyPath});
+const prepared = proxy.noAuthProxy("http://127.0.0.1:7000/v1");
+prepared.persist();
+let startupError = "";
+try {
+  proxy.noAuthProxy("http://127.0.0.1:9000/v1");
+} catch (error) {
+  startupError = error.message;
+}
+let ollamaStartupError = "";
+try {
+  proxy.startOllamaAuthProxy();
+} catch (error) {
+  ollamaStartupError = error.message;
+}
+
+console.log(JSON.stringify({
+  proxySpawns,
+  runCommands,
+  startupError,
+  ollamaStartupError,
+  runningToken: proxy.getOllamaProxyToken(),
+  persistedToken: fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
+  persistedBackend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8").trim(),
+  persistedDescriptor: JSON.parse(fs.readFileSync(path.join(stateDir, "ollama-backend.json"), "utf8")),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: tmpDir,
+      NEMOCLAW_VLLM_PORT: "7000",
+    };
+    delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
+    delete childEnv.NEMOCLAW_OLLAMA_PORT;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: childEnv,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+    assert.deepEqual(payload.proxySpawns, [
+      {
+        pid: 5000,
+        token: "committed-token",
+        backendUrl: "http://127.0.0.1:7000",
+      },
+    ]);
+    assert.deepEqual(payload.runCommands, [["kill", "4000"]]);
+    assert.match(payload.startupError, /already serves another inference backend/);
+    assert.match(payload.ollamaStartupError, /already serves another inference backend/);
+    assert.equal(payload.runningToken, "committed-token");
+    assert.equal(payload.persistedToken, "committed-token");
+    assert.equal(payload.persistedBackend, "http://127.0.0.1:7000");
+    assert.deepEqual(payload.persistedDescriptor, {
+      schemaVersion: 1,
+      kind: "compatible-endpoint",
+      url: "http://127.0.0.1:7000",
+    });
+  });
+
+  it("treats token-only legacy state as the local Ollama backend", () => {
+    const repoRoot = path.join(import.meta.dirname, "../../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-legacy-token-"));
+    const scriptPath = path.join(tmpDir, "legacy-token-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+
+const proxySpawns = [];
+childProcess.spawn = (...args) => {
+  proxySpawns.push(args);
+  return { pid: 5000, unref() {} };
+};
+runner.runCapture = () => "";
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+require("node:module").syncBuiltinESMExports();
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "legacy-token\n", { mode: 0o600 });
+
+let startupError = "";
+try {
+  require(${proxyPath}).noAuthProxy("http://127.0.0.1:7000/v1");
+} catch (error) {
+  startupError = error.message;
+}
+
+console.log(JSON.stringify({
+  proxySpawns: proxySpawns.length,
+  startupError,
+  persistedToken: fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
+  backendExists: fs.existsSync(path.join(stateDir, "ollama-backend")),
+  descriptorExists: fs.existsSync(path.join(stateDir, "ollama-backend.json")),
+  portExists: fs.existsSync(path.join(stateDir, "ollama-proxy-port")),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
+    delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
+    delete childEnv.NEMOCLAW_OLLAMA_PORT;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: childEnv,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+    assert.equal(payload.proxySpawns, 0);
+    assert.match(payload.startupError, /already serves another inference backend/);
+    assert.equal(payload.persistedToken, "legacy-token");
+    assert.equal(payload.backendExists, false);
+    assert.equal(payload.descriptorExists, false);
+    assert.equal(payload.portExists, false);
+  });
+});

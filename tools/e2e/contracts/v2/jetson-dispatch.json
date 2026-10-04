@@ -1,0 +1,116 @@
+{
+  "license": "Apache-2.0",
+  "contractVersion": "2.0.0",
+  "request": {
+    "schemaVersion": 2,
+    "target": "jetson-nvmap-gpu",
+    "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "managedImageRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "workflowRunId": "123456789",
+    "workflowRunAttempt": 1
+  },
+  "queuedResponse": {
+    "job": {
+      "schemaVersion": 2,
+      "jobId": "73a2b98ae61e454cf0677bd244f277eb723a522e3f15feecd65eb7f31a4bc2f4",
+      "request": {
+        "schemaVersion": 2,
+        "target": "jetson-nvmap-gpu",
+        "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "managedImageRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflowRunId": "123456789",
+        "workflowRunAttempt": 1
+      },
+      "state": "queued",
+      "createdAt": "2026-08-24T00:00:00.000Z",
+      "cleanup": "pending"
+    }
+  },
+  "completedStatus": {
+    "schemaVersion": 2,
+    "jobId": "73a2b98ae61e454cf0677bd244f277eb723a522e3f15feecd65eb7f31a4bc2f4",
+    "request": {
+      "schemaVersion": 2,
+      "target": "jetson-nvmap-gpu",
+      "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "managedImageRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workflowRunId": "123456789",
+      "workflowRunAttempt": 1
+    },
+    "state": "completed",
+    "conclusion": "success",
+    "createdAt": "2026-08-24T00:00:00.000Z",
+    "startedAt": "2026-08-24T00:00:01.000Z",
+    "completedAt": "2026-08-24T00:01:00.000Z",
+    "device": {
+      "model": "NVIDIA Jetson test fixture",
+      "jetpackVersion": "fixture",
+      "jetsonLinuxRelease": "fixture",
+      "kernel": "fixture"
+    },
+    "cleanup": "succeeded"
+  },
+  "artifact": {
+    "status": {
+      "schemaVersion": 2,
+      "jobId": "73a2b98ae61e454cf0677bd244f277eb723a522e3f15feecd65eb7f31a4bc2f4",
+      "request": {
+        "schemaVersion": 2,
+        "target": "jetson-nvmap-gpu",
+        "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "managedImageRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflowRunId": "123456789",
+        "workflowRunAttempt": 1
+      },
+      "state": "completed",
+      "conclusion": "success",
+      "createdAt": "2026-08-24T00:00:00.000Z",
+      "startedAt": "2026-08-24T00:00:01.000Z",
+      "completedAt": "2026-08-24T00:01:00.000Z",
+      "device": {
+        "model": "NVIDIA Jetson test fixture",
+        "jetpackVersion": "fixture",
+        "jetsonLinuxRelease": "fixture",
+        "kernel": "fixture"
+      },
+      "cleanup": "succeeded"
+    },
+    "log": "fixture log\n",
+    "artifactArchiveBase64": "dGVzdA=="
+  },
+  "invalidRequests": [
+    {
+      "name": "missing managed-image revision",
+      "value": {
+        "schemaVersion": 2,
+        "target": "jetson-nvmap-gpu",
+        "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workflowRunId": "123456789",
+        "workflowRunAttempt": 1
+      }
+    },
+    {
+      "name": "noncanonical managed-image revision",
+      "value": {
+        "schemaVersion": 2,
+        "target": "jetson-nvmap-gpu",
+        "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "managedImageRevision": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "workflowRunId": "123456789",
+        "workflowRunAttempt": 1
+      }
+    },
+    {
+      "name": "extra request field",
+      "value": {
+        "schemaVersion": 2,
+        "target": "jetson-nvmap-gpu",
+        "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "managedImageRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "workflowRunId": "123456789",
+        "workflowRunAttempt": 1,
+        "command": "untrusted"
+      }
+    }
+  ]
+}

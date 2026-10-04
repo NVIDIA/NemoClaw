@@ -1,0 +1,402 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { OllamaStartupOutcome } from "./ollama-startup";
+import type { SetupNimSelectionState } from "./setup-nim-selection";
+import type {
+  WindowsOllamaInstallResult,
+  WindowsOllamaSetupResult,
+} from "../inference/ollama/windows";
+import { OllamaSelectionFatalError } from "./ollama-probe-failure";
+
+const {
+  getRequestedModelFromEnv,
+}: {
+  getRequestedModelFromEnv: (env?: NodeJS.ProcessEnv) => string | null;
+} = require("./providers");
+
+type SetupNimSelectionResult = "selected" | "retry-selection";
+
+type SetupNimOllamaDeps = {
+  OLLAMA_PORT: number;
+  OLLAMA_PROXY_PORT: number;
+  process: NodeJS.Process;
+  isNonInteractive: () => boolean;
+  prompt: (message: string) => Promise<string>;
+  checkOllamaPortsOrWarn: (args: { isNonInteractive: () => boolean }) => boolean;
+  ensureOllamaLoopbackSystemdOverride: (args: {
+    isNonInteractive: () => boolean;
+    contextWindowFloor?: number;
+  }) => string;
+  runOllamaStartupOrGate: (args: {
+    ollamaReady: boolean;
+    ollamaPort: number;
+    getLocalProviderBaseUrl: (provider: string) => string | null;
+    isNonInteractive: () => boolean;
+    contextWindowFloor?: number;
+  }) => OllamaStartupOutcome;
+  shouldFrontOllamaWithProxy: () => boolean;
+  getLocalProviderBaseUrl: (provider: string) => string | null;
+  selectAndValidateOllamaModel: (
+    gpu: any,
+    provider: string,
+    args: {
+      requestedModel: string | null;
+      recoveredModel: string | null;
+      lockedModel?: string | null;
+      contextWindowFloor?: number;
+      promptDefaultModel?: string | null;
+    },
+    onModelSelected?: (model: string) => void,
+  ) => Promise<
+    | { outcome: "back-to-selection" }
+    | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
+  >;
+  installOllamaOnWindowsHost: (args: {
+    beforeRestart: () => void;
+  }) => Promise<WindowsOllamaInstallResult>;
+  setupWindowsOllamaLoopbackBinding: (args: {
+    announceStop?: boolean;
+    installedPath?: string | null;
+  }) => WindowsOllamaSetupResult;
+  printWindowsOllamaSnapshotDiagnostics?: () => void;
+  printWindowsOllamaTimeoutDiagnostics: () => void;
+  resetOllamaHostCache: () => void;
+  installOllamaOnMacOS: (args: {
+    isNonInteractive: () => boolean;
+    isUpgrade: boolean;
+    contextWindowFloor?: number;
+  }) => { ok: boolean };
+  installOllamaOnLinux: (args: {
+    isNonInteractive: () => boolean;
+    isUpgrade: boolean;
+    restartOnly?: boolean;
+    contextWindowFloor?: number;
+  }) => { ok: boolean };
+  abortNonInteractive: (message: string, hint?: string) => never;
+  assertOllamaUpgradeApplied: (menu: {
+    hasUpgradableOllama: boolean;
+  }) => { ok: true } | { ok: false; message: string };
+};
+
+/** Create Ollama onboarding handlers that propagate agent-specific context floors. */
+export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
+  handleWindowsHostOllamaSelection: (
+    gpu: any,
+    selectedKey: string,
+    requestedModel: string | null,
+    winOllamaLoopbackOnly: boolean,
+    winOllamaInstalledPath: string | null,
+    state: SetupNimSelectionState,
+  ) => Promise<SetupNimSelectionResult>;
+  handleRunningOllamaSelection: (
+    gpu: any,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+    ollamaRunning: boolean,
+    state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
+  ) => Promise<SetupNimSelectionResult>;
+  handleInstallOllamaSelection: (
+    gpu: any,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+    state: SetupNimSelectionState,
+    ollamaInstallMenu: { hasUpgradableOllama: boolean; binaryNeedsUpgrade?: boolean },
+  ) => Promise<SetupNimSelectionResult>;
+} {
+  async function selectModel(
+    gpu: any,
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+    lockedModel: string | null,
+  ): Promise<SetupNimSelectionResult> {
+    const constrainedModel = typeof state.model === "string" ? state.model : requestedModel;
+    const promptDefaultModel =
+      !lockedModel && !deps.isNonInteractive() ? getRequestedModelFromEnv(deps.process.env) : null;
+    const result = await deps.selectAndValidateOllamaModel(
+      gpu,
+      state.provider,
+      {
+        requestedModel: constrainedModel,
+        recoveredModel,
+        lockedModel,
+        contextWindowFloor: state.ollamaContextWindowFloor,
+        promptDefaultModel,
+      },
+      (model) => {
+        state.model = model;
+        state.preferredInferenceApi = "openai-completions";
+        state.assertRouteCompatible?.();
+      },
+    );
+    if (result.outcome === "back-to-selection") return "retry-selection";
+    state.model = result.model;
+    state.allowToolsIncompatible = result.allowToolsIncompatible;
+    state.preferredInferenceApi = "openai-completions";
+    return "selected";
+  }
+
+  function announceOllamaRoute(): void {
+    if (deps.shouldFrontOllamaWithProxy()) {
+      console.log(
+        `  ✓ Using Ollama on localhost:${deps.OLLAMA_PORT} (proxy on :${deps.OLLAMA_PROXY_PORT})`,
+      );
+    } else {
+      console.log(`  ✓ Using Ollama on localhost:${deps.OLLAMA_PORT}`);
+    }
+  }
+
+  function terminateFatalSelection(error: OllamaSelectionFatalError): never {
+    if (error.termination === "non-interactive") {
+      deps.abortNonInteractive(error.message, error.hint);
+    }
+    deps.process.exit(1);
+  }
+
+  function configureOllamaState(state: SetupNimSelectionState): void {
+    state.provider = "ollama-local";
+    state.credentialEnv = null;
+    state.endpointUrl = deps.getLocalProviderBaseUrl(state.provider);
+    state.preferredInferenceApi = "openai-completions";
+    state.skipHostInferenceSmoke = false;
+    if (!state.endpointUrl) {
+      console.error("  Local Ollama base URL could not be determined.");
+      deps.process.exit(1);
+    }
+  }
+
+  function preflightOllamaRoute(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+  ): string | null {
+    configureOllamaState(state);
+    state.model = requestedModel || recoveredModel;
+    const requiredModel = state.assertRouteCompatible?.().requiredModel ?? null;
+    if (requiredModel && !deps.isNonInteractive()) {
+      console.log(`  Shared gateway route requires Ollama model '${requiredModel}'.`);
+      console.log(
+        "  To use a different model for this agent, rerun with an unused NEMOCLAW_GATEWAY_PORT.",
+      );
+    }
+    return requiredModel;
+  }
+
+  function applyOllamaFallbackState(
+    state: SetupNimSelectionState,
+    result: Extract<OllamaStartupOutcome, { kind: "fallback" }>["result"],
+  ): void {
+    state.provider = result.provider;
+    state.credentialEnv = result.credentialEnv;
+    state.endpointUrl = result.endpointUrl;
+    state.model = result.model;
+    state.preferredInferenceApi = result.preferredInferenceApi;
+    state.nimContainer = null;
+    state.allowToolsIncompatible = false;
+    state.skipHostInferenceSmoke = false;
+  }
+
+  async function handleWindowsHostOllamaSelection(
+    gpu: any,
+    selectedKey: string,
+    requestedModel: string | null,
+    winOllamaLoopbackOnly: boolean,
+    winOllamaInstalledPath: string | null,
+    state: SetupNimSelectionState,
+  ): Promise<SetupNimSelectionResult> {
+    if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
+      return "retry-selection";
+    }
+    const isInstall = selectedKey === "install-windows-ollama";
+    const isRestart = !isInstall;
+    const promptMsg = isInstall
+      ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=127.0.0.1:11434? [Y/n]: "
+      : winOllamaLoopbackOnly
+        ? "  Restart loopback-only Ollama and verify Host header validation? [Y/n]: "
+        : "  Stop the running Ollama and restart it with OLLAMA_HOST=127.0.0.1:11434? [Y/n]: ";
+    const proceed = deps.isNonInteractive()
+      ? true
+      : !(await deps.prompt(promptMsg)).trim().toLowerCase().startsWith("n");
+    if (!proceed) return "retry-selection";
+
+    let mutationSession: { commit: () => void; rollback: () => void | Promise<void> } | null = null;
+    try {
+      if (isInstall) {
+        state.revalidateSandboxIdentity?.("install the Windows Ollama runtime");
+        const installResult = await deps.installOllamaOnWindowsHost({
+          beforeRestart: () =>
+            state.revalidateSandboxIdentity?.("start the Windows Ollama runtime"),
+        });
+        if (!installResult.ok) {
+          if (installResult.reason === "snapshot") {
+            deps.printWindowsOllamaSnapshotDiagnostics?.();
+          } else if (installResult.reason === "readiness") {
+            deps.printWindowsOllamaTimeoutDiagnostics();
+          } else if (installResult.reason === "install") {
+            console.error(
+              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
+            );
+          }
+          if (deps.isNonInteractive()) deps.process.exit(1);
+          return "retry-selection";
+        }
+        mutationSession = installResult;
+        console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
+      } else {
+        state.revalidateSandboxIdentity?.("start the Windows Ollama runtime");
+        const setupResult = deps.setupWindowsOllamaLoopbackBinding({
+          announceStop: isRestart,
+          installedPath: winOllamaInstalledPath || undefined,
+        });
+        if (!setupResult.ok) {
+          if (setupResult.reason === "snapshot") {
+            deps.printWindowsOllamaSnapshotDiagnostics?.();
+          } else if (setupResult.reason === "readiness") {
+            deps.printWindowsOllamaTimeoutDiagnostics();
+          }
+          if (deps.isNonInteractive()) deps.process.exit(1);
+          return "retry-selection";
+        }
+        mutationSession = setupResult;
+        console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
+      }
+
+      const lockedModel = preflightOllamaRoute(state, requestedModel, null);
+      const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
+      if (result === "retry-selection") {
+        await mutationSession?.rollback();
+        deps.resetOllamaHostCache();
+      } else {
+        mutationSession?.commit();
+      }
+      return result;
+    } catch (error) {
+      await mutationSession?.rollback();
+      if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
+      throw error;
+    }
+  }
+
+  async function handleRunningOllamaSelection(
+    gpu: any,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+    ollamaRunning: boolean,
+    state: SetupNimSelectionState,
+    isWindowsHostOllama = false,
+  ): Promise<SetupNimSelectionResult> {
+    if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
+      return "retry-selection";
+    }
+    const initialState = { ...state, hermesToolGateways: [...state.hermesToolGateways] };
+    const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
+    let ollamaReady = ollamaRunning;
+    // A Windows-host Ollama daemon reached at host.docker.internal is not a
+    // Linux systemd service. Applying the loopback override targets an
+    // unrelated local ollama.service and exits 1 (#8596, regression of #4208).
+    if (!isWindowsHostOllama) {
+      state.revalidateSandboxIdentity?.("configure the local Ollama runtime");
+      const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
+        isNonInteractive: deps.isNonInteractive,
+        contextWindowFloor: state.ollamaContextWindowFloor,
+      });
+      if (overrideState === "ready") {
+        ollamaReady = true;
+      } else if (overrideState === "failed") {
+        console.error(
+          "  Ollama systemd restart did not recover after applying the loopback override.",
+        );
+        deps.process.exit(1);
+      }
+    }
+    state.revalidateSandboxIdentity?.("start the local Ollama runtime");
+    const startup = deps.runOllamaStartupOrGate({
+      ollamaReady,
+      ollamaPort: deps.OLLAMA_PORT,
+      getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
+      isNonInteractive: deps.isNonInteractive,
+      contextWindowFloor: state.ollamaContextWindowFloor,
+    });
+    // Source boundary: ollama-startup owns this closed outcome contract. If a
+    // stale package or test double presents an unknown kind, fail closed before
+    // mutating provider state or starting proxy/model validation work.
+    switch (startup.kind) {
+      case "continue":
+        return "retry-selection";
+      case "fallback":
+        // Fallback crosses a provider boundary, so write a complete safe state
+        // rather than merging over stale cloud/NIM/Ollama selection fields.
+        applyOllamaFallbackState(state, startup.result);
+        state.assertRouteCompatible?.();
+        return "selected";
+      case "ready":
+        announceOllamaRoute();
+        try {
+          return await selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+        } catch (error) {
+          if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
+          throw error;
+        }
+      default: {
+        const kind = (startup as { kind?: unknown }).kind;
+        Object.assign(state, initialState);
+        console.error(`  Unknown Ollama startup outcome: ${String(kind)}`);
+        deps.process.exit(1);
+      }
+    }
+  }
+
+  async function handleInstallOllamaSelection(
+    gpu: any,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+    state: SetupNimSelectionState,
+    ollamaInstallMenu: { hasUpgradableOllama: boolean; binaryNeedsUpgrade?: boolean },
+  ): Promise<SetupNimSelectionResult> {
+    if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
+      return "retry-selection";
+    }
+    const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
+    const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
+    state.revalidateSandboxIdentity?.("install the local Ollama runtime");
+    const installResult =
+      deps.process.platform === "darwin"
+        ? deps.installOllamaOnMacOS({
+            isNonInteractive: deps.isNonInteractive,
+            isUpgrade,
+            contextWindowFloor: state.ollamaContextWindowFloor,
+          })
+        : deps.installOllamaOnLinux({
+            isNonInteractive: deps.isNonInteractive,
+            isUpgrade,
+            restartOnly: isUpgrade && ollamaInstallMenu.binaryNeedsUpgrade === false,
+            contextWindowFloor: state.ollamaContextWindowFloor,
+          });
+    if (!installResult.ok) {
+      if (deps.isNonInteractive())
+        deps.abortNonInteractive("Ollama install failed. See errors above.");
+      return "retry-selection";
+    }
+    const upgradeCheck = deps.assertOllamaUpgradeApplied(ollamaInstallMenu);
+    if (!upgradeCheck.ok) {
+      console.error(`  ${upgradeCheck.message}`);
+      if (deps.isNonInteractive()) deps.process.exit(1);
+      return "retry-selection";
+    }
+    announceOllamaRoute();
+    try {
+      return await selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+    } catch (error) {
+      if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
+      throw error;
+    }
+  }
+
+  return {
+    handleWindowsHostOllamaSelection,
+    handleRunningOllamaSelection,
+    handleInstallOllamaSelection,
+  };
+}

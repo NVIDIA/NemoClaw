@@ -4,42 +4,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+NEMOCLAW_CLI="${SCRIPT_DIR}/../bin/nemoclaw.js"
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
-SKILLS_PATH="/sandbox/.openclaw-data/skills"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
+FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md MEMORY.md)
 DIRS=(memory)
-
-# Workspace file list — canonical source is scripts/chad-workspace-files.txt
-# next to this script. Falls back to a hardcoded list if the file is missing
-# (e.g. running from a partial checkout). Both this script and the in-sandbox
-# chad-backup-to-github.sh read the same file so the lists can never drift.
-#
-# Manifest is sectioned: only [workspace] entries are downloaded here. The
-# memory/ directory is handled separately via the DIRS array (recursive). The
-# [runtime] / [runtime-dirs] sections are owned by chad-backup-to-github.sh.
-# Section headers and trailing-slash dir entries are skipped.
-FILES_LIST="${BACKUP_FILES_LIST:-$(dirname "$0")/chad-workspace-files.txt}"
-FILES=()
-if [ -r "$FILES_LIST" ]; then
-  current_section=""
-  while IFS= read -r line; do
-    line="${line%%#*}"
-    line="${line//[$'\t\r\n']/}"
-    line="${line## }"
-    line="${line%% }"
-    [ -z "$line" ] && continue
-    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
-      current_section="${BASH_REMATCH[1]}"
-      continue
-    fi
-    [ "$current_section" = "workspace" ] || continue
-    [[ "$line" == */ ]] && continue
-    FILES+=("$line")
-  done <"$FILES_LIST"
-fi
-if [ "${#FILES[@]}" -eq 0 ]; then
-  FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md HEARTBEAT.md TOOLS.md EMAIL-POLICY.md)
-fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -73,8 +43,71 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "'$1' is required but not found in PATH."
 }
 
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+download_backup_item() {
+  local sandbox="$1"
+  local remote_path="$2"
+  local host_dest="$3"
+  local optional="$4"
+  local status
+
+  if "$NEMOCLAW_CLI" "$sandbox" download "$remote_path" "$host_dest"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [ "$optional" = "1" ] && [ "$status" -eq 2 ]; then
+    return 2
+  fi
+
+  [ "$status" -ne 2 ] || return 1
+  return "$status"
+}
+
+RESTORE_DIR_COUNT=0
+restore_directory() {
+  local sandbox="$1"
+  local src_dir="$2"
+  local dir_name="$3"
+  local failed=0
+  RESTORE_DIR_COUNT=0
+
+  while IFS= read -r -d '' file; do
+    local rel="${file#"${src_dir}/"}"
+    local rel_parent
+    rel_parent="$(dirname -- "$rel")"
+
+    local remote_parent="${WORKSPACE_PATH}/${dir_name}"
+    if [ "$rel_parent" != "." ]; then
+      remote_parent="${remote_parent}/${rel_parent}"
+    fi
+
+    if ! openshell sandbox exec --name "$sandbox" -- sh -c "mkdir -p $(shell_quote "$remote_parent")"; then
+      warn "Failed to create restore directory ${remote_parent}"
+      failed=1
+      continue
+    fi
+
+    if openshell sandbox upload "$sandbox" "$file" "${remote_parent}/"; then
+      RESTORE_DIR_COUNT=$((RESTORE_DIR_COUNT + 1))
+    else
+      warn "Failed to restore ${dir_name}/${rel}"
+      failed=1
+    fi
+  done < <(find "$src_dir" -type f -print0)
+
+  return "$failed"
+}
+
 do_backup() {
   local sandbox="$1"
+  require_cmd "$NEMOCLAW_CLI"
+  "$NEMOCLAW_CLI" --version >/dev/null 2>&1 \
+    || fail "The selected NemoClaw CLI cannot start. Run 'npm run dev:setup' from the NemoClaw source repository root. Then retry the backup."
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
   local dest="${BACKUP_BASE}/${ts}"
@@ -82,39 +115,46 @@ do_backup() {
   mkdir -p "$BACKUP_BASE"
   chmod 0700 "${HOME}/.nemoclaw" "$BACKUP_BASE" \
     || fail "Failed to set secure permissions on ${HOME}/.nemoclaw — check directory ownership."
-  mkdir -p "$dest"
+  mkdir "$dest" \
+    || fail "Failed to create a new backup at ${dest}/. If it already exists, wait one second and retry; otherwise check directory ownership."
   chmod 0700 "$dest"
 
   info "Backing up workspace from sandbox '${sandbox}'..."
 
   local count=0
   for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
+    local optional=0
+    [ "$f" = "MEMORY.md" ] && optional=1
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" "$optional"; then
       count=$((count + 1))
     else
-      warn "Skipped ${f} (not found or download failed)"
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${f} (not found)"
+        continue
+      fi
+      warn "Failed to download ${f}"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${f} was not downloaded. Check ${WORKSPACE_PATH}/${f}, then rerun the backup before restore."
     fi
   done
 
   for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 1; then
       count=$((count + 1))
     else
-      warn "Skipped ${d}/ (not found or download failed)"
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${d}/ (not found)"
+        continue
+      fi
+      warn "Failed to download ${d}/"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${d}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${d}/ and rerun the backup before restore."
     fi
   done
 
-  # cron jobs.json on disk is canonical — backed up via the [runtime] section
-  # of chad-backup-to-github.sh, no need to capture a CLI snapshot here.
-
-  if [ "$count" -eq 0 ]; then
-    rmdir "$dest" 2>/dev/null || true
-    fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
-  fi
-
   info "Backup saved to ${dest}/ (${count} items)"
-  info "Tip: also run 'scripts/backup-host.sh' to back up host-side credentials and config."
-  info "Tip: after a reset, run 'scripts/chad-setup.sh ${sandbox}' to fully restore."
 }
 
 do_restore() {
@@ -145,10 +185,15 @@ do_restore() {
 
   for d in "${DIRS[@]}"; do
     if [ -d "${src}/${d}" ]; then
-      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${WORKSPACE_PATH}/${d}/"; then
-        count=$((count + 1))
+      if restore_directory "$sandbox" "${src}/${d}" "$d"; then
+        if [ "$RESTORE_DIR_COUNT" -gt 0 ]; then
+          count=$((count + RESTORE_DIR_COUNT))
+        else
+          warn "Skipped empty restore directory ${d}/"
+        fi
       else
-        warn "Failed to restore ${d}/"
+        count=$((count + RESTORE_DIR_COUNT))
+        warn "Failed to restore one or more files from ${d}/"
       fi
     fi
   done

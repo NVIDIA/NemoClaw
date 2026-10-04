@@ -1,0 +1,694 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { Buffer } from "node:buffer";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const requireSource = createRequire(import.meta.url);
+const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableError } =
+  requireSource(
+    "../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.ts",
+  ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
+const {
+  executeGatewaySupervisorAction,
+  resolveSandboxDashboardPort,
+  waitForManagedGatewaySupervisor,
+} = requireSource(
+  "../../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+
+const { executeSandboxExecCommand } = requireSource(
+  "../../src/lib/adapters/sandbox/command-transport.ts",
+) as typeof import("../../src/lib/adapters/sandbox/command-transport.js");
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("waitForManagedGatewaySupervisor", () => {
+  const restartingContainerId = "a".repeat(64);
+  const restartingContainer = {
+    status: 1,
+    stdout: "",
+    stderr: `Error response from daemon: Container ${restartingContainerId} is restarting, wait until the container is running`,
+    managedControlRestartingContainerId: restartingContainerId,
+  } as const;
+
+  it("retries a controller probe after status 137 with no output (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({ status: 137, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("stops after two status 137 controller probes with no output (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 137,
+      stdout: "",
+      stderr: "",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not retry a status 137 controller probe with diagnostic output (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 137,
+          stdout: "",
+          stderr: "container stopped",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("waits through an exact managed-container restart transition (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce(restartingContainer)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("stops after two managed-container restart transitions (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => restartingContainer);
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not wait through an unbound Docker restart diagnostic (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: restartingContainer.stderr,
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("waits through an exact missing-supervisor startup race", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "SUPERVISOR_NOT_RUNNING",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("waits through exact pending direct control while a clone container appears", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+        managedContainerDiscoveryUnavailable: true,
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("waits while a new clone gateway is not healthy yet (#7818)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "GATEWAY_HEALTH_TIMEOUT",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not wait when a health marker includes unclassified output (#7818)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: "GATEWAY_HEALTH_TIMEOUT\nunexpected detail",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not wait through an unclassified supervisor refusal", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: "prefix SUPERVISOR_NOT_RUNNING suffix",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not wait through a detailed privileged-control refusal", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an untyped helper refusal as pending container discovery (#11107)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("shares one deadline across managed probe attempts (#11107)", () => {
+    let now = 0;
+    const requestGatewaySupervisorActionImpl = vi.fn(
+      (_sandboxName: string, _action: "restart" | "recover" | "probe", timeout = 210_000) => {
+        now += timeout;
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "SUPERVISOR_DISCOVERY_PENDING",
+        };
+      },
+    );
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        nowImpl: () => now,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl: vi.fn(),
+        totalTimeoutMs: 20_000,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      1,
+      "new-clone",
+      "probe",
+      15_000,
+    );
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      2,
+      "new-clone",
+      "probe",
+      5_000,
+    );
+  });
+});
+
+describe("executeGatewaySupervisorAction", () => {
+  const targetContainerId = "a".repeat(64);
+
+  it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
+      throw new DirectSandboxContainerNotFoundError("temporary direct-container discovery detail");
+    });
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      managedContainerDiscoveryUnavailable: true,
+    });
+  });
+
+  it.each([
+    "Direct sandbox container discovery failed for 'new-clone': transport unavailable",
+    "No running Podman runtime resource found for sandbox 'new-clone'.",
+  ])("keeps a direct-container authority failure terminal: %s (#11107)", (detail) => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const request = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
+    request.mockImplementation(() => {
+      throw new DirectSandboxFallbackUnavailableError(detail);
+    });
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
+    });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("keeps other privileged-control refusals terminal and classified", () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
+      throw new Error(
+        "OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
+      );
+    });
+    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr:
+        "PRIVILEGED_CONTROL_UNAVAILABLE: OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
+    });
+  });
+
+  it("emits the managed-control identity marker for a pinned container refusal (#9364)", () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
+      throw new Error(
+        "OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
+      );
+    });
+    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
+    vi.spyOn(privilegedExec, "isPinnedSandboxContainerIdentityChangedError").mockReturnValue(true);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr:
+        "MANAGED_CONTROL_IDENTITY_CHANGED\nOpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
+    });
+  });
+
+  it("binds an exact Docker restart transition to the selected container (#8726)", () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockReturnValue({
+      resourceHandle: targetContainerId,
+    });
+    vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockReturnValue({
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from(
+        `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+      ),
+    } as never);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+      managedControlRestartingContainerId: targetContainerId,
+    });
+  });
+
+  it.each([
+    ["an error for a different container", 1, "", "b".repeat(64), ""],
+    ["a status-2 error", 2, "", targetContainerId, ""],
+    ["a result with stdout", 1, "unexpected", targetContainerId, ""],
+    ["an error with an additional line", 1, "", targetContainerId, "\nunexpected"],
+  ])(
+    "does not bind %s as a Docker restart transition (#8726)",
+    (_case, status, stdout, id, suffix) => {
+      const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+      vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockReturnValue({
+        resourceHandle: targetContainerId,
+      });
+      vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockReturnValue({
+        status,
+        signal: null,
+        stdout: Buffer.from(stdout),
+        stderr: Buffer.from(
+          `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
+        ),
+      } as never);
+
+      expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+        status,
+        stdout,
+        stderr: `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
+      });
+    },
+  );
+});
+
+async function withFakeOpenshellBinary<T>(script: string, fn: () => Promise<T>): Promise<T> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+  const bin = path.join(dir, "openshell");
+  const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
+  fs.writeFileSync(bin, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  process.env.NEMOCLAW_OPENSHELL_BIN = bin;
+  try {
+    return await fn();
+  } finally {
+    previous === undefined
+      ? delete process.env.NEMOCLAW_OPENSHELL_BIN
+      : (process.env.NEMOCLAW_OPENSHELL_BIN = previous);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("resolveSandboxDashboardPort", () => {
+  it("uses the recorded OpenClaw dashboard port for multi-sandbox recovery", () => {
+    expect(
+      resolveSandboxDashboardPort("beta", {
+        getSessionAgent: () => null,
+        getSandbox: () => ({ name: "beta", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+
+  it("falls back to the default OpenClaw dashboard port when registry metadata is absent", () => {
+    expect(
+      resolveSandboxDashboardPort("legacy", {
+        getSessionAgent: () => null,
+        getSandbox: () => null,
+      }),
+    ).toBe(18789);
+  });
+
+  it("keeps non-OpenClaw agents on their recorded custom dashboard port (#6277)", () => {
+    expect(
+      resolveSandboxDashboardPort("hermes-box", {
+        getSessionAgent: () => ({ forwardPort: 8642 }),
+        getSandbox: () => ({ name: "hermes-box", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+
+  it("falls back to a non-OpenClaw agent's declared port without registry metadata", () => {
+    expect(
+      resolveSandboxDashboardPort("hermes-box", {
+        getSessionAgent: () => ({ forwardPort: 8642 }),
+        getSandbox: () => null,
+      }),
+    ).toBe(8642);
+  });
+
+  it("does not invent a dashboard port for terminal agents without declared forwards", () => {
+    expect(
+      resolveSandboxDashboardPort("terminal-box", {
+        getSessionAgent: () => ({ runtime: { kind: "terminal" } }),
+        getSandbox: () => ({ name: "terminal-box", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+
+  it("ignores invalid agent forward ports and falls back to registry metadata", () => {
+    expect(
+      resolveSandboxDashboardPort("beta", {
+        getSessionAgent: () => ({ forwardPort: 0 }),
+        getSandbox: () => ({ name: "beta", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+});
+
+describe("executeSandboxExecCommand", () => {
+  it("does not forward an MCP credential to the OpenShell child process", async () => {
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    const priorGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
+
+    try {
+      const result = await withFakeOpenshellBinary(
+        [
+          'test -z "${TEST_MCP_RAW_TOKEN+x}" || exit 90',
+          'test "$OPENSHELL_GATEWAY" = "nemoclaw-19080" || exit 91',
+          'test -n "$PATH" || exit 92',
+          "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'READY'",
+        ].join("\n"),
+        () => executeSandboxExecCommand("hermes-box", "printf READY"),
+      );
+
+      expect(result).toEqual({ status: 0, stdout: "READY", stderr: "" });
+    } finally {
+      priorSecret === undefined
+        ? delete process.env.TEST_MCP_RAW_TOKEN
+        : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+      priorGateway === undefined
+        ? delete process.env.OPENSHELL_GATEWAY
+        : (process.env.OPENSHELL_GATEWAY = priorGateway);
+    }
+  });
+
+  it("honors the sandbox-exec timeout without falling back to Docker", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi
+      .spyOn(privilegedExec, "executePrivilegedSandboxCommand")
+      .mockImplementation(() => {
+        throw new Error("Docker fallback must not run after an OpenShell timeout");
+      });
+    const previousTimeout = process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS;
+    process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = "50";
+
+    try {
+      const startedAt = Date.now();
+      await expect(
+        withFakeOpenshellBinary("sleep 10", () =>
+          executeSandboxExecCommand("alpha", "printf RUNNING"),
+        ),
+      ).rejects.toMatchObject({ kind: "timeout" });
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(executePrivileged).not.toHaveBeenCalled();
+    } finally {
+      previousTimeout === undefined
+        ? delete process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS
+        : (process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = previousTimeout);
+    }
+  });
+
+  it("parses stdout-framed root exec output after the startup marker", async () => {
+    const result = await withFakeOpenshellBinary(
+      "printf '%s\\n' 'OpenShell sandbox exec output:' 'stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__' 'stdout: SECRET_BOUNDARY_OK'",
+      () => executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
+    );
+
+    expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
+  });
+
+  it("rejects a non-frame preamble without retrying through Docker", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
+
+    await expect(
+      withFakeOpenshellBinary(
+        "printf '%s\\n' 'operator preamble mentions __NEMOCLAW_SANDBOX_EXEC_STARTED__ before child stdout' 'stdout: RUNNING'",
+        () => executeSandboxExecCommand("hermes-box", "echo RUNNING"),
+      ),
+    ).rejects.toMatchObject({ kind: "malformed" });
+    expect(executePrivileged).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Hermes validator source out of the host shell payload", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-args-"));
+    const captureFile = path.join(dir, "args.txt");
+
+    try {
+      const result = await withFakeOpenshellBinary(
+        `printf '%s\\n' "$@" > '${captureFile}'\nprintf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'SECRET_BOUNDARY_OK'`,
+        () =>
+          executeSandboxExecCommand(
+            "hermes-box",
+            "python3 /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py env-file /sandbox/.hermes/.env\necho SECRET_BOUNDARY_OK",
+          ),
+      );
+
+      const shellPayload = fs.readFileSync(captureFile, "utf8");
+      expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
+      expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+      expect(shellPayload).toContain("base64 -d | sh");
+      expect(shellPayload).not.toContain("validate-hermes-env-secret-boundary.py");
+      expect(shellPayload).not.toContain("/sandbox/.hermes/.env");
+      expect(shellPayload).not.toContain("echo SECRET_BOUNDARY_OK");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let Docker fallback satisfy a strict provider credential proof", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-provider-args-"));
+    const captureFile = path.join(dir, "args.txt");
+
+    try {
+      await expect(
+        withFakeOpenshellBinary(`printf '%s\n' "$@" > '${captureFile}'\nexit 1`, () =>
+          executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]'),
+        ),
+      ).rejects.toMatchObject({ kind: "malformed" });
+
+      expect(executePrivileged).not.toHaveBeenCalled();
+      const shellPayload = fs.readFileSync(captureFile, "utf8").trim().split(/\r?\n/u).at(-1) ?? "";
+      expect(shellPayload).not.toMatch(/[\r\n]/u);
+      expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("executeSandboxExecCommand", () => {
+  it("uses one native execution with a sanitized host environment", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    try {
+      await expect(
+        withFakeOpenshellBinary(
+          [
+            'test -z "${TEST_MCP_RAW_TOKEN+x}" || exit 90',
+            'test "$1 $2" = "sandbox exec" || exit 91',
+            "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'registered'",
+          ].join("\n"),
+          () => executeSandboxExecCommand("alpha", "mcporter config get fake --json"),
+        ),
+      ).resolves.toEqual({ status: 0, stdout: "registered", stderr: "" });
+      expect(executePrivileged).not.toHaveBeenCalled();
+    } finally {
+      priorSecret === undefined
+        ? delete process.env.TEST_MCP_RAW_TOKEN
+        : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+    }
+  });
+});

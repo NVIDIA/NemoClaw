@@ -1,0 +1,29 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Gateway and policy decisions remain until #9172.",
+  "gateway": {
+    "preflight": 2,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 2
+  },
+  "messaging": {
+    "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 4,
+    "runOnboard": 1,
+    "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
+  },
+  "policy": {
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 4,
+    "sandboxCreateIntentResolver.getAgentPolicyPath": 1
+  },
+  "provider": {
+    "handleNimLocalSelection": 36,
+    "handleRemoteProviderSelection": 81,
+    "handleRemoteProviderSelection.providerExistsInGateway": 1,
+    "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
+    "handleVllmSelection.queryVllmModels": 1,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 7,
+    "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
+    "selectAndValidateOllamaModel": 19
+  }
+}

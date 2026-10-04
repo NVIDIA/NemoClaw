@@ -1,0 +1,80 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Gateway Lifecycle Control"
+sidebar-title: "Understand Gateway Lifecycle Control"
+description: "Understand how NemoClaw invokes native gateway lifecycle commands and verifies recovery."
+description-agent: "Explains native agent lifecycle ownership, OpenShell containment, health proofs, and fail-closed behavior. Use when reviewing recover or gateway restart security."
+keywords: ["gateway lifecycle control", "nemoclaw recover", "gateway restart", "native lifecycle"]
+content:
+  type: "concept"
+skill:
+  priority: 20
+agent-variants: ["openclaw", "hermes"]
+---
+Built-in OpenClaw and Hermes images leave agent gateway lifecycle with the native agent runtime.
+OpenShell owns sandbox containment and the authoritative sandbox lifecycle phase.
+NemoClaw resolves the registered sandbox, invokes the native command through that OpenShell sandbox, and observes the result.
+
+| Component | Responsibility |
+|---|---|
+| OpenShell | Selects and contains the sandbox, projects approved credentials, and records the authoritative sandbox lifecycle phase. |
+| Native agent runtime | Owns the agent gateway, background work, cron work, hooks, and child processes. |
+| NemoClaw host CLI | Resolves the registered sandbox and agent, invokes the native lifecycle command, verifies gateway health, and repairs host-side forwards. |
+
+NemoClaw does not signal a gateway process, authorize a process exit, or respawn an agent-owned process.
+It does not add a second gateway lifecycle controller inside the sandbox.
+
+<AgentOnly variant="hermes">
+Hermes configuration remains mutable.
+The native restart path validates the secret boundary before it replaces the gateway.
+The native `mcp_servers` content remains authoritative, including direct edits.
+No separate host-side MCP registry or intended/applied marker participates in restart eligibility.
+</AgentOnly>
+
+## Verify Recovery Health
+
+`gateway restart` invokes the native OpenClaw or Hermes lifecycle command through the selected OpenShell sandbox.
+For OpenClaw, NemoClaw polls `/readyz` for HTTP `200` and JSON `{"ready":true}` before it repairs host-side forwards or reports success.
+For Hermes, NemoClaw polls the agent health endpoint for the timeout declared in the agent manifest.
+It waits through the shared settle window and requires the gateway to remain healthy before it reports success.
+
+`recover` checks the native health endpoint.
+If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.
+Use `gateway restart` to request a native restart, or restart the sandbox through OpenShell when the native command cannot run.
+
+<AgentOnly variant="hermes">
+Hermes can close the OpenShell exec relay while its native restart command replaces the gateway.
+When NemoClaw receives the expected relay-closure result, it waits for the selected sandbox control plane to become ready again.
+This wait is bounded.
+NemoClaw then checks the Hermes health endpoint and host-side forwards.
+
+The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
+Four consecutive gateway health failures trigger recovery of the observed gateway child.
+
+A fifth status-75 service-managed restart request within 60 seconds starts a cooldown.
+The supervisor waits until the rolling window permits another restart, then relaunches the gateway automatically.
+If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
+Rebuild only if the sandbox still cannot start.
+
+After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
+</AgentOnly>
+
+## Fail Closed on Unsupported Runtimes
+
+NemoClaw runs the lifecycle command only after it resolves a supported gateway runtime for the registered sandbox.
+Terminal agents fail as unsupported because they do not have an agent gateway.
+An absent agent definition or a native command failure stops the operation before host-forward repair.
+
+For gateway lifecycle, NemoClaw does not fall back to direct provider-container mutation or manual process signaling.
+If the sandbox cannot run the current native lifecycle command, update its image:
+
+```bash
+$$nemoclaw <name> rebuild --yes
+```
+
+## Related Topics
+
+- [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) for recovery commands and rebuild fallback.
+- [`gateway restart` or `recover` reports `privileged control unavailable`](../../reference/troubleshooting#gateway-restart-or-recover-reports-privileged-control-unavailable) for native lifecycle remediation.
+- [Trusted Computing Base](../../security/trusted-computing-base) for the broader security boundary.

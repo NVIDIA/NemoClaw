@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1
+  displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 with vLLM on Linux x86_64
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.v1
+  runtime:
+    # NVIDIA's published one-H100/Brev recipe uses vLLM v0.27.1. Pin the
+    # Linux amd64 manifest rather than the multi-platform tag.
+    image: vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2
+    imageDownloadSizeBytes: 9110652559
+    # NVIDIA's published vLLM recipe matrix starts at H100. Lower compute
+    # capabilities require separate qualification before they can use this profile.
+    minimumComputeCapability: 90
+    minimumGpuMemoryBytes: 96000000000
+    pullTimeoutSeconds: 3600
+    architecture: amd64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 34359738368
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: bearer
+      fixedArguments: true
+      catalogReceipt: true
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 65536
+      - name: --max-num-seqs
+        value: 1
+      - name: --gpu-memory-utilization
+        value: 0.75
+      - name: --max-num-batched-tokens
+        value: 4096
+      - name: --mamba-backend
+        value: flashinfer
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: qwen3_coder
+      - name: --reasoning-parser
+        value: nemotron_v3
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4

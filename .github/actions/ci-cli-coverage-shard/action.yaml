@@ -1,0 +1,164 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-cli-coverage-shard
+description: Run one shared CLI, integration, and E2E-support shard and upload its Vitest blob report.
+
+inputs:
+  shard:
+    description: One-based shard index.
+    required: true
+  shard-count:
+    description: Total number of CLI coverage shards.
+    default: "8"
+
+runs:
+  using: composite
+  steps:
+    - name: Validate shard inputs
+      id: validate-shard-inputs
+      shell: bash
+      env:
+        CLI_SHARD: ${{ inputs.shard }}
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
+      run: |
+        set -euo pipefail
+
+        case "$CLI_SHARD" in
+          ''|*[!0-9]*)
+            echo "::error title=Invalid CLI shard::Expected positive integer, got ${CLI_SHARD}"
+            exit 1
+            ;;
+        esac
+        case "$CLI_SHARD_COUNT" in
+          ''|*[!0-9]*)
+            echo "::error title=Invalid CLI shard count::Expected positive integer, got ${CLI_SHARD_COUNT}"
+            exit 1
+            ;;
+        esac
+        if [ "$CLI_SHARD" -lt 1 ] || [ "$CLI_SHARD_COUNT" -lt 1 ] || [ "$CLI_SHARD" -gt "$CLI_SHARD_COUNT" ]; then
+          echo "::error title=Invalid CLI shard range::Expected 1 <= shard <= shard-count, got ${CLI_SHARD}/${CLI_SHARD_COUNT}"
+          exit 1
+        fi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "24.18.1"
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+    - name: Install pinned Pi search tools
+      shell: bash
+      env:
+        FD_FIND_VERSION: "9.0.0-1"
+        RIPGREP_VERSION: "14.1.0-1"
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq \
+          -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+          -o Dir::Etc::sourceparts="-"
+        sudo apt-get install -y --no-install-recommends \
+          "fd-find=${FD_FIND_VERSION}" \
+          "ripgrep=${RIPGREP_VERSION}"
+
+        INSTALLED_FD_FIND_VERSION="$(dpkg-query -W -f='${Version}' fd-find)"
+        INSTALLED_RIPGREP_VERSION="$(dpkg-query -W -f='${Version}' ripgrep)"
+        if [ "$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION" ]; then
+          echo "::error::fd-find package version $INSTALLED_FD_FIND_VERSION does not match $FD_FIND_VERSION"
+          exit 1
+        fi
+        if [ "$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION" ]; then
+          echo "::error::ripgrep package version $INSTALLED_RIPGREP_VERSION does not match $RIPGREP_VERSION"
+          exit 1
+        fi
+
+        command -v fdfind >/dev/null
+        command -v rg >/dev/null
+        EXPECTED_FD_BINARY_VERSION="${FD_FIND_VERSION%%-*}"
+        EXPECTED_RG_BINARY_VERSION="${RIPGREP_VERSION%%-*}"
+        FD_BINARY_VERSION="$(fdfind --version)"
+        RG_BINARY_VERSION="$(rg --version)"
+        RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
+        if [ "$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION" ]; then
+          echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fdfind $EXPECTED_FD_BINARY_VERSION"
+          exit 1
+        fi
+        if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
+          echo "::error::rg binary version $RG_BINARY_VERSION does not match ripgrep $EXPECTED_RG_BINARY_VERSION"
+          exit 1
+        fi
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production
+
+    - name: Validate changed live E2E mock parity
+      if: ${{ inputs.shard == '1' }}
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PUSH_BASE_SHA: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        case "$EVENT_NAME" in
+          pull_request)
+            # The checked-out merge commit is authoritative when the event
+            # payload still names an older base revision.
+            base=HEAD^1
+            head=HEAD^2
+            ;;
+          push)
+            if [ "$PUSH_BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              echo "Skipping changed live E2E parity: main has no prior commit."
+              exit 0
+            fi
+            base="$PUSH_BASE_SHA"
+            head=HEAD
+            ;;
+          *)
+            echo "Skipping changed live E2E parity for $EVENT_NAME."
+            exit 0
+            ;;
+        esac
+        if [ ! -f scripts/checks/e2e-mock-parity.mts ]; then
+          echo "::error title=Missing E2E mock parity entrypoint::Expected scripts/checks/e2e-mock-parity.mts."
+          exit 1
+        fi
+        npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"
+
+    - name: Run CLI coverage and E2E support shard
+      shell: bash
+      env:
+        CLI_SHARD: ${{ inputs.shard }}
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
+      run: |
+        npx vitest run --project cli --project integration --project e2e-support \
+          --shard="${CLI_SHARD}/${CLI_SHARD_COUNT}" \
+          --reporter=github-actions \
+          --reporter=blob \
+          --outputFile.blob=".vitest-reports/blob-${CLI_SHARD}-${CLI_SHARD_COUNT}.json" \
+          --coverage \
+          --coverage.reporter=json-summary \
+          --coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}" \
+          --coverage.include="bin/**/*.js" \
+          --coverage.include="src/**/*.ts" \
+          --coverage.exclude="test/**/*.js" \
+          --coverage.exclude="test/**/*.ts"
+
+    - name: Upload CLI shard blob report
+      if: ${{ always() && steps.validate-shard-inputs.outcome == 'success' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: cli-blob-report-${{ inputs.shard }}
+        path: .vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json
+        if-no-files-found: error
+        retention-days: 1
+        overwrite: true

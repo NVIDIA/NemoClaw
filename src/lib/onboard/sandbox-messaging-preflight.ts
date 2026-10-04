@@ -1,0 +1,145 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { WebSearchConfig } from "../inference/web-search";
+import type { SandboxMessagingPlan } from "../messaging/manifest/types";
+import { bridgeSecretEnvsForChannel } from "./messaging-bridge-provider";
+import {
+  enforceMessagingChannelConflicts as defaultEnforceMessagingChannelConflicts,
+  type MessagingConflictGuardDeps,
+} from "./messaging-conflict-guard";
+import {
+  type CreateSandboxMessagingPrepInput,
+  type CreateSandboxMessagingPrepResult,
+  prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
+  type NamedMessagingChannel,
+} from "./messaging-prep";
+
+export interface SandboxMessagingPreflightInput {
+  sandboxName: string;
+  agentName?: string | null;
+  requireExactProviderBinding?: boolean;
+  channels: readonly NamedMessagingChannel[];
+  enabledChannels: readonly string[] | null;
+  webSearchConfig: WebSearchConfig | null;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+
+export interface SandboxMessagingPreflightDeps {
+  readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
+  resolveDisabledChannels(sandboxName: string): string[];
+  gatewayName(): string;
+  registry: MessagingConflictGuardDeps["registry"];
+  readonly preEnableHookRegistry?: MessagingConflictGuardDeps["preEnableHookRegistry"];
+  providerExistsInGateway(name: string): boolean | Promise<boolean>;
+  providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): boolean | Promise<boolean>;
+  isNonInteractive(): boolean;
+  promptYesNoOrDefault(
+    message: string,
+    defaultValue: string | null,
+    fallback: boolean,
+  ): Promise<boolean>;
+  cliName(): string;
+  log(message: string): void;
+  error(message: string): void;
+  exitProcess(code: number): never;
+  getValidatedMessagingTokenByEnvKey(
+    channels: readonly NamedMessagingChannel[],
+    envKey: string,
+  ): string | null;
+  getCredential(envKey: string): string | null;
+  normalizeCredentialValue(value: unknown): string;
+  registerExtraPlaceholderProviders(
+    messagingTokenDefs: CreateSandboxMessagingPrepResult["messagingTokenDefs"],
+  ): string[];
+  getMessagingChannelForEnvKey(envKey: string): string | null;
+  prepareCreateSandboxMessaging?: (
+    input: CreateSandboxMessagingPrepInput,
+  ) => CreateSandboxMessagingPrepResult | Promise<CreateSandboxMessagingPrepResult>;
+  enforceMessagingChannelConflicts?: (deps: MessagingConflictGuardDeps) => Promise<void>;
+}
+
+export interface SandboxMessagingPreflightResult extends CreateSandboxMessagingPrepResult {
+  disabledChannels: string[];
+}
+
+export async function prepareSandboxMessagingPreflight(
+  input: SandboxMessagingPreflightInput,
+  deps: SandboxMessagingPreflightDeps,
+): Promise<SandboxMessagingPreflightResult> {
+  const disabledChannels = deps.resolveDisabledChannels(input.sandboxName);
+  await checkMessagingPlanConflicts(input.sandboxName, disabledChannels, deps);
+
+  const result = await (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)(
+    {
+      sandboxName: input.sandboxName,
+      agentName: input.agentName,
+      requireExactProviderBinding: input.requireExactProviderBinding,
+      channels: input.channels,
+      enabledChannels: input.enabledChannels,
+      disabledChannels,
+      webSearchConfig: input.webSearchConfig,
+      env: input.env,
+      getValidatedMessagingTokenByEnvKey: deps.getValidatedMessagingTokenByEnvKey,
+      getCredential: deps.getCredential,
+      normalizeCredentialValue: deps.normalizeCredentialValue,
+      registerExtraPlaceholderProviders: deps.registerExtraPlaceholderProviders,
+      getMessagingChannelForEnvKey: deps.getMessagingChannelForEnvKey,
+      providerExistsInGateway: deps.providerExistsInGateway,
+      providerMatchesGatewayCredential: deps.providerMatchesGatewayCredential,
+    },
+  );
+
+  // Fail before the caller can act on this intent: onboard may delete and
+  // recreate the sandbox, and a selected channel that resolved to nothing would
+  // be dropped from the replacement without a word.
+  result.missingBridgeChannels.forEach((channel) => {
+    deps.error(
+      `  ${channel} mints its outbound token gateway-side and needs ${bridgeSecretEnvsForChannel(channel).join(", ")} to configure it.`,
+    );
+    deps.error("  Paste the secret at the enrollment prompt or export the env var, then re-run.");
+  });
+  if (result.missingBridgeChannels.length > 0) {
+    deps.exitProcess(1);
+  }
+
+  if (result.missingWebSearchCredentialEnv) {
+    const envKey = result.missingWebSearchCredentialEnv;
+    deps.error(`  Web search is enabled, but ${envKey} is not available in this process.`);
+    deps.error(`  Re-run with ${envKey} set, or disable web search before recreating the sandbox.`);
+    deps.exitProcess(1);
+  }
+
+  return { ...result, disabledChannels };
+}
+
+async function checkMessagingPlanConflicts(
+  sandboxName: string,
+  disabledChannels: readonly string[],
+  deps: SandboxMessagingPreflightDeps,
+): Promise<void> {
+  const envPlan = deps.readMessagingPlanFromEnv();
+  const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
+  if (!currentPlan) return;
+
+  const enforceMessagingChannelConflicts =
+    deps.enforceMessagingChannelConflicts ?? defaultEnforceMessagingChannelConflicts;
+  await enforceMessagingChannelConflicts({
+    sandboxName,
+    gatewayName: deps.gatewayName(),
+    currentPlan,
+    currentSandboxDisabledChannels: disabledChannels,
+    registry: deps.registry,
+    isNonInteractive: deps.isNonInteractive,
+    promptContinue: () => deps.promptYesNoOrDefault("  Continue anyway?", null, false),
+    cliName: deps.cliName,
+    log: deps.log,
+    error: deps.error,
+    preEnableHookRegistry: deps.preEnableHookRegistry,
+    exit: deps.exitProcess,
+  });
+}

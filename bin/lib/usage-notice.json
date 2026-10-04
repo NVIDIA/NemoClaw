@@ -28,5 +28,5 @@
     "https://docs.openclaw.ai/gateway/security"
   ],
   "links": [],
-  "interactivePrompt": "Type 'yes' to accept the NemoClaw license and and third-party software notice and continue [no]: "
+  "interactivePrompt": "Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: "
 }

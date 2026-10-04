@@ -1,0 +1,152 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import {
+  initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute,
+  type InitializeOpenclawInferenceRoute,
+} from "./openclaw/initial-inference-route";
+
+const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
+
+export async function isOpenclawGatewayReady(
+  sandboxName: string,
+  port: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  timeoutMs = 3_000,
+): Promise<boolean> {
+  const boundedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(3_000, Math.floor(timeoutMs)) : 3_000;
+  const curlTimeoutSeconds = String(Math.max(1, boundedTimeoutMs) / 1_000);
+  try {
+    const result = await sandboxCommandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "selected" },
+      command: [
+        "curl",
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        curlTimeoutSeconds,
+        `http://127.0.0.1:${String(port)}/health`,
+      ],
+      tty: false,
+    });
+    return (
+      result.outcome.kind === "completed" &&
+      OPENCLAW_ALIVE_HTTP_CODES.has(Number.parseInt(result.stdout.trim(), 10))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function createOpenclawGatewayReadinessProbe(
+  readSandbox: (sandboxName: string) => { dashboardPort?: number | null } | null,
+  defaultPort: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): (sandboxName: string, timeoutMs?: number) => Promise<boolean> {
+  return (sandboxName, timeoutMs) =>
+    isOpenclawGatewayReady(
+      sandboxName,
+      readSandbox(sandboxName)?.dashboardPort ?? defaultPort,
+      sandboxCommandExecutor,
+      timeoutMs,
+    );
+}
+
+export interface ConfigureOpenclawSandboxDeps {
+  syncNemoClawConfigInSandbox(
+    sandboxName: string,
+    provider: string,
+    model: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied?: boolean,
+  ): Promise<void>;
+}
+
+export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDeps) {
+  return async function configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied = false,
+  ): Promise<void> {
+    await deps.syncNemoClawConfigInSandbox(
+      sandboxName,
+      provider,
+      model,
+      revalidateSandboxIdentity,
+      managedProfileApplied,
+    );
+  };
+}
+
+export interface OpenclawSetupDeps {
+  step(n: number, total: number, msg: string): void;
+  agentProductName(): string;
+  shouldRestartNativeGateway(provider: string): boolean;
+  restartNativeGateway(sandboxName: string): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        failureLayer: string;
+        detail: string;
+      }
+  >;
+  configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
+  initializeOpenclawInferenceRoute?: InitializeOpenclawInferenceRoute;
+}
+
+export function createOpenclawSetup(deps: OpenclawSetupDeps) {
+  return async function setupOpenclaw(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+    preferredInferenceApi: string | null = null,
+    initializeNativeInferenceRoute = false,
+    gatewayName?: string,
+    settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
+  ): Promise<void> {
+    deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
+
+    await deps.configureOpenclawSandbox(sandboxName, model, provider, revalidateSandboxIdentity);
+    if (initializeNativeInferenceRoute) {
+      if (!gatewayName) {
+        throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
+      if (settleOpenclawPairingBeforeRestart && !(await settleOpenclawPairingBeforeRestart())) {
+        throw new Error(
+          `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
+        );
+      }
+      await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+        sandboxName,
+        model,
+        provider,
+        preferredInferenceApi,
+        gatewayName,
+        revalidateSandboxIdentity,
+      );
+    } else if (deps.shouldRestartNativeGateway(provider)) {
+      revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
+      const restart = await deps.restartNativeGateway(sandboxName);
+      if (!restart.ok) {
+        throw new Error(
+          `OpenClaw native gateway restart failed during setup (${restart.failureLayer}): ${restart.detail}`,
+        );
+      }
+    }
+    revalidateSandboxIdentity?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
+    console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
+  };
+}

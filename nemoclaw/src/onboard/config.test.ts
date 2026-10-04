@@ -3,14 +3,12 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
-  describeOnboardEndpoint,
-  describeOnboardProvider,
   loadOnboardConfig,
   saveOnboardConfig,
   clearOnboardConfig,
   type NemoClawOnboardConfig,
-  type EndpointType,
 } from "./config.js";
 
 // Mock node:fs so tests don't touch the real filesystem.
@@ -18,7 +16,7 @@ import {
 const store = new Map<string, string>();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof import("node:fs")>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -39,12 +37,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 function makeConfig(overrides: Partial<NemoClawOnboardConfig> = {}): NemoClawOnboardConfig {
   return {
-    endpointType: "build",
-    endpointUrl: "https://api.build.nvidia.com/v1",
-    ncpPartner: null,
-    model: "nvidia/nemotron-3-super-120b-a12b",
     profile: "default",
-    credentialEnv: "NVIDIA_API_KEY",
     onboardedAt: "2026-03-01T00:00:00.000Z",
     ...overrides,
   };
@@ -55,88 +48,20 @@ describe("onboard/config", () => {
     store.clear();
   });
 
-  // -------------------------------------------------------------------------
-  // describeOnboardEndpoint
-  // -------------------------------------------------------------------------
-
-  describe("describeOnboardEndpoint", () => {
-    it("returns managed route description for inference.local", () => {
-      const config = makeConfig({ endpointUrl: "https://inference.local/v1" });
-      expect(describeOnboardEndpoint(config)).toBe("Managed Inference Route (inference.local)");
-    });
-
-    it("returns type and URL for other endpoints", () => {
-      const config = makeConfig({
-        endpointType: "ollama",
-        endpointUrl: "http://localhost:11434/v1",
-      });
-      expect(describeOnboardEndpoint(config)).toBe("ollama (http://localhost:11434/v1)");
-    });
-
-    it("redacts credentials from endpoint URLs", () => {
-      const config = makeConfig({
-        endpointType: "custom",
-        endpointUrl: "https://user:secret@api.example.com/v1?token=abc123",
-      });
-      const result = describeOnboardEndpoint(config);
-      expect(result).not.toContain("secret");
-      expect(result).not.toContain("abc123");
-      expect(result).toContain("api.example.com");
-      expect(result).toContain("****");
-    });
-
-    it("handles non-URL endpoint strings gracefully", () => {
-      const config = makeConfig({
-        endpointType: "local",
-        endpointUrl: "not-a-url",
-      });
-      expect(describeOnboardEndpoint(config)).toBe("local (not-a-url)");
-    });
+  it("discards routing from historical onboarding snapshots", () => {
+    const metadata = makeConfig();
+    store.set(
+      join(homedir(), ".nemoclaw", "config.json"),
+      JSON.stringify({
+        ...metadata,
+        provider: "stale-provider",
+        model: "stale/model",
+        endpointUrl: "https://stale.example/v1",
+        credentialEnv: "STALE_KEY",
+      }),
+    );
+    expect(loadOnboardConfig()).toEqual(metadata);
   });
-
-  // -------------------------------------------------------------------------
-  // describeOnboardProvider
-  // -------------------------------------------------------------------------
-
-  describe("describeOnboardProvider", () => {
-    it("returns providerLabel when set", () => {
-      const config = makeConfig({ providerLabel: "My Custom Provider" });
-      expect(describeOnboardProvider(config)).toBe("My Custom Provider");
-    });
-
-    const endpointCases: [EndpointType, string][] = [
-      ["build", "NVIDIA Endpoints"],
-      ["openai", "OpenAI"],
-      ["anthropic", "Anthropic"],
-      ["gemini", "Google Gemini"],
-      ["ollama", "Local Ollama"],
-      ["vllm", "Local vLLM"],
-      ["nim-local", "Local NVIDIA NIM"],
-      ["ncp", "NVIDIA Cloud Partner"],
-      ["custom", "Other OpenAI-compatible endpoint"],
-    ];
-
-    for (const [endpointType, expected] of endpointCases) {
-      it(`returns "${expected}" for endpoint type "${endpointType}"`, () => {
-        const config = makeConfig({ endpointType, providerLabel: undefined });
-        expect(describeOnboardProvider(config)).toBe(expected);
-      });
-    }
-
-    it("returns Unknown for unsupported endpoint types", () => {
-      const config = makeConfig({
-        endpointType: "build",
-        providerLabel: undefined,
-      });
-      expect(describeOnboardProvider({ ...config, endpointType: "bogus" as EndpointType })).toBe(
-        "Unknown",
-      );
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // loadOnboardConfig / saveOnboardConfig / clearOnboardConfig
-  // -------------------------------------------------------------------------
 
   describe("loadOnboardConfig", () => {
     it("returns null when no config file exists", () => {
@@ -145,21 +70,42 @@ describe("onboard/config", () => {
 
     it("returns parsed config when file exists", () => {
       const config = makeConfig();
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });
 
     it("returns null when the parsed JSON root is not a valid onboard config", () => {
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
       store.set(configPath, JSON.stringify({ endpointType: "bogus" }));
+      expect(loadOnboardConfig()).toBeNull();
+    });
+
+    it("returns null without throwing for an empty (0-byte) config file", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
+      store.set(configPath, "");
+      expect(() => loadOnboardConfig()).not.toThrow();
+      expect(loadOnboardConfig()).toBeNull();
+    });
+
+    it("returns null without throwing for a whitespace-only config file", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
+      store.set(configPath, "  \n\t  ");
+      expect(() => loadOnboardConfig()).not.toThrow();
+      expect(loadOnboardConfig()).toBeNull();
+    });
+
+    it("returns null without throwing for malformed JSON", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
+      store.set(configPath, "{ not json");
+      expect(() => loadOnboardConfig()).not.toThrow();
       expect(loadOnboardConfig()).toBeNull();
     });
   });
 
   describe("saveOnboardConfig", () => {
     it("writes config and can be loaded back", () => {
-      const config = makeConfig({ model: "nvidia/test-model" });
+      const config = makeConfig({ profile: "custom" });
       saveOnboardConfig(config);
       const loaded = loadOnboardConfig();
       expect(loaded).toEqual(config);

@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: resolve-reviewed-hermes-platform
+description: Resolve and verify one native Hermes manifest from the reviewed Dockerfile index.
+
+inputs:
+  platform:
+    description: Linux platform to select from the reviewed image index.
+    required: true
+  dockerfile-path:
+    description: Repository path to the Hermes Dockerfile that owns the reviewed image index.
+    required: true
+
+outputs:
+  digest:
+    description: Verified native-platform Hermes manifest digest.
+    value: ${{ steps.resolve.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      name: Resolve reviewed Hermes platform manifest
+      env:
+        DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        PLATFORM: ${{ inputs.platform }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        case "$PLATFORM" in
+          linux/amd64 | linux/arm64) ;;
+          *)
+            echo "::error::Unsupported Hermes base platform: ${PLATFORM}" >&2
+            exit 1
+            ;;
+        esac
+        [[ -f "$DOCKERFILE_PATH" && ! -L "$DOCKERFILE_PATH" ]] || {
+          echo "::error::Hermes Dockerfile is missing or is not a regular repository file" >&2
+          exit 1
+        }
+
+        reviewed_index="$(
+          sed -nE \
+            's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
+            < "$DOCKERFILE_PATH"
+        )"
+        if [[ -z "$reviewed_index" || "$reviewed_index" == *$'\n'* ]]; then
+          echo "::error::Hermes Dockerfile must select one immutable reviewed base index" >&2
+          exit 1
+        fi
+        [[ "$reviewed_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+          echo "::error::Hermes Dockerfile contains an invalid reviewed base index" >&2
+          exit 1
+        }
+
+        arch="${PLATFORM#linux/}"
+        work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-hermes-platform.XXXXXX")"
+        trap 'rm -rf -- "$work_dir"' EXIT
+        index_raw="$work_dir/hermes-index.raw"
+        native_raw="$work_dir/hermes-native.raw"
+
+        docker buildx imagetools inspect "$reviewed_index" --raw > "$index_raw"
+        digest="$(
+          jq -er --arg arch "$arch" '
+            if (
+              .mediaType == "application/vnd.oci.image.index.v1+json" or
+              .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+            ) then
+              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)]
+              | if length == 1 then .[0].digest else error("not one native platform descriptor") end
+            else
+              error("reviewed Hermes base is not a platform index")
+            end
+          ' "$index_raw"
+        )"
+        [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+          echo "::error::Reviewed Hermes base returned an invalid native digest" >&2
+          exit 1
+        }
+
+        reference="ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${digest}"
+        docker buildx imagetools inspect "$reference" --raw > "$native_raw"
+        native_sha256="$(sha256sum "$native_raw" | awk '{print $1}')"
+        [[ "sha256:${native_sha256}" == "$digest" ]] || {
+          echo "::error::Hermes native manifest bytes do not match the selected digest" >&2
+          exit 1
+        }
+        printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"

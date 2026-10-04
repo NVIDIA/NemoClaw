@@ -1,0 +1,1847 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
+import { resultText } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+
+const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
+const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
+const OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS = 280_000;
+const OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS = 360_000;
+export const OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS =
+  OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS +
+  2 *
+    (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS * OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS +
+      (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS - 1) * OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+export const OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS = 30 * 60_000;
+export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
+  "nemoclaw.e2e.launch-failure=provider-unavailable";
+const OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX =
+  "launch did not record the required structured session turns\n";
+
+function isTransientProviderAvailabilityFailure(
+  result: Pick<ShellProbeResult, "stderr">,
+  runId: string,
+): boolean {
+  const finalMarker = `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${runId}\n`;
+  return (
+    result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX) &&
+    result.stderr.endsWith(`\n${finalMarker}`)
+  );
+}
+
+export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
+  'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
+
+// OpenShell creates the PTY before it drops to the sandbox user. This child
+// process inherits fd 0, so it can observe PTY input mode without reopening the
+// root-owned device path from a separate sandbox command. The mode-0700 run
+// directory and mode-0600 socket trust E2E harness processes that share the
+// sandbox UID; they do not authenticate a hostile process that already has that
+// UID.
+export const OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT = String.raw`
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+
+const [role, parentPidText, runId, runRoot, ttyPath, dev, ino, rdev, sttyCommand] =
+  process.argv.slice(1);
+const socketPath = path.join(runRoot, "pty-input-mode.sock");
+const MAX_RESPONSE_BYTES = 1024;
+const MAX_STDERR_BYTES = 256;
+const parentPid = Number(parentPidText);
+const clients = new Set();
+let pendingClient;
+let ready = false;
+let retired = false;
+let socketDev;
+let socketIno;
+
+function response(state, result = null, fallbackCode = null) {
+  const status =
+    Number.isInteger(result && result.status) && result.status >= 0 && result.status <= 255
+      ? result.status
+      : null;
+  const resultSignal = result && result.signal;
+  const signal =
+    typeof resultSignal === "string" && /^SIG[A-Z0-9]{1,24}$/.test(resultSignal)
+      ? resultSignal
+      : null;
+  const resultCode = result && result.error && result.error.code;
+  const errorCode =
+    typeof resultCode === "string" && /^[A-Z0-9_]{1,64}$/.test(resultCode)
+      ? resultCode
+      : fallbackCode;
+  return {
+    ttyPath,
+    dev,
+    ino,
+    rdev,
+    state,
+    status,
+    signal,
+    errorCode,
+    stderr: String((result && result.stderr) || "")
+      .replace(/[^\x20-\x7e]/g, " ")
+      .trim()
+      .slice(0, MAX_STDERR_BYTES),
+  };
+}
+
+function closeInput() {
+  try {
+    fs.closeSync(0);
+  } catch {}
+}
+
+function sameRoot() {
+  try {
+    const stats = fs.lstatSync(runRoot, { bigint: true });
+    return (
+      stats.isDirectory() &&
+      !stats.isSymbolicLink() &&
+      stats.uid === BigInt(process.getuid()) &&
+      (stats.mode & 0o777n) === 0o700n &&
+      stats.dev === rootStats.dev &&
+      stats.ino === rootStats.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sameSocket() {
+  try {
+    const stats = fs.lstatSync(socketPath, { bigint: true });
+    return (
+      stats.isSocket() &&
+      stats.uid === BigInt(process.getuid()) &&
+      (stats.mode & 0o777n) === 0o600n &&
+      stats.nlink === 1n &&
+      stats.dev === socketDev &&
+      stats.ino === socketIno
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sameTty() {
+  try {
+    const stats = fs.fstatSync(0, { bigint: true });
+    return (
+      stats.isCharacterDevice() &&
+      stats.dev.toString() === dev &&
+      stats.ino.toString() === ino &&
+      stats.rdev.toString() === rdev
+    );
+  } catch {
+    return false;
+  }
+}
+
+function retire() {
+  if (retired) return;
+  retired = true;
+  pendingClient?.destroy();
+  pendingClient = undefined;
+  closeInput();
+}
+
+function send(client, observation) {
+  if (process.ppid !== parentPid) return client.destroy();
+  const body = JSON.stringify(observation) + "\n";
+  if (Buffer.byteLength(body) > MAX_RESPONSE_BYTES) {
+    client.destroy();
+    return retire();
+  }
+  client.end(body);
+  if (observation.state !== "canonical") retire();
+}
+
+function observe(client) {
+  clients.add(client);
+  client.once("close", () => clients.delete(client));
+  client.setTimeout(3_000, () => client.destroy());
+  client.resume();
+  if (process.ppid !== parentPid || retired || !sameRoot() || !sameSocket()) {
+    return client.destroy();
+  }
+  if (!sameTty()) {
+    return send(client, response("unavailable", null, "PTY_IDENTITY_CHANGED"));
+  }
+  const result = childProcess.spawnSync(sttyCommand, ["-a"], {
+    encoding: "utf8",
+    env: { LC_ALL: "C" },
+    stdio: [0, "pipe", "pipe"],
+    timeout: 1_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 64 * 1024,
+  });
+  if (process.ppid !== parentPid) return client.destroy();
+  if (!sameTty()) {
+    return send(client, response("unavailable", null, "PTY_IDENTITY_CHANGED"));
+  }
+  if (result.error) {
+    return send(client, response("unavailable", result, "PTY_TERMIOS_QUERY_FAILED"));
+  }
+  if (result.status !== 0) return send(client, response("unavailable", result));
+  if (/(^|[\s;])-icanon([\s;]|$)/.test(result.stdout)) {
+    return send(client, response("noncanonical"));
+  }
+  if (/(^|[\s;])icanon([\s;]|$)/.test(result.stdout)) {
+    return send(client, response("canonical"));
+  }
+  return send(client, response("unavailable", result, "PTY_TERMIOS_OUTPUT_INVALID"));
+}
+
+function accept(client) {
+  client.on("error", () => {});
+  if (ready) return observe(client);
+  if (pendingClient) return client.destroy();
+  pendingClient = client;
+}
+
+if (role !== "nemoclaw-pty-input-mode-monitor") process.exit(74);
+if (!Number.isSafeInteger(parentPid) || parentPid < 2) process.exit(74);
+if (!/^[0-9a-f]{32}$/.test(runId || "")) process.exit(74);
+if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) process.exit(74);
+if (!/^\/dev\/pts\/\d+$/.test(ttyPath || "")) process.exit(74);
+if (![dev, ino, rdev].every((value) => /^(0|[1-9]\d{0,24})$/.test(value || ""))) {
+  process.exit(74);
+}
+if (sttyCommand !== "/usr/bin/stty" && !path.isAbsolute(sttyCommand || "")) process.exit(74);
+
+const rootStats = fs.lstatSync(runRoot, { bigint: true });
+if (
+  !rootStats.isDirectory() ||
+  rootStats.isSymbolicLink() ||
+  rootStats.uid !== BigInt(process.getuid()) ||
+  (rootStats.mode & 0o777n) !== 0o700n
+) {
+  process.exit(74);
+}
+try {
+  fs.lstatSync(socketPath);
+  process.exit(74);
+} catch (error) {
+  if (!error || error.code !== "ENOENT") process.exit(74);
+}
+
+const server = net.createServer({ pauseOnConnect: true }, accept);
+server.on("error", retire);
+process.umask(0o177);
+server.listen(socketPath, () => {
+  try {
+    fs.chmodSync(socketPath, 0o600);
+    const stats = fs.lstatSync(socketPath, { bigint: true });
+    if (
+      !stats.isSocket() ||
+      stats.uid !== BigInt(process.getuid()) ||
+      (stats.mode & 0o777n) !== 0o600n ||
+      stats.nlink !== 1n
+    ) {
+      return retire();
+    }
+    socketDev = stats.dev;
+    socketIno = stats.ino;
+    ready = true;
+    if (pendingClient) {
+      const client = pendingClient;
+      pendingClient = undefined;
+      observe(client);
+    }
+  } catch {
+    retire();
+  }
+});
+const parentWatcher = setInterval(() => {
+  if (process.ppid === parentPid) return;
+  clearInterval(parentWatcher);
+  pendingClient?.destroy();
+  for (const client of clients) client.destroy();
+  closeInput();
+  if (!server.listening || !sameRoot() || !sameSocket()) process.exit(0);
+  server.close(() => process.exit(0));
+}, 25);
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => {});
+}
+`;
+
+// This starter and its monitor both inherit PTY fd 0. The starter then replaces
+// itself with the unchanged production command while the monitor retains its
+// descriptor.
+export const OPENCLAW_PTY_MONITOR_STARTER_SCRIPT = String.raw`
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+
+const monitorScript = ${JSON.stringify(OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT)};
+const termiosCommand = "/usr/bin/stty";
+
+const [runId, runRoot, ...originalArgv] = process.argv.slice(1);
+
+function fail(reason) {
+  process.stderr.write(JSON.stringify({ reason }) + "\n");
+  process.exit(72);
+}
+
+function exactMode(stats, mode) {
+  return (stats.mode & 0o777) === mode;
+}
+
+function validateRunRoot() {
+  let stats;
+  try {
+    stats = fs.lstatSync(runRoot);
+  } catch {
+    fail("pty_monitor_root_unavailable");
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    stats.uid !== process.getuid() ||
+    !exactMode(stats, 0o700)
+  ) {
+    fail("pty_monitor_root_invalid");
+  }
+}
+
+if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("pty_run_id_invalid");
+if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) fail("pty_monitor_root_invalid");
+if (originalArgv.length === 0) fail("pty_original_argv_invalid");
+if (typeof process.execve !== "function") fail("pty_execve_unavailable");
+
+try {
+  fs.mkdirSync(runRoot, { mode: 0o700 });
+  fs.chmodSync(runRoot, 0o700);
+} catch {
+  fail("pty_monitor_root_create_failed");
+}
+validateRunRoot();
+
+let ttyPath;
+let ttyStats;
+try {
+  ttyPath = fs.realpathSync("/proc/self/fd/0");
+  ttyStats = fs.fstatSync(0, { bigint: true });
+} catch {
+  fail("pty_stdin_unavailable");
+}
+if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) fail("pty_stdin_not_pty");
+if (!ttyStats.isCharacterDevice()) fail("pty_stdin_not_character_device");
+
+const monitor = childProcess.spawn(
+  process.execPath,
+  [
+    "-e",
+    monitorScript,
+    "nemoclaw-pty-input-mode-monitor",
+    process.pid.toString(),
+    runId,
+    runRoot,
+    ttyPath,
+    ttyStats.dev.toString(),
+    ttyStats.ino.toString(),
+    ttyStats.rdev.toString(),
+    termiosCommand,
+  ],
+  {
+    detached: false,
+    env: { LC_ALL: "C" },
+    stdio: [0, "ignore", "ignore"],
+  },
+);
+if (!Number.isSafeInteger(monitor.pid) || monitor.pid < 2) fail("pty_monitor_spawn_failed");
+monitor.unref();
+
+process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
+fail("pty_execve_failed");
+`;
+
+// Intercept only the final TUI spawn; forward ownership still sees the real binary.
+export const OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT = String.raw`// Health-probe Workers replay startup preloads without the CLI's launch authority.
+if (!require("node:worker_threads").isMainThread) return;
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const { syncBuiltinESMExports } = require("node:module");
+
+const authorityNames = Object.keys(process.env).filter(
+  (name) =>
+    name === "NEMOCLAW_OPENSHELL_COMMAND" ||
+    name.startsWith("NEMOCLAW_LAUNCH_") ||
+    name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
+);
+const realOpenShell = process.env.OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND;
+const sandboxName = process.env.OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX;
+const runId = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID;
+const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
+const monitorStarterScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT;
+const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
+const firstInput = process.env.OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT;
+
+function fail(reason) {
+  process.stderr.write(JSON.stringify({ reason }) + "\n");
+  process.exit(73);
+}
+
+function arraysEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+if (!path.isAbsolute(realOpenShell || "")) fail("openshell_preload_authority_invalid");
+if (!/^[0-9a-f]{32}$/.test(runId || "") || !path.isAbsolute(interceptPath || "")) {
+  fail("openshell_preload_receipt_invalid");
+}
+if (!monitorStarterScript || !runtimeEnvScript) fail("openshell_preload_script_missing");
+
+// Do not forward test authority or recursively preload it in child Node processes.
+for (const name of authorityNames) delete process.env[name];
+const nodeOptions = process.env.NODE_OPTIONS || "";
+const preloadOption = " --require " + JSON.stringify(__filename);
+if (nodeOptions.endsWith(preloadOption)) {
+  const originalOptions = nodeOptions.slice(0, -preloadOption.length);
+  if (originalOptions) process.env.NODE_OPTIONS = originalOptions;
+  else delete process.env.NODE_OPTIONS;
+}
+const spawn = childProcess.spawn;
+childProcess.spawn = (file, argv, options) => {
+  if (file !== realOpenShell || !Array.isArray(argv)) return spawn(file, argv, options);
+  const sameSandbox =
+    argv[0] === "sandbox" &&
+    argv[1] === "exec" &&
+    argv[2] === "--name" &&
+    argv[3] === sandboxName;
+  const separator = argv.indexOf("--");
+  const remoteArgv = separator === -1 ? [] : argv.slice(separator + 1);
+  const expectedTail = ["bash", "-lc", "openclaw tui"];
+  const hasExpectedTail = arraysEqual(remoteArgv.slice(-expectedTail.length), expectedTail);
+  const launchLike = sameSandbox && hasExpectedTail;
+
+  if (!launchLike) return spawn(file, argv, options);
+
+  if (!/^[\x20-\x7e]{1,512}$/.test(firstInput || "")) {
+    fail("openshell_preload_first_input_invalid");
+  }
+
+  let optionIndex = 4;
+  if (argv[optionIndex] === "-g") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(argv[optionIndex + 1] || "")) {
+      fail("openshell_launch_invocation_invalid");
+    }
+    optionIndex += 2;
+  }
+  const expectedOptions = ["--tty", "--timeout", "0", "--"];
+  const expectedRemote = [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-p",
+    "-c",
+    runtimeEnvScript,
+    "nemoclaw-runtime-env",
+    ...expectedTail,
+  ];
+  if (
+    !arraysEqual(argv.slice(optionIndex, optionIndex + expectedOptions.length), expectedOptions) ||
+    optionIndex + expectedOptions.length !== separator + 1 ||
+    !arraysEqual(remoteArgv, expectedRemote)
+  ) {
+    fail("openshell_launch_invocation_invalid");
+  }
+
+  try {
+    fs.writeFileSync(interceptPath, JSON.stringify({ schemaVersion: 1, runId }) + "\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    if (error && error.code === "EEXIST") fail("openshell_launch_intercept_duplicate");
+    fail("openshell_launch_intercept_failed");
+  }
+
+  const monitorRoot = "/tmp/nemoclaw-launch-turn-" + runId;
+  // OpenClaw submits --message only after its Gateway subscription and history
+  // load complete. Use a positional parameter so the generated input never
+  // enters shell source.
+  const launchRemoteArgv = [
+    ...remoteArgv.slice(0, -1),
+    'exec openclaw tui --message "$1"',
+    "nemoclaw-launch-first-turn",
+    firstInput,
+  ];
+  const replacement = [
+    ...argv.slice(0, separator + 1),
+    "node",
+    "-e",
+    monitorStarterScript,
+    runId,
+    monitorRoot,
+    ...launchRemoteArgv,
+  ];
+  return spawn(file, replacement, {
+    ...options,
+    timeout: Math.min(options?.timeout || 240_000, 240_000),
+    killSignal: "SIGKILL",
+  });
+};
+syncBuiltinESMExports();
+`;
+
+// OpenClaw owns the JSONL session store and does not expose a structured result
+// from `nemoclaw launch`. This verifier records an in-sandbox baseline, then
+// qualifies complete turns and exact structured provider failures appended
+// after that baseline. Session content never moves to the host.
+export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+
+const [
+  mode,
+  sessionRoot,
+  baselinePath,
+  expectedTurnsText,
+  ptyMonitorRoot,
+  runId,
+  firstUserIdentifier = "",
+  secondUserIdentifier = "",
+] = process.argv.slice(1);
+const baselineTemporaryPath = baselinePath + ".tmp";
+const ptyMonitorSocketPath = path.join(ptyMonitorRoot, "pty-input-mode.sock");
+const expectedUserIdentifiers = [firstUserIdentifier, secondUserIdentifier];
+const expectedUserIdentifiersConfigured = expectedUserIdentifiers.every((value) =>
+  /^[0-9a-f]{16}$/.test(value),
+);
+const MAX_BASELINE_BYTES = 1024 * 1024;
+const MAX_PTY_RESPONSE_BYTES = 1024;
+const PTY_RESPONSE_TIMEOUT_MS = 3_000;
+const sqliteSessionPath = path.join(path.dirname(sessionRoot), "agent", "openclaw-agent.sqlite");
+
+function finish(exitCode, reason, detail = {}) {
+  if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
+  process.exit(exitCode);
+}
+
+function exactKeys(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+function exactMode(stats, mode) {
+  return (stats.mode & 0o777) === mode;
+}
+
+function validPtyResponse(response) {
+  if (
+    !exactKeys(response, [
+      "ttyPath",
+      "dev",
+      "ino",
+      "rdev",
+      "state",
+      "status",
+      "signal",
+      "errorCode",
+      "stderr",
+    ]) ||
+    !["canonical", "noncanonical", "unavailable"].includes(response.state) ||
+    !/^\/dev\/pts\/\d+$/.test(response.ttyPath || "") ||
+    ![response.dev, response.ino, response.rdev].every(
+      (value) => typeof value === "string" && /^(0|[1-9]\d{0,24})$/.test(value),
+    )
+  ) {
+    return false;
+  }
+  if (
+    response.status !== null &&
+    (!Number.isInteger(response.status) || response.status < 0 || response.status > 255)
+  ) {
+    return false;
+  }
+  if (response.signal !== null && !/^SIG[A-Z0-9]{1,24}$/.test(response.signal)) return false;
+  if (response.errorCode !== null && !/^[A-Z0-9_]{1,64}$/.test(response.errorCode)) return false;
+  if (
+    typeof response.stderr !== "string" ||
+    Buffer.byteLength(response.stderr) > 256 ||
+    !/^[\x20-\x7e]*$/.test(response.stderr)
+  ) {
+    return false;
+  }
+  const diagnosticIsEmpty =
+    response.status === null &&
+    response.signal === null &&
+    response.errorCode === null &&
+    response.stderr === "";
+  return response.state === "unavailable" ? !diagnosticIsEmpty : diagnosticIsEmpty;
+}
+
+function validateRunContext() {
+  if (!/^[0-9a-f]{32}$/.test(runId || "")) finish(2, "run_id_invalid");
+  requireEvidence(
+    expectedUserIdentifiers.every((value) => value === "") || expectedUserIdentifiersConfigured,
+    "expected_user_identifiers_invalid",
+  );
+  if (baselinePath !== "/tmp/nemoclaw-launch-session-" + runId + ".json") {
+    finish(2, "baseline_path_invalid");
+  }
+  if (ptyMonitorRoot !== "/tmp/nemoclaw-launch-turn-" + runId) {
+    finish(2, "pty_monitor_root_invalid");
+  }
+}
+
+function readPrivateJson(filePath, maximumBytes, unavailableReason, invalidReason, missingReason) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (missingReason && error && error.code === "ENOENT") finish(1, missingReason);
+    finish(2, unavailableReason);
+  }
+  let raw;
+  try {
+    const stats = fs.fstatSync(fd);
+    if (
+      !stats.isFile() ||
+      stats.uid !== process.getuid() ||
+      !exactMode(stats, 0o600) ||
+      stats.nlink !== 1 ||
+      stats.size < 2 ||
+      stats.size > maximumBytes
+    ) {
+      finish(2, invalidReason);
+    }
+    raw = fs.readFileSync(fd, "utf8");
+  } catch {
+    finish(2, unavailableReason);
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {}
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    finish(2, invalidReason);
+  }
+}
+
+function writePrivateJsonAtomic(filePath, temporaryPath, value, maximumBytes, reason) {
+  const body = JSON.stringify(value) + "\n";
+  if (Buffer.byteLength(body) > maximumBytes) finish(2, reason);
+  let fd;
+  let created = false;
+  try {
+    fd = fs.openSync(
+      temporaryPath,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    created = true;
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temporaryPath, filePath);
+    const directoryFd = fs.openSync(path.dirname(filePath), fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } catch {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+    if (created) {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch {}
+    }
+    finish(2, reason);
+  }
+}
+
+function completeOffset(raw) {
+  return raw.endsWith("\n") ? raw.length : raw.lastIndexOf("\n") + 1;
+}
+
+function digest(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function digestSqliteEvents(events) {
+  const hash = crypto.createHash("sha256");
+  for (const event of events) {
+    hash.update(String(event.seq));
+    hash.update("\0");
+    hash.update(String(Buffer.byteLength(event.eventJson)));
+    hash.update("\0");
+    hash.update(event.eventJson);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function requireEvidence(value, reason, detail = {}) {
+  value ? undefined : finish(2, reason, detail);
+}
+
+function validSqliteEventRow(row) {
+  return (
+    typeof row.sessionId === "string" &&
+    row.sessionId.length > 0 &&
+    Buffer.byteLength(row.sessionId) <= 512 &&
+    Number.isSafeInteger(row.seq) &&
+    row.seq >= 0 &&
+    typeof row.eventJson === "string" &&
+    Buffer.byteLength(row.eventJson) <= 16 * 1024 * 1024
+  );
+}
+
+function sqliteSessionStoreStats(missingReason) {
+  let stats;
+  try {
+    stats = fs.lstatSync(sqliteSessionPath, { bigint: true });
+  } catch (error) {
+    const missing = Boolean(error && error.code === "ENOENT");
+    missing ? missingReason && finish(2, missingReason) : finish(2, "sqlite_session_store_unavailable");
+    return null;
+  }
+  requireEvidence(
+    stats.isFile() &&
+      !stats.isSymbolicLink() &&
+      stats.uid === BigInt(process.getuid()) &&
+      (stats.mode & 0o777n) === 0o600n &&
+      stats.nlink === 1n,
+    "sqlite_session_store_invalid",
+    {
+      check: "metadata",
+      regularFile: stats.isFile() && !stats.isSymbolicLink(),
+      ownerMatches: stats.uid === BigInt(process.getuid()),
+      privateMode: (stats.mode & 0o777n) === 0o600n,
+      singleLink: stats.nlink === 1n,
+    },
+  );
+  return stats;
+}
+
+function readSqliteTranscriptSnapshot(missingReason) {
+  const before = sqliteSessionStoreStats(missingReason);
+  return before ? readExistingSqliteTranscriptSnapshot(before) : null;
+}
+
+function readExistingSqliteTranscriptSnapshot(before) {
+  let database;
+  let rows;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    database = new DatabaseSync(sqliteSessionPath, {
+      allowExtension: false,
+      open: true,
+      readOnly: true,
+      timeout: 2_000,
+    });
+    database.exec("PRAGMA query_only = ON; BEGIN");
+    const table = database
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'transcript_events'",
+      )
+      .get();
+    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid", { check: "transcript_table" });
+    rows = database
+      .prepare(
+        "SELECT session_id AS sessionId, seq, event_json AS eventJson " +
+          "FROM transcript_events ORDER BY session_id, seq",
+      )
+      .all();
+    database.exec("COMMIT");
+  } catch {
+    finish(2, "sqlite_session_store_unreadable");
+  } finally {
+    try {
+      database?.close();
+    } catch {}
+  }
+  const after = sqliteSessionStoreStats("sqlite_session_store_removed");
+  requireEvidence(
+    before.dev === after.dev && before.ino === after.ino,
+    "sqlite_session_store_replaced",
+  );
+  const sessions = new Map();
+  for (const row of rows) {
+    requireEvidence(validSqliteEventRow(row), "sqlite_session_record_invalid");
+    const events = sessions.get(row.sessionId) ?? [];
+    events.push({ seq: row.seq, eventJson: row.eventJson });
+    sessions.set(row.sessionId, events);
+  }
+  return {
+    identity: { dev: before.dev.toString(), ino: before.ino.toString() },
+    sessions,
+  };
+}
+
+function sqliteBaseline(snapshot) {
+  return snapshot
+    ? {
+        ...snapshot.identity,
+        sessions: Array.from(snapshot.sessions, ([sessionId, events]) => ({
+          sessionId,
+          eventCount: events.length,
+          maximumSeq: events.at(-1).seq,
+          digest: digestSqliteEvents(events),
+        })),
+      }
+    : null;
+}
+
+function validUnsignedIdentity(value) {
+  return typeof value === "string" && (/^0$/.test(value) || /^[1-9]\d{0,24}$/.test(value));
+}
+
+function validSqliteBaselineShape(value) {
+  return (
+    value === null ||
+    (exactKeys(value, ["dev", "ino", "sessions"]) &&
+      validUnsignedIdentity(value.dev) &&
+      validUnsignedIdentity(value.ino) &&
+      Array.isArray(value.sessions))
+  );
+}
+
+function validateSqliteBaselineEntries(sqlite) {
+  const sessionIds = new Set();
+  for (const entry of sqlite.sessions) {
+    requireEvidence(
+      exactKeys(entry, ["sessionId", "eventCount", "maximumSeq", "digest"]) &&
+        typeof entry.sessionId === "string" &&
+        entry.sessionId.length > 0 &&
+        Buffer.byteLength(entry.sessionId) <= 512 &&
+        !sessionIds.has(entry.sessionId) &&
+        Number.isSafeInteger(entry.eventCount) &&
+        entry.eventCount >= 1 &&
+        Number.isSafeInteger(entry.maximumSeq) &&
+        entry.maximumSeq >= 0 &&
+        typeof entry.digest === "string" &&
+        /^[0-9a-f]{64}$/.test(entry.digest),
+      "baseline_invalid",
+    );
+    sessionIds.add(entry.sessionId);
+  }
+}
+
+function sessionFileNames() {
+  try {
+    return fs
+      .readdirSync(sessionRoot)
+      .filter((name) => name.endsWith(".jsonl") && !name.endsWith(".trajectory.jsonl"))
+      .sort();
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    finish(2, "session_store_unreadable");
+  }
+}
+
+function validatePtyIdentity(response) {
+  let ttyStats;
+  try {
+    ttyStats = fs.lstatSync(response.ttyPath, { bigint: true });
+  } catch {
+    finish(2, "pty_identity_changed");
+  }
+  if (!ttyStats.isCharacterDevice()) finish(2, "pty_not_character_device");
+  if (
+    ttyStats.dev.toString() !== response.dev ||
+    ttyStats.ino.toString() !== response.ino ||
+    ttyStats.rdev.toString() !== response.rdev
+  ) {
+    finish(2, "pty_identity_changed");
+  }
+}
+
+function readPtyMonitorRoot(startup) {
+  let stats;
+  try {
+    stats = fs.lstatSync(ptyMonitorRoot, { bigint: true });
+  } catch (error) {
+    if (startup && error && error.code === "ENOENT") finish(1, "pty_socket_missing");
+    finish(2, "pty_monitor_root_unavailable");
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    stats.uid !== BigInt(process.getuid()) ||
+    (stats.mode & 0o777n) !== 0o700n
+  ) {
+    finish(2, "pty_monitor_root_invalid");
+  }
+  return stats;
+}
+
+function readPtyMonitorSocket(startup) {
+  let stats;
+  try {
+    stats = fs.lstatSync(ptyMonitorSocketPath, { bigint: true });
+  } catch (error) {
+    if (startup && error && error.code === "ENOENT") finish(1, "pty_socket_missing");
+    finish(2, "pty_socket_unavailable");
+  }
+  if (
+    !stats.isSocket() ||
+    stats.uid !== BigInt(process.getuid()) ||
+    (stats.mode & 0o777n) !== 0o600n ||
+    stats.nlink !== 1n
+  ) {
+    finish(2, "pty_socket_invalid");
+  }
+  return stats;
+}
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function qualifyPtyResponse(raw, rootBefore, socketBefore) {
+  if (
+    Buffer.byteLength(raw) < 2 ||
+    Buffer.byteLength(raw) > MAX_PTY_RESPONSE_BYTES ||
+    !raw.endsWith("\n") ||
+    raw.slice(0, -1).includes("\n")
+  ) {
+    finish(2, "pty_termios_response_invalid");
+  }
+  let response;
+  try {
+    response = JSON.parse(raw);
+  } catch {
+    finish(2, "pty_termios_response_invalid");
+  }
+  if (!validPtyResponse(response)) finish(2, "pty_termios_response_invalid");
+  const rootAfter = readPtyMonitorRoot(false);
+  const socketAfter = readPtyMonitorSocket(false);
+  if (!sameIdentity(rootBefore, rootAfter) || !sameIdentity(socketBefore, socketAfter)) {
+    finish(2, "pty_socket_identity_changed");
+  }
+  validatePtyIdentity(response);
+  if (response.state === "canonical") finish(1, "pty_input_canonical");
+  if (response.state === "noncanonical") finish(0);
+  if (response.state === "unavailable") {
+    finish(2, "pty_termios_unavailable", {
+      sttyStatus: response.status,
+      sttySignal: response.signal,
+      sttyErrorCode: response.errorCode,
+      sttyStderr: response.stderr,
+    });
+  }
+  finish(2, "pty_termios_response_invalid");
+}
+
+function qualifyTuiInputMode() {
+  const rootBefore = readPtyMonitorRoot(true);
+  const socketBefore = readPtyMonitorSocket(true);
+  let raw = "";
+  const client = net.createConnection({ path: ptyMonitorSocketPath });
+  const responseDeadline = setTimeout(
+    () => finish(2, "pty_termios_response_timeout"),
+    PTY_RESPONSE_TIMEOUT_MS,
+  );
+  client.setEncoding("utf8");
+  client.on("data", (chunk) => {
+    raw += chunk;
+    if (Buffer.byteLength(raw) > MAX_PTY_RESPONSE_BYTES) {
+      finish(2, "pty_termios_response_invalid");
+    }
+  });
+  client.on("end", () => {
+    clearTimeout(responseDeadline);
+    qualifyPtyResponse(raw, rootBefore, socketBefore);
+  });
+  client.on("error", () => finish(2, "pty_socket_unavailable"));
+}
+
+function qualifyPtyMonitorReady() {
+  readPtyMonitorRoot(true);
+  readPtyMonitorSocket(true);
+  finish(0);
+}
+
+function readCompleteSession(fileName) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(sessionRoot, fileName), "utf8");
+  } catch {
+    finish(2, "session_unreadable", { sessionId: fileName.slice(0, -6) });
+  }
+  const offset = completeOffset(raw);
+  return { offset, complete: raw.slice(0, offset), raw };
+}
+
+function recordBaseline() {
+  const sessions = {};
+  for (const fileName of sessionFileNames()) {
+    const { offset, complete } = readCompleteSession(fileName);
+    sessions[fileName] = { offset, digest: digest(complete) };
+  }
+  writePrivateJsonAtomic(
+    baselinePath,
+    baselineTemporaryPath,
+    { schemaVersion: 2, sessions, sqlite: sqliteBaseline(readSqliteTranscriptSnapshot()) },
+    MAX_BASELINE_BYTES,
+    "baseline_write_failed",
+  );
+  finish(0);
+}
+
+function readBaseline() {
+  const value = readPrivateJson(
+    baselinePath,
+    MAX_BASELINE_BYTES,
+    "baseline_unreadable",
+    "baseline_invalid",
+  );
+  if (
+    !exactKeys(value, ["schemaVersion", "sessions", "sqlite"]) ||
+    value.schemaVersion !== 2 ||
+    !value.sessions ||
+    typeof value.sessions !== "object" ||
+    Array.isArray(value.sessions) ||
+    !validSqliteBaselineShape(value.sqlite)
+  ) {
+    finish(2, "baseline_invalid");
+  }
+  for (const [fileName, entry] of Object.entries(value.sessions)) {
+    if (
+      !/^[^/]+\.jsonl$/.test(fileName) ||
+      !exactKeys(entry, ["offset", "digest"]) ||
+      !Number.isSafeInteger(entry.offset) ||
+      entry.offset < 0 ||
+      typeof entry.digest !== "string" ||
+      !/^[0-9a-f]{64}$/.test(entry.digest)
+    ) {
+      finish(2, "baseline_invalid");
+    }
+  }
+  value.sqlite === null || validateSqliteBaselineEntries(value.sqlite);
+  return value;
+}
+
+function validateCleanupFile(filePath, maximumBytes, reason) {
+  let stats;
+  try {
+    stats = fs.lstatSync(filePath);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return false;
+    finish(2, reason);
+  }
+  if (
+    !stats.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.uid !== process.getuid() ||
+    !exactMode(stats, 0o600) ||
+    stats.nlink !== 1 ||
+    stats.size > maximumBytes
+  ) {
+    finish(2, reason);
+  }
+  return true;
+}
+
+function fsyncParent(filePath) {
+  const fd = fs.openSync(path.dirname(filePath), fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function removeBaseline() {
+  const baselineExists = validateCleanupFile(
+    baselinePath,
+    MAX_BASELINE_BYTES,
+    "baseline_cleanup_failed",
+  );
+  if (baselineExists) {
+    readBaseline();
+    try {
+      fs.unlinkSync(baselinePath);
+      fsyncParent(baselinePath);
+    } catch {
+      finish(2, "baseline_cleanup_failed");
+    }
+  }
+  const temporaryExists = validateCleanupFile(
+    baselineTemporaryPath,
+    MAX_BASELINE_BYTES,
+    "baseline_cleanup_failed",
+  );
+  if (temporaryExists) {
+    try {
+      fs.unlinkSync(baselineTemporaryPath);
+      fsyncParent(baselineTemporaryPath);
+    } catch {
+      finish(2, "baseline_cleanup_failed");
+    }
+  }
+  finish(0);
+}
+
+function removePtyMonitorRoot() {
+  let before;
+  try {
+    before = fs.lstatSync(ptyMonitorRoot, { bigint: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") finish(0);
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  if (
+    !before.isDirectory() ||
+    before.isSymbolicLink() ||
+    before.uid !== BigInt(process.getuid()) ||
+    (before.mode & 0o777n) !== 0o700n
+  ) {
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  let names;
+  try {
+    names = fs.readdirSync(ptyMonitorRoot).sort();
+  } catch {
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  const allowedNames = ["pty-input-mode.sock"];
+  if (names.some((name) => !allowedNames.includes(name))) {
+    finish(2, "pty_monitor_cleanup_unknown_entry");
+  }
+  if (names.includes("pty-input-mode.sock")) {
+    finish(2, "pty_monitor_socket_still_present");
+  }
+  let after;
+  try {
+    after = fs.lstatSync(ptyMonitorRoot, { bigint: true });
+  } catch {
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  if (after.dev !== before.dev || after.ino !== before.ino) {
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  try {
+    fs.rmdirSync(ptyMonitorRoot);
+    fsyncParent(ptyMonitorRoot);
+  } catch {
+    finish(2, "pty_monitor_cleanup_failed");
+  }
+  finish(0);
+}
+
+function hasStructuredContent(message) {
+  if (typeof message.content === "string") return message.content.length > 0;
+  return Array.isArray(message.content) && message.content.length > 0;
+}
+
+function messageFailureMetadata(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const errorType = /^(?:litellm\.)?(AuthenticationError|PermissionDeniedError|BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError|InternalServerError|ServiceUnavailableError)(?::|$)/.exec(errorMessage)?.[1];
+  const errorCode = ["string", "number"].includes(typeof message.errorCode) ? String(message.errorCode).trim() : "";
+  return {
+    role: message.role,
+    stopReason: ["stop", "length", "toolUse", "error", "aborted"].includes(message.stopReason) ? message.stopReason : "other",
+    errorCode: /^[1-5][0-9]{2}$/.test(errorCode) ? errorCode : null,
+    errorCodeType: typeof message.errorCode,
+    errorType: errorType ?? (errorMessage ? "unclassified" : null),
+    api: ["openai-completions", "openai-responses", "anthropic-messages"].includes(message.api) ? message.api : "other",
+    managedProvider: message.provider === "inference",
+  };
+}
+
+function structuredContentText(message) {
+  return [message.content]
+    .flat()
+    .flatMap((item) => {
+      return typeof item === "string"
+        ? [item]
+        : item && typeof item.text === "string"
+          ? [item.text]
+          : [];
+    })
+    .join("\n");
+}
+
+const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
+const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
+const providerConflictingError = /^(?:litellm\.)?(?:BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError)(?::|$)/;
+const providerNonRetryableError =
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|malformed|invalid (?:provider )?response|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
+
+function isStructuredProviderUnavailable(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const validEmptyContent = JSON.stringify(message.content) === "[]";
+  const identity = [
+    message.role,
+    validEmptyContent,
+    message.stopReason,
+    message.api,
+    message.provider,
+  ].join("\n");
+  return (
+    identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
+    typeof message.errorCode === "string" &&
+    providerUnavailableCodes.has(message.errorCode.trim()) &&
+    (message.errorCode.trim() === "503" || providerUnavailableError.test(errorMessage)) &&
+    !providerConflictingError.test(errorMessage) &&
+    !providerNonRetryableError.test(errorMessage)
+  );
+}
+
+function appendedMessages(fileName, baseline) {
+  const { offset, complete, raw } = readCompleteSession(fileName);
+  const prior = baseline[fileName];
+  const priorOffset = prior ? prior.offset : 0;
+  if (raw.length !== offset) {
+    finish(2, "session_record_incomplete", { sessionId: fileName.slice(0, -6) });
+  }
+  if (offset < priorOffset) finish(2, "session_truncated", { sessionId: fileName.slice(0, -6) });
+  if (prior && digest(raw.slice(0, priorOffset)) !== prior.digest) {
+    finish(2, "session_rewritten", { sessionId: fileName.slice(0, -6) });
+  }
+
+  const messages = [];
+  for (const line of complete.slice(priorOffset).split("\n")) {
+    if (!line.trim()) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      finish(2, "malformed_session", { sessionId: fileName.slice(0, -6) });
+    }
+    if (!record || record.type !== "message" || !record.message) continue;
+    const role = record.message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    messages.push({
+      role,
+      contentText: structuredContentText(record.message),
+      hasStructuredContent: hasStructuredContent(record.message),
+      providerUnavailable: isStructuredProviderUnavailable(record.message),
+      failureMetadata: messageFailureMetadata(record.message),
+    });
+  }
+  return messages;
+}
+
+function structuredMessages(events, sessionId) {
+  return events.flatMap((event) => {
+    let record;
+    try {
+      record = JSON.parse(event.eventJson);
+    } catch {
+      finish(2, "malformed_session", { sessionId });
+    }
+    const message = record?.type === "message" ? record.message : null;
+    const role = message?.role;
+    return message && (role === "user" || role === "assistant")
+      ? [
+          {
+            role,
+            contentText: structuredContentText(message),
+            hasStructuredContent: hasStructuredContent(message),
+            providerUnavailable: isStructuredProviderUnavailable(message),
+            failureMetadata: messageFailureMetadata(message),
+          },
+        ]
+      : [];
+  });
+}
+
+function appendedSqliteSessions(baseline, jsonlBaseline) {
+  const snapshot = readSqliteTranscriptSnapshot(
+    baseline ? "sqlite_session_store_removed" : undefined,
+  );
+  requireEvidence(
+    baseline || !snapshot || Object.keys(jsonlBaseline).length === 0,
+    "sqlite_session_store_appeared",
+  );
+  const effectiveBaseline =
+    baseline ??
+    (snapshot
+      ? { ...snapshot.identity, sessions: [] }
+      : null);
+  return snapshot ? appendedExistingSqliteSessions(snapshot, effectiveBaseline) : null;
+}
+
+function appendedExistingSqliteSessions(snapshot, baseline) {
+  requireEvidence(
+    snapshot.identity.dev === baseline.dev && snapshot.identity.ino === baseline.ino,
+    "sqlite_session_store_replaced",
+  );
+  const priorBySession = new Map(
+    baseline.sessions.map((entry) => [entry.sessionId, entry]),
+  );
+  for (const prior of priorBySession.values()) {
+    const current = snapshot.sessions.get(prior.sessionId) ?? [];
+    const prefix = current.filter((event) => event.seq <= prior.maximumSeq);
+    requireEvidence(
+      prefix.length >= prior.eventCount && current.at(-1)?.seq >= prior.maximumSeq,
+      "session_truncated",
+      { sessionId: prior.sessionId },
+    );
+    requireEvidence(
+      prefix.length === prior.eventCount && digestSqliteEvents(prefix) === prior.digest,
+      "session_rewritten",
+      { sessionId: prior.sessionId },
+    );
+  }
+  return Array.from(snapshot.sessions, ([sessionId, events]) => {
+    const prior = priorBySession.get(sessionId);
+    const appended = prior ? events.filter((event) => event.seq > prior.maximumSeq) : events;
+    return { sessionId, messages: structuredMessages(appended, sessionId) };
+  }).filter((session) => session.messages.length > 0);
+}
+
+function appendedJsonlSessions(baseline) {
+  const currentFiles = sessionFileNames();
+  for (const fileName of Object.keys(baseline)) {
+    if (!currentFiles.includes(fileName)) {
+      finish(2, "session_removed", { sessionId: fileName.slice(0, -6) });
+    }
+  }
+
+  const changedSessions = currentFiles
+    .map((fileName) => ({
+      sessionId: fileName.slice(0, -6),
+      messages: appendedMessages(fileName, baseline),
+    }))
+    .filter((session) => session.messages.length > 0);
+  return changedSessions;
+}
+
+function qualifyStructuredTurns(changedSessions, expectedTurns) {
+  if (changedSessions.length === 0) finish(1);
+  if (changedSessions.length > 1) finish(2, "multiple_sessions_changed");
+
+  const { messages, sessionId } = changedSessions[0];
+  const expectedRoles = Array.from({ length: expectedTurns }, () => ["user", "assistant"]).flat();
+  const providerUnavailableIndex = messages.findIndex((message) => message.providerUnavailable);
+  for (const [index, message] of messages.entries()) {
+    if (index >= expectedRoles.length || (providerUnavailableIndex !== -1 && index > providerUnavailableIndex)) {
+      const reason = index >= expectedRoles.length ? "extra_message" : "message_after_provider_unavailable";
+      finish(2, reason, { sessionId });
+    }
+    if (message.role !== expectedRoles[index]) {
+      finish(2, "message_order_invalid", { sessionId });
+    }
+    const expectedUserIdentifier =
+      message.role === "user" && expectedUserIdentifiersConfigured
+        ? expectedUserIdentifiers[Math.floor(index / 2)]
+        : null;
+    requireEvidence(
+      !expectedUserIdentifier || message.contentText.includes(expectedUserIdentifier),
+      "user_message_mismatch",
+      { sessionId },
+    );
+    if (!message.hasStructuredContent && !message.providerUnavailable) {
+      finish(2, "message_content_empty", { sessionId, messageIndex: index, ...message.failureMetadata });
+    }
+  }
+  const providerUnavailable = providerUnavailableIndex !== -1;
+  if (providerUnavailable || messages.length < expectedRoles.length) {
+    finish(providerUnavailable ? 3 : 1, providerUnavailable ? "provider_unavailable" : undefined, {
+      sessionId,
+    });
+  }
+  finish(0);
+}
+
+function qualifyTurns() {
+  const expectedTurns = Number(expectedTurnsText);
+  if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
+    finish(2, "expected_turn_count_invalid");
+  }
+
+  const baseline = readBaseline();
+  const sqliteSessions = appendedSqliteSessions(baseline.sqlite, baseline.sessions);
+  qualifyStructuredTurns(
+    sqliteSessions === null ? appendedJsonlSessions(baseline.sessions) : sqliteSessions,
+    expectedTurns,
+  );
+}
+
+try {
+  validateRunContext();
+  if (mode === "baseline") recordBaseline();
+  else if (mode === "monitor-ready") qualifyPtyMonitorReady();
+  else if (mode === "input-mode") qualifyTuiInputMode();
+  else if (mode === "qualify") qualifyTurns();
+  else if (mode === "cleanup-baseline") removeBaseline();
+  else if (mode === "cleanup-pty") removePtyMonitorRoot();
+  else finish(2, "mode_invalid");
+} catch {
+  finish(2, "verifier_failed");
+}
+`;
+
+export const LAUNCH_TURN_SCRIPT = String.raw`set -euo pipefail
+umask 077
+command -v script >/dev/null 2>&1
+command -v timeout >/dev/null 2>&1
+
+openshell_command="$NEMOCLAW_OPENSHELL_COMMAND"
+openshell_environment=(env)
+while IFS= read -r authority_name; do
+  openshell_environment+=(-u "$authority_name")
+done < <(
+  printf '%s\n' NEMOCLAW_OPENSHELL_BIN NEMOCLAW_OPENSHELL_COMMAND
+  compgen -e NEMOCLAW_LAUNCH_ || true
+  compgen -e OPENSHELL_NEMOCLAW_LAUNCH_ || true
+)
+
+session_dir="$(mktemp -d "$NEMOCLAW_LAUNCH_HOST_TMP_ROOT/nemoclaw-launch-host.XXXXXX")"
+capture="$session_dir/terminal.log"
+driver_error="$session_dir/pty-driver.err"
+evidence_error="$session_dir/session-evidence.err"
+input="$session_dir/input"
+openshell_preload="$session_dir/openshell-launch-preload.cjs"
+intercept_path="$session_dir/launch-intercept.json"
+baseline_path="/tmp/nemoclaw-launch-session-$NEMOCLAW_LAUNCH_RUN_ID.json"
+pty_monitor_root="/tmp/nemoclaw-launch-turn-$NEMOCLAW_LAUNCH_RUN_ID"
+session_pid=""
+session_deadline=""
+provider_unavailable_candidate=0
+last_evidence_status=unset
+
+remove_session_baseline() {
+  session_evidence cleanup-baseline
+}
+
+remove_pty_monitor() {
+  session_evidence cleanup-pty
+}
+
+wait_for_pty_monitor_exit() {
+  for _ in {1..100}; do
+    [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]] && return
+    sleep 0.05
+  done
+}
+
+cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT
+  set +e
+  printf 'nemoclaw.e2e.launch-cleanup=started evidence-status=%s provider-unavailable=%s\n' "$last_evidence_status" "$provider_unavailable_candidate" >&2
+  exec 3>&- || true
+  if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
+    kill -TERM "$session_pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$session_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$session_pid" ]]; then
+    wait "$session_pid" 2>/dev/null || true
+  fi
+  echo "nemoclaw.e2e.launch-cleanup=child-reaped" >&2
+  # A fatal shell error in one cleanup call must not skip the remaining cleanup.
+  if ! (remove_session_baseline) >/dev/null 2>"$evidence_error"; then
+    echo "structured session baseline cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
+    cleanup_status=1
+  fi
+  wait_for_pty_monitor_exit
+  if ! (remove_pty_monitor) >/dev/null 2>"$evidence_error"; then
+    echo "launch PTY monitor cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
+    cleanup_status=1
+  fi
+  if ! rm -rf -- "$session_dir"; then
+    echo "launch host session cleanup failed" >&2
+    cleanup_status=1
+  fi
+  printf 'nemoclaw.e2e.launch-cleanup=completed status=%s\n' "$cleanup_status" >&2
+  if [[ "$original_status" != 0 ]]; then
+    case "$provider_unavailable_candidate:$cleanup_status" in
+      1:0) printf '\n%s\n' "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
+    esac
+    exit "$original_status"
+  fi
+  exit "$cleanup_status"
+}
+trap cleanup EXIT
+
+terminal_diagnostic() {
+  if [[ -f "$capture" ]]; then
+    echo "bounded terminal diagnostic (last 4096 bytes):" >&2
+    tail -c 4096 "$capture" >&2 || true
+  fi
+  if [[ -s "$driver_error" ]]; then
+    echo "bounded PTY driver diagnostic (last 2048 bytes):" >&2
+    tail -c 2048 "$driver_error" >&2 || true
+  fi
+}
+
+fail_launch_session() {
+  echo "$1" >&2
+  if [[ -s "$evidence_error" ]]; then
+    tail -c 2048 "$evidence_error" >&2 || true
+  fi
+  terminal_diagnostic
+  exit 1
+}
+
+fail_provider_unavailable() {
+  provider_unavailable_candidate=1
+  fail_launch_session "launch did not record the required structured session turns"
+}
+
+session_evidence() {
+  local mode="$1"
+  local expected_turns=""
+  local command_timeout=10
+  if [[ "$#" -gt 1 ]]; then
+    expected_turns="$2"
+  fi
+  if [[ -n "$session_deadline" && "$mode" != cleanup-* ]]; then
+    local remaining=$((session_deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      return 1
+    fi
+    if (( remaining < command_timeout )); then
+      command_timeout="$remaining"
+    fi
+  fi
+  NODE_NO_WARNINGS=1 timeout --kill-after=1s "$command_timeout"s \
+    "${"$"}{openshell_environment[@]}" "$openshell_command" sandbox exec \
+    --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
+    node -e "$NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT" \
+    "$mode" \
+    "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
+    "$baseline_path" \
+    "$expected_turns" \
+    "$pty_monitor_root" \
+    "$NEMOCLAW_LAUNCH_RUN_ID" \
+    "$NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER" \
+    "$NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER"
+}
+
+wait_for_turn_count() {
+  local expected_turns="$1"
+  local evidence_status
+  local session_active
+  # Retain this phase's diagnostics if the final deadline probe has no stderr.
+  # Bound the retained tail after each failed probe, before polling again.
+  : > "$evidence_error"
+  while (( SECONDS < session_deadline )); do
+    # Sample liveness first so an exited child receives one final evidence qualification.
+    session_active=1
+    kill -0 "$session_pid" 2>/dev/null || session_active=0
+    if session_evidence qualify "$expected_turns" >/dev/null 2>>"$evidence_error"; then
+      last_evidence_status=0
+      return 0
+    else
+      evidence_status=$?
+    fi
+    last_evidence_status="$evidence_status"
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
+    if [[ "$evidence_status" != 1 ]]; then
+      case "$evidence_status" in
+        3) fail_provider_unavailable ;;
+      esac
+      fail_launch_session \
+        "structured session evidence was invalid or unavailable (status $evidence_status)"
+    fi
+    if [[ "$session_active" != 1 ]]; then
+      break
+    fi
+    sleep 1
+  done
+  fail_launch_session "launch did not record the required structured session turns"
+}
+
+wait_for_pty_input_mode() {
+  local evidence_status
+  : > "$evidence_error"
+  while (( SECONDS < session_deadline )); do
+    if session_evidence input-mode >/dev/null 2>>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not observe noncanonical PTY input mode before the session deadline or before the PTY child process exited"
+}
+
+wait_for_pty_monitor_ready() {
+  local evidence_status
+  : > "$evidence_error"
+  while (( SECONDS < session_deadline )); do
+    if session_evidence monitor-ready >/dev/null 2>>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not observe the PTY monitor socket before the session deadline or before the PTY child process exited"
+}
+
+if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
+  fail_launch_session "launch could not record the structured session baseline"
+fi
+
+printf '%s' "$NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT" >"$openshell_preload"
+node_options="$(node -e 'process.stdout.write((process.env.NODE_OPTIONS || "") + " --require " + JSON.stringify(require("node:fs").realpathSync(process.argv[1])))' "$openshell_preload")"
+
+mkfifo -m 600 "$input"
+if [[ -n "$NEMOCLAW_LAUNCH_ENTRYPOINT" ]]; then
+  printf -v launch_command '%q %q %q %q' \
+    "$NEMOCLAW_LAUNCH_COMMAND" "$NEMOCLAW_LAUNCH_ENTRYPOINT" \
+    launch "$NEMOCLAW_LAUNCH_SANDBOX"
+else
+  printf -v launch_command '%q %q %q' \
+    "$NEMOCLAW_LAUNCH_COMMAND" launch "$NEMOCLAW_LAUNCH_SANDBOX"
+fi
+
+NODE_OPTIONS="$node_options" \
+NEMOCLAW_OPENSHELL_BIN="$openshell_command" \
+OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND="$NEMOCLAW_OPENSHELL_COMMAND" \
+OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX="$NEMOCLAW_LAUNCH_SANDBOX" \
+OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID="$NEMOCLAW_LAUNCH_RUN_ID" \
+OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
+OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT="$NEMOCLAW_LAUNCH_FIRST_INPUT" \
+OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT="$NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT" \
+OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT="$NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT" \
+timeout --kill-after=5s 250s \
+  script --quiet --return --flush --command "$launch_command" "$capture" \
+  <"$input" >/dev/null 2>"$driver_error" &
+session_pid=$!
+exec 3>"$input"
+session_budget_seconds="$NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS"
+session_deadline=$((SECONDS + session_budget_seconds))
+
+capture_ready=0
+while (( SECONDS < session_deadline )); do
+  if [[ -f "$capture" ]]; then
+    capture_ready=1
+    break
+  fi
+  if ! kill -0 "$session_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$capture_ready" != 1 ]]; then
+  fail_launch_session "launch did not create a PTY diagnostic capture"
+fi
+
+# Establish monitor availability without consuming its single noncanonical
+# observation. A fresh input-mode proof is required after OpenClaw records its
+# startup-aware first turn.
+wait_for_pty_monitor_ready
+wait_for_turn_count 1
+wait_for_pty_input_mode
+if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
+  fail_launch_session "launch exited before the second PTY input was submitted"
+fi
+wait_for_turn_count 2
+
+exit_command_write_status=0
+if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
+  # The TUI may finish cleanly immediately after publishing the two required
+  # structured turns. Preserve that successful child status even when its
+  # input reader wins the race with the best-effort exit command.
+  trap '' PIPE
+  if printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3; then
+    :
+  else
+    exit_command_write_status=$?
+  fi
+  trap - PIPE
+else
+  # Some TUIs have no exit command. They may close the FIFO after the first
+  # interrupt, so ignore SIGPIPE while sending the second one.
+  trap '' PIPE
+  printf '\003' >&3 2>/dev/null || true
+  sleep 1
+  printf '\003' >&3 2>/dev/null || true
+  trap - PIPE
+fi
+
+if wait "$session_pid"; then
+  launch_status=0
+else
+  launch_status=$?
+fi
+exec 3>&-
+session_pid=""
+
+if [[ "$launch_status" != 0 ]]; then
+  if [[ "$exit_command_write_status" != 0 ]]; then
+    echo "launch PTY closed before the exit command was submitted (status $exit_command_write_status)" >&2
+  fi
+  echo "launch exited with status $launch_status" >&2
+  terminal_diagnostic
+  exit "$launch_status"
+fi
+if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
+  last_evidence_status=0
+else
+  evidence_status=$?
+  last_evidence_status="$evidence_status"
+  case "$evidence_status" in
+    3) fail_provider_unavailable ;;
+  esac
+  fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
+fi
+if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
+  fail_launch_session "launch could not remove the structured session baseline"
+fi
+wait_for_pty_monitor_exit
+if ! remove_pty_monitor >/dev/null 2>"$evidence_error"; then
+  fail_launch_session "launch could not remove the PTY monitor"
+fi
+`;
+
+export interface OpenClawLaunchSessionOptions {
+  artifactName: string;
+  cliCommand: string;
+  cliEntrypoint?: string;
+  env: NodeJS.ProcessEnv;
+  exitCommand?: string;
+  host: HostCliClient;
+  redactionValues: string[];
+  sandboxName: string;
+  beforeLaunchTurns?: () => Promise<void> | void;
+}
+
+function uniqueTurnInputs(): {
+  first: string;
+  firstIdentifier: string;
+  second: string;
+  secondIdentifier: string;
+} {
+  const fragment = randomUUID().replaceAll("-", "");
+  const firstIdentifier = fragment.slice(0, 16);
+  const secondIdentifier = fragment.slice(16);
+  return {
+    first: `Reply briefly without using tools. Request identifier: ${firstIdentifier}.`,
+    firstIdentifier,
+    second: `Reply briefly again without using tools. Request identifier: ${secondIdentifier}.`,
+    secondIdentifier,
+  };
+}
+
+export async function runOpenClawLaunchSession(
+  options: OpenClawLaunchSessionOptions,
+): Promise<ShellProbeResult> {
+  if (process.platform !== "linux") {
+    throw new Error("launch session coverage requires the Linux util-linux PTY driver");
+  }
+  if (!options.host.openshellCommandPath.startsWith("/")) {
+    throw new Error("launch session coverage requires an absolute OpenShell command path");
+  }
+  let finalFailure: ShellProbeResult | undefined;
+  let providerUnavailable = false;
+  for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
+    const inputs = uniqueTurnInputs();
+    const runId = randomUUID().replaceAll("-", "");
+    // A failing logout file can break Bash 5.1's function context during EXIT cleanup.
+    const result = await options.host.command("bash", ["-c", LAUNCH_TURN_SCRIPT], {
+      artifactName:
+        attempt === 1
+          ? options.artifactName
+          : `${options.artifactName}-provider-retry-${String(attempt).padStart(2, "0")}`,
+      env: {
+        ...options.env,
+        NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
+        NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
+        NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
+        NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
+        NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputs.firstIdentifier,
+        NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
+        NEMOCLAW_LAUNCH_RUN_ID: runId,
+        NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
+        NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
+        NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputs.secondIdentifier,
+        NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
+        NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
+        NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
+        NEMOCLAW_OPENSHELL_COMMAND: options.host.openshellCommandPath,
+        TERM: "xterm-256color",
+      },
+      redactionValues: options.redactionValues,
+      timeoutMs: OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS,
+    });
+    if (result.exitCode === 0) return result;
+    finalFailure = result;
+    providerUnavailable = isTransientProviderAvailabilityFailure(result, runId);
+    if (!providerUnavailable) break;
+    if (attempt < OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS) {
+      await delay(OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+    }
+  }
+  const detail = finalFailure ? resultText(finalFailure) : "launch attempt was not executed";
+  throw new Error(
+    providerUnavailable
+      ? `OpenClaw launch provider unavailable after ${OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS} attempts: ${detail}`
+      : `launch session failed: ${detail}`,
+  );
+}
+
+export async function runOpenClawLaunchReadinessLeaseTurns(
+  options: OpenClawLaunchSessionOptions,
+): Promise<void> {
+  const probeArgs = options.cliEntrypoint
+    ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
+    : [options.sandboxName, "connect", "--probe-only"];
+  const probe = await options.host.command(options.cliCommand, probeArgs, {
+    artifactName: `${options.artifactName}-probe`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
+  });
+  if (probe.exitCode !== 0) {
+    throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
+  }
+
+  await options.beforeLaunchTurns?.();
+
+  for (const ordinal of ["first", "second"] as const) {
+    await runOpenClawLaunchSession({
+      ...options,
+      artifactName: `${options.artifactName}-${ordinal}`,
+    });
+  }
+}

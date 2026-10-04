@@ -1,0 +1,45 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Root-Cause and Sensitive-Workflow State Checks
+
+Use sibling-path checks for a defect that may share a cause across entry points. Use the state
+matrix when changing a sensitive workflow listed below. Record material results in the task evidence;
+ordinary changes do not require an empty matrix or a separate report.
+
+## Authority
+
+Current code, tests, workflows, and active `AGENTS.md` files own implementation details. Derive the
+operations, sibling paths, and states from the current checkout rather than recording them here.
+
+## Root-Cause Sibling Paths
+
+Name the operation and failure class that the change belongs to.
+Inspect adjacent paths that implement the same operation or failure class.
+Record which sibling paths were checked and whether each one needs the same change.
+A change that repairs one path and leaves a sibling path unchanged keeps the same defect reachable.
+
+## Sensitive-Workflow State Matrix
+
+Build a sensitive-workflow state matrix as working analysis when changed runtime behavior handles
+credentials, remote execution, billable resources, destructive cleanup, security policy, or public
+writes. The matrix does not grant or revoke authority. Do not build it only because a workflow or
+E2E file changed, or because an authorized PR lifecycle writes its branch or PR. Use only the rows
+and columns required to cover the changed contract. Classify these outcomes when they apply:
+
+| Phase | Success | Command Failure | Transport Ambiguity | Verification Failure |
+|---|---|---|---|---|
+| Input or credential acquisition | Result and custody | Removal or rollback | Assume possible remote effect | Rejected input |
+| Execution | Expected state | Failure classification | Confirmation requirement | Acceptance criteria not met |
+| Cleanup | Confirmed removal | Recovery action | Ownership and absence check | Retention and rotation |
+| External write | Accepted write set | Partial-write report | Assume a possible write and re-read external state | Report a partial or inconclusive result |
+
+For each credential, name its location, access, lifetime, and removal. For each failure cell, record
+the result and required action separately. Classify the result as an infrastructure failure or
+inconclusive verification when applicable. Classify the action as rollback, retry, or stop. Ask the
+user only when the accepted scope does not select among materially different behaviors for security,
+data safety, cost, or a supported contract.
+
+The [Security Rubric](security-rubric.md) owns the authentication and authorization category and its
+evidence expectations. For a public or external write, record the positive and negative evidence that
+authorization is enforced for the resource and action.

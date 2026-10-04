@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: main
+name: CI / Main Branch
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths-ignore:
@@ -21,16 +22,485 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  package-openshell-sdk:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js for reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Download and verify approved OpenShell SDK packages
+        id: package
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT: "1"
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
+          [ -n "$artifact_path" ]
+          bundle="$(jq -cS '[.sourceRegistryPackage, .sourceRegistryPackageReplacement // empty]' ci/reviewed-npm-audit.json | sha256sum | cut -d ' ' -f 1)"
+          printf 'bundle_name=reviewed-openshell-sdk-%s\n' "$bundle" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified OpenShell SDK archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.bundle_name }}
+          path: ${{ runner.temp }}/openshell-sdk/*.tgz
+          if-no-files-found: error
+          retention-days: 90
+
+  static-checks:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run static checks
+        uses: ./.github/actions/ci-static-checks
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
+      - name: Verify exported defaults with the pinned v1 consumer
+        env:
+          NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
+
+  compile-artifacts:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Run basic checks
-        uses: ./.github/actions/basic-checks
+      - name: Compile and verify CLI and plugin outputs
+        uses: ./.github/actions/ci-compile-artifacts
 
-  sandbox-images-and-e2e:
-    needs: checks
-    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
+      - name: Upload compiled test inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-test-inputs
+          path: |
+            dist
+            nemoclaw/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build-typecheck:
+    needs: compile-artifacts
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            nemoclaw/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/ci-install-dependencies.sh
+
+      - name: Run package-contract and type checks
+        uses: ./.github/actions/ci-build-typecheck
+
+  installer-integration:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run installer integration tests
+        uses: ./.github/actions/ci-installer-integration
+
+  reviewed-npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: "true"
+
+  real-openclaw-dist-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # This required proof reads reviewed npm metadata/tarballs. Keep npm's
+      # transient-registry retry policy explicit at the hard merge boundary.
+      npm_config_fetch_retries: "3"
+      npm_config_fetch_retry_mintimeout: "10000"
+      npm_config_fetch_retry_maxtimeout: "60000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build generated harness inputs
+        run: npm run build:policy-boundary && npm run catalog:compile
+
+      - name: Audit the real patched OpenClaw distribution
+        env:
+          NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
+        run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
+      - name: Verify reviewed Jaeger header handling
+        env:
+          NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1"
+        run: npx vitest run --project integration test/agents/openclaw/openclaw-diagnostics-jaeger-runtime.test.ts --silent=false --reporter=default
+
+      - name: Audit managed OpenClaw security finding suppressions
+        env:
+          NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1"
+        run: npx vitest run --project integration test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
+
+  cli-test-shards:
+    needs: compile-artifacts
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    runs-on: ubuntu-24.04
+    # Keep the post-merge budget aligned with pull requests so the same
+    # duration-weighted coverage roster can finish and upload its artifacts.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Verify compiled test inputs
+        run: |
+          test -s dist/nemoclaw.js
+          test -s dist/managed-inference/catalog.json
+          test -s nemoclaw/dist/index.js
+          test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs
+          test -s nemoclaw/dist/shared/sandbox-name.cjs
+
+      - name: Run CLI coverage shard
+        uses: ./.github/actions/ci-cli-coverage-shard
+        with:
+          shard: ${{ matrix.shard }}
+          shard-count: "12"
+
+  cli-tests:
+    needs: [build-typecheck, cli-test-shards]
+    if: ${{ always() }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      packages: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            details="$RUN_URL"
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)"; then
+              if job_ids="$(jq -er '
+                if ((.total_count | type) != "number") or
+                  (.total_count < 0) or
+                  (.total_count > 100) or
+                  ((.total_count | floor) != .total_count) or
+                  ((.jobs | type) != "array") or
+                  ((.jobs | length) != .total_count)
+                then error("invalid workflow job listing")
+                else
+                  [.jobs[] |
+                    select((.name | type) == "string") |
+                    select(.name | test("^cli-test-shards \\(([1-9]|1[0-2])\\)$")) |
+                    select(.conclusion != "success")] as $failed |
+                  if ($failed | length) == 0 or
+                    ($failed | length) > 12 or
+                    (($failed | map(.name) | unique | length) != ($failed | length))
+                  then error("invalid failed CLI shard listing")
+                  else
+                    $failed[] |
+                    if ((.id | type) != "number") or
+                      (.id < 1) or
+                      (.id > 9007199254740991) or
+                      ((.id | floor) != .id) or
+                      (.status != "completed") or
+                      ((.conclusion | type) != "string")
+                    then error("invalid failed CLI shard")
+                    else .id
+                    end
+                  end
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+                details=""
+                while IFS= read -r job_id; do
+                  [ -n "$details" ] && details="${details}; "
+                  details="${details}${RUN_URL}/job/${job_id}"
+                done <<<"$job_ids"
+              fi
+            fi
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}. Details: ${details}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Merge CLI coverage
+        uses: ./.github/actions/ci-cli-coverage-merge
+        with:
+          shard-count: "12"
+
+  plugin-tests:
+    permissions:
+      code-quality: write
+      contents: read
+      packages: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run plugin coverage
+        uses: ./.github/actions/ci-plugin-coverage
+
+  checks:
+    needs:
+      - package-openshell-sdk
+      - static-checks
+      - build-typecheck
+      - installer-integration
+      - reviewed-npm-audit
+      - real-openclaw-dist-harness
+      - cli-tests
+      - plugin-tests
+      - sandbox-image-contracts
+    if: always()
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify required main checks
+        env:
+          SDK_PACKAGE_RESULT: ${{ needs['package-openshell-sdk'].result }}
+          STATIC_RESULT: ${{ needs['static-checks'].result }}
+          BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
+          REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
+          CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          SANDBOX_IMAGE_CONTRACTS_RESULT: ${{ needs['sandbox-image-contracts'].result }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          job_listing_state="uninitialized"
+          jobs_json=""
+          dependency_url="$RUN_URL"
+          failed=0
+
+          load_job_listing() {
+            if [ "$job_listing_state" != "uninitialized" ]; then
+              return
+            fi
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)" && jq -e '
+                ((.total_count | type) == "number") and
+                (.total_count >= 0) and
+                (.total_count <= 100) and
+                ((.total_count | floor) == .total_count) and
+                ((.jobs | type) == "array") and
+                ((.jobs | length) == .total_count)
+              ' <<<"$jobs_json" >/dev/null 2>&1; then
+              job_listing_state="ready"
+            else
+              job_listing_state="failed"
+            fi
+          }
+
+          resolve_dependency_url() {
+            local name="$1"
+            local result="$2"
+            local job_id=""
+            dependency_url="$RUN_URL"
+            case "$name" in
+              package-openshell-sdk|static-checks|build-typecheck|installer-integration|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests|sandbox-image-contracts) ;;
+              *) return ;;
+            esac
+            load_job_listing
+            if [ "$job_listing_state" = "ready" ] && job_id="$(jq -er \
+              --arg name "$name" \
+              --arg result "$result" '
+                [.jobs[] | select(.name == $name)] as $matching |
+                if ($matching | length) != 1
+                then error("missing or duplicate dependency job")
+                elif (($matching[0].id | type) != "number") or
+                  ($matching[0].id < 1) or
+                  ($matching[0].id > 9007199254740991) or
+                  (($matching[0].id | floor) != $matching[0].id) or
+                  ($matching[0].status != "completed") or
+                  (($matching[0].conclusion | type) != "string") or
+                  ($matching[0].conclusion != $result)
+                then error("invalid dependency job")
+                else $matching[0].id
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+              dependency_url="${RUN_URL}/job/${job_id}"
+            fi
+          }
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              resolve_dependency_url "$name" "$result"
+              echo "::error title=${name} failed::Expected success, got ${result}. Details: ${dependency_url}"
+              failed=1
+            fi
+          }
+
+          require_success "package-openshell-sdk" "$SDK_PACKAGE_RESULT"
+          require_success "static-checks" "$STATIC_RESULT"
+          require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+          require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+          require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
+          require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
+          require_success "cli-tests" "$CLI_TESTS_RESULT"
+          require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"
+
+          [ "$failed" -eq 0 ]
+
+  sandbox-image-contracts:
+    needs: [static-checks, build-typecheck]
+    uses: ./.github/workflows/sandbox-images.yaml
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

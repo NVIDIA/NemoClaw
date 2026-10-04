@@ -7,7 +7,7 @@
  * Combines 30-day git churn on main with open PR file overlap to rank
  * the files causing the most merge pain. Outputs structured JSON.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts [--days N] [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts [--days N] [--repo OWNER/REPO]
  */
 
 import { isRiskyFile, run, parseStringArg, parseIntArg } from "./shared.ts";
@@ -58,11 +58,16 @@ function gitChurn(days: number): Map<string, number> {
 
 function openPrFileOverlap(repo: string): Map<string, number> {
   const prListOut = run("gh", [
-    "pr", "list",
-    "--repo", repo,
-    "--state", "open",
-    "--limit", "200",
-    "--json", "number",
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--limit",
+    "200",
+    "--json",
+    "number",
   ]);
 
   const counts = new Map<string, number>();
@@ -78,9 +83,13 @@ function openPrFileOverlap(repo: string): Map<string, number> {
   const sample = prs.slice(0, 50);
   for (const pr of sample) {
     const filesOut = run("gh", [
-      "pr", "view", String(pr.number),
-      "--repo", repo,
-      "--json", "files",
+      "pr",
+      "view",
+      String(pr.number),
+      "--repo",
+      repo,
+      "--json",
+      "files",
     ]);
     if (!filesOut) continue;
 

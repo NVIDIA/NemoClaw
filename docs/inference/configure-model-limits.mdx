@@ -1,0 +1,178 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure Model Limits"
+sidebar-title: "Configure Model Limits"
+description: "Context-window and output-token limits for a NemoClaw-managed sandbox."
+description-agent: "Explains which agent runtimes accept NemoClaw model-limit overrides and how to set them. Use when checking or changing a context window or maximum output tokens."
+keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
+content:
+  type: "how_to"
+agent-variants: ["openclaw", "hermes", "deepagents", "pi"]
+---
+<AgentOnly variant="openclaw,hermes">
+
+Configure explicit model limits before onboarding so NemoClaw can bake them into the sandbox image.
+Changing an explicit build-time model limit on an existing sandbox requires fresh recreation.
+
+</AgentOnly>
+
+<AgentOnly variant="pi">
+
+## Set Pi Model Metadata
+
+Pi accepts an explicit context window, maximum output-token count, and reasoning flag.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer up to `4194304` tokens | Unset; Pi uses the model default |
+| `NEMOCLAW_MAX_TOKENS` | Integer from `1` to `1000000000` tokens | Unset; Pi uses the model default |
+| `NEMOCLAW_REASONING` | `true` or `false` | Unset; Pi uses the model default |
+
+Export the values before onboarding.
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+export NEMOCLAW_MAX_TOKENS=8192
+export NEMOCLAW_REASONING=true
+nemoclaw onboard --agent pi --name <sandbox-name>
+```
+
+NemoClaw validates each supplied value and writes it to `/sandbox/.pi/agent/models.json` through the managed startup profile.
+An invalid value fails before Pi starts.
+Pi does not support `NEMOCLAW_REASONING_EFFORT`.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+NemoClaw does not configure context-window or output-token limits for LangChain Deep Agents Code.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+## Set OpenClaw Limits
+
+OpenClaw accepts an explicit context window and maximum output-token count.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer in tokens | `131072` |
+| `NEMOCLAW_MAX_TOKENS` | Positive integer in tokens | `4096` |
+
+Export one or both values before onboarding.
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+export NEMOCLAW_MAX_TOKENS=8192
+$$nemoclaw onboard
+```
+
+NemoClaw ignores invalid values and uses the default instead.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+## Set the Hermes Context Window
+
+Hermes accepts `NEMOCLAW_CONTEXT_WINDOW` as its model-limit override.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer, at least `64000` tokens | Unset so Hermes auto-detects |
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+$$nemoclaw onboard
+```
+
+When onboarding resolves a valid value, NemoClaw writes it as `model.context_length` in `/sandbox/.hermes/config.yaml`.
+For non-Ollama endpoints, the field remains unset when no explicit or probed value is available so Hermes can auto-detect it from the endpoint.
+During `inference set`, NemoClaw recomputes the context window for the target model.
+It writes `model.context_length` when it resolves a value and omits the field when Hermes must use endpoint auto-discovery.
+When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000` tokens.
+Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
+Resumed onboarding and sandbox rebuilds warm the recorded Ollama model and repeat this verification before reusing its route.
+When `NEMOCLAW_CONTEXT_WINDOW` is larger than `64000`, the Ollama runtime must provide at least that larger value.
+When Ollama reports a smaller runtime value, NemoClaw queries `/api/show` for the selected model's native context window.
+If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.
+If the model can meet the requirement, or NemoClaw cannot read its native context window, onboarding instead shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+A missing or malformed runtime value also produces the daemon restart guidance.
+Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the model's native context window or the Ollama daemon's runtime context, and it does not bypass this check.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
+## Use Detected Local Limits
+
+When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw can use a context length reported by the selected local server.
+Local Ollama reports the loaded model's runtime context length.
+Local vLLM and OpenAI-compatible endpoints can report `max_model_len` through `/v1/models`.
+Local llama.cpp reports the selected model's served context window as `meta.n_ctx` through the authenticated `/v1/models` response.
+NemoClaw does not use the training limit in `meta.n_ctx_train` because the server can use a smaller context window.
+NemoClaw does not adopt `meta.n_ctx` when it is missing, malformed, or outside its accepted range.
+For local llama.cpp, NemoClaw warns before it ignores an invalid `NEMOCLAW_CONTEXT_WINDOW`.
+It uses a valid detected value instead or leaves the value unset.
+
+Set a valid `NEMOCLAW_CONTEXT_WINDOW` when you need to override the detected value.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+## Deep Agents Code Model Limits
+
+OpenClaw onboarding reads `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS`, and Hermes onboarding reads `NEMOCLAW_CONTEXT_WINDOW`.
+Deep Agents Code onboarding reads neither variable, and the Deep Agents Code image bakes no context-window or output-token limit.
+The agent runtime, the selected model, and the inference endpoint determine the limits that apply instead.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
+## Recreate an Existing Sandbox
+
+Model limits are build-time settings.
+Recreate the named sandbox after changing a supported value.
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+</AgentOnly>
+
+<AgentOnly variant="pi">
+
+## Recreate a Pi Sandbox
+
+A normal Pi rebuild replays the recorded context window, maximum output-token count, and reasoning flag.
+Changing those values requires a fresh replacement.
+Keep an independent copy first when you need an extra recovery point, then export the new values and recreate the sandbox.
+
+```bash
+nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
+```
+
+Pi has no runtime `inference set` configuration path.
+Use the same fresh replacement flow to change its provider or model.
+
+</AgentOnly>
+
+## Related Topics
+
+<AgentOnly variant="openclaw,hermes,deepagents">
+
+- [Configure Inference Timeouts](configure-inference-timeouts) for request, validation, and readiness budgets.
+- [Switch Models](switch-models) to change the selected model.
+
+</AgentOnly>
+
+<AgentOnly variant="pi">
+
+- [Run and Manage Pi](../manage-sandboxes/run-pi) for rebuild and recovery behaviour.
+- [Pi Support and Security](../reference/pi-support) for supported inference and credential boundaries.
+
+</AgentOnly>

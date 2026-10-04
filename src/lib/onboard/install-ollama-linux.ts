@@ -1,0 +1,476 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
+
+import { sleepSeconds, waitForHttp } from "../core/wait";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  resolveOllamaContextWindowFloor,
+} from "../inference/ollama-runtime-context";
+import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
+import { cliName } from "./branding";
+import {
+  OLLAMA_PORT,
+  recordUserLocalOllamaOwnership,
+  removeUserLocalOllamaOwnership,
+} from "./experimental/ollama-user-local-runtime";
+import {
+  decideInstallOllamaLinuxMode,
+  hostCommandExists,
+  type InstallOllamaLinuxMode,
+  type InstallOllamaLinuxModeOptions,
+} from "./install-ollama-linux-mode";
+import {
+  ensureManagedOllamaLoopbackSystemdOverride,
+  type OllamaLoopbackSystemdOverrideState,
+} from "./ollama-systemd";
+
+export type { InstallOllamaLinuxMode } from "./install-ollama-linux-mode";
+export { decideInstallOllamaLinuxMode } from "./install-ollama-linux-mode";
+
+const { runCaptureEx, runShell, shellQuote }: typeof import("../runner") = require("../runner");
+const {
+  setResolvedOllamaHost,
+}: typeof import("../inference/local") = require("../inference/local");
+
+const OFFICIAL_OLLAMA_INSTALLER_URL = "https://ollama.com/install.sh";
+const OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS = 190_000;
+
+/**
+ * Install location modes.
+ *
+ *  - `system`     installs into `/usr/local` via the official Ollama
+ *                 installer script (`https://ollama.com/install.sh`). Requires
+ *                 sudo, configures a systemd service, and writes to a system
+ *                 user (`ollama`). This is the historical path.
+ *  - `user-local` installs into `${HOME}/.local` by downloading the official
+ *                 release tarball directly and extracting it as the invoking
+ *                 user. No sudo, no systemd, no system user. The daemon is
+ *                 launched once via a backgrounded `ollama serve`; reboot
+ *                 persistence is the user's responsibility.
+ */
+export type InstallOllamaLinuxResult = {
+  ok: boolean;
+  mode: InstallOllamaLinuxMode;
+  binPath: string;
+};
+
+export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
+  /** Restart the daemon for an already-current binary without running the pinned installer. */
+  restartOnly?: boolean;
+  /** Test seam: override `os.homedir()`. */
+  homedir?: () => string;
+  /** Test seam: override `process.arch`. */
+  arch?: () => NodeJS.Architecture;
+  /** Test seam: override `runShell`. */
+  runShellImpl?: typeof runShell;
+  /** Test seam: override systemd loopback override. */
+  ensureManagedOllamaLoopbackSystemdOverrideImpl?: typeof ensureManagedOllamaLoopbackSystemdOverride;
+  /** Minimum daemon context length to request for the selected agent. */
+  contextWindowFloor?: number;
+  /** Test seam: override `waitForHttp`. */
+  waitForHttpImpl?: typeof waitForHttp;
+  /** Test seam: override `sleepSeconds`. */
+  sleepSecondsImpl?: typeof sleepSeconds;
+  /** Test seam: override `fs.existsSync` (for /etc/nv_tegra_release detection). */
+  fileExistsImpl?: (path: string) => boolean;
+  /** Test seam: override `fs.readFileSync`. */
+  readFileImpl?: (path: string) => string;
+  /** Test seam: redirect log output. */
+  log?: (message: string) => void;
+  /** Test seam: override the durable user-local ownership write. */
+  recordUserLocalOllamaOwnershipImpl?: typeof recordUserLocalOllamaOwnership;
+  /** Test seam: override removal after a successful system installation. */
+  removeUserLocalOllamaOwnershipImpl?: typeof removeUserLocalOllamaOwnership;
+};
+
+/**
+ * Map Node's `process.arch` to the architecture suffix Ollama publishes
+ * tarballs under (`amd64` / `arm64`). Returns `null` for anything else —
+ * callers must surface a clear error rather than guess.
+ */
+export function resolveOllamaTarballArch(arch: NodeJS.Architecture): "amd64" | "arm64" | null {
+  if (arch === "x64") return "amd64";
+  if (arch === "arm64") return "arm64";
+  return null;
+}
+
+/**
+ * Detect a JetPack release line from `/etc/nv_tegra_release` to pull the
+ * matching CUDA add-on tarball. Mirrors the JetPack branch of the official
+ * `install.sh` (L178-187).
+ */
+function detectJetpackVariant(opts: InstallOllamaLinuxOptions): "jetpack5" | "jetpack6" | null {
+  const exists = opts.fileExistsImpl ?? fs.existsSync;
+  const read = opts.readFileImpl ?? ((p: string) => fs.readFileSync(p, "utf8"));
+  if (!exists("/etc/nv_tegra_release")) return null;
+  let body = "";
+  try {
+    body = read("/etc/nv_tegra_release");
+  } catch {
+    return null;
+  }
+  if (/R36/.test(body)) return "jetpack6";
+  if (/R35/.test(body)) return "jetpack5";
+  return null;
+}
+
+/**
+ * Run the official `https://ollama.com/install.sh`. Sudo-bound. Configures
+ * the systemd `ollama.service`, creates the `ollama` system user, and
+ * installs CUDA drivers when applicable. An upgrade that replaces a stale
+ * binary asks the installer for `MIN_OLLAMA_VERSION` by name; a fresh install
+ * has no floor to satisfy and takes latest.
+ */
+function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
+  const runCaptureExImpl = opts.runCaptureExImpl ?? runCaptureEx;
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  ensureOllamaLinuxExtractionDependencies(opts);
+  log(
+    "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
+      "It uses sudo, may ask for your password, and can take a few minutes; installer output will stream below.",
+  );
+  const versionPin = opts.isUpgrade ? `OLLAMA_VERSION=${MIN_OLLAMA_VERSION} ` : "";
+  if (versionPin) {
+    log(`  Requesting Ollama ${MIN_OLLAMA_VERSION} from the installer.`);
+  }
+
+  const installerDirectory = fs.mkdtempSync(
+    nodePath.join(os.tmpdir(), "nemoclaw-ollama-installer-"),
+  );
+  const installerPath = nodePath.join(installerDirectory, "install.sh");
+
+  let failure: { exitCode: number; message: string } | null = null;
+  try {
+    fs.writeFileSync(installerPath, "", { flag: "wx", mode: 0o600 });
+    const fetchResult = runCaptureExImpl(
+      [
+        "curl",
+        "--fail",
+        "--show-error",
+        "--silent",
+        "--location",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "120",
+        "--retry",
+        "3",
+        "--retry-all-errors",
+        "--retry-delay",
+        "1",
+        "--retry-max-time",
+        "180",
+        "--output",
+        installerPath,
+        OFFICIAL_OLLAMA_INSTALLER_URL,
+      ],
+      { timeout: OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS },
+    );
+    if (fetchResult.exitCode !== 0) {
+      failure = {
+        exitCode: fetchResult.exitCode ?? 1,
+        message: `  Ollama installer download failed after bounded retries (exit ${fetchResult.exitCode ?? "unknown"}).`,
+      };
+    } else {
+      const installResult = runShellImpl(`${versionPin}sh ${shellQuote(installerPath)}`, {
+        ignoreError: true,
+        stdio: "inherit",
+      });
+      if (installResult.error || installResult.status !== 0) {
+        failure = {
+          exitCode: installResult.status ?? 1,
+          message: `  Ollama installer failed (exit ${installResult.status ?? "unknown"}).`,
+        };
+      }
+    }
+  } finally {
+    fs.rmSync(installerDirectory, { force: true, recursive: true });
+  }
+
+  if (failure) {
+    errorLog(failure.message);
+    process.exit(failure.exitCode);
+  }
+}
+
+/**
+ * Apt-based zstd bootstrap. Only viable in `system` mode, where sudo is
+ * available. The `user-local` branch hard-fails with manual install
+ * instructions instead (the script cannot install system packages without
+ * elevation).
+ */
+function ensureOllamaLinuxExtractionDependencies(opts: InstallOllamaLinuxOptions): void {
+  if (hostCommandExists("zstd", opts)) return;
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  log(
+    "  The Ollama Linux installer requires zstd for archive extraction. " +
+      "The next step uses sudo to install zstd; you may be prompted for your password.",
+  );
+  runShellImpl(`if ! command -v apt-get >/dev/null 2>&1; then
+  echo "ERROR: Ollama requires zstd for extraction, and only apt-based Linux is supported here." >&2
+  echo "Install zstd manually (for example, sudo dnf install zstd or sudo pacman -S zstd), then rerun ${cliName()} onboard." >&2
+  exit 1
+fi
+sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zstd`);
+}
+
+/**
+ * Download and extract the Ollama release tarball into `installDir` without
+ * sudo. Mirrors `download_and_extract` from `install.sh` (L130-157) with the
+ * `$SUDO` invocations stripped. zstd is the primary format; falls back to
+ * `.tgz` for tags where the zst asset is unpublished.
+ *
+ * Hard-fails when zstd is unavailable: we cannot bootstrap it without sudo
+ * elevation in user-local mode, so we surface the same per-distro install
+ * hint that `install.sh` does.
+ */
+function downloadAndExtractUserLocal(
+  tarballName: string,
+  installDir: string,
+  opts: InstallOllamaLinuxOptions,
+): void {
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  const runCaptureExImpl = opts.runCaptureExImpl ?? runCaptureEx;
+  const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
+  const log = opts.log ?? ((m: string) => console.log(m));
+
+  const zstUrl = `https://ollama.com/download/${tarballName}.tar.zst`;
+  const tgzUrl = `https://ollama.com/download/${tarballName}.tgz`;
+
+  const headProbe = runCaptureExImpl(
+    ["curl", "--fail", "--silent", "--head", "--location", zstUrl],
+    { timeout: 15_000 },
+  );
+  const zstExists = headProbe.exitCode === 0;
+
+  const quotedInstallDir = shellQuote(installDir);
+  if (zstExists) {
+    if (!hostCommandExists("zstd", opts)) {
+      errorLog(
+        `  ERROR: ${tarballName} ships as .tar.zst but zstd is not installed and ${cliName()} cannot bootstrap it without sudo.\n` +
+          `         Install zstd manually, then rerun ${cliName()} onboard:\n` +
+          "           - Debian/Ubuntu: sudo apt-get install zstd\n" +
+          "           - RHEL/CentOS/Fedora: sudo dnf install zstd\n" +
+          "           - Arch: sudo pacman -S zstd",
+      );
+      process.exit(1);
+    }
+    log(`  Downloading ${tarballName}.tar.zst`);
+    runShellImpl(
+      `set -o pipefail; curl --fail --show-error --location ${shellQuote(zstUrl)} | zstd -d | tar -xf - -C ${quotedInstallDir}`,
+      { stdio: "inherit" },
+    );
+    return;
+  }
+
+  log(`  Downloading ${tarballName}.tgz`);
+  runShellImpl(
+    `set -o pipefail; curl --fail --show-error --location ${shellQuote(tgzUrl)} | tar -xzf - -C ${quotedInstallDir}`,
+    { stdio: "inherit" },
+  );
+}
+
+/**
+ * Sudo-free, ~/.local-rooted install. Replicates the binary-extraction
+ * portion of the official `install.sh` (L159-187) but skips the parts that
+ * require root: the `install -o0 -g0` chown, the systemd service file, and
+ * the CUDA driver setup. The daemon is launched once at the end of the
+ * install with a backgrounded `ollama serve`. Manual re-launch is required
+ * after a reboot (this is documented in `docs/inference/set-up-ollama.mdx`).
+ *
+ * Refuses to proceed on unsupported architectures.
+ */
+function installOllamaUserLocal(opts: InstallOllamaLinuxOptions): InstallOllamaLinuxResult {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  const homedir = opts.homedir ?? (() => os.homedir());
+  const arch = opts.arch ?? (() => process.arch);
+
+  const ollamaArch = resolveOllamaTarballArch(arch());
+  if (!ollamaArch) {
+    errorLog(
+      `  ERROR: User-local Ollama install does not support architecture '${arch()}'. ` +
+        "Set NEMOCLAW_OLLAMA_INSTALL_MODE=system and run onboard interactively, " +
+        "or install Ollama manually before re-running onboard.",
+    );
+    return { ok: false, mode: "user-local", binPath: "" };
+  }
+
+  const installDir = nodePath.join(homedir(), ".local");
+  const binDir = nodePath.join(installDir, "bin");
+  const binPath = nodePath.join(binDir, "ollama");
+  const libDir = nodePath.join(installDir, "lib", "ollama");
+
+  log(
+    `  Installing Ollama in user-local mode (${installDir}). ` +
+      "No sudo, no systemd; the daemon will be launched manually and must be restarted after a reboot.",
+  );
+
+  runShellImpl(`mkdir -p ${shellQuote(binDir)} ${shellQuote(libDir)}`);
+  downloadAndExtractUserLocal(`ollama-linux-${ollamaArch}`, installDir, opts);
+  const jetpack = detectJetpackVariant(opts);
+  if (jetpack) {
+    log(`  Detected NVIDIA JetPack (${jetpack}); pulling matching add-on.`);
+    downloadAndExtractUserLocal(`ollama-linux-${ollamaArch}-${jetpack}`, installDir, opts);
+  }
+
+  if (!startUserLocalOllamaDaemon(binPath, opts)) {
+    errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
+    return { ok: false, mode: "user-local", binPath };
+  }
+
+  warnIfLocalBinNotOnPath(binDir, opts);
+
+  return { ok: true, mode: "user-local", binPath };
+}
+
+/** Start the user-local Ollama daemon with the selected agent context floor. */
+function startUserLocalOllamaDaemon(binPath: string, opts: InstallOllamaLinuxOptions): boolean {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
+  log("  Starting Ollama...");
+  runShellImpl(
+    `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup ${shellQuote(binPath)} serve > /dev/null 2>&1 &`,
+    { ignoreError: true },
+  );
+  return waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
+}
+
+/** Return the `OLLAMA_CONTEXT_LENGTH` prefix only when the agent needs a higher floor. */
+function ollamaContextLengthEnvPrefix(
+  opts: Pick<InstallOllamaLinuxOptions, "contextWindowFloor">,
+): string {
+  const floor = resolveOllamaContextWindowFloor(opts.contextWindowFloor);
+  return floor > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? `OLLAMA_CONTEXT_LENGTH=${floor} ` : "";
+}
+
+/**
+ * Emit a one-line PATH hint when `~/.local/bin` is missing from `PATH`. We
+ * intentionally do not edit shell rc files here: that is the operator's
+ * choice and `scripts/install.sh` already owns shell-profile rewrites for
+ * the NemoClaw CLI itself.
+ */
+function warnIfLocalBinNotOnPath(binDir: string, opts: InstallOllamaLinuxOptions): void {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const pathEntries = String(process.env.PATH || "").split(nodePath.delimiter);
+  if (pathEntries.includes(binDir)) return;
+  log(
+    `  Note: ${binDir} is not on your PATH. ` +
+      `Add 'export PATH="${binDir}:$PATH"' to your shell profile to invoke 'ollama' directly.`,
+  );
+}
+
+/**
+ * Sudo-driven path. Runs the official installer, then forces the systemd
+ * service to bind only to loopback (so the Docker bridge cannot reach raw
+ * Ollama). Falls back to a manual `ollama serve` launch when systemd is
+ * unavailable (e.g. WSL without systemd, minimal containers).
+ */
+function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinuxResult {
+  const log = opts.log ?? ((m: string) => console.log(m));
+  const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
+  const runShellImpl = opts.runShellImpl ?? runShell;
+  const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
+  const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
+  const ensureOverrideImpl =
+    opts.ensureManagedOllamaLoopbackSystemdOverrideImpl ??
+    ensureManagedOllamaLoopbackSystemdOverride;
+
+  if (opts.restartOnly) {
+    log(
+      `  Installed Ollama already meets ${MIN_OLLAMA_VERSION}; restarting its daemon without replacing the binary.`,
+    );
+  } else {
+    runOfficialInstallScript(opts);
+    sleepSecondsImpl(2);
+  }
+
+  const overrideState: OllamaLoopbackSystemdOverrideState = ensureOverrideImpl({
+    isNonInteractive: opts.isNonInteractive,
+    contextWindowFloor: opts.contextWindowFloor,
+    isUpgrade: opts.isUpgrade,
+  });
+  if (overrideState === "failed") {
+    errorLog("  Ollama systemd restart did not recover after applying the loopback override.");
+    return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
+  }
+
+  if (overrideState === "not-applicable") {
+    if (opts.isUpgrade) {
+      // The stale daemon still owns `:11434` and would answer the readiness
+      // probe with the old binary's version. Stop it before launching so
+      // the freshly installed binary takes the port; brief sleep lets the
+      // kernel release the socket.
+      log("  Stopping stale Ollama daemon before relaunching...");
+      runShellImpl("pkill -x ollama || true", { ignoreError: true });
+      sleepSecondsImpl(1);
+    }
+    // Re-probe loopback fresh here so this decision reflects the
+    // post-install daemon state, not the cached `findReachableOllamaHost`
+    // result that lingers for the rest of the onboard run. Skip the probe
+    // entirely on upgrade — we just killed the daemon and must relaunch.
+    const localDaemonReachable =
+      !opts.isUpgrade && waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 1);
+    if (!localDaemonReachable) {
+      log("  Starting Ollama...");
+      runShellImpl(
+        `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`,
+        {
+          ignoreError: true,
+        },
+      );
+      if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
+        errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
+        return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
+      }
+    }
+  }
+
+  return { ok: true, mode: "system", binPath: "/usr/local/bin/ollama" };
+}
+
+/**
+ * Entry point: decide an install mode (see `decideInstallOllamaLinuxMode`)
+ * and run the matching install path. Returns `{ ok: false, ... }` rather
+ * than throwing so the caller (the onboard selection loop) can continue to
+ * the next menu entry on interactive runs.
+ */
+export function installOllamaOnLinux(opts: InstallOllamaLinuxOptions): InstallOllamaLinuxResult {
+  const mode = decideInstallOllamaLinuxMode(opts);
+  const result = mode === "user-local" ? installOllamaUserLocal(opts) : installOllamaSystem(opts);
+  // Pin to local loopback so a cached `host.docker.internal` from an
+  // earlier WSL probe cannot route validation/pull at the Windows host.
+  if (result.ok) {
+    setResolvedOllamaHost("127.0.0.1");
+    const ownershipDeps = { homeDir: (opts.homedir ?? (() => os.homedir()))() };
+    try {
+      if (result.mode === "user-local") {
+        (opts.recordUserLocalOllamaOwnershipImpl ?? recordUserLocalOllamaOwnership)(
+          result.binPath,
+          ownershipDeps,
+        );
+      } else {
+        (opts.removeUserLocalOllamaOwnershipImpl ?? removeUserLocalOllamaOwnership)(ownershipDeps);
+      }
+    } catch (error) {
+      (opts.errorLog ?? ((message: string) => console.error(message)))(
+        `  Ollama install could not update its NemoClaw ownership receipt: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { ...result, ok: false };
+    }
+  }
+  return result;
+}

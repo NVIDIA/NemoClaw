@@ -1,0 +1,23 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.59
+
+NemoClaw v0.0.59 improves OpenClaw runtime compatibility, inference setup, credential reuse, messaging safeguards, and sandbox startup diagnostics:
+
+- OpenClaw sandboxes stay aligned with the live gateway and current runtime layout.
+  Sandbox startup reconciles the agent model from the live gateway, refreshes the OpenClaw plugin registry after gateway startup, pins OpenClaw home, state, and workspace paths inside the sandbox, and handles OpenClaw 2026.5.27 approval compatibility.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Inference setup has newer model choices and longer first-start budgets for local runtimes.
+  NVIDIA Endpoints includes the Nemotron 3 Ultra 550B option, Local Ollama uses `qwen3.5:9b` as the starter fallback, managed vLLM on DGX Spark uses a 128K context window for `nvidia/Qwen3.6-35B-A3B-NVFP4`, and Local NVIDIA NIM waits longer for first container startup while still failing fast when the container exits.
+  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
+- Hermes sandboxes can route Anthropic Messages API traffic through managed inference, and runtime model switches keep the Hermes config synchronized with the OpenShell route.
+  For more information, refer to [Switch Inference Models](/user-guide/openclaw/inference/manage-inference/switch-models).
+- Credential and messaging boundaries are clearer during day-two operations.
+  Rebuild and remote-provider update paths can reuse credentials already stored in the OpenShell gateway when the host environment is empty, `channels add` warns or aborts before multiple sandboxes compete for the same token-based messaging credential, and `status` reports cross-sandbox channel overlaps.
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+- Sandbox startup and host preflight failures provide more actionable recovery guidance.
+  NemoClaw heals `~/.nemoclaw` directory and config-file permissions on read paths, detects missing or stale NVIDIA CDI specs before GPU containers fail, probes legacy gateway containers before host-alias operations, and preserves argument validation before runtime probing.
+  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).

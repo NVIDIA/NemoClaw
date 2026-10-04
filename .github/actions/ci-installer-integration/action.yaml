@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-installer-integration
+description: Run CI-gated installer integration Vitest tests.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "24.18.1"
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
+
+    - name: Build installer integration artifacts
+      shell: bash
+      run: |
+        npm run build:cli
+        cd nemoclaw && npm run build
+
+    - name: Run installer integration tests
+      shell: bash
+      run: CI=true npx vitest run --project installer-integration

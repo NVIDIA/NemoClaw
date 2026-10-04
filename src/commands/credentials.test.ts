@@ -1,0 +1,483 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
+
+const mocks = vi.hoisted(() => ({
+  prompt: vi.fn().mockResolvedValue("yes"),
+  recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true, attempted: false }),
+  runOpenshellProviderCommand: vi.fn(),
+  recordExtraProvider: vi.fn(),
+  forgetExtraProvider: vi.fn(),
+  resolveGatewayCredentialMutationAuthority: vi.fn(),
+}));
+
+vi.mock("../lib/credentials/store", () => ({
+  KNOWN_CREDENTIAL_ENV_KEYS: ["NVIDIA_INFERENCE_API_KEY"],
+  getCredential: vi.fn(),
+  prompt: mocks.prompt,
+  saveCredential: vi.fn(),
+}));
+vi.mock("../lib/actions/global", () => ({
+  recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
+  recordExtraProvider: mocks.recordExtraProvider,
+  forgetExtraProvider: mocks.forgetExtraProvider,
+}));
+vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../lib/adapters/openshell/provider-command")>();
+  return {
+    ...actual,
+    OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
+    runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+  };
+});
+vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
+  resolveGatewayCredentialMutationAuthority: mocks.resolveGatewayCredentialMutationAuthority,
+}));
+
+import { runCredentialsAddAction } from "../lib/actions/credentials-add";
+import { runCredentialsListAction } from "../lib/actions/credentials/list";
+import { runCredentialsResetAction } from "../lib/actions/credentials/reset";
+import CredentialsCommand from "./credentials";
+import CredentialsAddCommand from "./credentials/add";
+import CredentialsListCommand from "./credentials/list";
+import CredentialsResetCommand from "./credentials/reset";
+
+const rootDir = process.cwd();
+
+describe("credentials oclif adapter source coverage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: false });
+    mocks.runOpenshellProviderCommand.mockReturnValue({ status: 0, stdout: "nvidia-prod\n" });
+    mocks.resolveGatewayCredentialMutationAuthority.mockReturnValue({});
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    process.exitCode = undefined;
+  });
+
+  it("prints top-level credentials usage", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await CredentialsCommand.run([], rootDir);
+
+    const output = log.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    log.mockRestore();
+    expect(output).toContain("Usage: nemoclaw credentials <subcommand>");
+    expect(output).toContain("reset <PROVIDER> [--yes]");
+  });
+
+  it.each([
+    ["tavily", "hermes", "tavily-hermes-v1"],
+    ["TaViLy", "nemohermes", "tavily-hermes-v1"],
+    ["tavily-hermes-v1", "hermes", "tavily-hermes-v1"],
+    ["tavily-hermes-v1", undefined, "tavily-hermes-v1"],
+    ["tavily", "dcode", "tavily"],
+    ["tavily", "openclaw", "tavily"],
+  ] as const)(
+    "registers %s for %s using the intended runtime profile",
+    async (type, agent, profile) => {
+      vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+      const exportedProfile = JSON.stringify(
+        parseYaml(
+          fs.readFileSync(
+            path.join(rootDir, "nemoclaw-blueprint/provider-profiles", `${profile}.yaml`),
+            "utf8",
+          ),
+        ),
+      );
+      mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+        status: 0,
+        stdout: args.includes("profile") ? exportedProfile : "",
+        stderr: "",
+      }));
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await CredentialsAddCommand.run(
+          [
+            "shared-search",
+            "--type",
+            type,
+            "--credential",
+            "TAVILY_API_KEY",
+            ...(agent ? ["--agent", agent] : []),
+          ],
+          rootDir,
+        );
+        expect(process.exitCode).not.toBe(1);
+        expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+          ["provider", "profile", "-g", "nemoclaw", "export", profile, "--output", "json"],
+          expect.any(Object),
+        );
+        expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+          [
+            "provider",
+            "create",
+            "-g",
+            "nemoclaw",
+            "--name",
+            "shared-search",
+            "--type",
+            profile,
+            "--credential",
+            "TAVILY_API_KEY",
+          ],
+          expect.objectContaining({
+            env: expect.objectContaining({ TAVILY_API_KEY: "host-only-tavily" }),
+          }),
+        );
+        expect(
+          JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)),
+        ).not.toContain("host-only-tavily");
+        const output = log.mock.calls.flat().join("\n");
+        expect(output).not.toContain("host-only-tavily");
+        expect(output).not.toContain("Warning:");
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  it("warns about Hermes incompatibility while preserving legacy Tavily registration", async () => {
+    vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+    const exportedProfile = JSON.stringify(
+      parseYaml(
+        fs.readFileSync(
+          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily.yaml"),
+          "utf8",
+        ),
+      ),
+    );
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: args.includes("profile") ? exportedProfile : "",
+      stderr: "",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        ["shared-search", "--type", "tavily", "--credential", "TAVILY_API_KEY"],
+        rootDir,
+      );
+      expect(process.exitCode).not.toBe(1);
+      expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+        [
+          "provider",
+          "create",
+          "-g",
+          "nemoclaw",
+          "--name",
+          "shared-search",
+          "--type",
+          "tavily",
+          "--credential",
+          "TAVILY_API_KEY",
+        ],
+        expect.objectContaining({
+          env: expect.objectContaining({ TAVILY_API_KEY: "host-only-tavily" }),
+        }),
+      );
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("Warning:");
+      expect(output).toContain("--agent hermes");
+      expect(output).toContain("tavily-hermes-v1");
+      expect(output).not.toContain("host-only-tavily");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([
+    ["tavily", "unknown-agent", "Unsupported Tavily agent"],
+    ["tavily", "../hermes", "Unsupported Tavily agent"],
+    ["tavily", "pi", "Unsupported Tavily agent"],
+    ["tavily-hermes-v1", "openclaw", "only compatible with Hermes"],
+    ["tavily-hermes-v1", "dcode", "only compatible with Hermes"],
+    ["openai", "hermes", "only with Tavily provider profiles"],
+  ])(
+    "rejects incompatible profile %s and agent %s before gateway effects",
+    async (type, agent, diagnostic) => {
+      vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await CredentialsAddCommand.run(
+          ["shared-search", "--type", type, "--agent", agent, "--credential", "TAVILY_API_KEY"],
+          rootDir,
+        );
+        expect(process.exitCode).toBe(1);
+        expect(error.mock.calls.flat().join("\n")).toContain(diagnostic);
+        expect(error.mock.calls.flat().join("\n")).not.toContain("host-only-tavily");
+        expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+        expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+        expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+      } finally {
+        error.mockRestore();
+      }
+    },
+  );
+
+  it("checks the selected Hermes profile before importing existing credentials", async () => {
+    const exportedProfile = JSON.stringify(
+      parseYaml(
+        fs.readFileSync(
+          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml"),
+          "utf8",
+        ),
+      ),
+    );
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: args.includes("profile") ? exportedProfile : "",
+      stderr: "",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        ["shared-search", "--type", "tavily", "--agent", "hermes", "--from-existing"],
+        rootDir,
+      );
+      expect(process.exitCode).not.toBe(1);
+      const calls = mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args);
+      expect(calls).toEqual([
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+        [
+          "provider",
+          "create",
+          "-g",
+          "nemoclaw",
+          "--name",
+          "shared-search",
+          "--type",
+          "tavily-hermes-v1",
+          "--from-existing",
+        ],
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("refuses incompatible exported Hermes policy without falling back to the generic profile", async () => {
+    vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify(
+        parseYaml(
+          fs.readFileSync(
+            path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily.yaml"),
+            "utf8",
+          ),
+        ),
+      ),
+      stderr: "",
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        [
+          "shared-search",
+          "--type",
+          "tavily",
+          "--agent",
+          "hermes",
+          "--credential",
+          "TAVILY_API_KEY",
+        ],
+        rootDir,
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+      ]);
+      expect(error.mock.calls.flat().join("\n")).toContain("checked-in credential boundary");
+      expect(error.mock.calls.flat().join("\n")).not.toContain("host-only-tavily");
+      expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("lists credential providers while hiding messaging bridge providers", async () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: "alpha-telegram-bridge\nnvidia-prod\nopenai-prod\n",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await CredentialsListCommand.run([], rootDir);
+
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+      ["provider", "list", "-g", "nemoclaw", "--names"],
+      {
+        ignoreError: true,
+        maxBuffer: 64 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+    );
+    const output = log.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    log.mockRestore();
+    expect(output).toContain("nvidia-prod");
+    expect(output).toContain("openai-prod");
+    expect(output).toContain("1 per-sandbox messaging bridge");
+    expect(output).not.toContain("alpha-telegram-bridge\n");
+  });
+
+  it("deletes provider credentials with --yes", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await CredentialsResetCommand.run(["nvidia-prod", "--yes"], rootDir);
+
+    expect(mocks.prompt).not.toHaveBeenCalled();
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+      ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
+        timeout: 30_000,
+      },
+    );
+    const output = log.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    log.mockRestore();
+    expect(output).toContain("Removed provider 'nvidia-prod'");
+  });
+
+  it("rejects add and reset before provider mutation when the gateway is healthy but authority changed since onboarding (#6576)", async () => {
+    mocks.resolveGatewayCredentialMutationAuthority.mockImplementation(() => {
+      throw new Error(
+        "Gateway lifecycle authority changed since onboarding; provider credential mutation will not perform gateway effects.",
+      );
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "custom",
+      credentials: [],
+      configPairs: [],
+      fromExisting: true,
+    });
+    await CredentialsResetCommand.run(["nvidia-prod", "--yes"], rootDir);
+
+    expect(add.exitCode).toBe(1);
+    expect(add.failureLines.join("\n")).toContain(
+      "gateway lifecycle authority could not be revalidated",
+    );
+    expect(mocks.resolveGatewayCredentialMutationAuthority).toHaveBeenCalledTimes(2);
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "gateway lifecycle authority could not be revalidated",
+    );
+  });
+
+  it("rejects an ambient gateway endpoint before credential provider operations (#9806)", async () => {
+    const credentialValue = "host-only-secret";
+    vi.stubEnv("CUSTOM_TOKEN", credentialValue);
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://untrusted.example.test");
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+    const list = await runCredentialsListAction("nemoclaw");
+    const reset = await runCredentialsResetAction({
+      provider: "custom-provider",
+      confirmed: true,
+    });
+
+    expect(add.exitCode).toBe(1);
+    expect(list.exitCode).toBe(1);
+    expect(reset.exitCode).toBe(1);
+    const diagnostics = JSON.stringify([add, list, reset]);
+    expect(diagnostics.match(/OPENSHELL_GATEWAY_ENDPOINT is set/gu)).toHaveLength(3);
+    expect(diagnostics).not.toContain(credentialValue);
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects endpoint-override recovery before credential provider side effects", async () => {
+    const endpointOverride = {
+      state: "observation_failed",
+      activeGateway: null,
+      recoveryBlocked: true,
+      unavailable: true,
+      diagnostic: "redacted",
+      error: {
+        kind: "transport",
+        reason: "endpoint_override",
+        message: "redacted",
+      },
+    };
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      before: endpointOverride,
+      after: endpointOverride,
+    });
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: [],
+      configPairs: [],
+      fromExisting: true,
+    });
+    const list = await runCredentialsListAction("nemoclaw");
+    const reset = await runCredentialsResetAction({
+      provider: "custom-provider",
+      confirmed: true,
+    });
+
+    expect(add.exitCode).toBe(1);
+    expect(add.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(list.exitCode).toBe(1);
+    expect(list.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(reset.exitCode).toBe(1);
+    expect(reset.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.forgetExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
+  });
+
+  it("releases a provider reservation when credential registration fails (#9388)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
+    mocks.recordExtraProvider.mockReturnValueOnce(true);
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "provider creation failed",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
+    );
+  });
+});

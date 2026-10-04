@@ -1,0 +1,369 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  buildListCommandDeps: vi.fn(),
+  buildStatusCommandDeps: vi.fn(),
+  createOnboardActionRuntimeDeps: vi.fn(),
+  getSandboxInventory: vi.fn(),
+  getStatusReport: vi.fn(),
+  listSandboxesCommand: vi.fn(),
+  runBackupAllAction: vi.fn(),
+  runGarbageCollectImagesAction: vi.fn(),
+  runInferenceGet: vi.fn(),
+  runInferenceSet: vi.fn(),
+  runOnboardAction: vi.fn(),
+  runUpgradeSandboxesAction: vi.fn(),
+  assertNoHermesPortableHostAuthority: vi.fn(),
+  withPortableHostFence: vi.fn(
+    async (homeOrOperation: string | (() => unknown), operation?: () => unknown) =>
+      (typeof homeOrOperation === "function" ? homeOrOperation : operation)?.(),
+  ),
+  showStatusCommand: vi.fn(),
+  onboardRuntimeDeps: { googlechatTunnelRuntime: {} },
+}));
+
+vi.mock("../lib/inventory", () => ({
+  getSandboxInventory: mocks.getSandboxInventory,
+  getStatusReport: mocks.getStatusReport,
+  listSandboxesCommand: mocks.listSandboxesCommand,
+  showStatusCommand: mocks.showStatusCommand,
+}));
+
+vi.mock("../lib/list-command-deps", () => ({
+  buildListCommandDeps: mocks.buildListCommandDeps,
+}));
+
+vi.mock("../lib/status-command-deps", () => ({
+  buildStatusCommandDeps: mocks.buildStatusCommandDeps,
+}));
+
+vi.mock("../lib/actions/global", () => ({
+  runBackupAllAction: mocks.runBackupAllAction,
+  runGarbageCollectImagesAction: mocks.runGarbageCollectImagesAction,
+  runOnboardAction: mocks.runOnboardAction,
+  runUpgradeSandboxesAction: mocks.runUpgradeSandboxesAction,
+}));
+
+vi.mock("../lib/state/portable-uninstall-retirement", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertNoHermesPortableHostAuthority: mocks.assertNoHermesPortableHostAuthority,
+  withCurrentPortableHostFence: mocks.withPortableHostFence,
+  withPortableHostFence: mocks.withPortableHostFence,
+}));
+
+vi.mock("../lib/cli/onboard-runtime-deps", () => ({
+  createOnboardActionRuntimeDeps: mocks.createOnboardActionRuntimeDeps,
+}));
+
+vi.mock("../lib/actions/inference-set", () => ({
+  InferenceSetError: class InferenceSetError extends Error {
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.exitCode = exitCode;
+    }
+  },
+  runInferenceSet: mocks.runInferenceSet,
+}));
+
+vi.mock("../lib/actions/inference-get", () => ({
+  InferenceGetError: class InferenceGetError extends Error {
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.exitCode = exitCode;
+    }
+  },
+  runInferenceGet: mocks.runInferenceGet,
+}));
+
+import { InferenceGetError } from "../lib/actions/inference-get";
+import { InferenceSetError } from "../lib/actions/inference-set";
+import BackupAllCommand from "./backup-all";
+import GarbageCollectImagesCommand from "./gc";
+import InferenceGetCommand from "./inference/get";
+import InferenceSetCommand from "./inference/set";
+import ListCommand from "./list";
+import OnboardCliCommand from "./onboard";
+import SetupCliCommand from "./setup";
+import SetupSparkCliCommand from "./setup-spark";
+import StatusCommand from "./status";
+import UpgradeSandboxesCommand from "./upgrade-sandboxes";
+
+const rootDir = process.cwd();
+
+describe("global oclif command adapters", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
+    mocks.buildListCommandDeps.mockReturnValue({ getLiveInference: vi.fn() });
+    mocks.buildStatusCommandDeps.mockReturnValue({ statusDeps: true });
+    mocks.getSandboxInventory.mockResolvedValue({ sandboxes: [] });
+    mocks.getStatusReport.mockReturnValue({ sandboxes: [] });
+    mocks.listSandboxesCommand.mockResolvedValue(undefined);
+    mocks.createOnboardActionRuntimeDeps.mockReturnValue(mocks.onboardRuntimeDeps);
+    mocks.runInferenceSet.mockResolvedValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+      primaryModelRef: "inference/nvidia/model-a",
+      providerKey: "inference",
+      configChanged: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("runs list through inventory helpers", async () => {
+    await ListCommand.run([], rootDir);
+
+    expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+    expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+      expect.any(String),
+      "list",
+    );
+    expect(mocks.buildListCommandDeps).toHaveBeenCalledWith();
+    expect(mocks.listSandboxesCommand).toHaveBeenCalledWith({
+      getLiveInference: expect.any(Function),
+      log: expect.any(Function),
+    });
+    expect(mocks.getSandboxInventory).not.toHaveBeenCalled();
+  });
+
+  it("keeps list --json stdout clean while inventory recovery prints progress", async () => {
+    const report = {
+      schemaVersion: 1,
+      defaultSandbox: null,
+      recovery: { recoveredFromSession: false, recoveredFromGateway: 0 },
+      lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
+      sandboxes: [],
+    };
+    mocks.getSandboxInventory.mockImplementationOnce(async () => {
+      process.stdout.write("  Starting OpenShell gateway\n");
+      return report;
+    });
+
+    const out: string[] = [];
+    const err: string[] = [];
+    const origOut = process.stdout.write;
+    const origErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      out.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      err.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stderr.write;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await ListCommand.run(["--json"], rootDir);
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+
+    const stdout = out.join("");
+    expect(stdout).not.toContain("Starting OpenShell gateway");
+    expect(stdout).toBe("");
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(report);
+    expect(err.join("")).toContain("Starting OpenShell gateway");
+  });
+
+  it("runs status through status helpers", async () => {
+    await StatusCommand.run([], rootDir);
+
+    expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+    expect(mocks.assertNoHermesPortableHostAuthority).not.toHaveBeenCalled();
+    expect(mocks.buildStatusCommandDeps).toHaveBeenCalledWith(rootDir);
+    expect(mocks.showStatusCommand).toHaveBeenCalledWith({ statusDeps: true });
+  });
+
+  it("maps status JSON output into oclif JSON handling", async () => {
+    const report = {
+      schemaVersion: 1,
+      defaultSandbox: "alpha",
+      liveInference: null,
+      gatewayHealth: null,
+      incompleteOnboarding: null,
+      sandboxes: [],
+      services: [],
+    };
+    mocks.getStatusReport.mockReturnValueOnce(report);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await StatusCommand.run(["--json"], rootDir);
+      expect(mocks.buildStatusCommandDeps).toHaveBeenCalledWith(rootDir);
+      expect(mocks.getStatusReport).toHaveBeenCalledWith({ statusDeps: true });
+      expect(mocks.showStatusCommand).not.toHaveBeenCalled();
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(report);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("maps maintenance flags to typed action options", async () => {
+    await BackupAllCommand.run(["--retire-legacy-forwards"], rootDir);
+    await UpgradeSandboxesCommand.run(["--check", "--yes"], rootDir);
+    await GarbageCollectImagesCommand.run(["--dry-run", "--force"], rootDir);
+
+    expect(mocks.runBackupAllAction).toHaveBeenCalledWith({ retireLegacyForwards: true });
+    expect(mocks.runUpgradeSandboxesAction).toHaveBeenCalledWith({
+      auto: false,
+      check: true,
+      yes: true,
+    });
+    expect(mocks.runGarbageCollectImagesAction).toHaveBeenCalledWith({
+      dryRun: true,
+      force: true,
+      yes: false,
+    });
+  });
+
+  it.each([
+    [
+      "list",
+      () => ListCommand.run([], rootDir),
+      [mocks.buildListCommandDeps, mocks.getSandboxInventory],
+    ],
+    ["inference:get", () => InferenceGetCommand.run([], rootDir), [mocks.runInferenceGet]],
+    [
+      "upgrade-sandboxes",
+      () => UpgradeSandboxesCommand.run(["--check"], rootDir),
+      [mocks.runUpgradeSandboxesAction],
+    ],
+  ] as const)(
+    "rejects %s under the host fence before any action (#9203)",
+    async (commandId, run, effects) => {
+      mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+        throw new Error(
+          `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
+        );
+      });
+
+      await expect(run()).rejects.toThrow(
+        `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists`,
+      );
+
+      expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+      expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+        expect.any(String),
+        commandId,
+      );
+      expect(effects.every((effect) => effect.mock.calls.length === 0)).toBe(true);
+    },
+  );
+
+  it("maps onboard-family flags directly into the shared typed action", async () => {
+    await OnboardCliCommand.run(["--name", "alpha", "--resume"], rootDir);
+    await SetupCliCommand.run(["--name", "alpha", "--resume"], rootDir);
+    await SetupSparkCliCommand.run(["--control-ui-port", "18080"], rootDir);
+
+    expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: "alpha", resume: true }),
+      mocks.onboardRuntimeDeps,
+    );
+    expect(mocks.runOnboardAction.mock.calls[1]).toEqual(mocks.runOnboardAction.mock.calls[0]);
+    expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ "control-ui-port": 18080 }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
+  it("maps inference set flags into the inference action", async () => {
+    await InferenceSetCommand.run(
+      [
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "--sandbox",
+        "alpha",
+        "--no-verify",
+        "--endpoint-url",
+        "https://example.test/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+      ],
+      rootDir,
+    );
+
+    expect(mocks.runInferenceSet).toHaveBeenCalledWith({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      sandboxName: "alpha",
+      noVerify: true,
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      inferenceApi: "openai-completions",
+      reasoningEffort: null,
+    });
+  });
+
+  it("preserves a compatible endpoint in inference get JSON output", async () => {
+    mocks.runInferenceGet.mockResolvedValueOnce({
+      provider: "compatible-endpoint",
+      model: "nvidia/model-a",
+      endpointUrl: "https://example.test/v1",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await InferenceGetCommand.run(["--json"], rootDir);
+      expect(mocks.withPortableHostFence).toHaveBeenCalledOnce();
+      expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(
+        expect.any(String),
+        "inference:get",
+      );
+      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ cliName: "nemoclaw", quiet: true });
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://example.test/v1",
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("records inference action failures without throwing oclif ExitError", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceGet.mockRejectedValueOnce(new InferenceGetError("route missing", 3));
+      mocks.runInferenceSet.mockRejectedValueOnce(new InferenceSetError("route rejected", 4));
+
+      await expect(InferenceGetCommand.run([], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(3);
+      expect(error).toHaveBeenCalledWith("route missing");
+
+      await expect(
+        InferenceSetCommand.run(
+          ["--provider", "nvidia-prod", "--model", "nvidia/model-a"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(4);
+      expect(error).toHaveBeenCalledWith("route rejected");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+});

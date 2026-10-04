@@ -1,0 +1,215 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { testTimeout } from "../../helpers/timeouts.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  expectSandboxReady,
+  installSandboxOrSkipOnRateLimit,
+  phase6Env,
+  precleanSandbox,
+  redactionValues,
+  sandboxSh,
+} from "./phase6-messaging-helpers.ts";
+
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-hermes";
+
+test(
+  "rebuild-hermes restores durable state and native readiness",
+  {
+    timeout: testTimeout(45 * 60_000),
+    meta: {
+      e2ePhases: [
+        "prepare the Hermes rebuild fixture",
+        "onboard the exact managed image",
+        "write durable Hermes state",
+        "rebuild the sandbox",
+        "verify restored state and native readiness",
+      ],
+    },
+  },
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+    skip,
+  }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+    const env = phase6Env({
+      agent: "hermes",
+      apiKey: hosted.apiKey,
+      sandboxName: SANDBOX_NAME,
+      extra: { NEMOCLAW_DASHBOARD_PORT: "18796" },
+    });
+    const redactions = redactionValues(hosted.apiKey);
+
+    await artifacts.target.declare({
+      id: "rebuild-hermes",
+      boundary: "exact managed Hermes rebuild state restoration and native readiness",
+      contracts: [
+        "rebuild uses the published exact managed image without stale controller fixtures",
+        "unknown home, workspace, memory, hook, cron, child-agent, plugin, package, operator config, and migrated dashboard session state survive the rebuild",
+        "the native Hermes health endpoint is ready after restore",
+      ],
+    });
+
+    await runtimeProvider.requireAvailable({
+      artifactName: "rebuild-hermes-runtime-provider",
+      scenarioLabel: "Hermes rebuild",
+    });
+    await precleanSandbox(host, SANDBOX_NAME, env, redactions, "rebuild-hermes-preclean");
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "rebuild-hermes-cleanup-openshell-delete",
+        env,
+        redactionValues: redactions,
+        timeoutMs: 120_000,
+      }),
+    );
+
+    progress.phase("onboard the exact managed image");
+    const install = await installSandboxOrSkipOnRateLimit(
+      host,
+      env,
+      redactions,
+      "rebuild-hermes-install",
+      skip,
+      "NVIDIA endpoint validation was rate-limited before Hermes rebuild assertions ran",
+    );
+    assertExitZero(install, "Hermes rebuild install");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "rebuild-hermes-ready-before-rebuild",
+    );
+
+    progress.phase("write durable Hermes state");
+    const marker = `rebuild-hermes-${Date.now()}`;
+    const operatorMaxTokens = 24_577;
+    const legacyDashboardHome = "/sandbox/.hermes/profiles/dashboard-home";
+    const legacyDashboardSession = `${legacyDashboardHome}/platforms/whatsapp/session/creds.json`;
+    const nativeDashboardSession = "/sandbox/.hermes/platforms/whatsapp/session/creds.json";
+    await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "config",
+        "set",
+        "--key",
+        "model.max_tokens",
+        "--value",
+        String(operatorMaxTokens),
+        "--config-accept-new-path",
+      ],
+      {
+        artifactName: "rebuild-hermes-set-operator-config",
+        env,
+        redactionValues: redactions,
+      },
+    );
+    const assertOperatorConfig = `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys, yaml; cfg = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text()) or {}; sys.exit(cfg.get("model", {}).get("max_tokens") != ${operatorMaxTokens})'`;
+    const write = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "set -eu",
+        assertOperatorConfig,
+        `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+        `mkdir -p /sandbox/.hermes/workspace /sandbox/.hermes/hooks /sandbox/.hermes/cron /sandbox/.hermes/agents/child; for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do printf '%s' '${marker}' > "$target"; done`,
+        `mkdir -p "$(dirname '${legacyDashboardSession}')"; printf '%s\\n' '{"e2e_marker":"${marker}"}' > '${legacyDashboardSession}'`,
+        "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
+        "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
+        'mkdir -p "$plugin" "$package"',
+        "printf '%s\\n' 'name: e2e-native-plugin' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
+        "printf '%s\\n' 'E2E_NATIVE_PLUGIN = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
+        "printf '%s\\n' 'E2E_NATIVE_PACKAGE = \"present\"' > \"$package/__init__.py\"",
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-before-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-before-rebuild",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+      ].join("\n"),
+      { artifactName: "rebuild-hermes-write-marker", redactionValues: redactions },
+    );
+    assertExitZero(write, "write Hermes rebuild marker");
+
+    progress.phase("rebuild the sandbox");
+    const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+      artifactName: "rebuild-hermes-current-managed-image",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 20 * 60_000,
+    });
+    const rebuildOutput = resultText(rebuild);
+    expect(rebuild.exitCode, rebuildOutput).toBe(0);
+
+    progress.phase("verify restored state and native readiness");
+    await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
+      artifactNamePrefix: "rebuild-hermes-ready-after-rebuild",
+      env,
+    });
+    await waitForNativeHermes(sandbox, redactions);
+    const read = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "set -eu",
+        assertOperatorConfig,
+        `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys; sys.exit(${JSON.stringify(marker)} not in Path("${nativeDashboardSession}").read_text())'`,
+        `test ! -e '${legacyDashboardHome}'`,
+        "test ! -e /sandbox/.hermes/dashboard-home",
+        'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
+        'for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do test "$(cat "$target")" = "$marker"; done',
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
+        "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+        'printf "%s\\n" "$marker"',
+      ].join("\n"),
+      { artifactName: "rebuild-hermes-read-marker", redactionValues: redactions },
+    );
+    assertExitZero(read, "read restored Hermes marker");
+    expect(read.stdout.trim(), resultText(read)).toBe(marker);
+
+    await artifacts.target.complete({
+      id: "rebuild-hermes",
+      status: "passed",
+      stateRestored: true,
+      nativeReady: true,
+      staleControllerRecovery: false,
+    });
+  },
+);
+
+async function waitForNativeHermes(
+  sandbox: Parameters<typeof sandboxSh>[0],
+  redactions: string[],
+): Promise<void> {
+  const ready = await sandboxSh(
+    sandbox,
+    SANDBOX_NAME,
+    [
+      "set -eu",
+      "attempt=0",
+      'while [ "$attempt" -lt 30 ]; do',
+      "  code=\"$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:8642/health 2>/dev/null || true)\"",
+      '  case "$code" in 200|401) printf "native-ready\\n"; exit 0 ;; esac',
+      "  attempt=$((attempt + 1))",
+      "  sleep 5",
+      "done",
+      "exit 1",
+    ].join("\n"),
+    {
+      artifactName: "rebuild-hermes-native-ready",
+      redactionValues: redactions,
+      timeoutMs: 180_000,
+    },
+  );
+  assertExitZero(ready, "native Hermes readiness after rebuild");
+}

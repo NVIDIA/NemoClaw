@@ -5,12 +5,17 @@ import { existsSync as defaultExistsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { dockerSpawnSync } from "./adapters/docker/exec";
+import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
+import { buildDockerSubprocessEnv } from "./subprocess-env";
+
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
 export interface PlatformLookupOptions {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface WslDetectionOptions {
@@ -24,13 +29,79 @@ export interface WslDetectionOptions {
 export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDetectionOptions {
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
+  probeDockerHost?: DockerHostProbe;
+  resolveDockerContextHost?: DockerContextHostResolver;
 }
 
 export interface DockerHostDetection {
   dockerHost: string;
-  source: "env" | "socket";
+  source: "env" | "context" | "socket";
   socketPath: string | null;
 }
+
+/** Resolve a Docker context name to the endpoint it selects, or null. */
+export type DockerContextHostResolver = (context: string) => string | null;
+
+export type DockerVersionIdentity = "docker" | "podman" | "unknown";
+
+export interface DockerHostProbeResult {
+  reachable: boolean;
+  identity: DockerVersionIdentity;
+  /**
+   * The probe never reached a verdict: no process result was returned, the
+   * result contained an error, or the process had no exit status.
+   * Unreachability was not observed, so this must not license a redirect.
+   * A timeout keeps the host default because the probe has no verdict.
+   * A longer timeout can produce a verdict and permit fallback selection.
+   */
+  inconclusive?: boolean;
+}
+
+export type DockerHostProbe = (dockerHost: string | undefined) => DockerHostProbeResult;
+
+type WindowsInteropCapture = (
+  command: readonly string[],
+  options?: { ignoreError?: boolean; timeout?: number },
+) => string;
+
+export interface WindowsProcessTcpListenerProbe {
+  processName: string;
+  port: number;
+  timeoutMs: number;
+}
+
+/** Require every matching Windows process listener on a TCP port to use loopback. */
+export function windowsProcessListensOnlyOnLoopback(
+  runCaptureImpl: WindowsInteropCapture,
+  probe: WindowsProcessTcpListenerProbe,
+): boolean {
+  const processName = probe.processName.trim();
+  if (!processName || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65_535) {
+    return false;
+  }
+  const quotedProcessName = `'${processName.replace(/'/g, "''")}'`;
+  const script =
+    `$processPids = @(Get-Process ${quotedProcessName} -ErrorAction SilentlyContinue | ` +
+    "Select-Object -ExpandProperty Id); " +
+    "if ($processPids.Count -gt 0) { " +
+    `Get-NetTCPConnection -LocalPort ${probe.port} -State Listen -ErrorAction SilentlyContinue | ` +
+    "Where-Object { $processPids -contains $_.OwningProcess } | " +
+    "Select-Object -ExpandProperty LocalAddress }";
+  const addresses = runCaptureImpl(["powershell.exe", "-Command", script], {
+    ignoreError: true,
+    timeout: probe.timeoutMs,
+  })
+    .split(/\r?\n/)
+    .map((address) => address.trim())
+    .filter(Boolean);
+  return (
+    addresses.length > 0 &&
+    addresses.every((address) => address === "127.0.0.1" || address === "::1")
+  );
+}
+
+const DOCKER_PROBE_TIMEOUT_MS = 3_000;
+const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
 
 function isWsl(opts: WslDetectionOptions = {}): boolean {
   // Explicit override — lets tests pin behavior regardless of the host kernel.
@@ -65,6 +136,135 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   return "unknown";
 }
 
+/**
+ * Classify the engine identity from the explicit
+ * `docker version --format '{{json .}}'` banner.
+ *
+ * Podman's Docker-compatible `/info` endpoint does not always name Podman.
+ * The `/version` payload retains a `Podman Engine` component. Docker Engine,
+ * Docker Desktop, and Colima retain a Docker platform or engine component.
+ */
+function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentity {
+  const text = String(versionOutput || "").trim();
+  if (!text) return "unknown";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    if (/podman/i.test(text)) return "podman";
+    return /docker engine/i.test(text) ? "docker" : "unknown";
+  }
+  const server = (parsed as Record<string, unknown> | null)?.Server;
+  if (!server || typeof server !== "object") return "unknown";
+  const serverRecord = server as Record<string, unknown>;
+  const platformName = (serverRecord.Platform as Record<string, unknown> | undefined)?.Name;
+  if (typeof platformName === "string" && /podman/i.test(platformName)) return "podman";
+  const components = serverRecord.Components;
+  const componentNames = Array.isArray(components)
+    ? components.flatMap((component) => {
+        const name =
+          component && typeof component === "object"
+            ? (component as Record<string, unknown>).Name
+            : undefined;
+        return typeof name === "string" ? [name] : [];
+      })
+    : [];
+  if (componentNames.some((name) => /podman/i.test(name))) return "podman";
+  if (
+    (typeof platformName === "string" && /^docker (?:engine|desktop)\b/i.test(platformName)) ||
+    componentNames.some((name) => name.trim().toLowerCase() === "engine")
+  ) {
+    return "docker";
+  }
+  return "unknown";
+}
+
+/**
+ * Probe the Docker CLI in the same environment the CLI's real Docker
+ * commands run in (`buildSubprocessEnv`), minus the authority under test.
+ *
+ * The probe predicts whether those commands will reach a daemon, so any
+ * name they get and it does not can flip its verdict: `SSH_AUTH_SOCK`
+ * authenticates an `ssh://` Docker context, and the proxy names decide how
+ * a `tcp://` one is routed. A verdict from a narrower environment can call
+ * a daemon unreachable that every later command talks to, which sends
+ * detection to a fallback socket the host never meant to use (#10367).
+ */
+function buildDockerProbeEnv(
+  source: NodeJS.ProcessEnv,
+  dockerHost: string | undefined,
+): Record<string, string> {
+  return buildDockerSubprocessEnv(source, dockerHost);
+}
+
+const DOCKER_CONTEXT_HOST_FORMAT = "{{.Endpoints.docker.Host}}";
+
+/**
+ * Resolve the endpoint an explicitly selected Docker context names.
+ *
+ * `docker context inspect` reads the local context store and never contacts a
+ * daemon, so the endpoint is known before any reachability verdict exists. A
+ * context that cannot be resolved has no endpoint to redirect to either, so
+ * the caller keeps the host default and lets the real command report why.
+ */
+function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): string | null {
+  if (!isSupportedDockerContextName(context)) return null;
+  const result = dockerSpawnSync(
+    ["context", "inspect", context, "--format", DOCKER_CONTEXT_HOST_FORMAT],
+    {
+      encoding: "utf-8",
+      env: buildDockerProbeEnv(source, undefined),
+      timeout: DOCKER_PROBE_TIMEOUT_MS,
+      maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+    },
+  );
+  if (!result || result.error || result.status !== 0) return null;
+  const host = String(result.stdout ?? "").trim();
+  if (!host || /[\0\r\n]/u.test(host)) return null;
+  return host;
+}
+
+function probeDockerHost(
+  dockerHost: string | undefined,
+  source: NodeJS.ProcessEnv,
+): DockerHostProbeResult {
+  const result = dockerSpawnSync(["version", "--format", "{{json .}}"], {
+    encoding: "utf-8",
+    env: buildDockerProbeEnv(source, dockerHost),
+    timeout: DOCKER_PROBE_TIMEOUT_MS,
+    maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+  });
+  if (!result || result.error || result.status === null) {
+    return { reachable: false, identity: "unknown", inconclusive: true };
+  }
+  if (result.status !== 0) return { reachable: false, identity: "unknown" };
+  return {
+    reachable: true,
+    identity: classifyDockerVersionIdentity(String(result.stdout ?? "")),
+  };
+}
+
+function containerCanReachHostLoopback(
+  runtime: ContainerRuntime,
+  opts: WslDetectionOptions = {},
+): boolean {
+  // Whether a sandbox container can reach the host's 127.0.0.1 directly,
+  // without an auth proxy fronting host-side services like Ollama or vLLM.
+  //
+  // Docker Desktop bridges the WSL host's loopback back into containers
+  // (running in the docker-desktop VM) via host.docker.internal — so the
+  // local Ollama daemon bound to 127.0.0.1:11434 is reachable as-is.
+  //
+  // Native dockerd installed inside a WSL distro only sees the Docker
+  // bridge gateway (e.g. 172.17.0.1); 127.0.0.1 on the WSL host is
+  // invisible from any container on that bridge. NemoClaw fronts Ollama
+  // with the auth proxy in this topology (issue #3695).
+  //
+  // Anywhere off WSL (macOS Docker Desktop, regular Linux native Docker),
+  // NemoClaw always runs the auth proxy.
+  return isWsl(opts) && runtime === "docker-desktop";
+}
+
 function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions = {}): boolean {
   // CoreDNS patching is needed for Colima and Podman (both use custom network bridges).
   // On WSL2, the host DNS is not routable from k3s pods — skip and let setup-dns-proxy.sh handle it.
@@ -72,16 +272,27 @@ function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions
   return runtime === "colima" || runtime === "podman";
 }
 
+function dedupe(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
 function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   return [
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Some Colima profiles (and older layouts) place the socket at the
+    // top-level ~/.colima/docker.sock rather than under default/. Reported
+    // in #3503 — keep as a candidate so detection succeeds without the
+    // user having to symlink to /var/run/docker.sock.
+    path.join(home, ".colima/docker.sock"),
   ];
 }
 
 function findColimaDockerSocket(
-  opts: PlatformLookupOptions & { existsSync?: (filePath: string) => boolean } = {},
+  opts: PlatformLookupOptions & {
+    existsSync?: (filePath: string) => boolean;
+  } = {},
 ): string | null {
   const fileExists = opts.existsSync ?? defaultExistsSync;
   return getColimaDockerSocketCandidates(opts).find((socketPath) => fileExists(socketPath)) ?? null;
@@ -90,6 +301,7 @@ function findColimaDockerSocket(
 function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
+  const env = opts.env ?? process.env;
   const uid = opts.uid ?? process.getuid?.() ?? 1000;
 
   if (platform === "darwin") {
@@ -100,7 +312,16 @@ function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
-    return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+    // Rootless Podman puts its socket under the session runtime directory.
+    // `XDG_RUNTIME_DIR` names that directory and is not always `/run/user/$UID`
+    // — systemd user sessions on some hosts relocate it, and the DNS commands
+    // have honoured it since before they shared this candidate list (#10632).
+    const runtimeDir = env.XDG_RUNTIME_DIR;
+    return dedupe([
+      ...(runtimeDir ? [path.join(runtimeDir, "podman/podman.sock")] : []),
+      `/run/user/${String(uid)}/podman/podman.sock`,
+      "/run/podman/podman.sock",
+    ]);
   }
 
   return [];
@@ -119,41 +340,136 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
+    const uid = opts.uid ?? process.getuid?.() ?? 1000;
+    // The rootless Docker daemon puts its socket in the same runtime
+    // directory as Podman's, and was never a candidate here (#10367).
+    // Order decides only between candidates that identify as the same
+    // engine; two engines that both answer still abort the selection below.
     return [
-      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
       "/run/docker.sock",
       "/var/run/docker.sock",
+      `/run/user/${String(uid)}/docker.sock`,
+      ...getPodmanSocketCandidates({ env: opts.env, home, platform, uid: opts.uid }),
     ];
   }
 
   return [];
 }
 
-function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+/** One reachable fallback socket that identified itself as a known engine. */
+export interface DockerAuthorityCandidate {
+  readonly socketPath: string;
+  readonly identity: "docker" | "podman";
+}
+
+/**
+ * Two reachable fallback sockets that identify as different engines while the
+ * host default authority refuses to answer. NemoClaw does not choose between
+ * them (#8816, #10253); this record lets preflight explain why (#10622).
+ */
+export interface DockerAuthorityConflict {
+  /** [the candidate selected first, the differing candidate], in probe order. */
+  readonly candidates: readonly [DockerAuthorityCandidate, DockerAuthorityCandidate];
+}
+
+interface DockerAuthoritySelection {
+  selection: DockerHostDetection | null;
+  conflict: DockerAuthorityConflict | null;
+}
+
+/**
+ * Probe the ambient Docker authority and the fallback sockets once, returning
+ * the selection detectDockerHost makes and the engine conflict, if any, that
+ * made it decline. The policy stays fail-closed (#8816, #10253).
+ */
+function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
-  if (env.DOCKER_HOST) {
+  // The Docker CLI gives an explicit DOCKER_HOST precedence when both selectors
+  // are set. A context still selects the daemon when DOCKER_HOST is absent, so
+  // a discovered fallback socket must never replace it: redirecting a host that
+  // named its own authority runs NemoClaw against a daemon the operator did not
+  // choose, and reports readiness for that other daemon (#11719). Resolving the
+  // context to its endpoint keeps every later consumer — readiness probes,
+  // preflight, and the container-engine authority — measuring the same daemon.
+  const dockerHost = String(env.DOCKER_HOST ?? "").trim();
+  if (dockerHost) {
     return {
-      dockerHost: env.DOCKER_HOST,
-      source: "env",
-      socketPath: null,
+      selection: {
+        dockerHost,
+        source: "env",
+        socketPath: null,
+      },
+      conflict: null,
     };
   }
 
-  const fileExists = opts.existsSync ?? defaultExistsSync;
-  for (const socketPath of getDockerSocketCandidates(opts)) {
-    if (fileExists(socketPath)) {
-      return {
-        dockerHost: `unix://${socketPath}`,
-        source: "socket",
-        socketPath,
-      };
-    }
+  const context = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (context) {
+    const resolveContextHost =
+      opts.resolveDockerContextHost ?? ((name: string) => resolveDockerContextHost(name, env));
+    const contextHost = resolveContextHost(context);
+    // Only a supported local socket is recorded as the endpoint. Any other
+    // endpoint, and a context that does not resolve, keeps the host default so
+    // this selection never widens what a later consumer is allowed to contact.
+    return {
+      selection:
+        contextHost && isSupportedGatewayDockerHost(contextHost)
+          ? { dockerHost: contextHost, source: "context", socketPath: null }
+          : null,
+      conflict: null,
+    };
   }
 
-  return null;
+  const probe = opts.probeDockerHost ?? ((dockerHost) => probeDockerHost(dockerHost, env));
+  const ambient = probe(undefined);
+  // Redirect the CLI away from the host's own default authority only after
+  // observing that the default refuses to answer. A probe that timed out or
+  // never ran is no evidence at all (#10367).
+  if (ambient.reachable || ambient.inconclusive) return { selection: null, conflict: null };
+
+  const fileExists = opts.existsSync ?? defaultExistsSync;
+  let selection: DockerHostDetection | null = null;
+  let selected: DockerAuthorityCandidate | null = null;
+  for (const socketPath of getDockerSocketCandidates({ ...opts, env })) {
+    if (!fileExists(socketPath)) continue;
+    const dockerHost = `unix://${socketPath}`;
+    const observation = probe(dockerHost);
+    if (!observation.reachable) continue;
+    if (observation.identity === "unknown") continue;
+    if (selected && observation.identity !== selected.identity) {
+      return {
+        selection: null,
+        conflict: {
+          candidates: [selected, { socketPath, identity: observation.identity }],
+        },
+      };
+    }
+    if (selection) continue;
+    selected = { socketPath, identity: observation.identity };
+    selection = { dockerHost, source: "socket", socketPath };
+  }
+
+  return { selection, conflict: null };
+}
+
+/** Select the Docker authority the CLI should use, or null to keep the host default. */
+function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+  return selectDockerAuthority(opts).selection;
+}
+
+/**
+ * Report the engine conflict that made detectDockerHost decline to select a
+ * fallback socket, or null when no such conflict was observed.
+ */
+function observeDockerAuthorityConflict(
+  opts: DockerHostDetectionOptions = {},
+): DockerAuthorityConflict | null {
+  return selectDockerAuthority(opts).conflict;
 }
 
 export {
+  classifyDockerVersionIdentity,
+  containerCanReachHostLoopback,
   detectDockerHost,
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,
@@ -161,5 +477,7 @@ export {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  probeDockerHost,
+  observeDockerAuthorityConflict,
   shouldPatchCoredns,
 };

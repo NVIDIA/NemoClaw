@@ -1,0 +1,112 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Install OpenClaw Plugins"
+sidebar-title: "Install OpenClaw Plugins"
+description: "Install and manage OpenClaw plugins with OpenClaw inside a NemoClaw sandbox."
+description-agent: "Explains the native OpenClaw plugin lifecycle inside a NemoClaw sandbox, including installation, discovery, updates, removal, restart, rebuild persistence, policy, and credential boundaries."
+keywords: ["nemoclaw plugins", "openclaw plugins", "install openclaw plugin", "update openclaw plugin", "remove openclaw plugin"]
+content:
+  type: "how_to"
+skill:
+  priority: 20
+agent-variants: ["openclaw"]
+---
+
+OpenClaw owns its plugin lifecycle after NemoClaw onboarding. Use the OpenClaw
+CLI inside the sandbox to install, discover, enable, update, disable, or remove
+plugins. NemoClaw does not keep a separate plugin allowlist or ownership index.
+
+Plugins are different from skills and policy presets:
+
+- **Plugins** are code packages loaded by OpenClaw.
+- **Skills** are `SKILL.md` directories that teach the agent how to perform a task.
+- **Policy presets** control which network destinations sandboxed code can reach.
+
+## Install a Plugin
+
+Add the `npm_registry` policy before an npm-backed install. A local path install
+does not need registry access unless its own installation process downloads
+packages.
+
+```bash
+nemoclaw <name> policy add npm_registry --yes
+nemoclaw <name> exec -- openclaw plugins install <package-or-path>
+nemoclaw <name> exec -- openclaw plugins inspect <plugin-id> --json
+```
+
+OpenClaw records installed plugins and their package locations under its native
+state directory, `/sandbox/.openclaw`. Do not edit the install index or
+`openclaw.json` to create a second ownership record.
+
+For local development, stage the plugin outside
+`/sandbox/.openclaw/extensions/<plugin-id>` and pass that source path to
+`openclaw plugins install`. Use `--force` when intentionally replacing an
+existing path install.
+
+## Enable, Update, and Remove Plugins
+
+Use OpenClaw for the complete lifecycle:
+
+```bash
+nemoclaw <name> exec -- openclaw plugins list
+nemoclaw <name> exec -- openclaw plugins enable <plugin-id>
+nemoclaw <name> exec -- openclaw plugins update <plugin-id> --dry-run
+nemoclaw <name> exec -- openclaw plugins update <plugin-id>
+nemoclaw <name> exec -- openclaw plugins disable <plugin-id>
+nemoclaw <name> exec -- openclaw plugins uninstall <plugin-id> --force
+```
+
+OpenClaw updates registry-installed plugins through `plugins update`. A local
+path install remains tied to its source and is not registry-updated; replace it
+with `plugins install <path> --force` instead.
+
+OpenClaw also owns supported self-updates. Inspect the proposed operation before
+applying it:
+
+```bash
+nemoclaw <name> exec -- openclaw update --dry-run --yes --no-restart
+```
+
+Follow the version and compatibility guidance printed by OpenClaw. NemoClaw
+does not intercept or reset these operations.
+
+## Apply Runtime Changes
+
+Plugin configuration changes may require a supervised gateway restart:
+
+```bash
+nemoclaw <name> gateway restart
+nemoclaw <name> exec -- openclaw plugins inspect <plugin-id> --runtime --json
+```
+
+For an updated native plugin, the restart loads a fresh module graph.
+Replacement code at the same plugin path takes effect.
+NemoClaw preserves OpenClaw's native state during restart and state-preserving
+rebuild or restore. User-installed extensions and packages therefore survive
+without NemoClaw plugin ownership metadata. A fresh onboarding with `--fresh`
+is intentionally a new state boundary.
+
+## Keep Credentials in OpenShell
+
+Never place plugin credentials in the plugin directory, package environment,
+or `openclaw.json`. Store secrets through the supported NemoClaw/OpenShell
+credential flow and refer only to the projected placeholder expected by the
+runtime.
+
+OpenShell-held credential values must not be copied into plugin-visible files
+or ordinary process environments. Plugin code still runs inside the sandbox
+and must comply with its network policy.
+
+## Common Mistakes
+
+- Do not bake a plugin into a custom image merely to make it survive restart or rebuild.
+- Do not add a NemoClaw-side allowlist or registry for native OpenClaw plugins.
+- Do not hand-edit OpenClaw's install index or copy OpenShell-held credentials into plugin state.
+- Do not expect a local path install to update from the npm registry.
+- Do not confuse `skill install` with OpenClaw plugin installation.
+
+## Next Steps
+
+- Review [Network Policies](../reference/network-policies) before a plugin downloads packages or calls an external service.
+- Review [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes) before changing runtime configuration.

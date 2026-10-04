@@ -1,0 +1,607 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import {
+  startTestProgress,
+  type TestProgressOptions,
+  validateE2EPhasePlan,
+} from "../fixtures/progress.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
+import {
+  cleanupTurnSandboxes,
+  hermesTurnCommand,
+  installSandbox,
+  turnLatencyInstallAttemptCount,
+} from "../live/agent-turn-latency-helpers.ts";
+
+function fakeInference(apiKey = "secret-api-key"): AgentTurnInference {
+  return {
+    mode: "internal-nvidia",
+    model: "test-model",
+    provider: "custom",
+    expectedRouteProvider: "compatible-endpoint",
+    env: (extra = {}) => ({ ...extra, COMPATIBLE_API_KEY: apiKey }),
+    redactionValues: () => [apiKey],
+  };
+}
+
+function progressHarness() {
+  const state = {
+    clearCalls: 0,
+    clockMs: 1_000,
+    lines: [] as string[],
+    scheduledDelays: [] as number[],
+    timerCallback: null as (() => void) | null,
+  };
+  const options: TestProgressOptions = {
+    stallThresholdMs: 5 * 60_000,
+    stallReminderIntervalMs: 10 * 60_000,
+    now: () => state.clockMs,
+    setTimer: (callback, delayMs) => {
+      state.timerCallback = callback;
+      state.scheduledDelays.push(delayMs);
+      return { unref() {} };
+    },
+    clearTimer: () => {
+      state.clearCalls += 1;
+    },
+    logLine: (line) => state.lines.push(line),
+    sampleResources: () => ({
+      availableMemoryBytes: 8 * 1024 ** 3,
+      processRssBytes: 0.5 * 1024 ** 3,
+      totalMemoryBytes: 16 * 1024 ** 3,
+      workspaceFreeBytes: 6 * 1024 ** 3,
+      loadAverage1m: 2.5,
+    }),
+  };
+  return { options, state };
+}
+
+function successfulProbe(): ShellProbeResult {
+  return {
+    command: ["bash", "install.sh"],
+    durationMs: 10,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    artifacts: { stdout: "stdout", stderr: "stderr", result: "result" },
+  };
+}
+
+function failedProbe(stderr: string, timedOut = false): ShellProbeResult {
+  return {
+    ...successfulProbe(),
+    exitCode: 1,
+    stderr,
+    timedOut,
+  };
+}
+
+it.each([
+  { name: "without authentication", apiKey: "", headers: ["Content-Type: application/json"] },
+  {
+    name: "with authentication",
+    apiKey: "fixture key with spaces",
+    headers: ["Content-Type: application/json", "Authorization: Bearer fixture key with spaces"],
+  },
+])("preserves quoted Hermes request arguments $name", ({ apiKey, headers }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw turn request-"));
+  try {
+    const capture = path.join(root, "request.args");
+    const payload = JSON.stringify({
+      messages: [{ role: "user", content: 'What\'s "$HOME" and `literal`?' }],
+    });
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          // Mock environment loading and curl so the probe cannot read host secrets or use the network.
+          "function .() { :; }",
+          'curl() { printf "%s\\0" "$@" > "$REQUEST_ARGS"; printf "%s" "{}" > "$3"; printf "200"; }',
+          hermesTurnCommand(payload),
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, API_SERVER_KEY: apiKey, REQUEST_ARGS: capture, TMPDIR: root },
+        timeout: 5_000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const args = fs.readFileSync(capture, "utf8").split("\0").slice(0, -1);
+    expect(args[args.indexOf("-d") + 1]).toBe(payload);
+    expect(args.filter((_, index) => args[index - 1] === "-H")).toEqual(headers);
+    expect(fs.existsSync(args[args.indexOf("-o") + 1]!)).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe("live test progress", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("uses two install attempts when no count is configured", () => {
+    expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
+  });
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    "accepts configured install attempt count %i",
+    (expected) => {
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+    },
+  );
+
+  it.each(["0", "-1", "abc", "01", "11"])(
+    "rejects invalid configured install attempt count %s",
+    (value) => {
+      expect(() => turnLatencyInstallAttemptCount(value)).toThrow(
+        /NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS must be an integer between 1 and 10/u,
+      );
+    },
+  );
+
+  it("reports semantic transitions and adds command-safe evidence only after a stall", () => {
+    const { options, state } = progressHarness();
+    const progress = startTestProgress(
+      "agent-turn-latency",
+      ["install OpenClaw sandbox", "install Hermes sandbox"],
+      options,
+    );
+
+    progress.onOutput({ stream: "stderr", atMs: 61_000 });
+    state.clockMs = 250_000;
+    const finishCommand = progress.activity("command: install-openclaw");
+    state.clockMs = 301_000;
+    state.timerCallback?.();
+    finishCommand();
+    state.clockMs = 361_000;
+    progress.phase("install Hermes sandbox");
+    progress.stop();
+
+    expect(state.clearCalls).toBe(2);
+    expect(state.scheduledDelays).toEqual([300_000, 600_000, 300_000]);
+    expect(state.lines).toEqual([
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] started: install OpenClaw sandbox (total 0s; phase 0s)',
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] still running: install OpenClaw sandbox (total 5m; phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] completed: install OpenClaw sandbox — passed in 6m (total 6m)',
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] started: install Hermes sandbox (total 6m; phase 0s)',
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] completed: install Hermes sandbox — passed in 0s (total 6m)',
+    ]);
+    expect(progress.summary()).toEqual({
+      version: 1,
+      scenario: "agent-turn-latency",
+      startedAtMs: 1_000,
+      finishedAtMs: 361_000,
+      durationMs: 360_000,
+      phases: [
+        {
+          label: "install OpenClaw sandbox",
+          outcome: "passed",
+          startedAtMs: 1_000,
+          finishedAtMs: 361_000,
+          durationMs: 360_000,
+          outputEvents: 1,
+          lastOutputAtMs: 61_000,
+        },
+        {
+          label: "install Hermes sandbox",
+          outcome: "passed",
+          startedAtMs: 361_000,
+          finishedAtMs: 361_000,
+          durationMs: 0,
+          outputEvents: 0,
+          lastOutputAtMs: null,
+        },
+      ],
+    });
+  });
+
+  it("records test identity, duration, and the final phase failure outcome", () => {
+    const { options, state } = progressHarness();
+    const progress = startTestProgress(
+      "visible-agent-turn-scenario",
+      ["prepare hosted inference", "send OpenClaw agent turn"],
+      options,
+    );
+
+    state.clockMs = 61_000;
+    progress.stop("failed");
+
+    expect(state.lines).toEqual([
+      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1/2] started: prepare hosted inference (total 0s; phase 0s)',
+      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1/2] completed: prepare hosted inference — failed in 1m (total 1m)',
+    ]);
+    expect(state.lines.join("\n")).toContain("visible-agent-turn-scenario");
+    expect(progress.summary().phases).toEqual([
+      expect.objectContaining({
+        label: "prepare hosted inference",
+        outcome: "failed",
+        durationMs: 60_000,
+      }),
+    ]);
+  });
+
+  it("rejects generic plans and undeclared or backward transitions", () => {
+    expect(() => validateE2EPhasePlan(["setup", "validate inference response"])).toThrow(
+      "phase label must describe test behavior",
+    );
+    expect(() =>
+      validateE2EPhasePlan(["prepare inference endpoint", "prepare inference endpoint"]),
+    ).toThrow("duplicate live E2E phase label");
+    expect(() =>
+      validateE2EPhasePlan(["prepare inference endpoint\n::error::forged", "validate response"]),
+    ).toThrow("invalid live E2E phase label");
+    expect(() => validateE2EPhasePlan(["p".repeat(161), "validate response"])).toThrow(
+      "invalid live E2E phase label",
+    );
+
+    const { options } = progressHarness();
+    const progress = startTestProgress(
+      "phase-contract",
+      ["prepare inference endpoint", "onboard OpenClaw sandbox", "validate agent turn"],
+      options,
+    );
+    progress.phase("validate agent turn");
+
+    expect(() => progress.phase("undeclared phase")).toThrow("undeclared live E2E phase");
+    expect(() => progress.phase("prepare inference endpoint")).toThrow(
+      "live E2E phase moved backwards",
+    );
+    expect(progress.summary().phases).toEqual([
+      expect.objectContaining({ label: "prepare inference endpoint", outcome: "passed" }),
+      expect.objectContaining({ label: "onboard OpenClaw sandbox", outcome: "skipped" }),
+    ]);
+    progress.stop();
+  });
+
+  it("connects install output to the timestamp-only observer", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const host = { command } as unknown as HostCliClient;
+    const finishActivity = vi.fn();
+    const progress = {
+      activity: vi.fn(() => finishActivity),
+      event: vi.fn(),
+      onOutput: vi.fn(),
+    };
+
+    await installSandbox(
+      host,
+      "e2e-openclaw-turn-latency",
+      "openclaw",
+      fakeInference(),
+      undefined,
+      progress,
+    );
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      artifactName: "openclaw-install-attempt-1",
+      onOutput: progress.onOutput,
+      redactionValues: ["secret-api-key"],
+    });
+    expect(progress.event.mock.calls).toEqual([
+      ["openclaw install attempt 1/2 started"],
+      ["openclaw install attempt 1/2 passed"],
+    ]);
+    expect(progress.activity).toHaveBeenCalledWith("command: openclaw-install-attempt-1");
+    expect(finishActivity).toHaveBeenCalledOnce();
+  });
+
+  it("reports timeout, cleanup, and backoff before retrying a transient install", async () => {
+    vi.useFakeTimers();
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(
+        failedProbe("Chat Completions API validation failed: request timed out", true),
+      )
+      .mockResolvedValueOnce(successfulProbe());
+    const cleanupBeforeRetry = vi.fn(async () => undefined);
+    const finishActivity = vi.fn();
+    const progress = {
+      activity: vi.fn(() => finishActivity),
+      event: vi.fn(),
+      onOutput: vi.fn(),
+    };
+    const host = { command } as unknown as HostCliClient;
+
+    const resultPromise = installSandbox(
+      host,
+      "e2e-openclaw-turn-latency",
+      "openclaw",
+      fakeInference(),
+      cleanupBeforeRetry,
+      progress,
+    );
+    await vi.runAllTimersAsync();
+
+    await expect(resultPromise).resolves.toMatchObject({ exitCode: 0 });
+    expect(cleanupBeforeRetry).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(command.mock.calls.map((call) => call[2])).toEqual([
+      expect.objectContaining({
+        artifactName: "openclaw-install-attempt-1",
+        onOutput: progress.onOutput,
+      }),
+      expect.objectContaining({
+        artifactName: "openclaw-install-attempt-2",
+        onOutput: progress.onOutput,
+      }),
+    ]);
+    expect(progress.event.mock.calls).toEqual([
+      ["openclaw install attempt 1/2 started"],
+      ["openclaw install attempt 1/2 timeout fired at the 30-minute limit"],
+      ["openclaw install attempt 1/2 starting cleanup before retry"],
+      ["openclaw install attempt 1/2 cleanup before retry passed"],
+      ["openclaw install attempt 1/2 waiting 10s before retry"],
+      ["openclaw install attempt 2/2 started"],
+      ["openclaw install attempt 2/2 passed"],
+    ]);
+    expect(progress.activity.mock.calls).toEqual([
+      ["command: openclaw-install-attempt-1"],
+      ["cleanup: openclaw-install-attempt-1-retry"],
+      ["command: openclaw-install-attempt-2"],
+    ]);
+    expect(finishActivity).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not report retry phases for a non-transient install failure", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () =>
+      failedProbe("endpoint validation failed: invalid NVIDIA_INFERENCE_API_KEY credential"),
+    );
+    const cleanupBeforeRetry = vi.fn(async () => undefined);
+    const finishActivity = vi.fn();
+    const progress = {
+      activity: vi.fn(() => finishActivity),
+      event: vi.fn(),
+      onOutput: vi.fn(),
+    };
+    const host = { command } as unknown as HostCliClient;
+
+    await expect(
+      installSandbox(
+        host,
+        "e2e-openclaw-turn-latency",
+        "openclaw",
+        fakeInference(),
+        cleanupBeforeRetry,
+        progress,
+      ),
+    ).resolves.toMatchObject({ exitCode: 1 });
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(cleanupBeforeRetry).not.toHaveBeenCalled();
+    expect(progress.event.mock.calls).toEqual([
+      ["openclaw install attempt 1/2 started"],
+      ["openclaw install attempt 1/2 failed"],
+    ]);
+    expect(finishActivity).toHaveBeenCalledOnce();
+  });
+
+  it("reports each pre-clean boundary and closes its heartbeat activity", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const openshell = vi.fn<SandboxClient["openshell"]>(async () => successfulProbe());
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
+    const sandbox = {
+      openshell,
+      hasGatewayForInitialCleanup: vi.fn(async () => {
+        expect(progress.event).toHaveBeenCalledWith("inspect OpenShell gateway started");
+        expect(activityFinishes[0]).not.toHaveBeenCalled();
+        return true;
+      }),
+    } as unknown as SandboxClient;
+    const activityFinishes: ReturnType<typeof vi.fn>[] = [];
+    const progress = {
+      activity: vi.fn(() => {
+        const finish = vi.fn();
+        activityFinishes.push(finish);
+        return finish;
+      }),
+      event: vi.fn(),
+      onOutput: vi.fn(),
+    };
+
+    await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({
+        artifactName: "cleanup-gateway-destroy-turn-latency",
+        timeoutMs: 60_000,
+      }),
+    );
+    expect(progress.activity.mock.calls).toEqual([
+      ["cleanup: inspect OpenShell gateway"],
+      ["cleanup: destroy openclaw sandbox"],
+      ["cleanup: delete openclaw sandbox"],
+      ["cleanup: destroy hermes sandbox"],
+      ["cleanup: delete hermes sandbox"],
+      ["cleanup: stop Hermes API forward"],
+      ["cleanup: remove OpenShell gateway"],
+    ]);
+    expect(progress.event.mock.calls).toEqual([
+      ["inspect OpenShell gateway started"],
+      ["inspect OpenShell gateway passed"],
+      ["destroy openclaw sandbox started"],
+      ["destroy openclaw sandbox passed"],
+      ["delete openclaw sandbox started"],
+      ["delete openclaw sandbox passed"],
+      ["destroy hermes sandbox started"],
+      ["destroy hermes sandbox passed"],
+      ["delete hermes sandbox started"],
+      ["delete hermes sandbox passed"],
+      ["stop Hermes API forward started"],
+      ["stop Hermes API forward passed"],
+      ["remove OpenShell gateway started"],
+      ["remove OpenShell gateway passed"],
+    ]);
+    expect(activityFinishes).toHaveLength(7);
+    expect(activityFinishes[0].mock.invocationCallOrder[0]).toBeLessThan(
+      command.mock.invocationCallOrder[0],
+    );
+    activityFinishes.forEach((finish) => {
+      expect(finish).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("accepts absent OpenShell sandboxes during idempotent pre-clean", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const openshell = vi
+      .fn<SandboxClient["openshell"]>()
+      .mockResolvedValueOnce(
+        failedProbe(
+          "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        ),
+      )
+      .mockResolvedValueOnce(failedProbe("no such sandbox"))
+      .mockResolvedValue(successfulProbe());
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
+    const sandbox = {
+      openshell,
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).resolves.toBeUndefined();
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledOnce();
+  });
+
+  it("removes the inspected gateway when the environment overrides its name", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-custom");
+    const host = {
+      command: vi.fn(async () => successfulProbe()),
+      cleanupGatewayRegistration: vi.fn(async () => undefined),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
+
+    await cleanupTurnSandboxes(host, sandbox, fakeInference());
+
+    expect(sandbox.hasGatewayForInitialCleanup).toHaveBeenCalledWith(
+      "nemoclaw-custom",
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-custom" }),
+      }),
+    );
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw-custom",
+      expect.any(Object),
+    );
+  });
+
+  it("skips sandbox deletion but retains forward cleanup when the gateway is absent", async () => {
+    const host = {
+      command: vi.fn(async () => successfulProbe()),
+      cleanupGatewayRegistration: vi.fn(async () => undefined),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => {
+        expect(progress.event).toHaveBeenCalledWith("inspect OpenShell gateway started");
+        expect(finishActivity).not.toHaveBeenCalled();
+        return false;
+      }),
+    } as unknown as SandboxClient;
+    const finishActivity = vi.fn();
+    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn(), onOutput: vi.fn() };
+    await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
+    expect(progress.event.mock.calls.slice(0, 3)).toEqual([
+      ["inspect OpenShell gateway started"],
+      ["inspect OpenShell gateway passed"],
+      ["destroy openclaw sandbox started"],
+    ]);
+    expect(progress.activity).toHaveBeenNthCalledWith(1, "cleanup: inspect OpenShell gateway");
+    expect(finishActivity).toHaveBeenCalledTimes(5);
+    expect(finishActivity.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(host.command).mock.invocationCallOrder[0],
+    );
+    expect(host.command).toHaveBeenCalledTimes(2);
+    expect(sandbox.openshell).toHaveBeenCalledOnce();
+    expect(sandbox.openshell).toHaveBeenCalledWith(["forward", "stop", "8642"], expect.any(Object));
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledOnce();
+  });
+
+  it("reports and closes a failed gateway probe before attempting cleanup", async () => {
+    const host = { command: vi.fn() } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn(),
+      hasGatewayForInitialCleanup: vi.fn(async () => {
+        throw new Error("gateway observation failed");
+      }),
+    } as unknown as SandboxClient;
+    const finishActivity = vi.fn();
+    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn(), onOutput: vi.fn() };
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference(), progress)).rejects.toThrow(
+      "cleanup failed (inspect OpenShell gateway)",
+    );
+    expect(progress.event.mock.calls).toEqual([
+      ["inspect OpenShell gateway started"],
+      ["inspect OpenShell gateway failed"],
+    ]);
+    expect(finishActivity).toHaveBeenCalledOnce();
+    expect(host.command).not.toHaveBeenCalled();
+    expect(sandbox.openshell).not.toHaveBeenCalled();
+  });
+
+  it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
+    const failed = failedProbe("opaque-cleanup-secret");
+    failed.artifacts.result = "artifacts/cleanup-openclaw-destroy.json";
+    const host = {
+      command: vi.fn<HostCliClient["command"]>(async () => failed),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn<SandboxClient["openshell"]>(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).rejects.toThrow(
+      "cleanup failed (destroy openclaw sandbox); see artifacts/cleanup-openclaw-destroy.json",
+    );
+    expect(sandbox.openshell).not.toHaveBeenCalled();
+  });
+
+  it("aborts an install retry when cleanup throws without exposing its payload", async () => {
+    const secret = "opaque-cleanup-exception-secret";
+    const command = vi.fn<HostCliClient["command"]>(async () =>
+      failedProbe("Chat Completions API validation failed: request timed out"),
+    );
+    const host = { command } as unknown as HostCliClient;
+    const cleanupBeforeRetry = vi.fn(async () => {
+      throw new Error(secret);
+    });
+
+    const error = await installSandbox(
+      host,
+      "e2e-openclaw-turn-latency",
+      "openclaw",
+      fakeInference(),
+      cleanupBeforeRetry,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(secret);
+    expect(command).toHaveBeenCalledOnce();
+    expect(cleanupBeforeRetry).toHaveBeenCalledOnce();
+  });
+});

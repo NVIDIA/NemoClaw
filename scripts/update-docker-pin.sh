@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Updates the pinned sha256 digest for node:22-slim in the Dockerfile.
-# Queries Docker Hub for the current linux/amd64 manifest digest and
-# rewrites every FROM line that references node:22-slim.
+# Updates the pinned sha256 digest for node:24.18.1-trixie-slim in the Dockerfile.
+# Queries Docker Hub for the current multi-arch image-index digest and
+# rewrites every FROM line that references node:24.18.1-trixie-slim.
 #
 # Usage:
 #   scripts/update-docker-pin.sh            # update Dockerfile in repo root
@@ -21,19 +21,19 @@ case "${1:-}" in
 esac
 
 IMAGE="node"
-TAG="22-slim"
+TAG="24.18.1-trixie-slim"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCKERFILE_PATH="${REPO_ROOT}/${DOCKERFILE}"
 
 # ---------------------------------------------------------------------------
-# Resolve the current multi-arch manifest digest for linux/amd64
+# Resolve the current multi-arch image-index digest
 # ---------------------------------------------------------------------------
 resolve_latest_digest() {
-  local token manifest
+  local token digest
 
   # Step 1: get an auth token for the Docker Hub library repo
-  token=$(curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+  token=$(curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
     --connect-timeout 10 --max-time 30 \
     "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/${IMAGE}:pull" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -43,26 +43,17 @@ resolve_latest_digest() {
     exit 1
   fi
 
-  # Step 2: fetch the manifest list and pick the linux/amd64 digest
-  manifest=$(curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+  # Step 2: fetch the tag headers and use Docker-Content-Digest for the index.
+  digest=$(curl -fsSIL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
     --connect-timeout 10 --max-time 30 \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json" \
-    "https://registry-1.docker.io/v2/library/${IMAGE}/manifests/${TAG}")
-
-  local digest
-  digest=$(echo "$manifest" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for m in data.get('manifests', []):
-    p = m.get('platform', {})
-    if p.get('os') == 'linux' and p.get('architecture') == 'amd64' and not p.get('variant'):
-        print(m['digest'])
-        break
-")
+    "https://registry-1.docker.io/v2/library/${IMAGE}/manifests/${TAG}" \
+    | tr -d '\r' \
+    | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2; exit }')
 
   if [[ -z "$digest" ]]; then
-    echo "ERROR: could not resolve digest for ${IMAGE}:${TAG}" >&2
+    echo "ERROR: could not resolve image-index digest for ${IMAGE}:${TAG}" >&2
     exit 1
   fi
 

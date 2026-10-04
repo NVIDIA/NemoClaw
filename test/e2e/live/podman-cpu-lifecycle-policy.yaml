@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /bin
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+# The immutable sandbox-base from the NemoClaw v0.0.89 fixture, which runs
+# OpenShell v0.0.85, omits OCI Config.User.
+# OpenShell v0.0.99 requires either that image metadata or an explicit non-root
+# policy identity, so keep this proof independent of mutable image metadata.
+process:
+  run_as_user: "1000"
+  run_as_group: "1000"
+
+network_policies: {}

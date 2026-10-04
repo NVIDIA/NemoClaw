@@ -13,6 +13,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "types": ["node"],
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],

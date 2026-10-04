@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # NemoClaw — prek hook configuration
 # prek: https://github.com/j178/prek — single binary, no Python required for the runner
 # Installed as an npm devDependency (@j178/prek) — available after `npm install`.
@@ -9,19 +12,25 @@
 # Usage:
 #   npx prek install
 #   npx prek run --all-files
+#   npx prek run --all-files --stage manual  # full CLI/plugin coverage
 #
-# CI / diff-only runs:
-#   npx prek run --from-ref <base> --to-ref HEAD
+# Routine PR validation for automatic commit, commit-message, and push checks:
+#   npm run validate:pr
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
 #   4  — SPDX header insertion (--fix)
-#   5  — Shell / TS formatters (shfmt, prettier)
-#   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
+#   5  — Shell / JS / TS formatters (shfmt, Oxfmt)
+#   6  — Oxlint fixes after formatting
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest, coverage, ratchet)
 
-exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/)
+
+# Stage-less hooks run only while creating a commit. Hooks for later Git
+# lifecycle stages declare their own `stages` explicitly below.
+default_stages:
+  - pre-commit
 
 # Which git hook shims `prek install` writes (separate from each hook's `stages:`).
 # https://prek.j178.dev/configuration/#default_install_hook_types
@@ -38,11 +47,16 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: end-of-file-fixer
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
 
   # ── Priority 0: reject force-added ignored files ───────────────────────────
@@ -75,9 +89,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/inference/inference-options.md'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/choose-inference-provider.mdx docs/reference/platform-support.mdx'
         language: system
-        files: ^(ci/platform-matrix\.json|README\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/choose-inference-provider\.mdx|docs/reference/platform-support\.mdx|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 
@@ -92,44 +106,36 @@ repos:
           - "2"
           - -ci
           - -bn
+        stages: [pre-commit]
         priority: 5
 
   - repo: local
     hooks:
-      - id: prettier-plugin
-        name: Prettier (plugin)
-        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
+      - id: oxfmt
+        name: Oxfmt
+        entry: npx oxfmt --write --no-error-on-unmatched-pattern
         language: system
-        files: ^nemoclaw/.*\.ts$
-        pass_filenames: true
-        priority: 5
-
-      - id: prettier-js
-        name: Prettier (JavaScript)
-        entry: npx prettier --write
-        language: system
-        files: ^(bin|test)/.*\.js$
+        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
         pass_filenames: true
         priority: 5
 
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:
-      - id: eslint-plugin
-        name: ESLint (plugin)
-        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
+      - id: oxlint-fix
+        name: Oxlint fixes
+        entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
-        files: ^nemoclaw/.*\.ts$
+        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        exclude: ^(src/lib/adapters/|nemoclaw/src/)
         pass_filenames: true
         priority: 6
 
-  - repo: local
-    hooks:
-      - id: eslint-cli
-        name: ESLint (CLI)
-        entry: npx eslint --fix
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
         language: system
-        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
+        files: ^(src/lib/adapters/|nemoclaw/src/).*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
@@ -138,9 +144,11 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
+        args: ["--assume-in-merge"]
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
+        stages: [pre-commit]
         priority: 10
       - id: check-case-conflict
         priority: 10
@@ -153,18 +161,56 @@ repos:
       - id: detect-private-key
         priority: 10
       - id: check-executables-have-shebangs
+        stages: [pre-commit]
         priority: 10
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]
         priority: 10
 
   - repo: local
     hooks:
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
-        entry: npx tsx scripts/validate-configs.ts
+        entry: npx tsx scripts/validate-configs.mts
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+      - id: validate-nemoclaw-config-schema
+        name: Validate generated NemoClawConfig schema
+        entry: npm run config-schema:check
+        language: system
+        pass_filenames: false
+        files: ^(package(?:-lock)?\.json|nemoclaw/src/shared/sandbox-name\.cts|schemas/nemoclaw-config-v1\.schema\.json|scripts/config/generate-nemoclaw-config-schema\.mts|src/lib/(?:config/model|core/endpoint-contract|name-validation|sandbox-name-contract)\.ts)$
+        priority: 10
+
+      - id: validate-managed-inference-catalog
+        name: Validate managed inference catalog
+        entry: npm run catalog:check
+        language: system
+        pass_filenames: false
+        files: ^(managed-inference/(?:presets|recipes)/.*\.yaml$|managed-inference/schemas/.*\.json$|src/lib/inference/serving/(?:adapter-registry|catalog|generate-catalog|types)\.ts$)
+        priority: 10
+
+      - id: repository-checks
+        name: Repository checks
+        entry: node --import tsx scripts/checks/run.mts --files
+        language: system
+        always_run: true
+        pass_filenames: true
+        require_serial: true
+        priority: 10
+
+      - id: env-var-docs
+        name: NEMOCLAW_* env-var documentation gate
+        entry: npx tsx scripts/check-env-var-docs.mts
+        language: system
+        # Triggers the audit when src/, bin/, the docs file, the allowlist,
+        # or the gate script itself changes. The script always rescans the
+        # whole repo so pass_filenames is false. See #3184.
+        files: ^(src/.*\.(ts|tsx|js)|bin/.*\.(ts|js)|docs/reference/commands\.mdx|ci/env-var-doc-allowlist\.json|scripts/check-env-var-docs\.mts)$
+        pass_filenames: false
         priority: 10
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
@@ -196,16 +242,6 @@ repos:
       - id: markdownlint-cli2
         priority: 10
 
-  - repo: local
-    hooks:
-      - id: docs-to-skills-dry-run
-        name: Validate docs-to-skills conversion
-        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
-        language: system
-        files: ^(docs/.*\.md$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
-        pass_filenames: false
-        priority: 10
-
   # ── commit-msg hooks ────────────────────────────────────────────────────────
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.24.0
@@ -218,9 +254,18 @@ repos:
   # ── pre-push hooks ─────────────────────────────────────────────────────────
   - repo: local
     hooks:
+      - id: publication-validation
+        name: Publication validation
+        entry: npx tsx scripts/checks/validate-pr.mts --pre-push
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+        priority: 1
+
       - id: tsc-plugin
         name: TypeScript (plugin)
-        entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
+        entry: npx tsx scripts/checks/cached-command.mts tsc-plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
@@ -229,31 +274,24 @@ repos:
 
       - id: tsc-js
         name: TypeScript (JS config)
-        entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
+        entry: npx tsx scripts/checks/cached-command.mts tsc-js
         language: system
         pass_filenames: false
-        files: ^(bin|test|scripts)/.*\.js$
+        files: ^(bin|test|scripts)/.*\.js$|^(jsconfig\.json|package(-lock)?\.json)$
         stages: [pre-push]
         priority: 10
 
       - id: tsc-cli
         name: TypeScript (CLI)
-        entry: npx tsc -p tsconfig.cli.json
+        entry: npx tsx scripts/checks/cached-command.mts tsc-cli
         language: system
         pass_filenames: false
-        files: ^(bin|scripts)/
-        types_or: [ts, tsx]
+        files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
-        priority: 10
-
-      - id: version-tag-sync
-        name: package.json ↔ git tag version sync
-        entry: bash scripts/check-version-tag-sync.sh
-        language: system
-        always_run: true
-        pass_filenames: false
-        stages: [pre-push]
-        priority: 10
+        # build:cli now removes all stale dist output. When package or script
+        # inputs select both hooks, run this reader after tsc-js finishes its
+        # clean rebuild instead of racing the deleted output tree.
+        priority: 20
 
   # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
   # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale
@@ -264,39 +302,59 @@ repos:
     hooks:
       - id: stale-dist-check
         name: Warn if dist/ is older than src/
-        entry: npx tsx scripts/check-stale-dist.ts
+        entry: node scripts/check-stale-dist.mts
         language: system
         always_run: true
         pass_filenames: false
         stages: [post-merge, post-checkout]
         priority: 10
 
-  # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
+  # ── Priority 20: project-level checks (full coverage is manual) ────────────
   - repo: local
     hooks:
-      - id: test-cli
-        name: Test (CLI)
-        entry: bash -c 'npm run build:cli && npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+      - id: e2e-semantic-phase-plans
+        name: E2E semantic phase plans
+        entry: npm run test:e2e-phases:check
         language: system
         pass_filenames: false
-        files: ^(bin/|src/|test/)
+        files: ^(\.github/workflows/e2e\.yaml|test/platform/images/vllm-docker-storage\.test\.ts|test/e2e/live/.*\.ts|test/e2e/fixtures/.*\.ts|test/e2e/risk-signal-reporter\.ts|test/e2e/support/(e2e-semantic-phase-check|workflow-e2e-progress)\.test\.ts|tools/e2e/(check-semantic-phases|credential-free-tests|workflow-boundary|workflow-plan)\.mts|vitest\.config\.ts|package\.json)$
+        priority: 20
+
+      - id: test-cli
+        name: Test (CLI)
+        entry: npm run test:coverage:cli
+        language: system
+        pass_filenames: false
+        files: ^(bin/|src/.*\.(ts|tsx|js|mjs|cjs)$|test/.*\.(ts|tsx|js|mjs|cjs)$)
+        require_serial: true
+        stages: [manual]
         priority: 20
 
       - id: test-plugin
         name: Test (plugin)
-        entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
+        entry: npm run test:coverage:plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
+        stages: [manual]
         priority: 20
 
-      - id: test-skills-yaml
-        name: Test (skills YAML)
-        entry: npx vitest run test/skills-frontmatter.test.ts
+      - id: source-shape-test-budget
+        name: Source-shape test budget
+        entry: npm run source-shape:check
         language: system
         pass_filenames: false
-        files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        files: ^(.+\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)|scripts/find-source-shape-tests\.mts|ci/source-shape-test-budget\.json)$
         priority: 20
+
+      - id: codebase-growth-guardrails
+        name: Codebase growth guardrails
+        entry: npx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts
+        language: system
+        always_run: true
+        pass_filenames: false
+        priority: 20
+
 
 default_language_version:
   python: python3

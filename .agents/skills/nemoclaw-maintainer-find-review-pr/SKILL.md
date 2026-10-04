@@ -1,36 +1,50 @@
 ---
 name: nemoclaw-maintainer-find-review-pr
-description: Finds open GitHub PRs with security and priority-high labels, links each to its issue, detects duplicates (multiple PRs fixing the same issue), and presents a table of review candidates. Use when looking for the next PR to review. Trigger keywords - find pr, find review, next pr, pr to review, duplicate pr, security pr.
+description: "Find high-priority open NemoClaw security PRs to review, including competing or superseded candidates."
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Find PR to Review
 
-Search for open PRs labeled `security` + `priority: high`, associate each with its linked issue, detect duplicates (multiple PRs targeting the same issue), and present a clean summary so you can decide what to review or close.
+Find open PRs with the `security` label and Project Priority `Urgent` or `High`.
+Link each PR to its issue. Identify competing or superseded PRs. Report the results for the maintainer.
 
 ## Prerequisites
 
 - `gh` (GitHub CLI) must be installed and authenticated.
+- The active `gh` token must have `read:project` scope.
 - You must be in a GitHub repository (or the user must specify `OWNER/REPO`).
 
 ## Step 1: Fetch candidate PRs
 
-List all open PRs that carry **both** the `security` and `priority: high` labels:
+Read the NemoClaw Development Tracker and select open PRs that carry the canonical `security` label and have Project Priority `Urgent` or `High`:
 
 ```bash
-gh pr list --label security --label "priority: high" --state open --limit 50 --json number,title,author,headRefName,labels,body,createdAt
+gh project item-list 199 --owner NVIDIA --limit 1000 --format json \
+  | jq '[.items[]
+    | select(.content.repository == "NVIDIA/NemoClaw")
+    | select(.content.type == "PullRequest")
+    | select(((.labels // []) | index("security")) != null)
+    | select(.priority == "Urgent" or .priority == "High")
+    | {number: .content.number, title: .content.title, url: .content.url,
+       priority: .priority, status: .status}]'
 ```
 
-If the result is empty, report that there are no matching PRs and stop.
+Remove entries for closed PRs.
+For each remaining PR, fetch the body, author, branch, labels, and creation time with `gh pr view`.
+If no PRs remain, report that result and stop.
 
 ## Step 2: Extract linked issues
 
-For each PR, parse the body for linked issue references. Look for these patterns (case-insensitive):
+For each PR, search its body for issue references. Match these patterns without case sensitivity:
 
-- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`
-- `Related Issue` / `Linked Issue` section containing `#NNN`
-- Issue number in the PR title, e.g. `(#NNN)` suffix
-- Branch name containing an issue number, e.g. `fix/something-NNN`
+- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`, `Refs #NNN`, `Relates to #NNN`, or `Part of #NNN`
+- `Related issues` / `Linked issues` section containing `#NNN`
+- Issue number in the PR title, such as a `(#NNN)` suffix
+- Branch name containing an issue number, such as `fix/something-NNN`
 
 Build a mapping: `PR# → [issue numbers]`.
 
@@ -38,9 +52,10 @@ If a PR has no detectable linked issue, mark it as `(no linked issue)`.
 
 ## Step 3: Detect duplicates
 
-Group PRs by linked issue number. Any issue with **two or more** open PRs is a duplicate group.
+Group PRs by linked issue number.
+If two or more open PRs link to one issue, put them in one competing-PR group.
 
-For each duplicate group, fetch a brief summary of each competing PR to help the user decide which to keep:
+Fetch these fields for each competing PR:
 
 ```bash
 gh pr view <number> --json number,title,author,createdAt,additions,deletions,reviewDecision,statusCheckRollup --jq '{number,title,author: .author.login,created: .createdAt,additions,deletions,review: .reviewDecision,checks: [.statusCheckRollup[]?.conclusion] | unique}'
@@ -48,11 +63,39 @@ gh pr view <number> --json number,title,author,createdAt,additions,deletions,rev
 
 ## Step 4: Check for superseded PRs
 
-Also flag PRs whose body contains phrases like:
+Run the comparator's canonical detector with the open candidate PR numbers:
 
-- `follow-up to #NNN` / `supersedes #NNN` / `replaces #NNN` / `folds in #NNN`
+```bash
+../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh <pr-number-1> <pr-number-2> ...
+```
 
-where `#NNN` is another **open** PR number in the candidate list. These indicate one PR has absorbed another.
+It recognizes the comparator parser's case-insensitive statement families:
+
+- `supersed[a-z]*` before `#N`: `supersedes #N` points from the current PR to `#N`; `superseded by #N` points from `#N` to the current PR.
+- `replac[a-z]*` before `#N`: `replaces #N` points from the current PR to `#N`; `replaced by #N` points from `#N` to the current PR.
+- `clos[a-z]* in favor of` before `#N`: `closes in favor of #N` and `closed in favor of #N` point from `#N` to the current PR.
+- `fold[a-z]* in` before `#N`: `folds in #N` points from the current PR to `#N`; `folded into #N` points from `#N` to the current PR.
+
+The bracket expressions describe the parser grammar; they are not literal PR body text.
+A `follow-up to #N` statement is a related-PR signal, not a supersession declaration,
+unless one of these phrases also appears.
+
+Each supersession phrase must name another open candidate PR. It indicates that one PR can include the other.
+It records a relationship but does not prove that the target carries the source PR's work.
+
+When the target claims the source PR's full scope, compare their commits and diffs.
+If material code, tests, or documentation from another contributor remains in the target,
+apply the canonical policy in
+`../nemoclaw-maintainer-policies/references/workflow-policy.md`.
+
+This skill reports recommendations only.
+Do not recommend closing the source PR until another authorized workflow has:
+
+- completed any required transfer
+- verified the updated commits, attribution, and CI
+- rerun the comparator and selected the target
+- confirmed that the target contains the source's full scope and required contributor attribution
+- merged the selected target
 
 ## Step 5: Present results
 
@@ -77,32 +120,34 @@ For superseded PRs:
 ### Superseded PRs
 
 - #1416 supersedes/folds in #1392 (shell-quote sandboxName)
-  → Consider closing #1392 if #1416 covers its scope.
+  Keep #1392 open while an authorized workflow completes any required transfer, verifies the updated commits, attribution, and CI, and reruns the comparator.
+  After the updated verdict selects #1416 and #1416 merges, consider closing #1392 only if #1416 contains its full scope and preserves any required contributor attribution.
 ```
 
 ### Clean candidates
 
-Present non-duplicate PRs in a table:
+Present PRs without competing PRs in a table:
 
 ```markdown
 ### Review candidates (no duplicates)
 
-| PR | Issue | Title | Author | Age |
-|----|-------|-------|--------|-----|
-| #1476 | #577 | disable remote uninstall fallback | user1 | 2d |
-| #1121 | #804 | Landlock read-only /sandbox | user2 | 6d |
+| PR | Issue | Priority | Title | Author | Age |
+|----|-------|----------|-------|--------|-----|
+| #1476 | #577 | Urgent | disable remote uninstall fallback | user1 | 2d |
+| #1121 | #804 | High | Landlock read-only /sandbox | user2 | 6d |
 ```
 
 ### Summary line
 
-End with a one-line recommendation of which PR to review first, preferring:
+Recommend one PR to review first. Apply these priorities in order:
 
-1. Older PRs (waiting longest)
-2. PRs with passing checks
-3. PRs with smaller diff size (easier to review)
+1. Project Priority (`Urgent` before `High`)
+2. Oldest PR
+3. PRs with passing checks
+4. PRs with smaller diff size (easier to review)
 
 ## Notes
 
-- Do NOT automatically close any PRs. Only present findings and recommendations.
-- If the user specifies additional filters (e.g., a specific scope label like `OpenShell`), apply them.
-- If the user asks for a different priority label, adjust accordingly.
+- Never close a PR. Report findings and recommendations only.
+- Apply filters that the user gives, such as a scope label.
+- If the user asks for a different priority, filter the Project Priority field. Never use or create a priority label.

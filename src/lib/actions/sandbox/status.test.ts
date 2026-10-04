@@ -1,0 +1,554 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+import type { ProviderHealthProbeOptions } from "../../inference/health";
+import {
+  classifySandboxContainerFailureForStatus,
+  classifySandboxStatusPreflightFailure,
+  getSandboxStatusPreflight,
+  getSandboxStatusInferenceHealth,
+  getSandboxStatusReport,
+  isDockerDaemonUnreachableForStatus,
+  maybeGetSandboxStatusInferenceHealth,
+  resolveSandboxStatusDcodeAutoApprovalMode,
+  sandboxGpuProofStatusSuffix,
+  sandboxGpuProofUnverified,
+} from "./status";
+
+describe("sandbox status DCode auto-approval (#6478)", () => {
+  it("defaults legacy DCode entries to disabled", () => {
+    expect(
+      resolveSandboxStatusDcodeAutoApprovalMode({
+        name: "dcode",
+        agent: "langchain-deepagents-code",
+      } as never),
+    ).toBe("disabled");
+  });
+
+  it("projects durable serving profile provenance into JSON status (#8384)", async () => {
+    const provenance = {
+      schemaVersion: 1,
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      preset: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"2".repeat(64)}`,
+        displayName: "Example Spark profile",
+        supportState: "experimental",
+      },
+      recipe: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"3".repeat(64)}`,
+        backend: "vllm",
+      },
+      model: { id: "example/model", revision: "revision-1" },
+      runtimeImage: null,
+      estimatedImageDownloadBytes: null,
+      estimatedModelDownloadBytes: null,
+    } as const;
+    const report = await getSandboxStatusReport("profile-test", {
+      getSandbox: () =>
+        ({
+          name: "profile-test",
+          agent: "openclaw",
+          servingProfileProvenance: provenance,
+        }) as never,
+      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+    });
+
+    expect(report.servingProfileProvenance).toEqual(provenance);
+  });
+
+  it("omits an attached llama.cpp route when the sandbox is missing (#10256)", async () => {
+    const report = await getSandboxStatusReport("attached", {
+      getSandbox: () =>
+        ({
+          name: "attached",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+    });
+
+    expect(report.llamaCpp).toBeNull();
+  });
+
+  it("projects effective DCode mode into JSON while using null for other agents", async () => {
+    const missingLookup = async () => ({ state: "missing" as const, output: "not found" });
+    const legacyDcode = await getSandboxStatusReport("dcode", {
+      getSandbox: () => ({ name: "dcode", agent: "langchain-deepagents-code" }) as never,
+      reconcile: missingLookup,
+    });
+    const openclaw = await getSandboxStatusReport("openclaw", {
+      getSandbox: () => ({ name: "openclaw", agent: "openclaw" }) as never,
+      reconcile: missingLookup,
+    });
+
+    expect(legacyDcode.dcodeAutoApprovalMode).toBe("disabled");
+    expect(openclaw.dcodeAutoApprovalMode).toBeNull();
+  });
+
+  it("reports the recorded DCode mode and omits it for other agents", () => {
+    expect(
+      resolveSandboxStatusDcodeAutoApprovalMode({
+        name: "dcode",
+        agent: "langchain-deepagents-code",
+        dcodeAutoApprovalMode: "thread-opt-in",
+      } as never),
+    ).toBe("thread-opt-in");
+    expect(
+      resolveSandboxStatusDcodeAutoApprovalMode({
+        name: "openclaw",
+        agent: "openclaw",
+        dcodeAutoApprovalMode: "thread-opt-in",
+      } as never),
+    ).toBeNull();
+  });
+});
+
+describe("sandbox status host mounts", () => {
+  it("projects durable read-only host mounts into JSON status", async () => {
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".status-host-mount-test-"));
+    const hostMounts = [{ source, target: "/sandbox/project", readOnly: true as const }];
+    try {
+      const report = await getSandboxStatusReport("alpha", {
+        getSandbox: () => ({ name: "alpha", hostMounts }) as never,
+        reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+      });
+
+      expect(report.hostMounts).toEqual(hostMounts);
+      expect(report.hostMounts).not.toBe(hostMounts);
+      expect(report.hostMounts?.[0]).not.toBe(hostMounts[0]);
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed and terminal-control host mounts before JSON rendering", async () => {
+    const reportFor = (hostMounts: unknown) =>
+      getSandboxStatusReport("alpha", {
+        getSandbox: () => ({ name: "alpha", hostMounts }) as never,
+        reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+      });
+
+    await expect(reportFor("not-an-array")).rejects.toThrow(
+      "Persisted host mount state must be an array",
+    );
+    await expect(
+      reportFor([
+        {
+          source: "/srv/project\u202e",
+          target: "/sandbox/project",
+          readOnly: true,
+        },
+      ]),
+    ).rejects.toThrow("unsafe terminal control characters");
+  });
+});
+
+describe("sandbox status inference health", () => {
+  it("passes the current model with the current provider", () => {
+    let observed: { provider: string; options?: ProviderHealthProbeOptions } | null = null;
+
+    const result = getSandboxStatusInferenceHealth(
+      true,
+      "nvidia-prod",
+      "moonshotai/kimi-k2.6",
+      (provider, options) => {
+        observed = { provider, options };
+        return {
+          ok: true,
+          probed: true,
+          providerLabel: "NVIDIA Endpoints",
+          endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+          detail: "healthy",
+        };
+      },
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(observed).toEqual({
+      provider: "nvidia-prod",
+      options: { model: "moonshotai/kimi-k2.6" },
+    });
+  });
+
+  it("passes the recorded sandbox route endpoint to the provider probe", () => {
+    let observed: ProviderHealthProbeOptions | undefined;
+
+    getSandboxStatusInferenceHealth(
+      true,
+      "vllm-local",
+      "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      (_provider, options) => {
+        observed = options;
+        return null;
+      },
+      "http://host.openshell.internal:46145/v1",
+    );
+
+    expect(observed).toEqual({
+      model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+    });
+  });
+
+  it("omits the recorded endpoint from the probe options when the registry records none", () => {
+    let observed: ProviderHealthProbeOptions | undefined;
+
+    getSandboxStatusInferenceHealth(
+      true,
+      "vllm-local",
+      "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      (_provider, options) => {
+        observed = options;
+        return null;
+      },
+      null,
+    );
+
+    expect(observed).toEqual({ model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" });
+  });
+
+  it("does not probe when the sandbox gateway is not present", () => {
+    let called = false;
+
+    const result = getSandboxStatusInferenceHealth(
+      false,
+      "nvidia-prod",
+      "moonshotai/kimi-k2.6",
+      () => {
+        called = true;
+        return null;
+      },
+    );
+
+    expect(result).toBeNull();
+    expect(called).toBe(false);
+  });
+});
+
+describe("isDockerDaemonUnreachableForStatus", () => {
+  it("returns false when sandbox entry is null", () => {
+    expect(isDockerDaemonUnreachableForStatus(null, () => false)).toBe(false);
+  });
+
+  it("returns false when the openshell driver is not docker", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "vm" } as never,
+        () => false,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true when driver is docker and the probe reports unreachable", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "docker" } as never,
+        () => false,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when driver is docker and the probe reports reachable", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "docker" } as never,
+        () => true,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("classifySandboxContainerFailureForStatus", () => {
+  it("returns null when sandbox entry is null", async () => {
+    const probe = async () => {
+      throw new Error("probe should not be invoked");
+    };
+    await expect(classifySandboxContainerFailureForStatus(null, probe)).resolves.toBeNull();
+  });
+
+  it("returns null when the openshell driver is not docker", async () => {
+    let called = false;
+    const probe = async () => {
+      called = true;
+      return null;
+    };
+    await expect(
+      classifySandboxContainerFailureForStatus(
+        { name: "alpha", openshellDriver: "vm" } as never,
+        probe,
+      ),
+    ).resolves.toBeNull();
+    expect(called).toBe(false);
+  });
+
+  it("forwards the sandbox name and dashboard port to the probe and propagates its verdict", async () => {
+    const observed: { sandboxName: string; port: number | null }[] = [];
+    const probe = async (sandboxName: string, dashboardPort: number | null) => {
+      observed.push({ sandboxName, port: dashboardPort });
+      return {
+        layer: "sandbox_dashboard_port_conflict" as const,
+        detail: "stub failure",
+      };
+    };
+    const result = await classifySandboxContainerFailureForStatus(
+      {
+        name: "alpha",
+        openshellDriver: "docker",
+        dashboardPort: 18900,
+      } as never,
+      probe,
+    );
+    expect(result).toEqual({
+      layer: "sandbox_dashboard_port_conflict",
+      detail: "stub failure",
+    });
+    expect(observed).toEqual([{ sandboxName: "alpha", port: 18900 }]);
+  });
+
+  it("passes null when the sandbox entry has no dashboard port recorded", async () => {
+    const observed: { sandboxName: string; port: number | null }[] = [];
+    const probe = async (sandboxName: string, dashboardPort: number | null) => {
+      observed.push({ sandboxName, port: dashboardPort });
+      return null;
+    };
+    await expect(
+      classifySandboxContainerFailureForStatus(
+        { name: "alpha", openshellDriver: "docker" } as never,
+        probe,
+      ),
+    ).resolves.toBeNull();
+    expect(observed).toEqual([{ sandboxName: "alpha", port: null }]);
+  });
+});
+
+describe("maybeGetSandboxStatusInferenceHealth", () => {
+  it("does not invoke the provider probe when suppressInferenceProbe is true even with a present gateway and string provider", () => {
+    let probeCalls = 0;
+    const result = maybeGetSandboxStatusInferenceHealth(
+      true,
+      true,
+      "nvidia-prod",
+      "nvidia/nemotron",
+      (...args) => {
+        probeCalls += 1;
+        throw new Error(`probeProviderHealth should not be invoked (args=${JSON.stringify(args)})`);
+      },
+    );
+    expect(result).toBeNull();
+    expect(probeCalls).toBe(0);
+  });
+
+  it("delegates to the probe when suppressInferenceProbe is false", () => {
+    const calls: { provider: string; options?: ProviderHealthProbeOptions }[] = [];
+    const result = maybeGetSandboxStatusInferenceHealth(
+      false,
+      true,
+      "nvidia-prod",
+      "nvidia/nemotron",
+      (provider, options) => {
+        calls.push({ provider, options });
+        return {
+          ok: true,
+          probed: true,
+          providerLabel: "NVIDIA Endpoints",
+          endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+          detail: "healthy",
+        };
+      },
+    );
+    expect(result?.ok).toBe(true);
+    expect(calls).toEqual([{ provider: "nvidia-prod", options: { model: "nvidia/nemotron" } }]);
+  });
+});
+
+describe("classifySandboxStatusPreflightFailure", () => {
+  it("returns docker_unreachable when the daemon probe reports unreachable", async () => {
+    let sandboxProbeCalled = false;
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker" } as never,
+      {
+        dockerProbe: () => false,
+        sandboxContainerProbe: async () => {
+          sandboxProbeCalled = true;
+          return null;
+        },
+      },
+    );
+    expect(result).toEqual({ layer: "docker_unreachable", dockerUnreachable: true });
+    // Short-circuits: a daemon that is already known to be down must not
+    // trigger a follow-up `docker ps` round trip.
+    expect(sandboxProbeCalled).toBe(false);
+  });
+
+  it("returns the sandbox container failure when the daemon is reachable", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker", dashboardPort: 18789 } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async (sandboxName, dashboardPort) => {
+          expect(sandboxName).toBe("alpha");
+          expect(dashboardPort).toBe(18789);
+          return {
+            layer: "sandbox_dashboard_port_conflict",
+            detail: "stub failure",
+          };
+        },
+      },
+    );
+    expect(result).toEqual({
+      layer: "sandbox_dashboard_port_conflict",
+      dockerUnreachable: false,
+    });
+  });
+
+  it("returns null when the sandbox container probe finds no failure", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker" } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => null,
+      },
+    );
+    expect(result).toBeNull();
+  });
+
+  it("keeps the stopped observation available for intentional-stop classification (#11025)", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+    expect(result).toEqual({
+      layer: "sandbox_container_stopped",
+      dockerUnreachable: false,
+    });
+  });
+
+  it("reports a clean stop only when provider observation confirms persisted intent (#11025)", async () => {
+    const stopped = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+    const running = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => null,
+      },
+    );
+
+    expect(stopped).toMatchObject({
+      intentionalStopConfirmed: true,
+      failureLayer: null,
+      suppressInferenceProbe: true,
+      exitCode: 0,
+    });
+    expect(running).toMatchObject({
+      intentionalStopConfirmed: false,
+      failureLayer: null,
+      suppressInferenceProbe: false,
+      exitCode: 0,
+    });
+  });
+
+  it("does not accept a non-boolean persisted stop marker as intentional (#11025)", async () => {
+    const result = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: "false" } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      intentionalStopConfirmed: false,
+      failureLayer: "sandbox_container_stopped",
+      suppressInferenceProbe: true,
+      exitCode: 1,
+    });
+  });
+
+  it("returns null when the sandbox is not on the docker driver", async () => {
+    let dockerCalled = false;
+    let sandboxCalled = false;
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "vm" } as never,
+      {
+        dockerProbe: () => {
+          dockerCalled = true;
+          return false;
+        },
+        sandboxContainerProbe: async () => {
+          sandboxCalled = true;
+          return null;
+        },
+      },
+    );
+    expect(result).toBeNull();
+    // Both gates are docker-driver-only; a vm sandbox must not provoke
+    // either probe.
+    expect(dockerCalled).toBe(false);
+    expect(sandboxCalled).toBe(false);
+  });
+
+  it("returns null when the sandbox entry is null", async () => {
+    const result = await classifySandboxStatusPreflightFailure(null);
+    expect(result).toBeNull();
+  });
+});
+
+describe("sandbox GPU proof status rendering (#4231)", () => {
+  it("does not call an unproven GPU healthy", () => {
+    expect(sandboxGpuProofUnverified(null)).toBe(true);
+    expect(sandboxGpuProofUnverified(undefined)).toBe(true);
+    expect(sandboxGpuProofUnverified({ status: "unverified", cudaVerified: false, at: "t" })).toBe(
+      true,
+    );
+    expect(sandboxGpuProofUnverified({ status: "verified", cudaVerified: true, at: "t" })).toBe(
+      false,
+    );
+    expect(sandboxGpuProofUnverified({ status: "failed", cudaVerified: false, at: "t" })).toBe(
+      false,
+    );
+  });
+
+  it("renders verified / unverified / failed suffixes distinctly", () => {
+    expect(
+      sandboxGpuProofStatusSuffix({ status: "verified", cudaVerified: true, at: "t" }),
+    ).toContain("CUDA verified");
+    // No recorded proof (older entries) must not read as healthy.
+    expect(sandboxGpuProofStatusSuffix(null)).toContain("CUDA unverified");
+    expect(
+      sandboxGpuProofStatusSuffix({ status: "unverified", cudaVerified: false, at: "t" }),
+    ).toContain("CUDA unverified");
+    const failed = sandboxGpuProofStatusSuffix({
+      status: "failed",
+      cudaVerified: false,
+      label: "cuInit(0)",
+      at: "t",
+    });
+    expect(failed).toContain("last CUDA proof failed");
+    expect(failed).toContain("cuInit(0)");
+  });
+});

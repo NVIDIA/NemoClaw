@@ -1,0 +1,11 @@
+{
+  "name": "@nemoclaw/ci-static-checks",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.16"
+  },
+  "dependencies": {
+    "typescript": "6.0.3"
+  }
+}

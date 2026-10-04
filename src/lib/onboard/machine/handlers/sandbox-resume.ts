@@ -1,0 +1,384 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { Session } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
+import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
+import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
+import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+
+export interface SandboxResumeSignals {
+  readonly resume: boolean;
+  readonly resumeAgentChanged: boolean;
+  readonly sandboxStepComplete: boolean;
+  readonly sandboxReuseState: string;
+  readonly inferenceRouteConfigChanged: boolean;
+  readonly compatibleEndpointReasoningChanged: boolean;
+  readonly webSearchConfigChanged: boolean;
+  readonly sandboxGpuConfigChanged: boolean;
+  readonly hostMountConfigChanged: boolean;
+  readonly recreateSandboxRequested: boolean;
+  readonly recreateJournalHandoff?: boolean;
+  readonly activeRecreateJournal?: boolean;
+  readonly messagingChannelConfigChanged: boolean;
+  readonly messagingCredentialChanged: boolean;
+  readonly hermesToolGatewayConfigChanged: boolean;
+  readonly observabilityChanged?: boolean;
+  readonly dcodeAutoApprovalChanged?: boolean;
+  readonly toolDisclosureMigrationNeeded: boolean;
+  readonly toolDisclosureChanged: boolean;
+  readonly inferenceSelectionChanged: boolean;
+  readonly hermesPortableLifecyclePending?: boolean;
+}
+
+export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
+  return !persistedSandboxHostMountsEqual(left, right);
+}
+
+/**
+ * A sandbox with no recorded channel configuration consumed none, so
+ * process-environment channel values are not drift.
+ */
+export function hasMessagingChannelConfigDrift<Config>(
+  effective: Config | null,
+  stored: Config | null,
+  configsEqual: (left: Config | null, right: Config | null) => boolean,
+): boolean {
+  if (stored === null) return false;
+  return !configsEqual(effective, stored);
+}
+
+interface InferenceRouteResumeInput {
+  readonly agentName: string | null | undefined;
+  readonly provider: string | null | undefined;
+  readonly model: string | null | undefined;
+  readonly preferredInferenceApi: string | null;
+  readonly registryEntry: SandboxEntry | null;
+}
+
+export function hasHermesCompatibleAnthropicInferenceRouteDrift({
+  agentName,
+  provider,
+  model,
+  preferredInferenceApi,
+  registryEntry,
+}: InferenceRouteResumeInput): boolean {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    preferredInferenceApi !== "openai-completions" ||
+    !model
+  ) {
+    return false;
+  }
+
+  // The registry records what was baked into the existing sandbox. Do not
+  // fall back to the session: provider setup repairs that session before the
+  // sandbox decision runs, which could make a stale sandbox look migrated.
+  // Missing legacy metadata is therefore drift and triggers a one-time rebuild.
+  if (!registryEntry) return true;
+  return (
+    registryEntry.provider !== provider ||
+    registryEntry.model !== model ||
+    registryEntry.preferredInferenceApi !== preferredInferenceApi
+  );
+}
+
+export function hasCompatibleEndpointReasoningDrift({
+  provider,
+  compatibleEndpointReasoning,
+  registryEntry,
+}: {
+  readonly provider: string | null | undefined;
+  readonly compatibleEndpointReasoning: string | null | undefined;
+  readonly registryEntry: SandboxEntry | null;
+}): boolean {
+  if (provider !== "compatible-endpoint") return false;
+  const desired =
+    compatibleEndpointReasoning === "true" || compatibleEndpointReasoning === "false"
+      ? compatibleEndpointReasoning
+      : null;
+  return (registryEntry?.compatibleEndpointReasoning ?? null) !== desired;
+}
+
+export function resolveToolDisclosureResumeSignals(
+  registryEntry: SandboxEntry | null,
+  session: Session | null,
+): Pick<SandboxResumeSignals, "toolDisclosureMigrationNeeded" | "toolDisclosureChanged"> {
+  const recorded = normalizeToolDisclosure(registryEntry?.toolDisclosure);
+  const migrationNeeded = Boolean(registryEntry && registryEntry.toolDisclosure === undefined);
+  return {
+    toolDisclosureMigrationNeeded: migrationNeeded,
+    toolDisclosureChanged: Boolean(
+      registryEntry &&
+      !migrationNeeded &&
+      recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
+    ),
+  };
+}
+
+export type SandboxResumeDecision =
+  | {
+      readonly kind: "create";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+      readonly continueHermesPortableLifecycle?: true;
+    }
+  | { readonly kind: "reuse" }
+  | {
+      readonly kind: "recreate";
+      readonly note: string;
+      readonly removeRegistryEntry: boolean;
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    }
+  | {
+      readonly kind: "repair-and-recreate";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    };
+
+export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolean {
+  if (decision.kind === "repair-and-recreate") return true;
+  return decision.kind === "recreate" && decision.removeRegistryEntry;
+}
+
+export function requiresSandboxRecreation(
+  decision: Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>,
+  explicitlyRequested: boolean,
+): boolean {
+  return explicitlyRequested || decision.kind !== "create";
+}
+
+function canReuseSandbox(signals: SandboxResumeSignals): boolean {
+  return (
+    !signals.resumeAgentChanged &&
+    !signals.inferenceRouteConfigChanged &&
+    !signals.compatibleEndpointReasoningChanged &&
+    !signals.inferenceSelectionChanged &&
+    !signals.webSearchConfigChanged &&
+    !signals.sandboxGpuConfigChanged &&
+    !signals.hostMountConfigChanged &&
+    !signals.recreateSandboxRequested &&
+    !signals.messagingChannelConfigChanged &&
+    !signals.messagingCredentialChanged &&
+    !signals.hermesToolGatewayConfigChanged &&
+    !signals.observabilityChanged &&
+    !signals.dcodeAutoApprovalChanged &&
+    !signals.toolDisclosureMigrationNeeded &&
+    !signals.toolDisclosureChanged &&
+    signals.sandboxReuseState === "ready"
+  );
+}
+
+function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.toolDisclosureMigrationNeeded) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Tool disclosure metadata is missing; recreating sandbox for one-time migration.",
+      // Preserve registry-only fidelity until createSandbox captures it.
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.toolDisclosureChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+      // Keep the row until createSandbox captures registry-only fidelity such
+      // as managed MCP bridge state and can route it through transactional rebuild.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
+function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.compatibleEndpointReasoningChanged && signals.sandboxReuseState === "ready") {
+    return {
+      kind: "recreate",
+      note: "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.inferenceSelectionChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Live DCode model/provider selection is stale or unreadable; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.resumeAgentChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.inferenceRouteConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Hermes inference route configuration changed; recreating sandbox.",
+      // Preserve registry-only fidelity until createSandbox captures it for
+      // the guarded recreate path.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
+function runtimeConfigurationResumeDecision(
+  signals: SandboxResumeSignals,
+): SandboxResumeDecision | null {
+  if (signals.recreateSandboxRequested) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Recreate sandbox requested; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.webSearchConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Web Search configuration changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.sandboxGpuConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Sandbox GPU settings changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.hostMountConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Read-only host mount declarations changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.messagingChannelConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Messaging channel configuration changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.messagingCredentialChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.hermesToolGatewayConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Hermes managed tool gateway selection changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.observabilityChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Observability configuration changed; recreating sandbox.",
+      // Preserve the row until createSandbox captures registry-only fidelity.
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.dcodeAutoApprovalChanged && signals.sandboxReuseState !== "not_ready") {
+    return {
+      kind: "recreate",
+      note: "  [resume] DCode auto-approval capability changed; recreating sandbox.",
+      // Preserve registry-only fidelity until createSandbox captures it.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
+function continuesJournaledRecreate(signals: SandboxResumeSignals): boolean {
+  const sourceStateKnown = ["ready", "missing", "not_ready"].includes(signals.sandboxReuseState);
+  return (
+    signals.resume &&
+    sourceStateKnown &&
+    (signals.activeRecreateJournal === true ||
+      ((signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
+        signals.recreateSandboxRequested &&
+        Boolean(signals.recreateJournalHandoff)))
+  );
+}
+
+function requiresUnownedNotReadyRepair(signals: SandboxResumeSignals): boolean {
+  return (
+    signals.sandboxReuseState === "not_ready" &&
+    signals.recreateSandboxRequested &&
+    !signals.recreateJournalHandoff
+  );
+}
+
+export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
+  if (continuesJournaledRecreate(signals)) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.hermesPortableLifecyclePending === true) {
+    return { kind: "create", continueHermesPortableLifecycle: true };
+  }
+  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };
+  const compatibilityDecision = compatibilityResumeDecision(signals);
+  if (compatibilityDecision) return compatibilityDecision;
+  if (canReuseSandbox(signals)) return { kind: "reuse" };
+  const configurationDecision = runtimeConfigurationResumeDecision(signals);
+  if (configurationDecision) return configurationDecision;
+  const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
+  if (toolDisclosureDecision) return toolDisclosureDecision;
+  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
+  return {
+    kind: "recreate",
+    note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
+    removeRegistryEntry: true,
+  };
+}
+
+/** Preserve explicit runtime authority while reclaiming a published resume reservation. */
+export function reserveSandboxResumeRoute(
+  sandboxName: string,
+  entry: SandboxEntry | null,
+  route: Parameters<typeof import("../../../state/registry").reserveSandboxInferenceRoute>[1],
+  reserve: typeof import("../../../state/registry").reserveSandboxInferenceRoute,
+  cliName: string,
+): void {
+  if (!route.reservationSessionId || !entry) return;
+  const explicitHostLocal = entry.hostLocalInferenceProvenance !== undefined;
+  // Route-only create reservations stay with the verified create boundary.
+  if (
+    !explicitHostLocal &&
+    entry.pendingRouteReservation === true &&
+    (entry.reservationSessionId === route.reservationSessionId || entry.createdAt === undefined)
+  )
+    return;
+  const desired = explicitHostLocal
+    ? {
+        ...route,
+        gatewayPort: entry.gatewayPort ?? undefined,
+        openshellDriver: entry.openshellDriver ?? undefined,
+        hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      }
+    : route;
+  try {
+    if (!reserveRecoveredSandboxInferenceRoute(reserve, sandboxName, desired)) {
+      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+    }
+  } catch (error) {
+    if (!explicitHostLocal) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot reserve host-local inference for sandbox '${sandboxName}': ${detail}\n` +
+        `Run '${cliName} ${sandboxName} doctor' to inspect runtime and gateway authority before retrying.`,
+      { cause: error },
+    );
+  }
+}

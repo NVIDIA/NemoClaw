@@ -1,0 +1,107 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "View Sandbox Status"
+sidebar-title: "View Sandbox Status"
+description: "List NemoClaw sandboxes, check their health, inspect logs, and collect diagnostics."
+description-agent: "Explains how to list registered sandboxes, inspect sandbox and host status, read logs, and collect diagnostics. Use when checking sandbox health or preparing a support handoff."
+keywords: ["nemoclaw status", "nemoclaw list", "nemoclaw logs", "nemoclaw debug"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Use these commands to inspect registered sandboxes and collect evidence before changing a sandbox.
+
+<AgentOnly variant="openclaw">
+Use this guide after you finish the [OpenClaw quickstart](../../get-started/quickstart).
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use this guide after you finish [Quickstart with Hermes](../../get-started/quickstart).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Use this guide after you finish [Quickstart with Deep Agents](../../get-started/quickstart).
+</AgentOnly>
+
+## List Sandboxes
+
+List every sandbox registered on this host:
+
+```bash
+$$nemoclaw list
+```
+
+The list shows each sandbox's model, provider, policy presets, and active SSH session indicator.
+<AgentOnly variant="openclaw,hermes">
+It also shows the dashboard URL when NemoClaw records a dashboard port.
+</AgentOnly>
+Use JSON output for scripts:
+
+```bash
+$$nemoclaw list --json
+```
+
+## Check Sandbox Health
+
+Check a specific sandbox's health, inference route, active connections, live policy, and update status:
+<AgentOnly variant="openclaw,hermes">
+For messaging agents, the command also reports messaging-channel overlap warnings.
+</AgentOnly>
+
+```bash
+$$nemoclaw my-assistant status
+```
+
+For local Ollama and vLLM routes, sandbox status and doctor compare the selected model with the provider inventory without issuing a completion or consuming tokens.
+An invalid or empty inventory, or an inventory that does not contain the configured model, reports unhealthy provider status.
+
+Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
+
+```bash
+$$nemoclaw status
+```
+
+## Inspect Logs
+
+View recent sandbox logs:
+
+```bash
+$$nemoclaw my-assistant logs
+```
+
+Stream logs while you reproduce a problem:
+
+```bash
+$$nemoclaw my-assistant logs --follow
+```
+
+<AgentOnly variant="openclaw,hermes">
+The log command reads both agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The log command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing.
+
+## Collect Diagnostics
+
+Collect diagnostics for bug reports or support handoff:
+
+```bash
+$$nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+```
+
+Use `--quick` for a smaller local summary:
+
+```bash
+$$nemoclaw debug --quick --sandbox my-assistant
+```
+
+The debug command gathers system information, Docker state, sandbox logs, and sandbox status.
+
+## Related Topics
+
+- [Run Sandboxes](run-sandboxes) for multiple-sandbox naming and start or stop operations.
+- [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) when status or logs show that a runtime needs repair.
+- [Troubleshooting](../../reference/troubleshooting) for symptom-based remediation.
+- [CLI Selection Guide](../../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and lower-level OpenShell commands.

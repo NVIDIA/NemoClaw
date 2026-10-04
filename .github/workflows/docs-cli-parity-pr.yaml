@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Docs / Verify CLI and Installer Reference Parity
+
+# Catches drift between the actual `nemoclaw --help` command list and the
+# command headings in `docs/reference/commands.mdx`. This workflow runs on every
+# PR that touches CLI source. Ref: NVIDIA/NemoClaw#3224.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+    paths:
+      - "src/**"
+      - "bin/**"
+      - "install.sh"
+      - "scripts/install.sh"
+      - "docs/reference/commands.mdx"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.src.json"
+      - "test/e2e/e2e-cloud-experimental/check-docs.sh"
+      - ".github/workflows/docs-cli-parity-pr.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-cli-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli-parity:
+    name: Docs / Verify CLI and installer reference parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run CLI/docs parity check (command + flag level)
+        run: bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-cli
+
+      - name: Run install.sh provider parity check
+        run: bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-install

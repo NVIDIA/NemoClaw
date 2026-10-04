@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Agent manifest for LangChain Deep Agents Code.
+# This is a terminal-oriented harness: there is no long-running gateway or
+# dashboard health surface. NemoClaw validates the binary/config and leaves
+# interactive/headless execution to the user's sandbox shell.
+
+name: langchain-deepagents-code
+display_name: "LangChain Deep Agents Code"
+description: "Terminal coding agent built on the Deep Agents SDK"
+version_constraint: ">=0.1.55"
+language: python
+license: MIT
+homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
+
+# ── Binary & process ────────────────────────────────────────────
+install_method: pip
+binary_path: /usr/local/bin/dcode
+version_command: "dcode --version"
+expected_version: "0.1.55"
+version_scheme: semver
+runtime:
+  kind: terminal
+  interactive_command: "dcode"
+  headless_command: "dcode -n"
+  smoke_commands:
+    - "dcode --version"
+    - "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK"
+    - 'empty_prompt=; output="$(timeout 10 dcode -n "$empty_prompt" 2>&1)"; status=$?; [ "$status" -eq 2 ] && [ "$output" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ] && echo NEMOCLAW_DCODE_EMPTY_PROMPT_OK'
+deferred_onboarding: true
+
+# ── Configuration ───────────────────────────────────────────────
+config:
+  dir: /sandbox/.deepagents
+  config_file: config.toml
+  env_file: .env
+  format: toml
+
+# Static integration metadata only. DCode remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.deepagents/agent/skills
+  list_command: [skills, list, --agent, agent]
+  remove_command: [skills, delete, "{name}", --agent, agent, --force, --json]
+  verified_content_digest: sha256
+
+# .deepagents/.mcp.json is the agent-owned MCP source. NemoClaw writes only
+# direct-HTTP endpoint config and OpenShell placeholders, preserves unrelated
+# native entries, and carries managed entries through the bounded rebuild
+# handoff instead of a host-side registry projection.
+user_managed_files:
+  - .deepagents/.env
+  - .deepagents/.mcp.json
+
+device_pairing: false
+
+# ── Inference ───────────────────────────────────────────────────
+# V1 routes NVIDIA/OpenAI-compatible selections through OpenShell's managed
+# inference.local endpoint using Deep Agents Code's OpenAI-compatible provider.
+inference:
+  provider_type: openai_compatible
+  default_model: nvidia/nemotron-3-ultra-550b-a55b
+  base_url_config_key: "models.providers.openai.base_url"
+  model_config_key: "models.default"
+  proxy_support: implicit
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: deepagents-config
+
+package_registry:
+  hosts:
+    - pypi.org
+    - files.pythonhosted.org
+  binary: /opt/venv/bin/pip3

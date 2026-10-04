@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# WeChat (personal) channel egress over Tencent's iLink Bot API.
+#
+# OpenClaw and Hermes use separate policy files for their agent-specific
+# binaries. Both files authorize the same iLink host and request contract.
+#
+# OpenShell's server-side request forgery (SSRF) engine matches `host:` as a
+# literal string. NemoClaw clones
+# the reviewed ilinkai.wechat.com endpoint for the exact validated IDC origin
+# returned during QR login; no wildcard or arbitrary operator host is allowed.
+#
+# Reviewed static hosts:
+#   - ilinkai.weixin.qq.com           bootstrap; hard-coded in src/lib/messaging/channels/wechat/qr.ts
+#                                     and Hermes' WEIXIN_BASE_URL default per
+#                                     hermes-agent docs/messaging/weixin
+#   - ilinkai.wechat.com              per-account baseUrl returned after QR confirm
+#
+preset:
+  name: wechat
+  description: "WeChat (personal) iLink API access (OpenClaw + Hermes)"
+
+network_policies:
+  wechat_bridge:
+    name: wechat_bridge
+    endpoints:
+      - host: ilinkai.weixin.qq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: ilinkai.wechat.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    # This agent-specific policy grants credentials only to OpenClaw's Node
+    # runtime. Hermes owns its Python grants in policy/hermes.yaml.
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

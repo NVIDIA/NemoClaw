@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+contractVersion: 1
+jobId: llama-cpp-dgx-spark-qualification
+platform: linux/arm64
+profile: dgx-spark-gb10-single

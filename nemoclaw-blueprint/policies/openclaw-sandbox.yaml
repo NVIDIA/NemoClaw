@@ -16,12 +16,9 @@
 version: 1
 
 filesystem_policy:
-  # SECURITY: must be false. When true, OpenShell adds WORKDIR (/sandbox) to
-  # read_write automatically, which overrides our read_only entry below because
-  # Landlock grants the union of all matching rules. All needed writable paths
-  # are declared explicitly in read_write.
-  # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
-  include_workdir: false
+  # Home directory writable (matches Hermes). Agents can create dotfiles and
+  # caches natively.
+  include_workdir: true
   read_only:
     - /usr
     - /lib
@@ -41,13 +38,30 @@ filesystem_policy:
                                     # /sandbox/.openclaw-data via symlinks.
                                     # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
     - /opt/gbrain                   # gbrain package install dir (read+execute for bun)
+    - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
   read_write:
     - /tmp
     - /dev/null
-    - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
+    - /dev/pts                      # PTY multiplexer + slave devices (devpts).
+                                    # OpenClaw's bundled tmux-session flow — and
+                                    # any PTY allocation (tmux, script, expect,
+                                    # interactive shells) — opens /dev/ptmx
+                                    # (-> /dev/pts/ptmx) and a /dev/pts/<n> slave
+                                    # via forkpty(). Without this grant landlock
+                                    # denies the open with EACCES, which tmux
+                                    # surfaces as `create window failed: fork
+                                    # failed: Permission denied` (#4513). Grant
+                                    # the directory, not /dev/ptmx itself — the
+                                    # supervisor refuses to chown that symlink.
+    - /sandbox/.openclaw            # Mutable agent config and state.
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
+    - /home/linuxbrew               # Homebrew prefix. The brew core is baked into
+                                    # the sandbox base image at /home/linuxbrew/
+                                    # .linuxbrew (#3913); runtime writes here let
+                                    # `brew install <formula>` extract bottles
+                                    # and manage Cellar/opt symlinks.
 
 # TODO: evaluate landlock enforce mode — currently best_effort because
 # enforce can break things in unpredictable ways. Needs thorough testing
@@ -55,63 +69,11 @@ filesystem_policy:
 landlock:
   compatibility: best_effort
 
-# Note: tool-level write/edit restrictions for openclaw.json are intentionally
-# NOT declared here. OpenShell's PolicyFile schema does not support a
-# `tool_policy` section (serde deny_unknown_fields — only version, filesystem_policy,
-# landlock, process, network_policies are accepted). Config protection is
-# achieved entirely through filesystem_policy (read_only + /etc/openclaw mount)
-# and the root:root 555 permission lock on /sandbox/.openclaw/.
-# Ref: https://github.com/NVIDIA/NemoClaw/pull/654#pullrequestreview-…
-
 process:
   run_as_user: sandbox
   run_as_group: sandbox
 
 network_policies:
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/v1/messages" }
-          - allow: { method: POST, path: "/v1/messages/batches" }
-          - allow: { method: GET, path: "/v1/messages/batches/**" }
-          - allow: { method: POST, path: "/v1/complete" }
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/**" }
-      # sentry.io is a multi-tenant SaaS — any authenticated client can POST
-      # to ANY Sentry project, not just NemoClaw's. Allowing POST /** turned
-      # the host into a generic exfiltration channel: a compromised agent
-      # could ship stack traces, env vars, file contents, etc. to a Sentry
-      # project controlled by an attacker via the public envelope endpoint
-      # (https://sentry.io/api/<any-project>/envelope/). Path-pattern
-      # restrictions cannot fix this because the project ID is part of the
-      # URL and there is no server-side allowlist of legitimate projects.
-      #
-      # Block POST entirely. GET stays allowed because it has no request
-      # body and is harmless for exfil. Side effect: Claude Code's crash
-      # telemetry to Sentry is silently dropped — that is the right
-      # tradeoff for a sandbox whose stated goal is preventing data egress.
-      # See #1437.
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/claude }
-
   nvidia:
     name: nvidia
     endpoints:
@@ -119,18 +81,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/v1/chat/completions" }
-          - allow: { method: POST, path: "/v1/completions" }
-          - allow: { method: POST, path: "/v1/embeddings" }
-          - allow: { method: GET, path: "/v1/models" }
-          - allow: { method: GET, path: "/v1/models/**" }
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -138,9 +88,31 @@ network_policies:
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
-      - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/bun }      # gbrain embed calls inference for embeddings
+
+  # ── Managed inference route ──────────────────────────────────────────
+  # inference.local is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider (OpenAI, NVIDIA, etc.).
+  # Every sandbox uses this route regardless of provider, so it belongs in
+  # the base policy rather than an optional preset.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
 
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every
@@ -162,7 +134,11 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
+        # ClawHub addresses scoped packages as @scope%2Fname. Keep strict
+        # canonicalization everywhere else while allowing that registry form.
+        # TODO(#4104): Remove if ClawHub stops encoding scope separators or
+        # OpenShell can preserve this route without an endpoint-level opt-in.
+        allow_encoded_slash: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -177,10 +153,16 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # OpenClaw reads model metadata from this catalog during agent turns.
+      - host: catalog.openclaw.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }
@@ -192,7 +174,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
@@ -209,219 +190,15 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
-  # Restricted to node processes to prevent arbitrary data exfiltration
-  # via curl, wget, python, etc. (See: #272)
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
-      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
-      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
-      # through behaviour needed here. Matches presets/discord.yaml.
-      - host: gateway.discord.gg
-        port: 443
-        access: full
-        tls: skip
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  # ── WhatsApp ─────────────────────────────────────────────────────
-  # WhatsApp Web protocol uses persistent WebSocket connections and
-  # geo-distributed CDN media nodes — all require CONNECT tunnels
-  # (access: full) to avoid HTTP idle timeout drops. See #409.
-  # Auth is session-based (creds.json mounted at runtime), not a bot token.
-  whatsapp:
-    name: whatsapp
-    endpoints:
-      - host: web.whatsapp.com
-        port: 443
-        access: full
-      - host: "*.web.whatsapp.com"
-        port: 443
-        access: full
-      - host: mmg.whatsapp.net
-        port: 443
-        access: full
-      - host: "*.fna.whatsapp.net"
-        port: 443
-        access: full
-      - host: v.whatsapp.net
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: static.whatsapp.net
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  # ── Go toolchain ─────────────────────────────────────────────────
-  # Download and install Go runtime (curl/wget https://go.dev/dl/...)
-  go_install:
-    name: go_install
-    endpoints:
-      - host: go.dev
-        port: 443
-        access: full
-      - host: dl.google.com
-        port: 443
-        access: full
-      - host: golang.org
-        port: 443
-        access: full
-    binaries:
-      - { path: /usr/bin/curl }
-      - { path: /usr/bin/wget }
-
-  # ── Go module proxy ──────────────────────────────────────────────
-  # Required for `go mod download`, `go build`, `go get`.
-  # access: full — the Go binary opens TLS connections itself
-  # (not via curl/wget), so it needs CONNECT tunnels through the proxy.
-  go_modules:
-    name: go_modules
-    endpoints:
-      - host: proxy.golang.org
-        port: 443
-        access: full
-      - host: sum.golang.org
-        port: 443
-        access: full
-      - host: storage.googleapis.com
-        port: 443
-        access: full
-    binaries:
-      - { path: "/usr/local/go/bin/go" }
-      - { path: "/sandbox/go/bin/go" }
-      - { path: "/sandbox/**/go" }
-
-  # ── Go module Git sources ────────────────────────────────────────
-  # go-proton-api deps require direct Git fetches from GitHub/GitLab.
-  # ProtonMail modules: go-crypto, gopenpgp, go-srp, gluon, etc.
-  # Also gitlab.com/c0b/go-ordered-json.
-  go_module_git_sources:
-    name: go_module_git_sources
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: "*.github.com"
-        port: 443
-        access: full
-      - host: gitlab.com
-        port: 443
-        access: full
-      - host: "*.gitlab.com"
-        port: 443
-        access: full
-    binaries:
-      - { path: "/usr/local/go/bin/go" }
-      - { path: "/sandbox/go/bin/go" }
-      - { path: "/sandbox/**/go" }
-      - { path: /usr/bin/git }
-
-  # ── Internet Archive (fitness book ingest) ────────────────────
-  # Used by chad-ingest-fitness-books.sh to download OCR text for
-  # Starting Strength and Supple Leopard from archive.org.
-  # Restricted to GET — read-only fetch, no uploads.
-  internet_archive:
-    name: internet_archive
-    endpoints:
-      - host: archive.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-      - host: "*.archive.org"
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-      # CDN download servers: ia<nnn>.us.archive.org, dn<nnn>.ca.archive.org, etc.
-      # archive.org/download redirects to these regional CDN hosts; access: full
-      # is required because they negotiate TLS independently (no proxy MiTM).
-      - host: "*.us.archive.org"
-        port: 443
-        access: full
-      - host: "*.ca.archive.org"
-        port: 443
-        access: full
-      - host: "*.eu.archive.org"
-        port: 443
-        access: full
-    binaries:
-      - { path: /usr/bin/python3 }
-      - { path: /usr/bin/curl }
-
-  # ── Proton API (proton-calendar skill) ─────────────────────────
-  # go-proton-api uses SRP auth + PGP encryption, which requires the Go
-  # HTTP client to manage its own TLS sessions. Use access: full (CONNECT
-  # tunnel) so the proxy passes traffic through without TLS termination.
-  # AppVersion must be web-mail@5.0.36 (free accounts); linux-bridge@*
-  # requires a paid Proton plan.
-  proton_api:
-    name: proton_api
-    endpoints:
-      - host: mail-api.proton.me
-        port: 443
-        access: full
-      - host: mail.proton.me
-        port: 443
-        access: full
-      # Legacy API domain — some go-proton-api versions still resolve here.
-      - host: api.protonmail.ch
-        port: 443
-        access: full
-      - host: account.proton.me
-        port: 443
-        access: full
-    binaries:
-      - { path: "/sandbox/**" }
+  # Messaging endpoints (telegram, discord, slack) are intentionally NOT in
+  # the baseline — #1705 removed them so every sandbox does not silently
+  # egress to third-party IM platforms without user opt-in. The messaging
+  # presets (presets/{telegram,discord,slack}.yaml) are the opt-in path:
+  # users enable a channel in step [5/8] of onboard and the matching preset
+  # is applied on top of this baseline. Keep this comment so the entries
+  # are not casually re-added during a merge-conflict resolution. See #2180.

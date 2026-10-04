@@ -10,18 +10,23 @@ describe("validation-recovery helpers", () => {
     expect(getTransportRecoveryMessage({ curlStatus: 2, message: "curl --manual" })).toContain(
       "local curl invocation error",
     );
-    expect(getTransportRecoveryMessage({ curlStatus: 28, message: "operation timed out" })).toContain(
-      "timed out",
-    );
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 28, message: "operation timed out" }),
+    ).toContain("timed out");
   });
 
   it("returns targeted transport guidance for DNS and TLS failures", () => {
-    expect(getTransportRecoveryMessage({ curlStatus: 6, message: "Could not resolve host" })).toContain(
-      "could not resolve",
-    );
-    expect(getTransportRecoveryMessage({ curlStatus: 60, message: "SSL certificate problem" })).toContain(
-      "TLS/certificate",
-    );
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 6, message: "Could not resolve host" }),
+    ).toContain("could not resolve");
+    expect(
+      getTransportRecoveryMessage({
+        message: 'cannot resolve endpoint host "example.invalid": getaddrinfo ENOTFOUND',
+      }),
+    ).toContain("Check DNS, VPN, or the endpoint URL");
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 60, message: "SSL certificate problem" }),
+    ).toContain("TLS/certificate");
   });
 
   it("prefers credential failures over endpoint and model issues", () => {
@@ -38,6 +43,20 @@ describe("validation-recovery helpers", () => {
   it("returns the first transport failure for retry guidance", () => {
     const failure = { curlStatus: 7, message: "failed to connect" };
     expect(getProbeRecovery({ failures: [{ httpStatus: 404 }, failure] })).toEqual({
+      kind: "transport",
+      retry: "retry",
+      failure,
+    });
+  });
+
+  it("routes DNS-backed preflight resolution failures through transport recovery (#6854)", () => {
+    const failure = {
+      name: "SSRF preflight",
+      httpStatus: 0,
+      curlStatus: 0,
+      message: 'cannot resolve endpoint host "example.invalid": getaddrinfo ENOTFOUND',
+    };
+    expect(getProbeRecovery({ failures: [failure] })).toEqual({
       kind: "transport",
       retry: "retry",
       failure,

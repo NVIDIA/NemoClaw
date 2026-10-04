@@ -1,0 +1,467 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Troubleshoot MCP Servers"
+sidebar-title: "Troubleshoot MCP Servers"
+description: "Diagnose managed MCP transport failures, timeout evidence, credential resolution, DNS pin drift, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
+description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers, including transport diagnostics and trusted private endpoints. Use when MCP requests, add, status, restart, remove, rebuild, or destroy do not converge."
+keywords: ["troubleshoot nemoclaw mcp", "mcp transport diagnostics", "mcp timeout evidence", "mcp credential resolution", "mcp dns pin drift", "mcp policy drift", "mcp transaction"]
+content:
+  type: "troubleshooting"
+---
+Use the reported status or lifecycle error to choose the matching remediation.
+
+## Credential Resolution Is Unknown
+
+If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
+Restart validates and reloads the current provider-backed registration; it never consumes an exported replacement credential.
+To replace the credential, follow the conservative remove and re-add procedure:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp remove <server>
+# Confirm no sandbox uses the retained provider named by remove, then delete it.
+openshell provider delete <PROVIDER_NAME>
+$$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV>
+unset <CREDENTIAL_ENV>
+```
+
+Preserve the original denied-tool selectors and `--trusted-private-host` declaration on the re-add.
+See [Rotate a Credential](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential) for the complete provider-cleanup sequence.
+
+For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
+Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
+
+This is a host-side OpenShell defect rather than a NemoClaw registration problem.
+Verify the OpenShell installation on the host, tracked upstream as OpenShell issue 2161.
+
+An identical HTTP 400 remains inconclusive because the endpoint may reject the probe's `initialize` request.
+Compare status for the same server on a known-good host.
+
+A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment.
+Fix the reported endpoint or policy condition, then rerun status.
+
+A detail containing `CONNECT 503` means OpenShell failed closed before TLS setup because gateway TLS termination state was unavailable.
+Inspect the OpenShell gateway's ephemeral CA generation and CA-file initialization, repair the reported condition, and rerun `mcp status <server>`.
+
+## Provider Is Missing During Restart
+
+If restart reports a missing provider, remove the native registration and re-add it with the same URL, credential environment name, denied-tool selectors, and trusted-private declaration. Restart does not recreate providers.
+
+## Provider Uses the Legacy Generic Profile
+
+If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
+OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
+
+## Rebuild Cannot Prove a Credential Handle
+
+If rebuild reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+NemoClaw leaves the affected adapter and every provider unchanged.
+It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
+
+Inspect the managed server:
+
+```bash
+$$nemoclaw <sandbox> mcp status <server> --json
+```
+
+If status cannot reach the sandbox, repair the reported gateway condition first.
+Export the replacement under the same environment-variable name, then remove and re-add the server so a fresh provider binding and agent placeholder are created:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV>
+unset <CREDENTIAL_ENV>
+```
+
+Run status again.
+OpenShell can retain the same `s…` stable handle after a provider update; verify endpoint authorization with the named `mcp status` probe.
+Retry rebuild only after `provider.credentialReady` and `adapter.registered` are both `true`.
+If the re-add still cannot prove the credential handle, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+
+<AgentOnly variant="hermes">
+
+## Hermes Add Outcome Is Unknown
+
+If Hermes reports an unknown outcome after losing its OpenShell exec relay, do not rerun `mcp add`.
+Do not force-remove or remove and re-add the server.
+NemoClaw proved neither committed state nor absence, so another mutation can conflict with the in-flight or committed transaction.
+
+Inspect the current state without changing it:
+
+```bash
+$$nemoclaw <sandbox> mcp status <server> --json
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+Preserve the reported diagnostic.
+Repair any reported sandbox readiness, gateway health, provider, policy, attachment, or adapter problem before another MCP lifecycle command.
+Keep the registration unchanged while status remains unavailable, conflicting, or incomplete.
+</AgentOnly>
+
+## Add Transaction Is Incomplete
+
+For an interrupted `mcp add` that does not report an unknown outcome, inspect the native source and live status first.
+If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options.
+If the native registration exists, remove it and then re-add it after re-exporting the credential.
+
+To abandon the transaction, run `mcp remove <server> --force`.
+NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
+
+## Agent MCP Capability Is Missing
+
+If add or restart reports that the OpenClaw native writer, Hermes transaction helper, or Deep Agents native MCP capability v3 is unavailable, rebuild the sandbox onto a current image before retrying.
+When an older OpenClaw or Deep Agents sandbox has a legacy MCP file, preview `mcp migrate`, then use `mcp migrate --apply` when you intend to convert it. To delete one named legacy entry instead, run `mcp remove <server>`; NemoClaw removes it only when a matching committed registry row proves ownership and otherwise preserves it. A native definition that conflicts with the legacy definition stops migration before mutation.
+
+<AgentOnly variant="deepagents">
+Migration carries the legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into the native `/sandbox/.deepagents/.mcp.json` file.
+Preview and apply the migration, then retry the managed MCP command:
+
+```bash
+nemo-deepagents <name> mcp migrate
+nemo-deepagents <name> mcp migrate --apply
+nemo-deepagents <name> mcp add <server-name> --url <url> --env <credential-env>
+```
+
+NemoClaw preserves unrelated entries in `/sandbox/.deepagents/.mcp.json` and mutates only the named managed server.
+Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential replacement and egress policy.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+If Hermes reports that reconcile-finality capability version 1 is unavailable, the MCP mutation did not start.
+Rebuild the sandbox onto a current image, then retry the original MCP command:
+
+```bash
+$$nemoclaw <sandbox> rebuild
+```
+
+Rebuild uses the older helper only to remove exact managed entries from the retiring sandbox.
+The replacement helper must report capability version 1 before it restores those entries.
+
+If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
+Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
+</AgentOnly>
+
+## Collect Sandbox Logs
+
+Read recent sandbox logs while you reproduce an MCP failure:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+<AgentOnly variant="openclaw,hermes">
+The command reads agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing.
+
+<AgentOnly variant="openclaw">
+
+## Remote MCP Tools Are Missing for One Agent Turn
+
+If a remote Streamable HTTP MCP server times out or resets while its tools are being loaded, NemoClaw retries that startup once with a fresh connection before the agent turn continues.
+A successful retry loads the expected tools in the same turn, so no new session is needed.
+
+If the retry also ends in a classified transient transport failure, the sandbox log records a temporary MCP transport failure and states that credentials and configuration were not rejected.
+Read that line before rotating a credential:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+NemoClaw does not retry an authentication, authorization, TLS-validation, network-policy, or invalid-configuration failure inside a turn, because repeating the same request cannot succeed.
+A refused or unreachable endpoint is also not retried inside a turn; check the endpoint and its egress policy instead.
+
+A catalog that contains a server diagnostic is not cached for the session.
+NemoClaw rebuilds the catalog on the next agent turn and contacts the affected server again, so a brief upstream outage clears on its own and a repaired credential or policy takes effect without a new session.
+A catalog without server diagnostics is cached and reused as usual.
+
+## A Remote MCP Request Fails Without Saying Where
+
+A transport error such as `fetch failed` does not say which step failed.
+For OpenClaw remote Streamable HTTP requests, NemoClaw adds a failure-only diagnostic at the `fetch` boundary.
+When that request fails inside a sandbox, OpenClaw attempts to write one `managed_transport_failure` line group to the sandbox log:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+```text
+[nemoclaw] managed_transport_failure
+[nemoclaw] consumer=mcp
+[nemoclaw] mcp_server=gitlab
+[nemoclaw] operation=tools/list
+[nemoclaw] transport_generation=1
+[nemoclaw] request_sequence=3
+[nemoclaw] route=proxy_configured
+[nemoclaw] proxy=127.0.0.1:3128
+[nemoclaw] target=mcp.example.com:443
+[nemoclaw] connection_timeout_ms=30000
+[nemoclaw] request_timeout_ms=60000
+[nemoclaw] catalog_list_timeout_ms=1500
+[nemoclaw] effective_timeout_ms=1500
+[nemoclaw] transport_phase=response_headers
+[nemoclaw] http_status=503
+[nemoclaw] elapsed_ms=412
+[nemoclaw] server=envoy
+[nemoclaw] x_envoy_response_flags=UF,URX
+[nemoclaw] session_present=true
+[nemoclaw] diagnostic_id=<generated-id>
+```
+
+Read `transport_phase` first.
+It states which transport step failed:
+
+| Transport phase | What failed |
+|-----------------|-------------|
+| `policy` | The network policy refused the destination |
+| `connect` | The proxy CONNECT tunnel failed for a reason other than a denial |
+| `tls` | TLS setup or certificate validation failed |
+| `app_connect` | The upstream connection was refused, unreachable, or unresolved |
+| `request` | The request failed before any response arrived |
+| `response_headers` | A response arrived and its status or headers report the failure |
+
+`route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
+`route=unknown` states that the diagnostic did not observe one.
+These values report configuration evidence and do not prove whether the failed request used a proxy.
+When present, `proxy` contains the configured proxy endpoint without credentials.
+`mcp_server` contains the configured MCP server name when it passes validation and redaction.
+`operation` contains a validated JSON-RPC method, such as `initialize`, `tools/list`, or `tools/call`.
+For other request shapes, it contains `rpc/unknown`, `transport/listen`, or `transport/close` when that transport action is known.
+The diagnostic never records JSON-RPC parameters, tool names, tool arguments, or successful response bodies.
+`transport_generation` identifies one constructed transport for the configured server.
+`request_sequence` counts requests through that transport.
+The connection, request, catalog-list, and effective timeout fields report the resolved millisecond budgets for the request operation.
+`server`, `via`, `x_request_id`, and the `x_envoy_*` fields are the proxy's own account of the failure and appear only when the proxy sends them.
+A proxy-generated response does not by itself prove whether the proxy or its upstream produced the failure; keep both the status and the cause chain when reporting one.
+
+By default, the line group is written only for a failure, so normal traffic adds no logging.
+A 2xx response does not emit this failure diagnostic or read its body.
+This fetch boundary cannot report a failure that occurs while the caller later reads a 2xx response body.
+For a non-2xx response, OpenClaw does not wait for asynchronous body sampling before it receives the response.
+Non-2xx response diagnostics are best-effort.
+If detached collection fails, OpenClaw still returns the original response and the line group can be absent.
+The line group can also be absent if OpenClaw exits before collection completes.
+The sampler waits at most 250 ms and retains at most 2,048 response bytes.
+The redacted `error_body` value contains at most 2,048 UTF-8 bytes before JSON encoding.
+It redacts session identifiers, bearer tokens, structured credentials such as `access_token`, `refresh_token`, and `client_secret`, and known token prefixes.
+
+### Collect Shadow Timeout Evidence
+
+Set `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1` before you create or rebuild an OpenClaw sandbox to collect successful request timing without applying a timeout change.
+NemoClaw accepts only the literal value `1` and forwards it only to OpenClaw sandboxes.
+The setting is disabled by default and affects only remote Streamable HTTP MCP requests inside an OpenShell sandbox.
+
+<Warning>
+Enabling shadow diagnostics attempts to record one timing event for every successful remote Streamable HTTP MCP request and increases log volume.
+Each event includes the target host and port, configured server name, operation, and timeout metadata, but excludes URL paths, tool arguments, and successful response bodies.
+Rebuilding also interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
+</Warning>
+
+For an existing sandbox, export the setting and rebuild:
+
+```bash
+export NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1
+$$nemoclaw <sandbox> rebuild
+```
+
+For a new sandbox, export the setting before `$$nemoclaw onboard` creates it.
+
+When enabled, each successful request attempts to emit a `managed_transport_shadow` line group with the same validated operation, transport, timeout, and elapsed-time fields.
+The diagnostic does not read the successful response body or change the returned response.
+Identifier generation, serialization, or standard-error output failure can omit the line group without blocking the request or changing its response.
+
+For `tools/list`, NemoClaw retains up to 64 successful elapsed-time samples per target host and port in the OpenClaw process.
+Different MCP URL paths on the same target host and port share this sample set because the diagnostic does not retain URL paths.
+After five samples, the event reports `shadow_p95_ms` and `shadow_recommended_timeout_ms`.
+The proposed value is 1.5 times the observed p95 and is rounded up to 100 ms.
+It cannot be less than the active catalog-list budget or 1,500 ms, and it cannot exceed 10,000 ms.
+If the active budget already exceeds 10,000 ms, NemoClaw does not emit a recommendation.
+An abort observed near the effective `tools/list` budget proposes twice that budget under the same constraints.
+An explicit HTTP 503 does not produce a timeout recommendation because a longer timeout does not repair a returned upstream failure.
+
+The shadow recommendation is evidence only.
+It does not change a timeout, retry a request, or persist samples across an OpenClaw process restart.
+After you collect the evidence, remove the setting and rebuild to restore failure-only logging:
+
+```bash
+unset NEMOCLAW_MCP_SHADOW_DIAGNOSTICS
+$$nemoclaw <sandbox> rebuild
+```
+
+Verify that later successful MCP requests emit no `managed_transport_shadow` line groups.
+
+To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
+Match on `target` and the timestamp.
+`diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
+NemoClaw attempts to create it before the request starts, but does not add it to the request.
+It is not a distributed trace identifier and does not appear in OpenShell audit events.
+Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
+
+### Adjust the Tool Discovery Timeout
+
+OpenClaw uses a 1,500 ms timeout for `tools/list` when no server-specific request timeout exists.
+This discovery request retrieves tool names and schemas; it does not execute an MCP tool.
+
+Set `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before you create or rebuild an OpenClaw sandbox to override only this discovery timeout.
+The value must be an integer from `1500` through `10000`.
+When the value is unset or blank, NemoClaw adds no override.
+OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
+The override applies to catalog `tools/list` requests for every MCP server in the sandbox and takes precedence over a server-specific request timeout.
+NemoClaw rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
+
+<Warning>
+Rebuilding interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
+A longer timeout does not correct an HTTP 503 response, an authentication failure, a policy denial, or a connection failure.
+</Warning>
+
+For an existing sandbox, start with 3,000 ms:
+
+```bash
+export NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000
+$$nemoclaw <sandbox> rebuild
+```
+
+OpenClaw writes the selected override once when its MCP runtime loads:
+
+```text
+[nemoclaw] mcp_tools_list_timeout_override_ms=3000
+```
+
+Verify the selected value in recent startup output:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+Choose a repeat count before testing, such as 10 runs.
+After each rebuild, run the identical tool-discovery workflow that many times.
+Current OpenClaw timeout errors do not identify the JSON-RPC operation, so reproduce through catalog loading rather than a tool call.
+Advance from `3000` to `5000`, and then to `10000`, only when catalog loading fails and the recent logs contain:
+
+```text
+McpError: MCP error -32001: Request timed out
+```
+
+Stop at the lowest value that completes every planned catalog-loading run without that error.
+Do not increase this setting for `MCP server ... connection timed out after 30000ms`; that message reports the separate connection timeout.
+Do not increase the value after an explicit HTTP 503 response or a non-timeout transport failure.
+
+Unset the override and rebuild to restore OpenClaw's normal server-specific or 1,500 ms fallback selection:
+
+```bash
+unset NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS
+$$nemoclaw <sandbox> rebuild
+```
+
+Inspect the recent startup output again and verify that the new OpenClaw start did not add an `mcp_tools_list_timeout_override_ms` line.
+</AgentOnly>
+
+## Policy or Provider Ownership Drifted
+
+If generated policy or provider metadata drifted, restart fails closed instead of overwriting same-name state.
+Resolve the reported OpenShell ownership or content mismatch, then retry.
+`remove --force` can continue cleaning other independently owned resources, but it does not claim or delete the drifted resource.
+
+Registry entries created by an earlier preview with a host-alias URL or a credential name that is now reserved remain visible so they can be removed safely.
+Status reports the unsupported boundary, and restart and rebuild fail closed.
+
+Remove the legacy entry before rebuilding or destroying the sandbox, then add a public HTTPS DNS endpoint with a dedicated service credential name.
+
+## MCP Policy Capability Is Unavailable
+
+Install the required OpenShell build and rerun onboarding.
+NemoClaw checks inspectable installed OpenShell artifacts for `protocol: mcp` capability and does not enable managed MCP from a version number alone.
+
+For image-backed or compressed supervisors without an inspectable host artifact, the onboarding check is provisional.
+Before a credential or provider mutation, the MCP command imports or verifies the endpointless profile and loads the generated policy without a credential binding by using `policy set --wait`.
+After provider attachment, it applies and matches the endpoint-bound policy before credential use.
+
+A runtime that rejects `protocol: mcp` therefore fails closed.
+
+## Private or Plain-HTTP MCP URL Is Rejected
+
+If `$$nemoclaw <sandbox> mcp add` rejects an `http://` URL, use HTTPS before you retry.
+This requirement applies to OpenClaw, Hermes, and Deep Agents Code so OpenShell forwards the bearer credential over TLS.
+
+If the endpoint resolves to RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, add its host with `--trusted-private-host`.
+The declared host must equal the normalized hostname from `--url`.
+NemoClaw rejects a private endpoint without that explicit declaration before provider, policy, registry, or adapter mutation.
+
+An agent-native registration path, such as editing OpenClaw `openclaw.json` inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
+A URL that the agent-native path accepts is therefore not registrable through managed `mcp add`.
+
+For a host-local server, keep the MCP process on loopback when practical.
+Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
+The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
+For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
+The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
+Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
+
+Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
+Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.
+Use a DNS hostname for an IPv6 unique local address.
+NemoClaw has not qualified direct IPv6-literal MCP URLs and rejects them.
+See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for the full endpoint requirements.
+
+## DNS Pins Drift
+
+If `mcp status <server>` reports `public address pins: drift`, refresh only its live policy pins:
+
+```bash
+$$nemoclaw <sandbox> mcp update <server> --refresh-public-pins
+$$nemoclaw <sandbox> mcp status <server> --tools
+```
+
+The refresh preserves all other policy fields, including denied tools, and retains the existing agent configuration and credentials.
+Successful tool discovery verifies recovery.
+Status, restart, rebuild, and restore preserve the live pins.
+If refresh cannot confirm a write, inspect status and the live OpenShell policy before retrying.
+
+If status reports `public address pins: rejected`, DNS resolved to a private or special-use address.
+Investigate the destination change; refresh does not approve that address.
+
+If status reports `public address pins: unresolved`, DNS is unavailable and the recorded pins remain unchanged.
+Retry status after DNS recovers.
+
+If status reports `private address pins: drift`, review the endpoint address change before updating access.
+Status, restart, rebuild, and restore do not add new trusted-private addresses.
+Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
+A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
+Do not add a provider's complete address range or broaden the policy to bypass the denial.
+
+Cloudflare Quick Tunnels and named tunnels can rotate public edge addresses while keeping one hostname.
+A managed MCP server can require another explicit pin refresh after each public address change.
+Use stable private DNS and a routed private HTTPS endpoint for a host-local MCP server.
+
+If status reports matching pins but the request still receives `CONNECT 403`, inspect the OpenShell policy and audit logs.
+Do not treat matching DNS pins as evidence that the path, method, adapter identity, or provider attachment also matches.
+
+## Lifecycle Lock Times Out
+
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
+
+It does not expose a force-unlock flag.
+Resolve a live or ambiguous owner on the host that owns it, and do not delete the lock file manually.
+
+## Related Topics
+
+- [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for endpoint and credential requirements.
+- [Manage MCP Servers](../manage-sandboxes/mcp-servers/manage-mcp-servers) for normal lifecycle operations.
+- [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) for the accepted security boundary.

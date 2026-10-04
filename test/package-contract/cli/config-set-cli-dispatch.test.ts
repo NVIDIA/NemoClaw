@@ -1,0 +1,156 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createRequire } from "node:module";
+import { describe, expect, it, vi } from "vitest";
+
+const require = createRequire(import.meta.url);
+const requireCache: Record<string, unknown> = require.cache as any;
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function restoreCachedModule(modulePath: string, prior: unknown): void {
+  if (prior) requireCache[modulePath] = prior;
+  else delete requireCache[modulePath];
+}
+
+describe("config set CLI dispatch", () => {
+  it("awaits configSet before completing the dispatcher", async () => {
+    const cliPath = require.resolve("../../../dist/nemoclaw.js");
+    const publicDispatchPath = require.resolve("../../../dist/lib/cli/public-dispatch.js");
+    const crossPortPath = require.resolve("../../../dist/lib/state/registry/cross-port.js");
+    const configSetCommandPath = require.resolve("../../../dist/commands/sandbox/config/set.js");
+    const registryPath = require.resolve("../../../dist/lib/state/registry.js");
+    const sandboxConfigPath = require.resolve("../../../dist/lib/sandbox/config.js");
+    const runnerPath = require.resolve("../../../dist/lib/runner.js");
+
+    const priorCli = require.cache[cliPath];
+    const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorCrossPort = require.cache[crossPortPath];
+    const priorConfigSetCommand = require.cache[configSetCommandPath];
+    const priorRegistry = require.cache[registryPath];
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorRunner = require.cache[runnerPath];
+    const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+
+    require(publicDispatchPath);
+    require(configSetCommandPath);
+
+    const configSetDeferred = deferred<void>();
+    const validateName = vi.fn();
+    const configSet = vi.fn(() => configSetDeferred.promise);
+
+    process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
+
+    requireCache[runnerPath] = {
+      id: runnerPath,
+      filename: runnerPath,
+      loaded: true,
+      exports: new Proxy(
+        {
+          ROOT: process.cwd(),
+          validateName,
+        },
+        {
+          get(target, prop) {
+            if (prop in target) return target[prop as keyof typeof target];
+            return vi.fn();
+          },
+        },
+      ),
+    } as any;
+
+    requireCache[registryPath] = {
+      id: registryPath,
+      filename: registryPath,
+      loaded: true,
+      exports: {
+        getSandbox: vi.fn((name: string) => (name === "test-sandbox" ? { name } : null)),
+        listSandboxes: vi.fn(() => ({ sandboxes: [{ name: "test-sandbox" }] })),
+      },
+    } as any;
+
+    requireCache[crossPortPath] = {
+      id: crossPortPath,
+      filename: crossPortPath,
+      loaded: true,
+      exports: {
+        findSandboxAcrossGatewayRoots: vi.fn((name: string) =>
+          name === "test-sandbox"
+            ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }
+            : null,
+        ),
+        listPublishedSandboxNamesAcrossGatewayRoots: vi.fn(() => ["test-sandbox"]),
+        listPendingSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
+      },
+    } as any;
+
+    requireCache[sandboxConfigPath] = {
+      id: sandboxConfigPath,
+      filename: sandboxConfigPath,
+      loaded: true,
+      exports: {
+        configSet,
+        configGet: vi.fn(),
+        configRotateToken: vi.fn(),
+      },
+    } as any;
+
+    try {
+      delete require.cache[configSetCommandPath];
+      delete require.cache[publicDispatchPath];
+      delete require.cache[cliPath];
+      const { dispatchCli } = require(cliPath);
+
+      const dispatchPromise = dispatchCli([
+        "test-sandbox",
+        "config",
+        "set",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]);
+
+      let settled = false;
+      dispatchPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1), { timeout: 4_000 });
+      expect(configSet).toHaveBeenCalledTimes(1);
+      expect(configSet).toHaveBeenCalledWith("test-sandbox", {
+        key: "inference.endpoints",
+        value: "HTTP://93.184.216.34/v1",
+        restart: false,
+        acceptNewPath: true,
+      });
+      expect(settled).toBe(false);
+
+      configSetDeferred.resolve();
+      await expect(dispatchPromise).resolves.toBeUndefined();
+      expect(settled).toBe(true);
+    } finally {
+      if (priorDisableAutoDispatch === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
+      } else {
+        process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
+      }
+
+      restoreCachedModule(cliPath, priorCli);
+      restoreCachedModule(publicDispatchPath, priorPublicDispatch);
+      restoreCachedModule(crossPortPath, priorCrossPort);
+      restoreCachedModule(configSetCommandPath, priorConfigSetCommand);
+      restoreCachedModule(registryPath, priorRegistry);
+      restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
+      restoreCachedModule(runnerPath, priorRunner);
+    }
+  });
+});

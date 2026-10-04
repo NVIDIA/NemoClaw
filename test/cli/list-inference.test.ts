@@ -1,0 +1,467 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+import { execTimeout, HERMES_CLI, runAsync, runWithEnvAsync, testTimeout } from "./helpers";
+
+function runHermes(args: string[]): Promise<{ code: number; out: string }> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-cli-test-"));
+  return new Promise<{ code: number; out: string }>((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [HERMES_CLI, ...args],
+      {
+        encoding: "utf-8",
+        timeout: execTimeout(),
+        env: { ...process.env, HOME: home },
+      },
+      (error, stdout, stderr) => {
+        fs.rmSync(home, { force: true, recursive: true });
+        const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
+        const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
+        resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
+      },
+    );
+    child.stdin?.end();
+  });
+}
+
+describe.concurrent("CLI dispatch", () => {
+  it.each([
+    "inference set 2>&1",
+    "inference set --provider nvidia-prod 2>&1",
+    "inference set --model nvidia/model 2>&1",
+  ])(
+    "keeps `inference set` inside NemoClaw when provider or model is missing [%s]",
+    async (argv) => {
+      const r = await runAsync(argv);
+      expect(r.code, `nemoclaw ${argv}`).toBe(1);
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "nemoclaw inference set requires --provider and --model",
+      );
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "Run: nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>]",
+      );
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("openshell inference set");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
+    },
+    testTimeout(15_000),
+  );
+
+  it("keeps `inference set` inside NemoClaw under the Hermes alias", async () => {
+    const hermes = await runHermes(["inference", "set"]);
+    expect(hermes.code).toBe(1);
+    expect(hermes.out).toContain("nemohermes inference set requires --provider and --model");
+    expect(hermes.out).toContain(
+      "Run: nemohermes inference set --provider <provider> --model <model> [--sandbox <name>]",
+    );
+    expect(hermes.out).not.toContain("openshell inference set");
+  });
+
+  it("list exits 0", async () => {
+    const r = await runAsync("list");
+    expect(r.code).toBe(0);
+    // With empty HOME, should say no sandboxes
+    expect(r.out.includes("No sandboxes")).toBeTruthy();
+  });
+
+  it("list --help exits 0 and shows list usage", async () => {
+    const r = await runAsync("list --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("list [--json]");
+    expect(r.out).toContain("List all sandboxes");
+  });
+
+  it("nemohermes list --help uses alias branding", async () => {
+    const result = await runHermes(["list", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("$ nemohermes list [--json]");
+    expect(result.out).not.toContain("$ nemoclaw list [--json]");
+  });
+
+  it("nemohermes inference set --help uses alias branding and agent-aware wording", async () => {
+    const result = await runHermes(["inference", "set", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain(
+      "$ nemohermes inference set --provider <provider> --model <model>",
+    );
+    expect(result.out).toContain("[--sandbox <name>] [--no-verify]");
+    expect(result.out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
+  });
+
+  it("inference set rejects empty provider values during oclif parsing", async () => {
+    const result = await runAsync("inference set --provider '' --model nvidia/model");
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Parsing --provider");
+    expect(result.out).toContain("OpenShell inference provider name cannot be empty");
+  });
+
+  it("inference get reports the live NemoClaw gateway route", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const text = await runWithEnvAsync("inference get", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(text.code).toBe(0);
+      expect(text.out).toContain("Provider: nvidia-prod");
+      expect(text.out).toContain("Model:    nvidia/nemotron-3-super-120b-a12b");
+
+      const json = await runWithEnvAsync("inference get --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.out)).toEqual({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("inference get --json reports the selected non-default gateway endpoint (#10671)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-port-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellArgs = path.join(home, "openshell-args.txt");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          beta: {
+            name: "beta",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
+            gatewayPort: 19_090,
+            gatewayName: "nemoclaw-19090",
+          },
+        },
+        defaultSandbox: "beta",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" > ${JSON.stringify(openshellArgs)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19090" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: wrong/default-model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = await runWithEnvAsync("inference get --json", {
+        HOME: home,
+        NEMOCLAW_GATEWAY_PORT: "19090",
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toEqual({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+      });
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox inference get --json queries the recorded gateway binding (#10671)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-inference-get-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellArgs = path.join(home, "openshell-args.txt");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          beta: {
+            name: "beta",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
+            gatewayPort: 19_090,
+            gatewayName: "nemoclaw-19090",
+          },
+        },
+        defaultSandbox: "beta",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" > ${JSON.stringify(openshellArgs)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19090" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: wrong/default-model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = await runWithEnvAsync("beta inference get --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toEqual({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+      });
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("list --json emits structured empty inventory", async () => {
+    const r = await runAsync("list --json");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: null,
+      recovery: {
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      },
+      lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
+      sandboxes: [],
+    });
+  });
+
+  it("list --json emits structured sandbox details", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-json-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "configured-model",
+            provider: "configured-provider",
+            gpuEnabled: true,
+            agent: "openclaw",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ps"),
+      ["#!/bin/sh", "echo '123 ssh openshell-alpha.default'", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = await runWithEnvAsync("list --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: "alpha",
+      recovery: {
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      },
+      lastOnboardedSandbox: null,
+      incompleteOnboarding: null,
+      sandboxes: [
+        {
+          name: "alpha",
+          model: "configured-model",
+          provider: "configured-provider",
+          gpuEnabled: true,
+          agent: "openclaw",
+          isDefault: true,
+          activeSessionCount: 1,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: true,
+          sandboxGpuMode: null,
+          sandboxGpuDevice: null,
+          openshellDriver: null,
+          openshellVersion: null,
+          policies: [],
+        },
+      ],
+    });
+  });
+
+  it("list and global status report a resumable inference-route reservation separately (#10097)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-incomplete-onboard-"));
+    const localBin = path.join(home, "bin");
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          "sandbox-d": {
+            name: "sandbox-d",
+            provider: "nvidia-prod",
+            model: "nvidia/model",
+            pendingRouteReservation: true,
+            reservationSessionId: "session-d",
+          },
+        },
+        defaultSandbox: null,
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-d",
+        resumable: true,
+        status: "failed",
+        sandboxName: "sandbox-d",
+        lastStepStarted: "inference",
+        lastCompletedStep: "inference",
+        failure: {
+          step: "inference",
+          message: null,
+          recordedAt: "2026-08-24T10:00:00.000Z",
+          interrupted: true,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(path.join(localBin, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+
+    try {
+      const listText = await runWithEnvAsync("list", env);
+      expect(listText.code).toBe(0);
+      expect(listText.out).toContain("Incomplete onboarding:");
+      expect(listText.out).toContain("sandbox-d  interrupted at inference");
+      expect(listText.out).toContain("nemoclaw onboard --resume");
+      expect(listText.out).not.toContain("Sandboxes:");
+
+      const listJson = await runWithEnvAsync("list --json", env);
+      expect(listJson.code).toBe(0);
+      expect(JSON.parse(listJson.out)).toMatchObject({
+        incompleteOnboarding: {
+          name: "sandbox-d",
+          status: "failed",
+          step: "inference",
+          interrupted: true,
+          resumable: true,
+        },
+        sandboxes: [],
+      });
+
+      const statusText = await runWithEnvAsync("status", env);
+      expect(statusText.code).toBe(0);
+      expect(statusText.out).toContain("Incomplete onboarding:");
+      expect(statusText.out).toContain("sandbox-d  interrupted at inference");
+
+      const statusJson = await runWithEnvAsync("status --json", env);
+      expect(statusJson.code).toBe(0);
+      expect(JSON.parse(statusJson.out)).toMatchObject({
+        incompleteOnboarding: {
+          name: "sandbox-d",
+          status: "failed",
+          step: "inference",
+          interrupted: true,
+          resumable: true,
+        },
+        sandboxes: [],
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("list forwards oclif parse errors for unknown options", async () => {
+    const r = await runAsync("list --bogus");
+    expect(r.code).toBe(2);
+    expect(r.out.includes("Nonexistent flag: --bogus")).toBeTruthy();
+    expect(r.out.includes("See more help with --help")).toBeTruthy();
+  });
+});

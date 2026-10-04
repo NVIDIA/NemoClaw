@@ -1,0 +1,297 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TierDefinition } from "../policy/tiers";
+import { createPolicySelectionPromptHelpers } from "./policy-selection-prompts";
+import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
+
+class FakeInput extends EventEmitter {
+  isTTY: boolean;
+  ref = vi.fn();
+  pause = vi.fn();
+  resume = vi.fn();
+  setEncoding = vi.fn();
+  setRawMode = vi.fn();
+  unref = vi.fn();
+
+  constructor(isTTY = true) {
+    super();
+    this.isTTY = isTTY;
+  }
+}
+
+class FakeOutput {
+  isTTY: boolean;
+  chunks: string[] = [];
+  write = vi.fn((chunk: string | Uint8Array) => {
+    this.chunks.push(String(chunk));
+    return true;
+  });
+
+  constructor(isTTY = true) {
+    this.isTTY = isTTY;
+  }
+}
+
+const TIERS: TierDefinition[] = [
+  {
+    name: "restricted",
+    label: "Restricted",
+    description: "Minimal egress",
+    presets: [],
+  },
+  {
+    name: "balanced",
+    label: "Balanced",
+    description: "Common package registries",
+    presets: [
+      { name: "npm", access: "read" },
+      { name: "pypi", access: "read-write" },
+    ],
+  },
+  {
+    name: "open",
+    label: "Open",
+    description: "Permissive egress",
+    presets: [
+      { name: "npm", access: "read-write" },
+      { name: "github", access: "read-write" },
+    ],
+  },
+];
+
+function createHarness({
+  tiers = TIERS,
+  stdinTTY = true,
+  stdoutTTY = true,
+  promptReplies = [],
+}: {
+  tiers?: TierDefinition[];
+  stdinTTY?: boolean;
+  stdoutTTY?: boolean;
+  promptReplies?: string[];
+} = {}) {
+  const stdin = new FakeInput(stdinTTY);
+  const stdout = new FakeOutput(stdoutTTY);
+  const processEvents = new EventEmitter();
+  const markCancelled = vi.fn();
+  const prompt = vi.fn(async () => promptReplies.shift() ?? "");
+
+  const helpers = createPolicySelectionPromptHelpers({
+    tiers: {
+      listTiers: () => tiers,
+      getTier: (name) => tiers.find((tier) => tier.name === name) ?? null,
+    },
+    policyTierEnv: {
+      resolvePolicyTierFromEnv: () => "balanced",
+    },
+    isNonInteractive: () => false,
+    note: vi.fn(),
+    prompt,
+    selectFromNumberedMenuOrExit,
+    makeOnboardCancelExit: (rollback, cleanup, exit) => () => {
+      cleanup();
+      rollback.markCancelled();
+      exit?.(1);
+    },
+    sandboxCancelRollback: { markCancelled },
+    useColor: false,
+    stdin,
+    stdout,
+    processEvents,
+  });
+
+  return { helpers, markCancelled, processEvents, prompt, stdin, stdout };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("createPolicySelectionPromptHelpers", () => {
+  it("selectPolicyTier resolves numbered choices in the non-TTY fallback", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+      promptReplies: ["3"],
+    });
+
+    await expect(helpers.selectPolicyTier()).resolves.toBe("open");
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Select tier [1-3]"));
+  });
+
+  it("selectPolicyTier keeps the balanced default on blank non-TTY input", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+      promptReplies: [""],
+    });
+
+    await expect(helpers.selectPolicyTier()).resolves.toBe("balanced");
+  });
+
+  it("selectTierPresetsAndAccess honors comma-separated non-TTY allowlists", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { helpers } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+      promptReplies: ["github, npm, missing"],
+    });
+
+    await expect(
+      helpers.selectTierPresetsAndAccess("balanced", [
+        { name: "npm" },
+        { name: "pypi" },
+        { name: "github" },
+      ]),
+    ).resolves.toEqual([
+      { name: "npm", access: "read" },
+      { name: "github", access: "read-write" },
+    ]);
+    expect(errorSpy).toHaveBeenCalledWith("  Unknown preset name ignored: missing");
+  });
+
+  it.each([
+    [
+      "policy tier",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.selectPolicyTier(),
+    ],
+    [
+      "tier presets",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.selectTierPresetsAndAccess("balanced", [{ name: "npm" }]),
+    ],
+    [
+      "preset checkbox",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.presetsCheckboxSelector([{ name: "npm", description: "npm registry" }], []),
+    ],
+  ])(
+    "marks cancellation when SIGTERM interrupts the non-TTY %s selector",
+    async (_label, select) => {
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { helpers, markCancelled, processEvents, prompt } = createHarness({
+        stdinTTY: false,
+        stdoutTTY: false,
+      });
+      prompt.mockImplementation(() => new Promise<string>(() => undefined));
+
+      const selection = select(helpers);
+      expect(prompt).toHaveBeenCalledOnce();
+      processEvents.emit("SIGTERM");
+
+      await expect(selection).rejects.toMatchObject({ code: 1 });
+      expect(markCancelled).toHaveBeenCalledOnce();
+      expect(processEvents.listenerCount("SIGINT")).toBe(0);
+      expect(processEvents.listenerCount("SIGTERM")).toBe(0);
+    },
+  );
+
+  it("marks cancellation when a non-TTY prompt reports Ctrl-C", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, markCancelled, processEvents, prompt } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+    });
+    prompt.mockRejectedValue(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+
+    await expect(helpers.selectPolicyTier()).rejects.toMatchObject({ code: 1 });
+
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(processEvents.listenerCount("SIGINT")).toBe(0);
+    expect(processEvents.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("selectTierPresetsAndAccess returns raw-mode access toggles on Enter", async () => {
+    const { helpers, markCancelled, stdin } = createHarness();
+    const result = helpers.selectTierPresetsAndAccess("balanced", [
+      { name: "npm" },
+      { name: "pypi" },
+      { name: "github" },
+    ]);
+
+    stdin.emit("data", "\x1b[B");
+    stdin.emit("data", "\x1b[B");
+    stdin.emit("data", " ");
+    stdin.emit("data", "r");
+    stdin.emit("data", "\r");
+
+    await expect(result).resolves.toEqual([
+      { name: "npm", access: "read" },
+      { name: "pypi", access: "read-write" },
+      { name: "github", access: "read" },
+    ]);
+    expect(markCancelled).not.toHaveBeenCalled();
+    expect(stdin.setRawMode).toHaveBeenNthCalledWith(1, true);
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  it("selectTierPresetsAndAccess honors an exact initial selection", async () => {
+    const { helpers, stdin } = createHarness();
+    const result = helpers.selectTierPresetsAndAccess(
+      "balanced",
+      [{ name: "npm" }, { name: "pypi" }, { name: "github" }],
+      ["npm"],
+    );
+
+    stdin.emit("data", "\r");
+
+    await expect(result).resolves.toEqual([{ name: "npm", access: "read" }]);
+  });
+
+  it("selectPolicyTier rejects through the prompt after SIGTERM cleanup (#9035)", async () => {
+    const { helpers, markCancelled, processEvents, stdin } = createHarness();
+
+    const selection = helpers.selectPolicyTier();
+    processEvents.emit("SIGTERM");
+
+    await expect(selection).rejects.toMatchObject({ code: 1 });
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  it("presetsCheckboxSelector rejects through the prompt after Ctrl-C cleanup (#9035)", async () => {
+    const { helpers, markCancelled, stdin } = createHarness();
+
+    const selection = helpers.presetsCheckboxSelector(
+      [{ name: "npm", description: "npm registry" }],
+      [],
+    );
+    stdin.emit("data", "\x03");
+
+    await expect(selection).rejects.toMatchObject({ code: 1 });
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  it("selectTierPresetsAndAccess rejects through the prompt after Ctrl-C cleanup (#9035)", async () => {
+    const { helpers, markCancelled, stdin } = createHarness();
+
+    const selection = helpers.selectTierPresetsAndAccess("balanced", [
+      { name: "npm" },
+      { name: "pypi" },
+      { name: "github" },
+    ]);
+    stdin.emit("data", "\x03");
+
+    await expect(selection).rejects.toMatchObject({ code: 1 });
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  it("selectPolicyTier rejects when no policy tiers are configured", async () => {
+    const { helpers } = createHarness({ tiers: [] });
+
+    await expect(helpers.selectPolicyTier()).rejects.toThrow("No policy tiers are configured.");
+  });
+});

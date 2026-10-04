@@ -5,7 +5,7 @@
  * Subprocess environment allowlist.
  *
  * Subprocesses spawned by the CLI or plugin must NOT inherit the full
- * parent process.env — that leaks secrets (NVIDIA_API_KEY, GITHUB_TOKEN,
+ * parent process.env — that leaks secrets (NVIDIA_INFERENCE_API_KEY, GITHUB_TOKEN,
  * AWS_ACCESS_KEY_ID, etc.) to child processes where they can be read and
  * exfiltrated. Instead, only forward the categories below.
  *
@@ -40,43 +40,87 @@ const TLS = [
 
 const TOOLCHAIN = ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "RUST_LOG", "RUST_BACKTRACE"];
 
-const ALLOWED_ENV_NAMES = new Set([...SYSTEM, ...TEMP, ...LOCALE, ...PROXY, ...TLS, ...TOOLCHAIN]);
+export const SUBPROCESS_ENV_ALLOWED_NAMES: readonly string[] = Object.freeze([
+  ...SYSTEM,
+  ...TEMP,
+  ...LOCALE,
+  ...PROXY,
+  ...TLS,
+  ...TOOLCHAIN,
+]);
+const ALLOWED_ENV_NAMES = new Set(SUBPROCESS_ENV_ALLOWED_NAMES);
 
 // ── Allowed prefixes ───────────────────────────────────────────
 
-const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_", "OPENSHELL_", "GRPC_"];
+export const SUBPROCESS_ENV_ALLOWED_PREFIXES: readonly string[] = Object.freeze([
+  "LC_",
+  "XDG_",
+  "OPENSHELL_",
+  "GRPC_",
+]);
 
 // ── Public API ─────────────────────────────────────────────────
 
+export function isSubprocessEnvNameAllowed(name: string): boolean {
+  return (
+    ALLOWED_ENV_NAMES.has(name) ||
+    SUBPROCESS_ENV_ALLOWED_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
+
 /**
- * When any HTTP proxy is forwarded, ensure localhost and loopback traffic is
- * not routed through it. Without this, tools that respect HTTP_PROXY (curl,
- * Node.js http, Python requests) will tunnel loopback requests to the user's
- * proxy (e.g. Privoxy), which fails with HTTP 500.
- * See: #2616
+ * When any HTTP proxy is forwarded, augment NO_PROXY so the host proxy is
+ * never asked to forward traffic destined for the host loopback, the
+ * container-host aliases, or the OpenShell-managed inference hostname.
+ *
+ * Boundary: the helper covers host-side subprocesses (curl, Node.js http,
+ * Python requests) and the env forwarded into `openshell sandbox create
+ * -- env ...`. The latter is what determines whether OpenShell's L7 proxy
+ * chains a hostname through the host HTTP_PROXY when the host has one set
+ * (for example Privoxy at 127.0.0.1:8118 on macOS + Colima). Adding
+ * `inference.local` here is the seed that keeps OpenShell-internal
+ * inference traffic off the host proxy chain.
+ *
+ * The sandbox runtime's own NO_PROXY is set later by
+ * `scripts/nemoclaw-start.sh` against the OpenShell L7 proxy address and
+ * intentionally does not include `inference.local`, which is orthogonal
+ * to this seed and unaffected by the augmentation.
+ *
+ * Removal condition: when OpenShell's host-side proxy chaining no longer
+ * consults the caller's NO_PROXY for sandbox-create env decisions, this
+ * augmentation can be dropped.
  */
 export function withLocalNoProxy(env: Record<string, string>): void {
   const hasProxy = env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy;
   if (!hasProxy) return;
-  for (const key of ["NO_PROXY", "no_proxy"] as const) {
-    const current = env[key] ?? "";
-    const parts = current ? current.split(",").map((s) => s.trim()) : [];
-    let changed = false;
-    for (const host of ["localhost", "127.0.0.1"]) {
-      if (!parts.includes(host)) {
-        parts.push(host);
-        changed = true;
-      }
-    }
-    if (changed) env[key] = parts.join(",");
-  }
+  // Canonicalize the union of both spellings, then write both, so a consumer's
+  // case precedence cannot discard exclusions configured through the other one.
+  const parts = new Set([
+    ...`${env.NO_PROXY ?? ""},${env.no_proxy ?? ""}`
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+    "localhost",
+    "127.0.0.1",
+    "host.docker.internal",
+    "host.containers.internal",
+    "::1",
+    "0.0.0.0",
+    "inference.local",
+  ]);
+  const noProxy = [...parts].join(",");
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
 }
 
-export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+export function buildSubprocessEnvFrom(
+  source: NodeJS.ProcessEnv,
+  extra?: Record<string, string>,
+): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
-    if (ALLOWED_ENV_NAMES.has(key) || ALLOWED_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+    if (isSubprocessEnvNameAllowed(key)) {
       env[key] = value;
     }
   }
@@ -85,4 +129,33 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
   }
   withLocalNoProxy(env);
   return env;
+}
+
+/**
+ * Build the environment for a Docker CLI command against one explicit
+ * authority. The default authority keeps its context and config selection;
+ * an explicit socket removes both so they cannot override `DOCKER_HOST`.
+ */
+export function buildDockerSubprocessEnv(
+  source: NodeJS.ProcessEnv,
+  dockerHost: string | undefined,
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const env = buildSubprocessEnvFrom(source, extra);
+  delete env.DOCKER_HOST;
+  delete env.DOCKER_CONFIG;
+  delete env.DOCKER_CONTEXT;
+  if (dockerHost === undefined) {
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    const dockerContext = extra?.DOCKER_CONTEXT ?? source.DOCKER_CONTEXT;
+    if (dockerConfig !== undefined) env.DOCKER_CONFIG = dockerConfig;
+    if (dockerContext !== undefined) env.DOCKER_CONTEXT = dockerContext;
+  } else {
+    env.DOCKER_HOST = dockerHost;
+  }
+  return env;
+}
+
+export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+  return buildSubprocessEnvFrom(process.env, extra);
 }

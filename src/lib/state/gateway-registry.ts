@@ -1,0 +1,409 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+
+import { isErrnoException } from "../core/errno";
+import { isObjectRecord } from "../core/json-types";
+import { resolveLegacyModelRouterPort } from "../core/model-router-port";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { isValidDashboardExternalUrl } from "../dashboard/url";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
+import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
+import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
+
+export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
+export { DEFAULT_GATEWAY_PORT } from "../core/ports";
+export { isValidName } from "../name-validation";
+export {
+  releaseManagedGatewayStateLifecycleLock,
+  tryAcquireManagedGatewayStateLifecycleLock,
+} from "../onboard/gateway/state-lifecycle-lock";
+// The canonical lock for a `sandboxes.json` registry file, re-exported beside
+// the readers of that file so every writer guards it the same way.
+export { withRegistryLockAt } from "./registry/lock";
+
+const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
+const MAX_ONBOARD_SESSION_BYTES = 1024 * 1024;
+const MAX_GATEWAY_ROOTS = 256;
+const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
+
+export interface GatewayRegistryEntry extends Record<string, unknown> {
+  name: string;
+  dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
+  hermesApiPort?: number | null;
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
+  openshellGatewayStateDir?: string | null;
+}
+
+export interface GatewayRegistryDocument extends Record<string, unknown> {
+  defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
+  sandboxes: Record<string, GatewayRegistryEntry>;
+}
+
+export interface GatewayStateRoot {
+  gatewayPort: number;
+  root: string;
+}
+
+function stateError(message: string): Error {
+  return new Error(`Cannot safely inspect NemoClaw gateway state: ${message}`);
+}
+
+export function assertGatewayStatePathSafe(home: string, target: string): void {
+  const resolvedHome = path.resolve(home);
+  const resolvedTarget = path.resolve(target);
+  const relative = path.relative(resolvedHome, resolvedTarget);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw stateError(`${resolvedTarget} is outside HOME`);
+  }
+
+  let current = resolvedTarget;
+  while (current !== resolvedHome) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw stateError(`${current} is a symbolic link`);
+      }
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+
+function openReadOnlyNoFollow(filePath: string): number {
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  if (noFollow === 0 && fs.lstatSync(filePath).isSymbolicLink()) {
+    throw stateError(`${filePath} is a symbolic link`);
+  }
+  return fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+}
+
+function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw stateError(`${filePath} is not valid JSON`);
+  }
+  if (!isObjectRecord(parsed) || !isObjectRecord(parsed.sandboxes)) {
+    throw stateError(`${filePath} does not contain a sandbox registry`);
+  }
+  if (
+    parsed.defaultSandbox !== undefined &&
+    parsed.defaultSandbox !== null &&
+    typeof parsed.defaultSandbox !== "string"
+  ) {
+    throw stateError(`${filePath} has an invalid defaultSandbox`);
+  }
+  if (
+    parsed.defaultSelectionRevision !== undefined &&
+    (typeof parsed.defaultSelectionRevision !== "number" ||
+      !Number.isSafeInteger(parsed.defaultSelectionRevision) ||
+      parsed.defaultSelectionRevision < 0)
+  ) {
+    throw stateError(`${filePath} has an invalid defaultSelectionRevision`);
+  }
+
+  const sandboxes: Record<string, GatewayRegistryEntry> = {};
+  for (const [name, value] of Object.entries(parsed.sandboxes)) {
+    if (
+      name.length > NAME_MAX_LENGTH ||
+      !NAME_VALID_PATTERN.test(name) ||
+      !isObjectRecord(value) ||
+      value.name !== name
+    ) {
+      throw stateError(`${filePath} has an invalid sandbox row for ${JSON.stringify(name)}`);
+    }
+    for (const field of ["dashboardPort", "hermesApiPort"] as const) {
+      const port = value[field];
+      if (
+        port !== undefined &&
+        port !== null &&
+        (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535)
+      ) {
+        throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
+      }
+    }
+    const externalUrl = value.dashboardExternalUrl;
+    if (
+      externalUrl !== undefined &&
+      externalUrl !== null &&
+      (typeof externalUrl !== "string" || !isValidDashboardExternalUrl(externalUrl))
+    ) {
+      throw stateError(
+        `${filePath} has an invalid dashboardExternalUrl for sandbox ${JSON.stringify(name)}`,
+      );
+    }
+    const gatewayStateDir = value.openshellGatewayStateDir;
+    if (
+      gatewayStateDir !== undefined &&
+      gatewayStateDir !== null &&
+      (typeof gatewayStateDir !== "string" ||
+        gatewayStateDir.length === 0 ||
+        !path.isAbsolute(gatewayStateDir) ||
+        path.resolve(gatewayStateDir) !== gatewayStateDir)
+    ) {
+      throw stateError(
+        `${filePath} has an invalid openshellGatewayStateDir for sandbox ${JSON.stringify(name)}`,
+      );
+    }
+    sandboxes[name] =
+      value.dashboardPort === 0
+        ? { ...(value as GatewayRegistryEntry), dashboardPort: null }
+        : (value as GatewayRegistryEntry);
+  }
+  return {
+    ...parsed,
+    defaultSandbox: typeof parsed.defaultSandbox === "string" ? parsed.defaultSandbox : null,
+    sandboxes,
+  };
+}
+
+/** Read and strictly validate a registry without following user-controlled symlinks. */
+export function readGatewayRegistryFile(
+  home: string,
+  filePath: string,
+): GatewayRegistryDocument | null {
+  assertGatewayStatePathSafe(home, path.dirname(filePath));
+  let fd: number;
+  try {
+    fd = openReadOnlyNoFollow(filePath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw stateError(`${filePath} is not a regular file`);
+    if (stat.size > MAX_REGISTRY_BYTES) {
+      throw stateError(`${filePath} exceeds the ${String(MAX_REGISTRY_BYTES)} byte limit`);
+    }
+    return parseRegistry(filePath, fs.readFileSync(fd, "utf8"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Resolve the gateway identity recorded by a registry row, rejecting ambiguity. */
+export function registryEntryGatewayPort(entry: GatewayRegistryEntry): number {
+  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
+  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
+  const port = entry.gatewayPort;
+  const name = entry.gatewayName;
+
+  if (
+    hasPort &&
+    (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
+  ) {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayPort`);
+  }
+  if (hasName && typeof name !== "string") {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayName`);
+  }
+
+  const portFromName = typeof name === "string" ? resolveGatewayPortFromName(name) : null;
+  if (hasName && portFromName === null) {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an unrecognized gatewayName`);
+  }
+  if (typeof port === "number") {
+    if (typeof name === "string" && resolveGatewayName(port) !== name) {
+      throw stateError(`sandbox ${JSON.stringify(entry.name)} has conflicting gateway identity`);
+    }
+    return port;
+  }
+  if (portFromName !== null) return portFromName;
+  return DEFAULT_GATEWAY_PORT;
+}
+
+/** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */
+export function registryOpenShellGatewayStateDir(
+  registry: GatewayRegistryDocument,
+  gatewayPort: number,
+): string | null {
+  const recorded = new Set<string>();
+  for (const entry of Object.values(registry.sandboxes)) {
+    const entryPort = registryEntryGatewayPort(entry);
+    const pending = normalizePendingSandboxCreateIdentity(entry.pendingCreateIdentity);
+    if (
+      pending &&
+      (entry.pendingRouteReservation !== true ||
+        typeof entry.reservationSessionId !== "string" ||
+        !entry.reservationSessionId.trim() ||
+        pending.sandboxName !== entry.name ||
+        pending.gatewayName !== resolveGatewayName(entryPort) ||
+        pending.gatewayPort !== entryPort ||
+        pending.lifecycleGeneration !== entry.lifecycleGeneration ||
+        pending.sandboxIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint)
+    ) {
+      throw stateError(
+        `sandbox ${JSON.stringify(entry.name)} has a conflicting pending create identity`,
+      );
+    }
+    if (entryPort !== gatewayPort) continue;
+    if (typeof entry.openshellGatewayStateDir === "string") {
+      recorded.add(entry.openshellGatewayStateDir);
+    }
+    if (pending?.openshellGatewayStateDir) recorded.add(pending.openshellGatewayStateDir);
+  }
+  if (recorded.size > 1) {
+    throw stateError(
+      `gateway port ${String(gatewayPort)} has conflicting OpenShell state directories`,
+    );
+  }
+  return recorded.values().next().value ?? null;
+}
+
+/** Read one port's recorded custom OpenShell state directory from its canonical registry. */
+export function readGatewayOpenShellStateDir(home: string, gatewayPort: number): string | null {
+  const registry = readGatewayRegistryFile(
+    home,
+    path.join(nemoclawStateRoot(home, gatewayPort), "sandboxes.json"),
+  );
+  return registry ? registryOpenShellGatewayStateDir(registry, gatewayPort) : null;
+}
+
+/** Enumerate the default root plus bounded, real, numeric non-default gateway roots. */
+export function listGatewayStateRoots(home: string): GatewayStateRoot[] {
+  const sharedRoot = nemoclawStateRoot(home, DEFAULT_GATEWAY_PORT);
+  const gatewaysDir = path.join(sharedRoot, GATEWAYS_SUBDIR);
+  assertGatewayStatePathSafe(home, gatewaysDir);
+
+  let directory: fs.Dir;
+  try {
+    directory = fs.opendirSync(gatewaysDir);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return [{ gatewayPort: DEFAULT_GATEWAY_PORT, root: sharedRoot }];
+    }
+    throw error;
+  }
+
+  const roots: GatewayStateRoot[] = [];
+  let inspected = 0;
+  try {
+    let entry: fs.Dirent | null;
+    while ((entry = directory.readSync()) !== null) {
+      inspected += 1;
+      if (inspected > MAX_GATEWAY_DIRECTORY_ENTRIES) {
+        throw stateError(
+          `more than ${String(MAX_GATEWAY_DIRECTORY_ENTRIES)} entries are present under ${gatewaysDir}`,
+        );
+      }
+      if (!/^\d{1,5}$/.test(entry.name)) continue;
+      const gatewayPort = Number(entry.name);
+      if (gatewayPort < 1 || gatewayPort > 65535 || gatewayPort === DEFAULT_GATEWAY_PORT) continue;
+      if (entry.isSymbolicLink() || !entry.isDirectory()) {
+        throw stateError(`${path.join(gatewaysDir, entry.name)} is not a real directory`);
+      }
+      roots.push({ gatewayPort, root: path.join(gatewaysDir, entry.name) });
+      if (roots.length > MAX_GATEWAY_ROOTS) {
+        throw stateError(`more than ${String(MAX_GATEWAY_ROOTS)} gateway roots are present`);
+      }
+    }
+  } finally {
+    directory.closeSync();
+  }
+  roots.sort((a, b) => a.gatewayPort - b.gatewayPort);
+  return [{ gatewayPort: DEFAULT_GATEWAY_PORT, root: sharedRoot }, ...roots];
+}
+
+export interface HostGatewayRegistryEntry {
+  entry: GatewayRegistryEntry;
+  gatewayPort: number;
+  registryFile: string;
+  stateRoot: string;
+}
+
+/** Aggregate every valid host registry, retaining each row's canonical gateway identity. */
+export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistryEntry[] {
+  const result: HostGatewayRegistryEntry[] = [];
+  for (const state of listGatewayStateRoots(home)) {
+    const registryFile = path.join(state.root, "sandboxes.json");
+    const registry = readGatewayRegistryFile(home, registryFile);
+    if (!registry) continue;
+    for (const entry of Object.values(registry.sandboxes)) {
+      const gatewayPort = registryEntryGatewayPort(entry);
+      if (state.gatewayPort !== DEFAULT_GATEWAY_PORT && gatewayPort !== state.gatewayPort) {
+        throw stateError(
+          `${registryFile} contains sandbox ${JSON.stringify(entry.name)} for gateway port ${String(gatewayPort)}`,
+        );
+      }
+      result.push({ entry, gatewayPort, registryFile, stateRoot: state.root });
+    }
+  }
+  return result;
+}
+
+/**
+ * Enumerate every gateway port represented by durable host state.
+ *
+ * State-root names protect gateways that do not yet have a sandbox row, while
+ * registry bindings retain ports recorded by legacy layouts. Consumers that
+ * expose a host loopback service must treat the complete inventory as control
+ * plane, even when the current process selects another gateway.
+ */
+export function listRecordedGatewayPorts(home: string): number[] {
+  const ports = new Set(listGatewayStateRoots(home).map(({ gatewayPort }) => gatewayPort));
+  for (const { gatewayPort } of listHostGatewayRegistryEntries(home)) ports.add(gatewayPort);
+  return [...ports].sort((left, right) => left - right);
+}
+
+/** Enumerate exact Model Router ports retained by onboarding state on this host. */
+export function listRecordedModelRouterPorts(home: string): number[] {
+  const ports = new Set<number>();
+  for (const state of listGatewayStateRoots(home)) {
+    const sessionFile = path.join(state.root, "onboard-session.json");
+    assertGatewayStatePathSafe(home, path.dirname(sessionFile));
+    let fd: number;
+    try {
+      fd = openReadOnlyNoFollow(sessionFile);
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") continue;
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw stateError(`${sessionFile} is not a regular file`);
+      if (stat.size > MAX_ONBOARD_SESSION_BYTES) {
+        throw stateError(
+          `${sessionFile} exceeds the ${String(MAX_ONBOARD_SESSION_BYTES)} byte limit`,
+        );
+      }
+      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (!isObjectRecord(parsed)) throw stateError(`${sessionFile} is not an object`);
+      const routerPort = parsed.routerPort;
+      if (routerPort === null && parsed.routerPid === null && parsed.routerCredentialHash === null)
+        continue;
+      if (routerPort === undefined || routerPort === null) {
+        const legacyPort = resolveLegacyModelRouterPort(parsed);
+        if (legacyPort !== null) ports.add(legacyPort);
+        continue;
+      }
+      if (
+        typeof routerPort !== "number" ||
+        !Number.isInteger(routerPort) ||
+        routerPort < 1 ||
+        routerPort > 65535
+      ) {
+        throw stateError(`${sessionFile} has an invalid routerPort`);
+      }
+      ports.add(routerPort);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw stateError(`${sessionFile} is not valid JSON`);
+      throw error;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  for (const { entry } of listHostGatewayRegistryEntries(home)) {
+    const port = resolveLegacyModelRouterPort(entry);
+    if (port !== null) ports.add(port);
+  }
+  return [...ports].sort((left, right) => left - right);
+}

@@ -1,0 +1,150 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { redactSensitiveText } from "../../security/redact";
+import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-observer";
+
+export type InferenceRouteProbeAgent = { name: string } | null;
+
+export type ParsedInferenceRouteProbe = {
+  healthy: boolean;
+  broken: boolean;
+  httpStatus: number;
+  detail: string;
+};
+
+export type InferenceRouteFailureLabel = "unhealthy" | "unreachable";
+
+type InferenceRouteProbeCommandResult = {
+  status?: number | null;
+  output?: string | null;
+  stderr?: string | null;
+};
+
+// OpenShell injects the per-sandbox trust bundle into each exec process. Pass
+// that exact path explicitly because curl backend support for the CA env names
+// is not uniform across agent images.
+const INFERENCE_ROUTE_CA_FROM_ENV = 'CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FILE:-}}"';
+// A missing OpenShell-managed CA means the probe boundary is unavailable, not
+// that inference.local is known broken. Keep the marker outside the trusted
+// OK/BROKEN grammar so connect cannot authorize repair from this evidence.
+const INFERENCE_ROUTE_CA_VALIDATION =
+  '[ -n "$CA_BUNDLE" ] && [ -f "$CA_BUNDLE" ] && [ -r "$CA_BUNDLE" ] || { printf \'UNAVAILABLE OpenShell CA bundle missing or unreadable\'; exit 1; }';
+const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
+  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
+  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
+].join("; ");
+export const INFERENCE_ROUTE_PROBE_SCRIPT = [
+  INFERENCE_ROUTE_CA_FROM_ENV,
+  INFERENCE_ROUTE_CA_VALIDATION,
+  INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
+].join("; ");
+// Invalid state: OpenShell starts sandbox exec through a login shell before the
+// requested command (#8624; OpenShell#2668). DCode's image-owned system hook
+// selects the managed home before reading personal files. Older images can emit output and
+// create side effects before this probe begins. The launcher reconstructs the
+// managed proxy from root-owned, mode-0444 files without adding another
+// profile-sourcing shell, and the parser rejects inherited stderr or extra
+// stdout so startup output cannot become accepted probe evidence. Regression:
+// system-hook and hostile-profile tests cover startup and inherited descriptors.
+// Removal condition: use a raw probe only when OpenShell
+// provides both a non-login exec path and the trusted proxy environment to every
+// sandbox exec process.
+// This separate regular-file install is intentionally absent from older images:
+// a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
+// can run, so version skew cannot mutate observability state.
+export const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+export const DCODE_MANAGED_EXEC_MISSING_DETAIL =
+  "trusted Deep Agents Code route-probe helper is missing; rebuild this sandbox with the updated NemoClaw image before retrying connect, status, or doctor";
+
+export function isDcodeManagedExecMissingDetail(detail: string): boolean {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (normalized === DCODE_MANAGED_EXEC_MISSING_DETAIL) return true;
+  return (
+    normalized.includes(DCODE_MANAGED_EXEC_LAUNCHER) &&
+    /\b(?:not found|no such file|does not exist|cannot stat|stat .* failed)\b/i.test(normalized)
+  );
+}
+
+function formatUntrustedProbeDetail(detail: string): string {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (isDcodeManagedExecMissingDetail(normalized)) return DCODE_MANAGED_EXEC_MISSING_DETAIL;
+  return redactSensitiveText(normalized) ?? "";
+}
+
+/**
+ * Classify a route result that is already known not to be healthy.
+ * Final HTTP 200-499 responses are handled as reachable before this helper is
+ * called; passing one here is outside the helper's contract.
+ */
+export function classifyInferenceRouteFailureLabel(httpStatus: number): InferenceRouteFailureLabel {
+  return httpStatus >= 500 && httpStatus < 600 ? "unhealthy" : "unreachable";
+}
+
+/** Build the transport-neutral buffered request for an inference route probe. */
+export function buildSandboxInferenceRouteProbeRequest(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  gatewayName: string | undefined,
+  timeoutMilliseconds: number,
+): OpenShellSandboxBufferedCommandRequest {
+  const dcode = agent?.name === "langchain-deepagents-code";
+  return {
+    sandboxName,
+    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+    command: dcode
+      ? [DCODE_MANAGED_EXEC_LAUNCHER, "/bin/sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT]
+      : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT],
+    ...(dcode
+      ? {
+          sandboxEnvironment: {
+            BASH_ENV: "",
+            ENV: "",
+            HOME: "/usr/local/lib/nemoclaw",
+          },
+        }
+      : {}),
+    ...(dcode ? { tty: false } : {}),
+    timeoutMilliseconds,
+  };
+}
+
+/** Parse the shared route-probe output used by connect, status, and doctor. */
+export function parseSandboxInferenceRouteProbeResult(
+  result: InferenceRouteProbeCommandResult,
+): ParsedInferenceRouteProbe {
+  const stderr = String(result.stderr ?? "").trim();
+  if (stderr) {
+    return {
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: formatUntrustedProbeDetail(stderr),
+    };
+  }
+  const rawDetail = String(result.output ?? "").trim();
+  // Some OpenShell releases frame child stdout for humans. Normalize only the
+  // two known frame prefixes at the beginning of the captured output.
+  const detail = rawDetail.replace(/^(?:\[stdout\]|stdout:)\s*/i, "");
+  // A trusted probe emits one result line. Reject preambles or extra lines so
+  // shell startup output can never be mistaken for the authoritative result.
+  const match = /^(OK|BROKEN)\s+([0-9]{3})\b[^\r\n]*$/.exec(detail);
+  const httpStatus = match ? Number.parseInt(match[2], 10) : 0;
+  const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
+  const commandSucceeded = result.status === 0;
+  const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
+  const broken =
+    commandSucceeded && Boolean(match) && (match?.[1] === "BROKEN" || !isReachableHttpStatus);
+  const trustedDetail = !healthy && !broken ? formatUntrustedProbeDetail(detail) : detail;
+  return {
+    healthy,
+    broken,
+    httpStatus,
+    detail:
+      trustedDetail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
+  };
+}

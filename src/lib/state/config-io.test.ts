@@ -1,0 +1,555 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  ConfigCorruptError,
+  ConfigPermissionError,
+  ensureConfigDir,
+  readConfigFile,
+  writeConfigFile,
+} from "./config-io";
+
+const tmpDirs: string[] = [];
+
+function makeTempDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-io-"));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+function writeFileWithMode(filePath: string, contents: string, mode: number) {
+  fs.writeFileSync(filePath, contents, { mode });
+  fs.chmodSync(filePath, mode);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const dir of tmpDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("config-io", () => {
+  it("creates config directories recursively with mode 0o700", () => {
+    const dir = path.join(makeTempDir(), "a", "b", "c");
+    ensureConfigDir(dir);
+    expect(fs.existsSync(dir)).toBe(true);
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("rejects a symlink in place of the config directory", () => {
+    // Place temp dir under HOME so rejectSymlinksOnPath inspects it.
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const attackerDir = path.join(tmp, "attacker");
+    fs.mkdirSync(attackerDir);
+    const symlinkPath = path.join(tmp, ".nemoclaw");
+    fs.symlinkSync(attackerDir, symlinkPath);
+
+    expect(() => ensureConfigDir(symlinkPath)).toThrow(/symbolic link/);
+    expect(() => ensureConfigDir(symlinkPath)).toThrow(/symlink attack/);
+  });
+
+  it("rejects a symlink in an ancestor of the config directory", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const attackerDir = path.join(tmp, "attacker");
+    fs.mkdirSync(attackerDir);
+    const symlinkPath = path.join(tmp, ".nemoclaw");
+    fs.symlinkSync(attackerDir, symlinkPath);
+    const nestedDir = path.join(symlinkPath, "state");
+
+    expect(() => ensureConfigDir(nestedDir)).toThrow(/symbolic link/);
+  });
+
+  it("refuses to read a config file through a symlinked config directory", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const attackerDir = path.join(tmp, "attacker");
+    fs.mkdirSync(attackerDir, { mode: 0o700 });
+    writeFileWithMode(
+      path.join(attackerDir, "sandboxes.json"),
+      JSON.stringify({ sandboxes: { planted: {} } }),
+      0o600,
+    );
+    const symlinkPath = path.join(tmp, ".nemoclaw");
+    fs.symlinkSync(attackerDir, symlinkPath);
+    const plantedFile = path.join(symlinkPath, "sandboxes.json");
+
+    // The write path already refuses this exact path; the read path must agree.
+    expect(() => writeConfigFile(plantedFile, { sandboxes: {} })).toThrow(/symbolic link/);
+    expect(() => readConfigFile(plantedFile, null)).toThrow(/symbolic link/);
+  });
+
+  it("reports permission failures while checking a read path with remediation", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const configDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(configDir, { mode: 0o700 });
+    const configFile = path.join(configDir, "sandboxes.json");
+    fs.writeFileSync(configFile, JSON.stringify({ sandboxes: {} }), { mode: 0o600 });
+
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const rejectInspection = (): never => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
+    const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((target, options) => {
+      return path.resolve(String(target)) === path.resolve(configDir)
+        ? rejectInspection()
+        : realLstatSync(target, options as never);
+    });
+
+    try {
+      const read = () => readConfigFile(configFile, null);
+      expect(read).toThrow(ConfigPermissionError);
+      expect(read).toThrow(/Cannot read config directory/);
+      expect(read).toThrow(/sudo chown/);
+    } finally {
+      lstatSpy.mockRestore();
+    }
+  });
+
+  it("allows a normal directory (no symlinks)", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const dir = path.join(tmp, ".nemoclaw");
+    ensureConfigDir(dir);
+    expect(fs.existsSync(dir)).toBe(true);
+    expect(fs.lstatSync(dir).isSymbolicLink()).toBe(false);
+  });
+
+  it("tightens pre-existing weak directory permissions to 0o700", () => {
+    const dir = path.join(makeTempDir(), "config");
+    fs.mkdirSync(dir, { mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
+
+    ensureConfigDir(dir);
+
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("returns the fallback when the config file is missing", () => {
+    const file = path.join(makeTempDir(), "missing.json");
+    expect(readConfigFile(file, { ok: true })).toEqual({ ok: true });
+  });
+
+  it("fails instead of returning the fallback when the config file is malformed", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, "{not-json");
+
+    expect(() => readConfigFile(file, { ok: true })).toThrow(ConfigCorruptError);
+  });
+
+  it("leaves the malformed file untouched and keeps failing on every later read", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const original = '{"sandboxes":{"keep-me":{"name":"keep-me"}},}';
+    fs.writeFileSync(file, original, { mode: 0o600 });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(() => readConfigFile(file, { ok: true })).toThrow(ConfigCorruptError);
+    }
+
+    expect(fs.readFileSync(file, "utf-8")).toBe(original);
+    expect(fs.readdirSync(dir)).toEqual(["config.json"]);
+  });
+
+  it("names the malformed file and a recovery path without quoting its contents", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, '{"token":"super-secret-value"');
+
+    let caught: unknown;
+    try {
+      readConfigFile(file, null);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ConfigCorruptError);
+    const corrupt = caught as ConfigCorruptError;
+    expect(corrupt.code).toBe("ECONFIGCORRUPT");
+    expect(corrupt.filePath).toBe(file);
+    expect(corrupt.message).toContain(file);
+    expect(corrupt.remediation).toMatch(new RegExp(`cp \\S*${file}\\S* \\S*${file}\\.bad`));
+    expect(corrupt.remediation).toContain("rm ");
+    expect(corrupt.cause).toBeUndefined();
+    expect(JSON.stringify(corrupt, Object.getOwnPropertyNames(corrupt))).not.toContain(
+      "super-secret-value",
+    );
+  });
+
+  it("fails on a malformed file reached through a symlinked final component", () => {
+    const dir = makeTempDir();
+    const target = path.join(dir, "target.json");
+    const link = path.join(dir, "config.json");
+    fs.writeFileSync(target, "{not-json", { mode: 0o600 });
+    fs.symlinkSync(target, link);
+
+    expect(() => readConfigFile(link, { ok: true })).toThrow(ConfigCorruptError);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf-8")).toBe("{not-json");
+  });
+
+  it("throws when a present config path cannot be read as a file", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.mkdirSync(file);
+
+    expect(() => readConfigFile(file, { ok: true })).toThrow();
+  });
+
+  it("writes and reads JSON atomically", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const data = { token: "abc", nested: { enabled: true } };
+
+    writeConfigFile(file, data);
+
+    expect(readConfigFile(file, null)).toEqual(data);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("synchronizes replacement bytes before rename and the directory after rename", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const openSpy = vi.spyOn(fs, "openSync");
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    const linkSpy = vi.spyOn(fs, "linkSync");
+    const renameSpy = vi.spyOn(fs, "renameSync");
+
+    writeConfigFile(file, { durable: true });
+
+    expect(openSpy).toHaveBeenCalledWith(`${file}.tmp.${String(process.pid)}`, "r");
+    expect(openSpy).toHaveBeenCalledWith(dir, fs.constants.O_RDONLY);
+    expect(syncSpy).toHaveBeenCalledTimes(3);
+    expect(syncSpy.mock.invocationCallOrder[0]).toBeLessThan(linkSpy.mock.invocationCallOrder[0]!);
+    expect(linkSpy.mock.invocationCallOrder[0]).toBeLessThan(syncSpy.mock.invocationCallOrder[1]!);
+    expect(syncSpy.mock.invocationCallOrder[1]).toBeLessThan(
+      renameSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(renameSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      syncSpy.mock.invocationCallOrder[2]!,
+    );
+  });
+
+  it("replaces a stale rollback backup from a reused process ID", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const backupFile = `${file}.rollback.${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    fs.writeFileSync(backupFile, JSON.stringify({ durable: "stale" }), { mode: 0o600 });
+
+    writeConfigFile(file, { durable: "replacement" });
+
+    expect(readConfigFile(file, null)).toEqual({ durable: "replacement" });
+    expect(fs.existsSync(backupFile)).toBe(false);
+  });
+
+  it("preserves the prior config when temporary-file synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("storage synchronization failed"), { code: "EIO" });
+    });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(
+      /storage synchronization failed/,
+    );
+    expect(readConfigFile(file, null)).toEqual({ durable: "prior" });
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("removes an initial config when its directory synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: true })).toThrow(
+      /directory synchronization failed/,
+    );
+    expect(syncSpy).toHaveBeenCalledTimes(3);
+    expect(readConfigFile(file, null)).toBeNull();
+  });
+
+  it("restores the prior config when replacement directory synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(
+      /directory synchronization failed/,
+    );
+    expect(readConfigFile(file, null)).toEqual({ durable: "prior" });
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".rollback."))).toEqual([]);
+  });
+
+  it("retains the prior config backup when durability rollback fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const backupFile = `${file}.rollback.${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+    const renameSync = fs.renameSync;
+    vi.spyOn(fs, "renameSync")
+      .mockImplementationOnce(renameSync)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("rollback rename failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(AggregateError);
+    expect(readConfigFile(backupFile, null)).toEqual({ durable: "prior" });
+  });
+
+  it("cleans up temp files when rename fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const originalRename = fs.renameSync;
+    fs.renameSync = () => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
+    try {
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(ConfigPermissionError);
+    } finally {
+      fs.renameSync = originalRename;
+    }
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("wraps permission errors with sudo and non-sudo remediation guidance", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const originalWrite = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    };
+    try {
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(ConfigPermissionError);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/sudo chown/);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/\bmv\b/);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/HOME=/);
+    } finally {
+      fs.writeFileSync = originalWrite;
+    }
+  });
+
+  it("readConfigFile repairs a 755 parent directory to 700", () => {
+    const root = makeTempDir();
+    const dir = path.join(root, "loose-dir");
+    fs.mkdirSync(dir, { mode: 0o755 });
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ repaired: true }), { mode: 0o600 });
+
+    const result = readConfigFile(file, null);
+
+    expect(result).toEqual({ repaired: true });
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("readConfigFile repairs a 644 file to 600", () => {
+    const dir = makeTempDir();
+    fs.chmodSync(dir, 0o700);
+    const file = path.join(dir, "config.json");
+    writeFileWithMode(file, JSON.stringify({ tight: true }), 0o644);
+
+    const result = readConfigFile(file, null);
+
+    expect(result).toEqual({ tight: true });
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("ensureConfigDir heals every root-level file in the dir, not just the one being read (#4546)", () => {
+    // #4546 expects auto-repair across all root-level files. Most of those
+    // files (onboard-session.json, ollama-proxy-token, etc.) are written by
+    // code paths that don't flow through readConfigFile, so the read-time
+    // per-file heal alone misses them. The dir walk in ensureConfigDir is
+    // what covers them — verify by writing several siblings at 644 and
+    // confirming a single read tightens all of them to 600.
+    //
+    // The walk is scoped to the host ~/.nemoclaw root, so the test sets
+    // HOME to a temp dir and writes under <home>/.nemoclaw.
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const dir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(dir, { mode: 0o700 });
+      const target = path.join(dir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+
+      const siblings = [
+        "onboard-session.json",
+        "ollama-proxy-token",
+        "ollama-auth-proxy.pid",
+        "usage-notice.json",
+      ];
+      siblings.forEach((name) => {
+        writeFileWithMode(path.join(dir, name), "stale", 0o644);
+      });
+
+      readConfigFile(target, null);
+
+      siblings.forEach((name) => {
+        const mode = fs.statSync(path.join(dir, name)).mode & 0o777;
+        expect(mode, `${name} should be tightened to 600`).toBe(0o600);
+      });
+    });
+  });
+
+  it("ensureConfigDir skips symlinks during the root-level heal", () => {
+    // A chmod on a symlink follows to the target — if ~/.nemoclaw/X is a
+    // symlink to /etc/passwd, healing must NOT chmod /etc/passwd. lstat
+    // before chmod keeps the heal scoped to real files inside the dir.
+    //
+    // Positive control: a regular sibling at 0o644 proves the walker
+    // actually ran (it should be tightened to 0o600). Without the
+    // control, this test would pass vacuously if the walker were a no-op.
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const dir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(dir, { mode: 0o700 });
+      const target = path.join(dir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+
+      const sibling = path.join(dir, "should-be-healed.json");
+      writeFileWithMode(sibling, "stale", 0o644);
+
+      const outsideDir = makeTempDir();
+      const outside = path.join(outsideDir, "target");
+      writeFileWithMode(outside, "outside", 0o644);
+      const linkPath = path.join(dir, "rogue-link");
+      fs.symlinkSync(outside, linkPath);
+
+      readConfigFile(target, null);
+      expect(
+        fs.statSync(sibling).mode & 0o777,
+        "positive control: walker tightened the regular sibling",
+      ).toBe(0o600);
+      expect(
+        fs.statSync(outside).mode & 0o777,
+        "symlink target must not be chmodded through the link",
+      ).toBe(0o644);
+    });
+  });
+
+  it("readConfigFile does not chmod through a symlink even via the per-file heal", () => {
+    // Defensive duplicate of the symlink check, this time for the per-file
+    // heal in readConfigFile itself (not the dir walk in ensureConfigDir).
+    const dir = makeTempDir();
+    fs.chmodSync(dir, 0o700);
+
+    const outsideDir = makeTempDir();
+    const outside = path.join(outsideDir, "target.json");
+    writeFileWithMode(outside, JSON.stringify({ outside: true }), 0o644);
+    const symlinkPath = path.join(dir, "config.json");
+    fs.symlinkSync(outside, symlinkPath);
+
+    // Reading through the symlink should not chmod the target file.
+    readConfigFile(symlinkPath, null);
+    expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
+    // Cleanup via afterEach (both dirs are tracked in tmpDirs).
+  });
+
+  // ── Scope-boundary tests (cv's PR #4628 feedback) ──────────────────────
+  // The 700/600 heal is HOST-state-only — it must not normalize mutable
+  // sandbox OpenClaw config trees (2770/660 per #4538) or arbitrary
+  // config directories that may have their own permission contracts.
+
+  function withHome<T>(home: string, fn: () => T): T {
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) delete process.env.HOME;
+      else process.env.HOME = previous;
+    }
+  }
+
+  it("ensureConfigDir does NOT heal siblings when dirPath is not the host ~/.nemoclaw root", () => {
+    // An arbitrary config dir (not the host nemoclaw state root) must
+    // leave sibling perms alone — otherwise a future caller pointing
+    // ensureConfigDir at a mutable-sandbox or third-party state dir
+    // would silently tighten files that have a different contract.
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const unrelatedDir = path.join(makeTempDir(), "other-tool-state");
+      fs.mkdirSync(unrelatedDir, { recursive: true, mode: 0o700 });
+      const target = path.join(unrelatedDir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+      const sibling = path.join(unrelatedDir, "other.json");
+      writeFileWithMode(sibling, "stale", 0o644);
+
+      readConfigFile(target, null);
+
+      expect(
+        fs.statSync(sibling).mode & 0o777,
+        "sibling under an unrelated dir must keep its mode",
+      ).toBe(0o644);
+    });
+  });
+
+  it("ensureConfigDir DOES heal siblings when dirPath IS the host ~/.nemoclaw root", () => {
+    // Positive control for the scope boundary: when the path is the host
+    // nemoclaw state root, the walk fires as before (#4546 acceptance).
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const hostDir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(hostDir, { mode: 0o700 });
+      const target = path.join(hostDir, "sandboxes.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+      const sibling = path.join(hostDir, "onboard-session.json");
+      writeFileWithMode(sibling, "stale", 0o644);
+
+      readConfigFile(target, null);
+
+      expect(fs.statSync(sibling).mode & 0o777).toBe(0o600);
+    });
+  });
+
+  it("supports both rich and legacy constructor forms", () => {
+    const rich = new ConfigPermissionError("test error", "/some/path");
+    expect(rich.name).toBe("ConfigPermissionError");
+    expect(rich.code).toBe("EACCES");
+    expect(rich.configPath).toBe("/some/path");
+    expect(rich.filePath).toBe("/some/path");
+    expect(rich.message).toContain("test error");
+    expect(rich.remediation).toContain("sudo chown");
+    expect(rich.remediation).toContain("mv ");
+    expect(rich.remediation).toContain("HOME=");
+
+    const legacy = new ConfigPermissionError("/other/path", "write");
+    expect(legacy.filePath).toBe("/other/path");
+    expect(legacy.message).toContain("Cannot write config file");
+  });
+});

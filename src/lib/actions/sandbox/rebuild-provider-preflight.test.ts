@@ -1,0 +1,341 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as openshellRuntime from "../../adapters/openshell/runtime";
+import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
+import {
+  canRecreateMissingRebuildGatewayProvider,
+  checkRebuildGatewayCredentialReuseOrBail,
+  checkRebuildGatewayProviderOrBail,
+  inspectRebuildGatewayProviderRegistration,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
+import type { RebuildResumeConfig } from "./rebuild-resume-config";
+
+const exactGatewayProvider: GatewayProviderMetadata = {
+  name: "compatible-endpoint",
+  type: "openai",
+  credentialKeys: ["COMPATIBLE_API_KEY"],
+  configKeys: ["OPENAI_BASE_URL"],
+};
+
+const noAuthGatewayProvider: GatewayProviderMetadata = {
+  name: "compatible-endpoint",
+  type: "openai",
+  credentialKeys: ["NEMOCLAW_OLLAMA_PROXY_TOKEN"],
+  configKeys: ["OPENAI_BASE_URL"],
+};
+
+function config(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConfig {
+  return {
+    agent: null,
+    provider: "compatible-endpoint",
+    model: "nvidia/model",
+    nimContainer: null,
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    pinEndpoint: true,
+    endpointUrl: "https://inference.example.test/v1",
+    registryInferenceRoute: {
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "https://inference.example.test/v1",
+      preferredInferenceApi: "openai-completions",
+      source: "registry",
+    },
+    ambient: { presentVars: [], agentMismatch: null },
+    ...overrides,
+  };
+}
+
+const throwingBail = (message: string): never => {
+  throw new Error(message);
+};
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+describe("shouldVerifyRebuildGatewayProvider", () => {
+  it("requires remote registrations while allowing reconstructible local registrations", async () => {
+    expect(shouldVerifyRebuildGatewayProvider("nvidia-prod")).toBe(true);
+    expect(shouldVerifyRebuildGatewayProvider("ollama-local")).toBe(false);
+    expect(shouldVerifyRebuildGatewayProvider("vllm-local")).toBe(false);
+
+    const log = vi.fn();
+    const bail = vi.fn(() => {
+      throw new Error("local provider must not require an existing gateway registration");
+    });
+    await expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).resolves.toBe(
+      true,
+    );
+    expect(log).not.toHaveBeenCalled();
+    expect(bail).not.toHaveBeenCalled();
+  });
+});
+
+describe("canRecreateMissingRebuildGatewayProvider", () => {
+  it("requires a canonical provider and its exact credential binding (#6114)", async () => {
+    expect(
+      canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "COMPATIBLE_API_KEY"),
+    ).toBe(true);
+    expect(canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "OPENAI_API_KEY")).toBe(
+      false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("mystery-provider", "MYSTERY_API_KEY")).toBe(
+      false,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_INFERENCE_API_KEY")).toBe(
+      true,
+    );
+    expect(canRecreateMissingRebuildGatewayProvider("nvidia-nim", "NVIDIA_API_KEY")).toBe(false);
+  });
+});
+
+describe("inspectRebuildGatewayProviderRegistration", () => {
+  it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "provider not found",
+    } as never);
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    await expect(
+      inspectRebuildGatewayProviderRegistration(
+        "compatible-endpoint",
+        vi.fn(),
+        "Delete-edge",
+        runtimeSelection,
+      ),
+    ).resolves.toBe("missing");
+
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "compatible-endpoint"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+    const env = runOpenshell.mock.calls[0]?.[1]?.env as Record<string, string>;
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+  });
+});
+
+describe("checkRebuildGatewayCredentialReuseOrBail", () => {
+  it("accepts an exact complete registry route and gateway provider identity", async () => {
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata: async () => exactGatewayProvider,
+        readRecordedProviderEndpoints: () => [],
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
+    const noAuthConfig = config({
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      endpointUrl: "http://localhost:11434/v1",
+      registryInferenceRoute: {
+        ...config().registryInferenceRoute!,
+        endpointUrl: "http://localhost:11434/v1",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        noAuthConfig,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => noAuthGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it("preserves normal host-key validation without reading gateway recovery metadata", async () => {
+    const readGatewayProviderMetadata = vi.fn();
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", config(), true, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata,
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).resolves.toBe(true);
+    expect(readGatewayProviderMetadata).not.toHaveBeenCalled();
+  });
+
+  it("preserves Bedrock Runtime rebuilds with explicit AWS authentication", async () => {
+    const readGatewayProviderMetadata = vi.fn();
+    const bedrock = config({
+      provider: "compatible-anthropic-endpoint",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      registryInferenceRoute: {
+        provider: "compatible-anthropic-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
+        hasBedrockRuntimeAwsAuth: () => true,
+        readGatewayProviderMetadata,
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).resolves.toBe(true);
+    expect(readGatewayProviderMetadata).not.toHaveBeenCalled();
+  });
+
+  it("rejects Bedrock Runtime before deletion when neither AWS nor compatible auth exists", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bedrock = config({
+      provider: "compatible-anthropic-endpoint",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      registryInferenceRoute: {
+        provider: "compatible-anthropic-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
+        hasBedrockRuntimeAwsAuth: () => false,
+        readGatewayProviderMetadata: async () => ({
+          name: "compatible-anthropic-endpoint",
+          type: "openai",
+          credentialKeys: ["NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"],
+          configKeys: ["OPENAI_BASE_URL"],
+        }),
+        readRecordedProviderEndpoints: () => [],
+      }),
+    ).rejects.toThrow("Missing Bedrock Runtime authentication");
+
+    const diagnostics = errors.mock.calls.flat().join(" ");
+    expect(diagnostics).toContain("AWS_BEARER_TOKEN_BEDROCK");
+    expect(diagnostics).toContain("AWS_PROFILE");
+    expect(diagnostics).toContain("IAM environment credentials");
+    expect(diagnostics).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
+  });
+
+  it.each([
+    ["missing registry route", config({ registryInferenceRoute: null })],
+    [
+      "oversized model",
+      config({
+        model: "m".repeat(513),
+        registryInferenceRoute: {
+          ...config().registryInferenceRoute!,
+          model: "m".repeat(513),
+        },
+      }),
+    ],
+    [
+      "oversized endpoint",
+      config({
+        endpointUrl: `https://example.test/${"x".repeat(2049)}`,
+        registryInferenceRoute: {
+          ...config().registryInferenceRoute!,
+          endpointUrl: `https://example.test/${"x".repeat(2049)}`,
+        },
+      }),
+    ],
+  ])("rejects %s before destructive rebuild work", async (_label, unsafeConfig) => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        unsafeConfig,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+  });
+
+  it("rejects spoofed gateway bindings", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const spoofedProvider = {
+      ...exactGatewayProvider,
+      credentialKeys: ["ATTACKER_KEY"],
+    };
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata: async () => spoofedProvider,
+        readRecordedProviderEndpoints: () => [],
+      }),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).not.toContain("compatible-endpoint");
+    expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
+    expect(diagnostics).not.toContain("ATTACKER_KEY");
+  });
+
+  it("rejects a custom endpoint recorded by another sandbox", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const readRecordedProviderEndpoints = vi.fn(() => ["https://other.example.test/v1"]);
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata: async () => exactGatewayProvider,
+        readRecordedProviderEndpoints,
+      }),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+    expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
+  });
+
+  it("reports the rejected recovery condition without endpoint details", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mismatchedEndpoint = config({
+      endpointUrl: "https://secret-canary.example.test/v1",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        mismatchedEndpoint,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
+    expect(diagnostics).not.toContain("secret-canary");
+  });
+});

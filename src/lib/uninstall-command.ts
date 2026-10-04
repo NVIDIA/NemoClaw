@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnExitCode } from "./core/process-exit";
 
 export function buildVersionedUninstallUrl(version: string): string {
   const stableVersion = String(version || "")
@@ -24,22 +24,6 @@ export function resolveUninstallScript(
     }
   }
   return null;
-}
-
-export function exitWithSpawnResult(
-  result: Pick<SpawnSyncReturns<string>, "status" | "signal">,
-  exit: (code: number) => never = (code) => process.exit(code),
-): never {
-  if (result.status !== null) {
-    return exit(result.status);
-  }
-
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    return exit(signalNumber ? 128 + signalNumber : 1);
-  }
-
-  return exit(1);
 }
 
 export interface RunUninstallCommandDeps {
@@ -76,7 +60,7 @@ export function runUninstallCommand(deps: RunUninstallCommandDeps): never {
       cwd: deps.rootDir,
       env: deps.env,
     });
-    return exitWithSpawnResult(result, exit);
+    return exit(spawnExitCode(result));
   }
 
   error("  Local uninstall script not found.");

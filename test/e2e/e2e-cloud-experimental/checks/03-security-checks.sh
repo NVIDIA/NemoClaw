@@ -11,10 +11,12 @@
 
 set -euo pipefail
 
-# Env var name is assembled from fragments so static secret scanners do not match a single literal token.
-_api_key_env_name_part1='NVIDIA'
-_api_key_env_name_part2='_API_KEY'
-_api_key_env_name="${_api_key_env_name_part1}${_api_key_env_name_part2}"
+# The caller can point this check at the active hosted-inference credential.
+_api_key_env_name="${NEMOCLAW_E2E_CLOUD_API_KEY_ENV:-NVIDIA_INFERENCE_API_KEY}"
+if [[ ! "$_api_key_env_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  printf '%s\n' "03-security-checks: FAIL: invalid cloud API token env var name: ${_api_key_env_name}" >&2
+  exit 1
+fi
 : "${!_api_key_env_name:?cloud API token env var must be set (export before running)}"
 
 die() {
@@ -33,14 +35,20 @@ while IFS= read -r line; do
   esac
 done <<<"$ps_lines"
 
-# argv-style leak: NAME=<vendor key prefix> (prefix via escapes; no contiguous vendor prefix literal in source).
-_key_argv_prefix_marker=$'\x6e\x76\x61\x70\x69\x2d'
-_key_argv_needle="${_api_key_env_name}=${_key_argv_prefix_marker}"
-while IFS= read -r line; do
-  case "$line" in
-    *"${_key_argv_needle}"*) die "api-key-in-ps: env-style API key argv leak in ps" ;;
-  esac
-done <<<"$ps_lines"
+# argv-style leak: NAME=<first six key characters>. The caller can override or
+# disable this marker with NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX.
+_key_argv_prefix_marker="${NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX:-}"
+if [ -z "${NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX+x}" ]; then
+  _key_argv_prefix_marker="$(printf '%.6s' "$_api_key_value")"
+fi
+if [ -n "$_key_argv_prefix_marker" ]; then
+  _key_argv_needle="${_api_key_env_name}=${_key_argv_prefix_marker}"
+  while IFS= read -r line; do
+    case "$line" in
+      *"${_key_argv_needle}"*) die "api-key-in-ps: env-style API key argv leak in ps" ;;
+    esac
+  done <<<"$ps_lines"
+fi
 
 printf '%s\n' "03-security-checks: OK (api-key-in-ps)"
 exit 0

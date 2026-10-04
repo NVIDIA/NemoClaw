@@ -1,0 +1,262 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Prepare a Windows Machine to Install NemoClaw"
+sidebar-title: "Additional Setup for Windows Machines"
+description: "Prepare a Windows machine for NemoClaw before running the Quickstart: enable WSL 2, install Ubuntu, and choose Docker Desktop or qualified rootless Podman for WSL-local Ollama."
+description-agent: "Covers Windows-only preparation steps required before the Quickstart. Use when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop or qualified rootless Podman, or troubleshooting a Windows-specific install error."
+keywords: ["nemoclaw windows wsl2 setup", "nemoclaw install windows docker desktop podman"]
+content:
+  type: "reference"
+---
+Run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
+<AgentOnly variant="openclaw">
+Complete these steps before following the [Quickstart](../quickstart).
+</AgentOnly>
+<AgentOnly variant="hermes">
+Complete these steps before following [Quickstart with Hermes](../quickstart).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Complete these steps before following [Quickstart with Deep Agents](../quickstart).
+</AgentOnly>
+Linux and macOS users do not need this page and can go directly to the Quickstart.
+
+<Note>
+NVIDIA tested this guide on x86-64.
+</Note>
+
+## Prerequisites
+
+Verify the following before you begin:
+
+- Windows 10 (build 19041 or later) or Windows 11.
+<AgentOnly variant="openclaw">
+
+- Hardware requirements are the same as the [Quickstart](../quickstart).
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Hardware requirements are the same as [Quickstart with Hermes](../quickstart).
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- Hardware requirements are the same as [Quickstart with Deep Agents](../quickstart).
+
+</AgentOnly>
+
+## Choose a Container Runtime
+
+Use Docker Desktop unless you specifically need the qualified rootless Podman path for WSL-local Ollama.
+
+- **Docker Desktop:** Follow the bootstrap-script route below. Docker Desktop is required for managed llama.cpp and Windows-host Ollama.
+- **Rootless Podman:** Skip the bootstrap script and the Docker Desktop section. Complete [Enable WSL 2](#enable-wsl-2) and [Install and Register Ubuntu](#install-and-register-ubuntu) manually, then follow the [native Podman prerequisites and recovery guidance](../../reference/troubleshooting#podman) inside WSL. Before onboarding, set `NEMOCLAW_GATEWAY_RUNTIME=podman` and confirm the current-user Podman socket and service, rootless engine, cgroups v2, bridge networking, and DNS are available. NVIDIA CDI is additionally required when you enable sandbox GPU passthrough or need the N1x CUDA capacity proof. This route supports WSL-local Ollama; it does not enable managed llama.cpp or Windows-host Ollama.
+
+## Use the Bootstrap Script
+
+The bootstrap script is the Docker Desktop route. It is not a prerequisite for the rootless Podman route.
+
+Open Windows PowerShell on the Windows host and run the bootstrap script:
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/bootstrap-windows.ps1' -OutFile "$env:TEMP\bootstrap-windows.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\bootstrap-windows.ps1"
+```
+
+The command downloads the script to a temporary file before running it.
+`-ExecutionPolicy Bypass` applies only to that PowerShell process and avoids local policy blocking the downloaded script.
+Run it from Windows, not from inside WSL.
+The script requests Administrator privileges when needed, enables the required WSL 2 Windows features, installs or opens Ubuntu 24.04, and installs and starts Docker Desktop.
+When Ubuntu needs first-run account setup, the script opens a handoff window and waits for that account to exist before it changes Docker settings.
+It enables Docker Desktop WSL integration for the target distro, restarts Docker Desktop only when Docker was already running, and leaves your global default WSL distro unchanged.
+If the target Ubuntu distro is already registered, the script confirms it uses WSL 2, converts it from WSL 1 when needed, and verifies Docker is reachable from WSL.
+If Windows requires a reboot after enabling WSL features, the script prompts for the reboot and registers a one-time continuation for the next sign-in.
+When the Ubuntu install command completes but the distro is not registered yet, the script requests a reboot only when WSL output says a reboot is required.
+Any WSL install transcript printed for troubleshooting removes PowerShell transcript metadata and temporary local paths before display.
+If Docker Desktop shows first-run prompts, complete them and return to the PowerShell window.
+
+For advanced options, download the script first and run `Get-Help "$env:TEMP\bootstrap-windows.ps1" -Detailed`.
+Useful parameters include `-DistroName`, `-InstallerUrl`, `-InstallerArgs`, and `-InstallDockerDesktop`.
+The default distro is `Ubuntu-24.04`.
+To reuse an existing distro named `Ubuntu`, pass `-DistroName Ubuntu`.
+
+The bootstrap script does not install NemoClaw itself.
+When Windows preparation is complete, it opens Ubuntu and prints the standard installer command to run inside Ubuntu:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+If the bootstrap script reports that Ubuntu cannot reach Docker, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for Ubuntu (**Settings** > **Resources** > **WSL integration**).
+Make sure Docker Desktop is running, then rerun the script.
+
+If the bootstrap script reports that `winget.exe` is not available, install **App Installer** from the Microsoft Store.
+This is common on Windows Server or stripped Windows installs.
+**App Installer** provides `winget`.
+You can also download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
+After you install Docker Desktop, rerun the bootstrap script.
+The script skips the install step after it detects Docker Desktop.
+
+The manual steps below describe the Docker Desktop preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
+
+## Enable WSL 2
+
+Open an elevated PowerShell as Administrator.
+
+```powershell
+wsl --install --no-distribution
+```
+
+This enables both the Windows Subsystem for Linux and Virtual Machine Platform features.
+If the command returns `Forbidden (403)` or the online WSL installer is blocked, use the [Windows Subsystem for Linux troubleshooting section](../../reference/troubleshooting#windows-subsystem-for-linux) for manual WSL installation links.
+
+Reboot if prompted.
+
+## Install and Register Ubuntu
+
+After reboot, open an elevated PowerShell again.
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+Let the distribution launch and complete first-run setup.
+Pick a Unix username and password, then type `exit` to return to PowerShell.
+
+<Warning>
+Do not use the `--no-launch` flag.
+The `--no-launch` flag downloads the package but does not register the distribution with WSL.
+Commands like `wsl -d Ubuntu-24.04` fail with "There is no distribution with the supplied name" until you launch the distribution at least one time.
+</Warning>
+
+Verify that WSL registered the distribution and runs it with WSL 2:
+
+```powershell
+wsl -l -v
+```
+
+Expected output:
+
+```text
+  NAME            STATE           VERSION
+* Ubuntu-24.04    Running         2
+```
+
+## Install Docker Desktop
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 backend (the default on Windows 11).
+
+After installation, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for your Ubuntu distribution (**Settings** > **Resources** > **WSL integration**).
+
+Open WSL from PowerShell:
+
+```powershell
+wsl
+```
+
+Then verify Docker from inside WSL:
+
+```bash
+docker info
+```
+
+`docker info` prints server information.
+If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
+
+For WSL-local Ollama, a qualified rootless Podman provider is also supported.
+Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and make sure the current-user Podman service and `lsof` on `PATH` are available. NemoClaw does not install `lsof`; install it through the WSL distribution's package-management policy before retrying onboarding. NVIDIA CDI is additionally required for sandbox GPU passthrough and the N1x CUDA capacity proof.
+The Podman path does not enable the Docker-specific managed llama.cpp or Windows-host Ollama routes described below.
+
+## Set Up Local Inference (Optional)
+
+If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
+The installer leaves inference selection to onboarding.
+Onboarding requires Linux ARM64 WSL, one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+The Windows chassis model does not participate in managed llama.cpp selection.
+If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
+If a required check fails after managed selection starts, onboarding stops before installation.
+Other WSL hosts also use WSL-local Ollama for Express installation.
+
+If you plan to select Ollama as your inference provider during onboarding, use one Ollama instance.
+It can run inside WSL or on Windows through Docker Desktop.
+Run this command to install Ollama inside WSL.
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+If you installed Ollama but it is not already running in WSL, onboarding starts it for you.
+You can also start it yourself beforehand with `ollama serve`.
+
+You can also use Ollama for Windows through the manual onboarding menu.
+NemoClaw reuses a Windows-host daemon only when it is bound exclusively to a loopback address on port `11434`, Docker Desktop can reach it, and it returns `403` for an untrusted HTTP `Host` value.
+The Windows install and restart actions enforce the same loopback binding and validation check.
+For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects WSL-local Ollama.
+The Windows-host Ollama path remains an explicit manual option and requires Docker Desktop WSL integration.
+For that path, unset `DOCKER_HOST` and use Docker's local `default` context; otherwise, choose WSL-local Ollama.
+The express selection does not waive system readiness.
+An installed Windows-host Ollama that fails the loopback, reachability, or HTTP `Host` validation check leaves the WSL-local install available in the onboarding menu and through a requested `install-ollama` provider.
+Qualified Windows-host routes reach the protected host route directly and do not use the Ollama auth proxy.
+You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
+When Ollama runs on the Windows host, NemoClaw checks it from Docker Desktop through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
+A direct request from WSL can fail because Docker Desktop defines this hostname in its container network context.
+Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
+Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
+Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
+On a WSL RTX Spark N1x, NemoClaw ranks installed Ollama models with capacity from the selected Docker or Podman provider's CUDA proof.
+The proof-backed GPU identity or a Windows chassis model that reports `RTX Spark N1X` qualifies the host for this ranking.
+The chassis model does not establish N1x WSL identity.
+Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
+When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
+A Windows chassis model that reports Station GB300 also qualifies for this ranking through Docker Desktop.
+Its proof must verify every reported GPU, include an `NVIDIA GB300` device, and report at least 30,000 MiB available.
+A Windows on Arm host with multiple GPUs uses the provider proof to validate every reported device and its aggregate capacity, but that proof does not qualify a generic host for automatic 30B or 35B selection.
+Only the N1x or Station GB300 qualification described above can select `qwen3.6:35b`; other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b`.
+<AgentOnly variant="openclaw">
+For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+</AgentOnly>
+<AgentOnly variant="hermes">
+For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/hermes/inference/local-inference/set-up-ollama).
+</AgentOnly>
+
+## Next Step
+
+Your Windows environment is ready.
+If you used the bootstrap script, follow the installer command it printed inside Ubuntu.
+<AgentOnly variant="openclaw">
+If you prepared Windows manually, open a WSL terminal.
+Type `wsl` in PowerShell, or open Ubuntu from Windows Terminal.
+Then continue with the [Quickstart](../quickstart) to install NemoClaw and launch your first sandbox.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If you prepared Windows manually, open a WSL terminal.
+Type `wsl` in PowerShell, or open Ubuntu from Windows Terminal.
+Then continue with [Quickstart with Hermes](../quickstart) to install NemoClaw and launch your first Hermes sandbox.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If you prepared Windows manually, open a WSL terminal.
+Type `wsl` in PowerShell, or open Ubuntu from Windows Terminal.
+Then continue with [Quickstart with Deep Agents](../quickstart) to install NemoClaw and launch your first sandbox.
+</AgentOnly>
+
+All NemoClaw commands run inside WSL, not in PowerShell.
+
+## Troubleshooting
+
+### Cursor blocks the starter prompt install command
+
+Cursor can block Windows terminal automation before NemoClaw runs when the Legacy Terminal Tool is disabled or when Run Mode is locked to **Allowlist with Sandbox**.
+This is a Cursor security restriction, not a NemoClaw installer failure.
+If your AI assistant reports this restriction, use one of these recovery paths:
+
+1. Enable the terminal capability your organization allows, then ask the assistant to retry the approved install command from the starter prompt.
+2. If your organization permits manually created local scripts but not automated terminal execution, ask the assistant to create a local `.bat` or `.ps1` fallback file.
+   The assistant must show you the file contents before you run it, and you should inspect and approve those contents first.
+3. Start Docker Desktop and confirm WSL integration before running the fallback file.
+
+Do not paste API keys, bot tokens, or other secrets into chat while using the fallback path.
+Enter credentials only into the local terminal, browser, or secure prompt that needs them.
+Do not embed real credentials in the generated `.bat` or `.ps1` file.
+Docker Desktop must be running before the NemoClaw install command can continue.
+
+For Windows-specific troubleshooting, refer to the [Windows Subsystem for Linux section](../../reference/troubleshooting#windows-subsystem-for-linux) in the Troubleshooting guide.

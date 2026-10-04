@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: discord-hermes-static-v1
+display_name: Discord Bot (Hermes)
+description: Endpointless Discord bot credential for sandbox policy binding
+category: agent
+credentials:
+  - name: bot_token
+    description: Discord bot token
+    env_vars:
+      - DISCORD_BOT_TOKEN
+    required: true
+    auth_style: header
+    header_name: Authorization
+    query_param: ''
+endpoints: []
+binaries: []
+inference_capable: false

@@ -1,0 +1,280 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { ChannelManifest } from "../../manifest";
+
+export const slackManifest = {
+  schemaVersion: 1,
+  id: "slack",
+  displayName: "Slack",
+  description: "Slack bot messaging",
+  supportedAgents: ["openclaw", "hermes"],
+  state: { hermes: ["platforms/slack"] },
+  auth: {
+    mode: "token-paste",
+  },
+  inputs: [
+    {
+      id: "botToken",
+      kind: "secret",
+      required: true,
+      envKey: "SLACK_BOT_TOKEN",
+      formatPattern: "^xoxb-[A-Za-z0-9_-]+$",
+      formatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-<workspace>-<bot>-<redacted>).",
+      prompt: {
+        label: "Slack Bot Token",
+        help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
+      },
+    },
+    {
+      id: "appToken",
+      kind: "secret",
+      required: true,
+      envKey: "SLACK_APP_TOKEN",
+      formatPattern: "^xapp-[A-Za-z0-9_-]+$",
+      formatHint:
+        "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
+      prompt: {
+        label: "Slack App Token (Socket Mode)",
+        help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+      },
+    },
+    {
+      id: "allowedUsers",
+      kind: "config",
+      required: false,
+      envKey: "SLACK_ALLOWED_USERS",
+      statePath: "allowedIds.slack",
+      prompt: {
+        label: "Slack Member IDs (comma-separated allowlist)",
+        help: "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
+        emptyValueMessage: "bot will require manual pairing",
+      },
+    },
+    {
+      id: "allowedChannels",
+      kind: "config",
+      required: false,
+      envKey: "SLACK_ALLOWED_CHANNELS",
+      statePath: "slackConfig.allowedChannels",
+      prompt: {
+        label: "Slack Channel IDs (comma-separated allowlist)",
+        help: "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+        emptyValueMessage: "channel @mentions stay unrestricted by channel ID",
+      },
+    },
+  ],
+  credentials: [
+    {
+      id: "slackBotToken",
+      sourceInput: "botToken",
+      providerName: "{sandboxName}-slack-bridge",
+      providerEnvKey: "SLACK_BOT_TOKEN",
+      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      primary: true,
+    },
+    {
+      id: "slackAppToken",
+      sourceInput: "appToken",
+      providerName: "{sandboxName}-slack-app",
+      providerEnvKey: "SLACK_APP_TOKEN",
+      placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+  ],
+  policyPresets: [{ name: "slack", requiredAtCreate: true }],
+  render: [
+    {
+      id: "slack-openclaw-channel",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "channels.slack",
+        value: {
+          enabled: true,
+          accounts: {
+            default: {
+              // No botToken/appToken here: OpenShell 0.0.106 injects both as
+              // revision-scoped placeholders and rejects the provider-shaped
+              // alias once the policy binds them. OpenClaw resolves the
+              // default account from process.env.SLACK_BOT_TOKEN and
+              // SLACK_APP_TOKEN when the config omits them.
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              dmPolicy: "{{allowedIds.slack.dmPolicy}}",
+              allowFrom: "{{allowedIds.slack.values}}",
+              groupPolicy: "{{allowedIds.slack.groupPolicy}}",
+              channels: "{{allowedIds.slack.channels}}",
+            },
+          },
+        },
+      },
+    },
+    {
+      id: "slack-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.slack",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+    {
+      id: "slack-hermes-env",
+      kind: "env-lines",
+      agent: "hermes",
+      target: "~/.hermes/.env",
+      lines: [
+        "SLACK_ALLOWED_USERS={{allowedIds.slack.csv}}",
+        "SLACK_ALLOWED_CHANNELS={{slackConfig.allowedChannels.csv}}",
+      ],
+    },
+    {
+      id: "slack-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.slack",
+        value: {
+          enabled: true,
+          extra: {
+            rich_blocks: true,
+          },
+        },
+      },
+    },
+  ],
+  runtime: {
+    openclaw: {
+      channelName: "slack",
+      visibility: {
+        configKeys: ["slack"],
+        logPatterns: ["slack"],
+      },
+      nodePreloads: [
+        {
+          module: "slack-channel-guard",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Slack channel guard (unhandled-rejection safety net)",
+          installedMessage: "[channels] Slack channel guard installed (NODE_OPTIONS updated)",
+        },
+      ],
+      secretScans: [
+        {
+          path: "/sandbox/.openclaw/openclaw.json",
+          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
+          exitCode: 78,
+        },
+      ],
+    },
+    hermes: {},
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/slack@{{openclaw.version}}",
+      pin: true,
+      integrityByVersion: {
+        "2026.9.2":
+          "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
+        "2026.9.1":
+          "sha512-tU372jE40nnPcKQ6oxmDHf2/UhGtdz8ysi4JKsRZIO1QBAEkZd2YfsOw8aucmb2r0B0vjcFD3OmIV/Qzb57COg==",
+      },
+      tarballUrlByVersion: {
+        "2026.9.2": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz",
+        "2026.9.1": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz",
+      },
+      required: true,
+    },
+  ],
+  hooks: [
+    {
+      id: "slack-socket-mode-gateway-conflict",
+      phase: "pre-enable",
+      handler: "slack.socketModeGatewayConflict",
+      onFailure: "abort",
+    },
+    {
+      id: "slack-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "slack.openclawBridgeHealth",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    },
+    {
+      id: "slack-socket-mode-gateway-status",
+      phase: "status",
+      handler: "slack.socketModeGatewayStatus",
+      outputs: [
+        {
+          id: "gatewayOverlaps",
+          kind: "status",
+        },
+      ],
+    },
+    {
+      id: "slack-status-health",
+      phase: "status",
+      handler: "slack.statusHealth",
+      providesReadiness: true,
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
+          kind: "status",
+        },
+      ],
+    },
+    {
+      id: "slack-token-paste",
+      phase: "enroll",
+      handler: "common.tokenPaste",
+      outputs: [
+        {
+          id: "botToken",
+          kind: "secret",
+          required: true,
+        },
+        {
+          id: "appToken",
+          kind: "secret",
+          required: true,
+        },
+      ],
+      onFailure: "skip-channel",
+    },
+    {
+      id: "slack-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "allowedUsers",
+          kind: "config",
+        },
+        {
+          id: "allowedChannels",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "slack-credential-validation",
+      phase: "reachability-check",
+      handler: "slack.validateCredentials",
+      inputs: ["botToken", "appToken"],
+      onFailure: "skip-channel",
+    },
+  ],
+} as const satisfies ChannelManifest;

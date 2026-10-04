@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Perl 5.44.0 Net::Ping tests infer raw-socket access from effective UID.
+# Let the package builder skip only raw-ICMP assertions after an explicit
+# socket probe reports EPERM or EACCES.
+diff --git a/dist/Net-Ping/t/001_new.t b/dist/Net-Ping/t/001_new.t
+--- a/dist/Net-Ping/t/001_new.t
++++ b/dist/Net-Ping/t/001_new.t
+@@ -58,14 +58,10 @@ eval {
+ SKIP: {
+     # diag "Checking icmp";
+     eval { $p = Net::Ping->new('icmp'); };
+-    skip "icmp ping requires root privileges.", 3
+-      if !Net::Ping::_isroot() or $^O eq 'MSWin32';
+-    if($> and $^O ne 'VMS' and $^O ne 'cygwin') {
+-        like($@, qr/icmp ping requires root privilege/, "Need root for icmp");
+-        skip "icmp tests require root", 2;
+-    } else {
+-        isa_ok($p, "Net::Ping");
+-    }
++    skip "raw IPv4 ICMP socket is unavailable.", 3
++      if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
++        or $^O eq 'MSWin32';
++    isa_ok($p, "Net::Ping");
+
+     # set IP TOS to "Minimum Delay"
+     $p = Net::Ping->new("icmp", undef, undef, undef, 8);
+diff --git a/dist/Net-Ping/t/110_icmp_inst.t b/dist/Net-Ping/t/110_icmp_inst.t
+--- a/dist/Net-Ping/t/110_icmp_inst.t
++++ b/dist/Net-Ping/t/110_icmp_inst.t
+@@ -19,8 +19,8 @@ use Test::More tests => 2;
+ BEGIN {use_ok('Net::Ping')};
+
+ SKIP: {
+-  skip "icmp ping requires root privileges.", 1
+-    unless &Net::Ping::_isroot;
++  skip "raw IPv4 ICMP socket is unavailable.", 1
++    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS};
+   my $p = new Net::Ping "icmp";
+   isa_ok($p, 'Net::Ping', 'object can be instantiated for icmp protocol');
+ }
+diff --git a/dist/Net-Ping/t/500_ping_icmp.t b/dist/Net-Ping/t/500_ping_icmp.t
+--- a/dist/Net-Ping/t/500_ping_icmp.t
++++ b/dist/Net-Ping/t/500_ping_icmp.t
+@@ -54,8 +54,9 @@ if (0 && !Net::Ping::_isroot()) {
+ }
+
+ SKIP: {
+-  skip "icmp ping requires root privileges.", 2
+-    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
++  skip "raw IPv4 ICMP socket is unavailable.", 2
++    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
++      or $^O eq 'MSWin32';
+   my $p = new Net::Ping "icmp";
+   is($p->message_type(), 'echo', "default icmp message type is 'echo'");
+   # message_type fails on wrong message type
+diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6.t
+--- a/dist/Net-Ping/t/501_ping_icmpv6.t
++++ b/dist/Net-Ping/t/501_ping_icmpv6.t
+@@ -45,11 +45,12 @@ if (0 && !Net::Ping::_isroot()) {
+
+
+ SKIP: {
+-  skip "icmpv6 ping requires root privileges.", 1
+-    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
++  skip "raw IPv6 ICMP socket is unavailable.", 1
++    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS}
++      or $^O eq 'MSWin32';
+   my $p;
+   eval { $p = new Net::Ping "icmpv6"; };
+   if ($@) {
+-    plan skip_all => "no icmpv6 on this machine $@";
++    die $@;
+   }
+   # message_type can't be used
+diff --git a/dist/Net-Ping/t/520_icmp_ttl.t b/dist/Net-Ping/t/520_icmp_ttl.t
+--- a/dist/Net-Ping/t/520_icmp_ttl.t
++++ b/dist/Net-Ping/t/520_icmp_ttl.t
+@@ -18,8 +18,9 @@ use Test::More qw(no_plan);
+ BEGIN {use_ok('Net::Ping')};
+
+ SKIP: {
+-  skip "icmp ping requires root privileges.", 1
+-    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
++  skip "raw IPv4 ICMP socket is unavailable.", 1
++    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
++      or $^O eq 'MSWin32';
+   my $p = new Net::Ping ("icmp",undef,undef,undef,undef,undef);
+   isa_ok($p, 'Net::Ping');
+   ok $p->ping("127.0.0.1");

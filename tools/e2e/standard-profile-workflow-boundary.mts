@@ -1,0 +1,778 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+
+import YAML from "yaml";
+import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
+import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
+
+type WorkflowRecord = Record<string, unknown>;
+type WorkflowStep = WorkflowRecord & {
+  env?: WorkflowRecord;
+  if?: string;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: WorkflowRecord;
+};
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DEFAULT_PROFILE_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml");
+const PROFILE_WORKFLOW = "./.github/workflows/e2e-standard-profile.yaml";
+const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
+const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
+const guardedCallerSecret = (name: string): string =>
+  `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+const SKILL_AGENT_UPLOAD_PATH = `${[
+  "e2e-artifacts/live/skill-agent/evidence-manifest.json",
+  "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
+  "e2e-artifacts/live/skill-agent/*/cleanup.json",
+  "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
+  "e2e-artifacts/live/skill-agent/*/target.json",
+  "e2e-artifacts/live/skill-agent/*/target-result.json",
+  "e2e-artifacts/live/skill-agent/*/test-progress.json",
+  "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
+  "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
+  "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
+].join("\n")}\n`;
+const PROFILE_JOBS = {
+  standard: {
+    job: "catalogue-standard",
+    matrix: "catalogue_standard_matrix",
+    credentialBoundary: "no provider credential",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "nvidia-api": {
+    job: "catalogue-nvidia-api",
+    matrix: "catalogue_nvidia_api_matrix",
+    credentialBoundary: "NVIDIA API key",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "nvidia-inference": {
+    job: "catalogue-nvidia-inference",
+    matrix: "catalogue_nvidia_inference_matrix",
+    credentialBoundary: "NVIDIA inference API key",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "github-read": {
+    job: "catalogue-github-read",
+    matrix: "catalogue_github_read_matrix",
+    credentialBoundary: "GitHub read token",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
+    githubToken: true,
+    maxParallel: undefined,
+  },
+} as const;
+
+function record(value: unknown): WorkflowRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as WorkflowRecord)
+    : {};
+}
+
+function steps(value: unknown): WorkflowStep[] {
+  return Array.isArray(value) ? (value as WorkflowStep[]) : [];
+}
+
+function namedStep(workflowSteps: readonly WorkflowStep[], name: string): WorkflowStep | undefined {
+  return workflowSteps.find((step) => step.name === name);
+}
+
+function requireStep(
+  errors: string[],
+  workflowSteps: readonly WorkflowStep[],
+  name: string,
+): WorkflowStep | undefined {
+  const matches = workflowSteps.filter((step) => step.name === name);
+  if (matches.length !== 1) errors.push(`standard E2E profile must define one '${name}' step`);
+  return matches[0];
+}
+
+function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, name: string): void {
+  if (!step?.uses || !/@[0-9a-f]{40}$/u.test(step.uses)) {
+    errors.push(`standard E2E profile ${name} action must use a full commit SHA`);
+  }
+}
+
+function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
+  const jobs = record(workflow.jobs);
+  const sdkPackage = record(jobs["package-openshell-sdk"]);
+  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
+    errors.push(
+      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+    );
+  }
+  const sdkPackageStep = namedStep(
+    steps(sdkPackage.steps),
+    "Download and verify reviewed OpenShell SDK packages",
+  );
+  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+    errors.push(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
+    );
+  }
+  for (const profile of E2E_EXECUTION_PROFILES) {
+    const contract = PROFILE_JOBS[profile];
+    const job = record(jobs[contract.job]);
+    if (Object.keys(job).length === 0) {
+      errors.push(`workflow is missing ${contract.job}`);
+      continue;
+    }
+    if (
+      !isDeepStrictEqual(job.needs, [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ]) ||
+      job.uses !== PROFILE_WORKFLOW
+    ) {
+      errors.push(
+        `${contract.job} must call the standard E2E profile after matrix generation, base-image publication, and SDK packaging`,
+      );
+    }
+    if (job.name !== "${{ matrix.display_name }} (${{ matrix.runtime_provider }})") {
+      errors.push(`${contract.job} must use the planned outcome-first display name`);
+    }
+    const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
+    if (
+      job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
+      record(record(job.strategy).matrix).include !== `\${{ fromJSON(${matrixOutput}) }}`
+    ) {
+      errors.push(`${contract.job} must use its generated catalogue matrix`);
+    }
+    const withInputs = record(job.with);
+    if (record(job.strategy)["max-parallel"] !== contract.maxParallel) {
+      errors.push(
+        contract.maxParallel === undefined
+          ? `${contract.job} must not cap matrix concurrency`
+          : `${contract.job} must cap matrix concurrency at ${contract.maxParallel}`,
+      );
+    }
+    for (const [name, expected] of Object.entries({
+      candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
+      candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      runtime_provider: "${{ matrix.runtime_provider }}",
+      execution_id: "${{ matrix.execution_id }}",
+      coverage_variant: "${{ matrix.coverage_variant }}",
+      risk_signal_expected_sha:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
+      risk_signal_correlation_id:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
+      cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      openshell_sdk_artifact_name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+      managed_image_catalog: "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
+      managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+      managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+      workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
+      credential_boundary: contract.credentialBoundary,
+      catalogue_id: "${{ matrix.id }}",
+      target_id: "${{ matrix.target_id }}",
+      runner:
+        "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}",
+      checkout_sha: "${{ inputs.checkout_sha }}",
+      workflow_sha: "${{ inputs.workflow_sha }}",
+      test_file: "${{ matrix.test_file }}",
+      timeout_minutes: "${{ matrix.timeout_minutes }}",
+      install_mode: "${{ matrix.install_mode }}",
+      install_non_interactive: "${{ matrix.install_non_interactive }}",
+      restore_cli: "${{ matrix.restore_cli }}",
+      cloudflared: "${{ matrix.cloudflared }}",
+      host_packages: "${{ matrix.host_packages }}",
+      host_preparation: "${{ matrix.host_preparation }}",
+      runner_comparison: "${{ matrix.runner_comparison }}",
+      compatible_api_key: "${{ matrix.compatible_api_key }}",
+      github_token: contract.githubToken,
+      shard: "${{ matrix.shard }}",
+      artifact_layout: "${{ matrix.artifact_layout }}",
+      trusted_main:
+        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
+    })) {
+      if (withInputs[name] !== expected) {
+        errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
+      }
+    }
+    const callerSecrets = record(job.secrets);
+    if (
+      Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
+      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
+    ) {
+      errors.push(`${contract.job} must receive only its profile secrets`);
+    }
+  }
+}
+
+function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): void {
+  const triggers = record(profile.on ?? profile[true as unknown as string]);
+  const call = record(triggers.workflow_call);
+  const inputs = record(call.inputs);
+  const requiredInputs = {
+    candidate_repository: "string",
+    candidate_sha: "string",
+    runtime_provider: "string",
+    execution_id: "string",
+    coverage_variant: "string",
+    risk_signal_expected_sha: "string",
+    risk_signal_correlation_id: "string",
+    cli_artifact_provenance: "string",
+    openshell_sdk_artifact_name: "string",
+    managed_image_catalog: "string",
+    managed_image_revision: "string",
+    managed_image_receipt: "string",
+    workload_source: "string",
+    credential_boundary: "string",
+    catalogue_id: "string",
+    target_id: "string",
+    runner: "string",
+    checkout_sha: "string",
+    workflow_sha: "string",
+    test_file: "string",
+    timeout_minutes: "number",
+    install_mode: "string",
+    install_non_interactive: "boolean",
+    restore_cli: "boolean",
+    cloudflared: "boolean",
+    host_packages: "string",
+    host_preparation: "string",
+    runner_comparison: "boolean",
+    compatible_api_key: "boolean",
+    github_token: "boolean",
+    shard: "string",
+    artifact_layout: "string",
+    trusted_main: "boolean",
+  };
+  if (
+    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
+    Object.entries(requiredInputs).some(
+      ([name, type]) =>
+        record(inputs[name]).required !== true || record(inputs[name]).type !== type,
+    )
+  ) {
+    errors.push("standard E2E profile must require its exact execution-plan inputs");
+  }
+  const acceptedSecrets = [
+    "DOCKERHUB_TOKEN",
+    "DOCKERHUB_USERNAME",
+    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
+  ];
+  const declaredSecrets = record(call.secrets);
+  if (
+    Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
+    acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
+  ) {
+    errors.push("standard E2E profile must accept only its four optional profile secrets");
+  }
+  if (record(profile.permissions).contents !== "read") {
+    errors.push("standard E2E profile permissions must be contents: read");
+  }
+
+  const runJob = record(record(profile.jobs).run);
+  if (
+    Object.keys(runJob).sort().join(",") !==
+    ["env", "name", "runs-on", "steps", "timeout-minutes"].sort().join(",")
+  ) {
+    errors.push("standard E2E profile must expose only its reviewed job settings");
+  }
+  if (runJob["runs-on"] !== "${{ inputs.runner }}") {
+    errors.push("standard E2E profile must use the catalogue runner");
+  }
+  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+    errors.push("standard E2E profile must show the planned credential boundary");
+  }
+  if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
+    errors.push("standard E2E profile must use the catalogue timeout");
+  }
+  const jobEnv = record(runJob.env);
+  const expectedJobEnv = {
+    E2E_JOB: "1",
+    E2E_EXECUTION_ID: "${{ inputs.execution_id }}",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
+    E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
+    E2E_TARGET_ID: "${{ inputs.target_id }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",
+    E2E_WORKLOAD_SOURCE: "${{ inputs.workload_source }}",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
+  };
+  if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
+    errors.push("standard E2E profile must expose only its reviewed job environment");
+  }
+  for (const [name, expected] of Object.entries(expectedJobEnv)) {
+    if (jobEnv[name] !== expected) errors.push(`standard E2E profile must set ${name}`);
+  }
+
+  const workflowSteps = steps(runJob.steps);
+  const expectedStepNames = [
+    "Validate catalogue execution plan",
+    "Provision trusted Hermes E2E swap",
+    undefined,
+    "Authenticate to Docker Hub",
+    "Install target host dependencies",
+    "Prepare E2E workspace",
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK archive without package credentials",
+    "Restore exact-commit CLI artifact",
+    "Prepare native Podman E2E runtime",
+    "Stage immutable stopped-state cleanup helper",
+    "Install reviewed cloudflared",
+    "Initialize runner comparison telemetry",
+    "Install OpenShell CLI",
+    "Install OpenShell CLI without workflow credentials",
+    "Prepare GPU launch-readiness runtime directory",
+    "Run catalogue E2E target",
+    "Finalize runner comparison telemetry",
+    "Write E2E evidence manifest",
+    "Upload skill-agent artifacts",
+    "Upload E2E artifacts",
+    "Restore Docker CLI after native Podman E2E",
+    "Restore GPU launch-readiness runtime directory",
+    "Clean up Docker auth",
+  ];
+  if (
+    workflowSteps.length !== expectedStepNames.length ||
+    workflowSteps.some((step, index) => step.name !== expectedStepNames[index])
+  ) {
+    errors.push("standard E2E profile must keep its reviewed step set and order");
+  }
+  const executionPlan = requireStep(errors, workflowSteps, "Validate catalogue execution plan");
+  const executionPlanRun = String(executionPlan?.run ?? "");
+  const executionPlanFragments = [
+    '[[ "$CATALOGUE_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$COVERAGE_VARIANT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$EXECUTION_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$EXECUTION_ID" == "${CATALOGUE_ID}-${COVERAGE_VARIANT}" ]]',
+    '[[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$SHARD" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]',
+    '[[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]',
+    '[[ "$TEST_FILE" =~ ^test/e2e/live/[A-Za-z0-9._-]+\\.test\\.ts$ ]]',
+    '[[ "$ARTIFACT_LAYOUT" == "target-shard" || "$ARTIFACT_LAYOUT" == "flat-shard" ]]',
+    'artifact_directory="e2e-artifacts/live/${TARGET_ID}"',
+    'artifact_directory="${artifact_directory}-${SHARD}"',
+    'artifact_directory="${artifact_directory}/${SHARD}"',
+    'printf \'artifact_directory=%s\\n\' "$artifact_directory" >>"$GITHUB_OUTPUT"',
+    'printf \'upload_name=%s\\n\' "$upload_name" >>"$GITHUB_OUTPUT"',
+    'printf \'E2E_ARTIFACT_DIR=%s/%s\\n\' "$GITHUB_WORKSPACE_VALUE" "$artifact_directory" >>"$GITHUB_ENV"',
+    'printf \'NEMOCLAW_E2E_SHARD=%s\\n\' "$SHARD" >>"$GITHUB_ENV"',
+    'printf \'NEMOCLAW_GATEWAY_RUNTIME=%s\\n\' "$RUNTIME_PROVIDER" >>"$GITHUB_ENV"',
+  ];
+  if (
+    executionPlan?.id !== "execution_plan" ||
+    executionPlan.shell !== EXECUTION_PLAN_SHELL ||
+    workflowSteps.indexOf(executionPlan ?? {}) !== 0 ||
+    !isDeepStrictEqual(record(executionPlan.env), {
+      ARTIFACT_LAYOUT: "${{ inputs.artifact_layout }}",
+      BASH_ENV: "/dev/null",
+      CANDIDATE_REPOSITORY: "${{ inputs.candidate_repository }}",
+      CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+      CATALOGUE_ID: "${{ inputs.catalogue_id }}",
+      COVERAGE_VARIANT: "${{ inputs.coverage_variant }}",
+      ENV: "/dev/null",
+      EXECUTION_ID: "${{ inputs.execution_id }}",
+      GITHUB_WORKSPACE_VALUE: "${{ github.workspace }}",
+      HOST_PACKAGES: "${{ inputs.host_packages }}",
+      HOST_PREPARATION: "${{ inputs.host_preparation }}",
+      INSTALL_MODE: "${{ inputs.install_mode }}",
+      LC_ALL: "C",
+      RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
+      SHARD: "${{ inputs.shard }}",
+      TARGET_ID: "${{ inputs.target_id }}",
+      TEST_FILE: "${{ inputs.test_file }}",
+    }) ||
+    executionPlanFragments.some((fragment) => !executionPlanRun.includes(fragment))
+  ) {
+    errors.push(
+      "standard E2E profile must derive validated execution paths before candidate checkout",
+    );
+  }
+  const trustedSwap = requireStep(errors, workflowSteps, "Provision trusted Hermes E2E swap");
+  if (
+    trustedSwap?.if !== "${{ inputs.host_preparation == 'hermes-swap' }}" ||
+    trustedSwap.id !== "trusted_hermes_swap" ||
+    trustedSwap.shell !== EXECUTION_PLAN_SHELL ||
+    trustedSwap.run !== TRUSTED_HERMES_SWAP_SCRIPT ||
+    !isDeepStrictEqual(record(trustedSwap.env), {
+      BASH_ENV: "/dev/null",
+      CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+      DISPATCH_SHA: "${{ github.sha }}",
+      ENV: "/dev/null",
+      EVENT_NAME: "${{ github.event_name }}",
+      EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+      LC_ALL: "C",
+      REF: "${{ github.ref }}",
+      REPOSITORY: "${{ github.repository }}",
+      RUNNER_ARCH_KIND: "${{ runner.arch }}",
+      RUNNER_ENVIRONMENT_KIND: "${{ runner.environment }}",
+      RUNNER_OS_KIND: "${{ runner.os }}",
+      WORKFLOW_SHA: "${{ github.workflow_sha }}",
+    }) ||
+    workflowSteps.indexOf(trustedSwap) !== 1
+  ) {
+    errors.push("standard E2E profile must preserve trusted Hermes swap before candidate checkout");
+  }
+  const checkout = workflowSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
+  requirePinnedAction(errors, checkout, "checkout");
+  const checkoutWith = record(checkout?.with);
+  if (
+    checkout?.uses !== CHECKOUT ||
+    checkoutWith.repository !== "${{ inputs.candidate_repository }}" ||
+    checkoutWith.ref !== "${{ inputs.candidate_sha }}" ||
+    checkoutWith["fetch-depth"] !== 0 ||
+    checkoutWith["persist-credentials"] !== false ||
+    workflowSteps.indexOf(checkout ?? {}) !== 2
+  ) {
+    errors.push("standard E2E profile must check out checkout_sha without credentials");
+  }
+
+  const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");
+  if (auth?.uses !== E2E_ACTION_PROVENANCE.dockerAuth.reference) {
+    errors.push("standard E2E profile must use the reviewed Docker Hub authentication action");
+  }
+  const authInputs = record(auth?.with);
+  const expectedAuthInputs = {
+    "auth-required": "${{ inputs.trusted_main && '1' || '0' }}",
+    username: "${{ inputs.trusted_main && secrets.DOCKERHUB_USERNAME || '' }}",
+    token: "${{ inputs.trusted_main && secrets.DOCKERHUB_TOKEN || '' }}",
+  };
+  for (const [name, expected] of Object.entries(expectedAuthInputs)) {
+    if (authInputs[name] !== expected) {
+      errors.push(`standard E2E profile Docker Hub ${name} must be guarded by trusted_main`);
+    }
+  }
+
+  const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+
+  const hostDependencies = requireStep(errors, workflowSteps, "Install target host dependencies");
+  if (
+    hostDependencies?.if !== "${{ inputs.host_packages != '' }}" ||
+    hostDependencies.uses !== E2E_ACTION_PROVENANCE.hostDependencies.reference ||
+    record(hostDependencies.with).packages !== "${{ inputs.host_packages }}"
+  ) {
+    errors.push(
+      "standard E2E profile must install only the planned host packages with the reviewed action",
+    );
+  }
+  if (
+    hostDependencies &&
+    prepare &&
+    workflowSteps.indexOf(hostDependencies) >= workflowSteps.indexOf(prepare)
+  ) {
+    errors.push("standard E2E profile must install host dependencies before workspace prep");
+  }
+  if (
+    prepare?.uses !== E2E_ACTION_PROVENANCE.prepareWorkspace.reference ||
+    record(prepare?.with)["build-cli"] !== "false"
+  ) {
+    errors.push("standard E2E profile must prepare once without rebuilding the CLI");
+  }
+  const sdkDownload = requireStep(errors, workflowSteps, "Download reviewed OpenShell SDK archive");
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ inputs.openshell_sdk_artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push(
+      "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
+    );
+  }
+  const restore = requireStep(errors, workflowSteps, "Restore exact-commit CLI artifact");
+  if (
+    restore?.if !== "${{ inputs.restore_cli }}" ||
+    restore.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference ||
+    record(restore.with)["provenance-json"] !== "${{ inputs.cli_artifact_provenance }}"
+  ) {
+    errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
+  }
+  const nativePodmanRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare native Podman E2E runtime",
+  );
+  if (
+    nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
+    record(nativePodmanRuntime?.with).enabled !==
+      "${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}" ||
+    !restore ||
+    workflowSteps.indexOf(nativePodmanRuntime ?? {}) !== workflowSteps.indexOf(restore) + 1
+  ) {
+    errors.push("standard E2E profile must prepare the selected native Podman runtime");
+  }
+  const stoppedStateHelper = requireStep(
+    errors,
+    workflowSteps,
+    "Stage immutable stopped-state cleanup helper",
+  );
+  const stoppedStateHelperRun = String(stoppedStateHelper?.run ?? "");
+  if (
+    stoppedStateHelper?.if !==
+      "${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}" ||
+    stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(stoppedStateHelper.env), {
+      CLEANUP_IMAGE:
+        "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
+      RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
+    }) ||
+    !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||
+    !stoppedStateHelperRun.includes('podman --url "unix://$OPENSHELL_PODMAN_SOCKET" pull') ||
+    !stoppedStateHelperRun.includes('--authfile "$DOCKER_CONFIG/config.json" "$CLEANUP_IMAGE"') ||
+    workflowSteps.indexOf(stoppedStateHelper ?? {}) !==
+      workflowSteps.indexOf(nativePodmanRuntime ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must stage the immutable stopped-state helper once");
+  }
+  const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
+  const cloudflaredRun = String(cloudflared?.run ?? "");
+  if (
+    cloudflared?.if !== "${{ inputs.cloudflared }}" ||
+    cloudflared.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(cloudflared.env), {
+      CLOUDFLARED_VERSION: "2026.6.1",
+      CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+    }) ||
+    !cloudflaredRun.includes(
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
+    ) ||
+    !cloudflaredRun.includes("sha256sum -c -") ||
+    !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
+    !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
+    cloudflaredRun.includes("command -v cloudflared") ||
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must install only the reviewed cloudflared package");
+  }
+  const comparisonInitialize = requireStep(
+    errors,
+    workflowSteps,
+    "Initialize runner comparison telemetry",
+  );
+  if (
+    comparisonInitialize?.if !== "${{ inputs.runner_comparison && inputs.trusted_main }}" ||
+    comparisonInitialize["continue-on-error"] !== true ||
+    comparisonInitialize.run !== "npx tsx tools/e2e/runner-comparison.mts initialize"
+  ) {
+    errors.push("standard E2E profile must initialize only planned trusted-main runner telemetry");
+  }
+
+  const authenticatedInstall = requireStep(errors, workflowSteps, "Install OpenShell CLI");
+  if (
+    authenticatedInstall?.if !== "${{ inputs.install_mode == 'authenticated' }}" ||
+    record(authenticatedInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
+    authenticatedInstall.run !== "bash scripts/install-openshell.sh"
+  ) {
+    errors.push("standard E2E profile must gate authenticated OpenShell installation by mode");
+  }
+  const credentialFreeInstall = requireStep(
+    errors,
+    workflowSteps,
+    "Install OpenShell CLI without workflow credentials",
+  );
+  if (
+    credentialFreeInstall?.if !== "${{ inputs.install_mode == 'credential-free' }}" ||
+    record(credentialFreeInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
+    !String(credentialFreeInstall.run).includes("env -u DOCKER_CONFIG") ||
+    !String(credentialFreeInstall.run).includes("-u NVIDIA_INFERENCE_API_KEY")
+  ) {
+    errors.push(
+      "standard E2E profile must remove workflow credentials from credential-free installs",
+    );
+  }
+
+  const gpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare GPU launch-readiness runtime directory",
+  );
+  const gpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    'unit="user@${uid}.service"',
+    'prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"',
+    'if [[ "$prior_state" != "active" ]]; then',
+    '  [[ "$prior_state" == "inactive" ]]',
+    "  printf 'started=true\\n' >> \"$GITHUB_OUTPUT\"",
+    '  /usr/bin/sudo -n /usr/bin/systemctl start "$unit"',
+    "fi",
+    '/usr/bin/systemctl is-active --quiet "$unit"',
+    'runtime_directory="/run/user/$uid"',
+    '[[ -d "$runtime_directory" && ! -L "$runtime_directory" ]]',
+    '[[ "$(/usr/bin/stat -c \'%u:%a\' "$runtime_directory")" == "${uid}:700" ]]',
+  ].join("\n");
+  const restoreGpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Restore GPU launch-readiness runtime directory",
+  );
+  const restoreGpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    '/usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"',
+  ].join("\n");
+  if (
+    gpuRuntime?.id !== "gpu_runtime_directory" ||
+    gpuRuntime.if !==
+      "${{ inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' }}" ||
+    gpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(gpuRuntime.run).trim() !== gpuRuntimeScript ||
+    restoreGpuRuntime?.if !==
+      "${{ always() && inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' && steps.gpu_runtime_directory.outputs.started == 'true' }}" ||
+    restoreGpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(restoreGpuRuntime.run).trim() !== restoreGpuRuntimeScript
+  ) {
+    errors.push("GPU E2E must prepare and restore only its OS-managed user runtime directory");
+  }
+
+  const execute = requireStep(errors, workflowSteps, "Run catalogue E2E target");
+  const executeEnv = record(execute?.env);
+  if (
+    !String(execute?.run).includes('if [ "$INSTALL_MODE" != "none" ]; then') ||
+    !String(execute?.run).includes('OPENSHELL_BIN="$(command -v openshell)"') ||
+    !String(execute?.run).includes('"$OPENSHELL_BIN" --version') ||
+    !String(execute?.run).includes(
+      'npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"',
+    ) ||
+    executeEnv.INSTALL_MODE !== "${{ inputs.install_mode }}" ||
+    executeEnv.CATALOGUE_ID !== "${{ inputs.catalogue_id }}" ||
+    executeEnv.TEST_FILE !== "${{ inputs.test_file }}" ||
+    executeEnv.NVIDIA_API_KEY !== "${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}" ||
+    executeEnv.NVIDIA_INFERENCE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
+    executeEnv.COMPATIBLE_API_KEY !==
+      "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
+    executeEnv.GITHUB_TOKEN !==
+      "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
+  ) {
+    errors.push("standard E2E profile must run the planned catalogue target with guarded secrets");
+  }
+
+  const skillUpload = requireStep(errors, workflowSteps, "Upload skill-agent artifacts");
+  if (
+    skillUpload?.if !==
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id == 'skill-agent' }}" ||
+    skillUpload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
+    !isDeepStrictEqual(record(skillUpload.with), {
+      name: "${{ steps.execution_plan.outputs.upload_name }}",
+      path: SKILL_AGENT_UPLOAD_PATH,
+    })
+  ) {
+    errors.push(
+      "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",
+    );
+  }
+  const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
+  if (
+    upload?.if !==
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}" ||
+    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
+    !isDeepStrictEqual(record(upload.with), {
+      name: "${{ steps.execution_plan.outputs.upload_name }}",
+      path: "${{ steps.execution_plan.outputs.artifact_directory }}/",
+    })
+  ) {
+    errors.push(
+      "standard E2E profile must upload only its validated artifact path with the reviewed action",
+    );
+  }
+  const restoreNativePodman = requireStep(
+    errors,
+    workflowSteps,
+    "Restore Docker CLI after native Podman E2E",
+  );
+  if (
+    restoreNativePodman?.if !== "${{ always() && inputs.runtime_provider == 'podman' }}" ||
+    restoreNativePodman.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
+    !isDeepStrictEqual(record(restoreNativePodman.with), { enabled: "true" }) ||
+    workflowSteps.indexOf(restoreNativePodman ?? {}) <= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push("standard E2E profile must restore Docker after native Podman artifact capture");
+  }
+  const comparisonFinalize = requireStep(
+    errors,
+    workflowSteps,
+    "Finalize runner comparison telemetry",
+  );
+  if (
+    comparisonFinalize?.if !==
+      "${{ always() && inputs.runner_comparison && inputs.trusted_main }}" ||
+    comparisonFinalize["continue-on-error"] !== true ||
+    comparisonFinalize.run !== "npx tsx tools/e2e/runner-comparison.mts finalize" ||
+    workflowSteps.indexOf(comparisonFinalize ?? {}) >= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push(
+      "standard E2E profile must finalize planned runner telemetry before artifact upload",
+    );
+  }
+  const evidence = requireStep(errors, workflowSteps, "Write E2E evidence manifest");
+  const evidenceEnv = record(evidence?.env);
+  const evidenceRun = String(evidence?.run ?? "");
+  if (
+    evidence?.if !== "${{ always() && steps.execution_plan.outcome == 'success' }}" ||
+    evidenceEnv.ARTIFACT_DIRECTORY !== "${{ steps.execution_plan.outputs.artifact_directory }}" ||
+    evidenceEnv.CANDIDATE_SHA !== "${{ inputs.candidate_sha }}" ||
+    evidenceEnv.COVERAGE_VARIANT !== "${{ inputs.coverage_variant }}" ||
+    evidenceEnv.EXECUTION_ID !== "${{ inputs.execution_id }}" ||
+    evidenceEnv.RUNTIME_PROVIDER !== "${{ inputs.runtime_provider }}" ||
+    evidenceEnv.WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
+    evidenceEnv.JOB_STATUS !== "${{ job.status }}" ||
+    !evidenceRun.includes('kind: "nemoclaw-e2e-evidence-v1"') ||
+    !evidenceRun.includes("executionId: $executionId") ||
+    !evidenceRun.includes("coverageVariant: $coverageVariant") ||
+    !evidenceRun.includes("runtimeProvider: $runtimeProvider") ||
+    !evidenceRun.includes("successful E2E target produced no product evidence") ||
+    !evidenceRun.includes('>"$ARTIFACT_DIRECTORY/evidence-manifest.json"') ||
+    workflowSteps.indexOf(evidence ?? {}) >= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push(
+      "standard E2E profile must write exact-commit product evidence before artifact upload",
+    );
+  }
+  const cleanup = namedStep(workflowSteps, "Clean up Docker auth");
+  if (
+    cleanup?.if !== "always()" ||
+    cleanup.run !== "bash .github/scripts/docker-auth-cleanup.sh" ||
+    workflowSteps.indexOf(restoreNativePodman ?? {}) >= workflowSteps.indexOf(cleanup ?? {}) ||
+    workflowSteps.at(-1) !== cleanup
+  ) {
+    errors.push("standard E2E profile must always clean up Docker authentication last");
+  }
+}
+
+export function validateStandardProfileWorkflowBoundary(
+  workflow: WorkflowRecord,
+  profilePath = DEFAULT_PROFILE_PATH,
+): string[] {
+  const errors: string[] = [];
+  validateProfileCallers(errors, workflow);
+  validateProfileWorkflow(errors, record(YAML.parse(readFileSync(profilePath, "utf8"))));
+  return errors;
+}

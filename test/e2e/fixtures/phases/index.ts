@@ -1,0 +1,48 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+export {
+  CONFIG_EXPORT_EVIDENCE_CONTRACT,
+  type ConfigExportEvidenceEnvelope,
+  ConfigExportValidationPhaseFixture,
+  type ConfigExportVerification,
+} from "./config-export-validation.ts";
+export {
+  EnvironmentPhaseFixture,
+  type EnvironmentReady,
+  type RuntimeExpectation,
+  type RuntimeReady,
+} from "./environment.ts";
+export {
+  type DcodeInvalidCredentialRebuildOptions,
+  dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
+  type LifecycleCleanup,
+  LifecyclePhaseFixture,
+  type LifecycleProfile,
+  type LifecycleResult,
+  type LifecycleSimulationOptions,
+} from "./lifecycle.ts";
+export {
+  type NemoClawInstance,
+  type OnboardingExpectedFailure,
+  type OnboardingOptions,
+  OnboardingPhaseFixture,
+  type OnboardingSecrets,
+} from "./onboarding.ts";
+export {
+  type InferenceRoute,
+  type InferenceRuntimeChatOptions,
+  type InferenceRuntimeProbeResult,
+  type InferenceRuntimeRequestOptions,
+  type InferenceRuntimeRouteOptions,
+  type InferenceRuntimeStatusOptions,
+  inferenceRouteUrl,
+  type ProviderRuntimeRequestOptions,
+  RuntimePhaseFixture,
+} from "./runtime.ts";
+export {
+  readRegistrySandboxEntry,
+  StateValidationPhaseFixture,
+  type StateValidationProbeResult,
+  type StateValidationResult,
+} from "./state-validation.ts";

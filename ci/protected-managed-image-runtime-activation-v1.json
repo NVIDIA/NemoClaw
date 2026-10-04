@@ -1,0 +1,8 @@
+{
+  "contractVersion": 2,
+  "jobId": "managed-image-protected-runtime",
+  "platform": "linux/amd64",
+  "providers": ["ollama", "nim", "vllm"],
+  "agents": ["openclaw", "hermes", "langchain-deepagents-code"],
+  "runtimeUser": "sandbox"
+}

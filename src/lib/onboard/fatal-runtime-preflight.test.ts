@@ -1,0 +1,1499 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  preparePortableExperimentalHost: vi.fn(),
+  prepareRuntimeHost: vi.fn(({ environment }: { environment: NodeJS.ProcessEnv }) => ({
+    sandboxHostAddress: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
+  })),
+}));
+
+vi.mock("./experimental/portable-host-preparation", () => ({
+  preparePortableExperimentalHost: mocks.preparePortableExperimentalHost,
+}));
+
+vi.mock("./runtime-provider/selection", () => ({
+  resolveConfiguredRuntimeProvider: (
+    _platform: NodeJS.Platform,
+    _architecture: NodeJS.Architecture,
+    environment: NodeJS.ProcessEnv,
+  ) => ({
+    identity: {
+      id: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker",
+      displayName: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "Podman" : "Docker",
+    },
+    gateway: {
+      supported: true,
+      ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
+      observeHostRuntime: mocks.prepareRuntimeHost,
+      prepareHostRuntime: mocks.prepareRuntimeHost,
+    },
+  }),
+}));
+
+import { selectDefaultOllamaModel } from "../inference/local";
+import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
+import type { GatewayObservationSnapshot, GatewayReadinessProjection } from "../readiness/gateway";
+import type { SystemReadinessReport } from "../readiness/types";
+import * as platformQualification from "../readiness/platform-qualification";
+import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import {
+  assertOnboardGatewayReadiness,
+  assertOnboardHostReadiness,
+  assertOnboardSystemReadiness,
+  type CollectedGatewayReadiness,
+  runFatalOnboardRuntimePreflight,
+  runOnboardRuntimeEffectfulPreflightChecks,
+  runReadinessGatedRuntimePreflight,
+} from "./fatal-runtime-preflight";
+import type { HostAssessment } from "./preflight";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
+import { createArm64ContainerGpuProver } from "./runtime-provider/nvidia-container-proof";
+
+function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
+  return {
+    platform: "linux",
+    isWsl: false,
+    runtime,
+    dockerInstalled: true,
+    dockerRunning: true,
+    dockerReachable: true,
+    nodeInstalled: true,
+    openshellInstalled: true,
+    isContainerRuntimeUnderProvisioned: false,
+    hasNestedOverlayConflict: false,
+    requiresHostCgroupnsFix: false,
+    isUnsupportedRuntime: runtime === "podman",
+    isHeadlessLikely: false,
+    hasNvidiaGpu: false,
+    dockerCdiSpecDirs: [],
+    cdiNvidiaGpuSpecMissing: false,
+    nvidiaContainerToolkitInstalled: false,
+    notes: [],
+  };
+}
+
+function hostWithoutDocker(): HostAssessment {
+  return {
+    ...hostWithRuntime("unknown"),
+    dockerInstalled: false,
+    dockerRunning: false,
+    dockerReachable: false,
+  };
+}
+
+function hostWithMissingGpuIntegration(): HostAssessment {
+  return {
+    ...hostWithRuntime("docker"),
+    hasNvidiaGpu: true,
+    dockerCdiSpecDirs: ["/etc/cdi"],
+    cdiNvidiaGpuSpecMissing: true,
+    cdiNvidiaGpuSpecStale: false,
+    cdiNvidiaGpuSpecNeedsRepair: true,
+    nvidiaContainerToolkitInstalled: false,
+  };
+}
+
+function wslDockerDesktopHost(): HostAssessment {
+  return {
+    ...hostWithRuntime("docker-desktop"),
+    isWsl: true,
+    hasNvidiaGpu: true,
+    nvidiaContainerToolkitInstalled: false,
+  };
+}
+
+function wslPodmanHost(): HostAssessment {
+  return {
+    ...hostWithoutDocker(),
+    isWsl: true,
+    hasNvidiaGpu: true,
+    nvidiaContainerToolkitInstalled: true,
+  };
+}
+
+function managedGatewayReadiness(
+  overrides: Partial<GatewayReadinessProjection> = {},
+): GatewayReadinessProjection {
+  return {
+    observations: [{ id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" }],
+    capabilities: [
+      { id: "gateway.authority.resolved", state: "present" },
+      { id: "gateway.attachment.valid", state: "present" },
+      { id: "gateway.reuse.ready", state: "present" },
+      { id: "gateway.version.compatible", state: "present" },
+      { id: "gateway.port.uncontested", state: "present" },
+    ],
+    findings: [],
+    evidence: [],
+    ...overrides,
+  };
+}
+
+function managedGatewaySnapshot(
+  completedAt = new Date().toISOString(),
+): GatewayObservationSnapshot {
+  return {
+    observedAt: completedAt,
+    completedAt,
+    observations: {
+      owner: {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      },
+      attachmentState: "not-applicable",
+      reuseState: "healthy",
+      driftState: "not-detected",
+      portConflictState: "none",
+    },
+  };
+}
+
+function collectedGatewayReadiness(
+  projection: GatewayReadinessProjection = managedGatewayReadiness(),
+  completedAt?: string,
+): CollectedGatewayReadiness {
+  return { projection, snapshot: managedGatewaySnapshot(completedAt) };
+}
+
+async function withLinuxArm64<T>(operation: () => Promise<T>): Promise<T> {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+  Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+  try {
+    return await operation();
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    Object.defineProperty(process, "arch", arch);
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+describe("report-backed runtime readiness (#7411)", () => {
+  it("requires explicit N1x intent and lets rebuild reject ambient intent (#9292)", () => {
+    const readiness: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "incompatible",
+      exitCode: 2,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-12T00:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [
+        { id: "host.docker.available", state: "present" },
+        { id: "host.docker.daemon_reachable", state: "present" },
+        { id: "host.docker.runtime_supported", state: "present" },
+        { id: "host.docker.storage_compatible", state: "present" },
+        { id: "host.docker.storage_remediation_available", state: "absent" },
+        { id: "host.gpu.nvidia_available", state: "present" },
+        { id: "host.gpu.container_toolkit_available", state: "present" },
+        { id: "host.gpu.cdi_healthy", state: "present" },
+        { id: "host.platform.supported", state: "absent" },
+        { id: "host.platform.n1x", state: "present" },
+      ],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.platform.n1x_validation_pending",
+          severity: "blocking",
+          summary: "N1x validation is pending.",
+        },
+      ],
+      evidence: [],
+    };
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowDeferredN1xOnboarding: true,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "");
+    vi.stubEnv("NEMOCLAW_NO_EXPRESS", "1");
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowDeferredN1xOnboarding: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+  });
+
+  it("rejects ambiguous gateway ownership before the caller can run effects", () => {
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    });
+    const gateway: GatewayReadinessProjection = {
+      observations: [],
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "present" },
+        { id: "gateway.attachment.valid", state: "absent" },
+        { id: "gateway.reuse.ready", state: "present" },
+        { id: "gateway.version.compatible", state: "present" },
+        { id: "gateway.port.uncontested", state: "absent" },
+      ],
+      findings: [
+        {
+          id: "gateway.ownership.multiple",
+          severity: "blocking",
+          summary: "Multiple gateway owners were observed.",
+        },
+      ],
+      evidence: [
+        {
+          id: "gateway.attachment.failure",
+          summary: "Stop the competing listener on port 8080 and retry.",
+        },
+      ],
+    };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() => assertOnboardGatewayReadiness(gateway, exit as never)).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(error).toHaveBeenCalledWith("  Stop the competing listener on port 8080 and retry.");
+  });
+
+  it("preserves actionable managed port evidence at the readiness gate", () => {
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    });
+    const gateway = managedGatewayReadiness({
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "present" },
+        { id: "gateway.attachment.valid", state: "present" },
+        { id: "gateway.reuse.ready", state: "present" },
+        { id: "gateway.version.compatible", state: "present" },
+        { id: "gateway.port.uncontested", state: "absent" },
+      ],
+      findings: [
+        {
+          id: "gateway.port.owner_mismatch",
+          severity: "blocking",
+          summary: "The gateway port has an incompatible owner.",
+          evidenceIds: ["gateway.port.conflict"],
+        },
+      ],
+      evidence: [
+        {
+          id: "gateway.port.conflict",
+          summary: "Inspect port 8080 and stop only its owning process before retrying.",
+        },
+      ],
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() => assertOnboardGatewayReadiness(gateway, exit as never)).toThrow("exit");
+    expect(error).toHaveBeenCalledWith(
+      "  Inspect port 8080 and stop only its owning process before retrying.",
+    );
+  });
+
+  // The Docker-driver gateway path is forced on Linux and Apple Silicon macOS;
+  // the reject gate only fires there. Gate the test on the same predicate via
+  // it.skipIf (not an in-body `if`) so it runs on the Linux CI runner.
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "exits when Podman is detected on a Docker-driver gateway platform",
+    () => {
+      const exit = vi.fn(() => {
+        throw new Error("exit");
+      });
+      expect(() =>
+        assertOnboardHostReadiness(hostWithRuntime("podman"), null, {
+          explicitlyOptedOutGpuPassthrough: false,
+          exitProcess: exit as never,
+        }),
+      ).toThrow("exit");
+      expect(exit).toHaveBeenCalledWith(1);
+    },
+  );
+
+  it("does not exit for a supported Docker runtime", () => {
+    const exit = vi.fn();
+    assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: false,
+      exitProcess: exit as never,
+    });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("presents warning advisories by default at the system readiness boundary", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host: HostAssessment = {
+      ...hostWithRuntime("docker-desktop"),
+      isHeadlessLikely: true,
+      dockerCredsStore: "desktop",
+      dockerCredsStorePath: "~/.docker/config.json",
+    };
+    const readiness = assertOnboardHostReadiness(host, null, {
+      explicitlyOptedOutGpuPassthrough: false,
+      presentAdvisories: false,
+    });
+
+    assertOnboardSystemReadiness(readiness, host, {
+      explicitlyOptedOutGpuPassthrough: false,
+    });
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
+  });
+
+  it("retains warning remediation when a repeated readiness check blocks", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host: HostAssessment = {
+      ...hostWithRuntime("docker-desktop"),
+      dockerRunning: false,
+      dockerReachable: false,
+      isHeadlessLikely: true,
+      dockerCredsStore: "desktop",
+      dockerCredsStorePath: "~/.docker/config.json",
+    };
+    expect(() =>
+      assertOnboardHostReadiness(host, null, {
+        explicitlyOptedOutGpuPassthrough: false,
+        presentAdvisories: false,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
+  });
+
+  it("rejects an unsupported DOCKER_HOST before runtime probe effects (#7411)", async () => {
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const exitProcess = vi.fn((_code: number): never => {
+      throw new Error("invalid Docker endpoint");
+    });
+
+    await expect(
+      runReadinessGatedRuntimePreflight(
+        {},
+        {
+          nonInteractive: true,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
+          assessHost: () => ({
+            ...hostWithRuntime("docker"),
+            dockerHostInvalid: true,
+          }),
+          detectGpu: () => null,
+          warnIfHostProxyMissesLoopback: vi.fn(),
+          assertRuntimeProviderHealthy: bridge,
+          validateSandboxGpuPreflight: validateGpu,
+          exitProcess,
+        },
+      ),
+    ).rejects.toThrow("invalid Docker endpoint");
+
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(bridge).not.toHaveBeenCalled();
+    expect(validateGpu).not.toHaveBeenCalled();
+  });
+
+  it("preserves Jetson NVIDIA runtime remediation before GPU-enabled effects (#7411)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = {
+      ...hostWithRuntime("docker"),
+      hasNvidiaGpu: true,
+      dockerNvidiaRuntimeAvailable: false,
+      cdiNvidiaGpuSpecMissing: true,
+      cdiNvidiaGpuSpecNeedsRepair: true,
+      nvidiaContainerToolkitInstalled: true,
+    };
+    const gpu: GpuDetection = {
+      type: "nvidia",
+      platform: "jetson",
+      count: 1,
+      totalMemoryMB: 8_192,
+      perGpuMB: 8_192,
+      nimCapable: true,
+    };
+
+    expect(() =>
+      assertOnboardHostReadiness(host, gpu, {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("sudo nvidia-ctk runtime configure --runtime=docker");
+    expect(output).not.toContain("Generate NVIDIA CDI device specs");
+    expect(output).not.toContain("nvidia-ctk cdi generate");
+
+    const optOutExit = vi.fn();
+    assertOnboardHostReadiness(host, gpu, {
+      explicitlyOptedOutGpuPassthrough: true,
+      exitProcess: optOutExit as never,
+    });
+    expect(optOutExit).not.toHaveBeenCalled();
+  });
+
+  it("admits a host collection slower than the reuse window (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const observedAt = "2026-08-31T12:00:00.000Z";
+    const projectedAt = new Date(Date.parse(observedAt) + 45_000);
+
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      observedAt,
+      now: () => projectedAt,
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(report.provenance.observedAt).toBe(observedAt);
+  });
+
+  it("uses collection completion as provenance when no start is supplied (#10670)", () => {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      collectedAt,
+      now: () => new Date("2026-08-31T12:00:01.000Z"),
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.provenance.observedAt).toBe(collectedAt);
+  });
+
+  function slowMetadataAdmission(reuseDelay: number) {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    let currentTime = Date.parse(collectedAt) + reuseDelay;
+    vi.spyOn(platformQualification, "collectPlatformIdentity").mockImplementation(() => {
+      currentTime += 45_000;
+      return {};
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const admit = () =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => new Date(currentTime),
+        presentAdvisories: false,
+        exitProcess: exit,
+      });
+    return { admit, exit };
+  }
+
+  it("excludes slow metadata collection from host reuse age (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(0);
+    expect(admit().evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale caller facts even after slow metadata collection (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(45_000);
+    expect(admit).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("charges a delay between host collection and the gate (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const gatedAt = new Date(Date.parse(collectedAt) + 45_000);
+
+    expect(() =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => gatedAt,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 45000ms old against a 30000ms window",
+    );
+  });
+
+  it.each([
+    ["an invalid observation start", "not-a-timestamp", "2026-08-31T12:00:00.000Z"],
+    ["an invalid collection completion", "2026-08-31T11:59:30.000Z", "not-a-timestamp"],
+    [
+      "a clock step backward during collection",
+      "2026-08-31T12:00:30.000Z",
+      "2026-08-31T12:00:00.000Z",
+    ],
+  ])("rejects %s at host admission (#10670)", (_case, observedAt, collectedAt) => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt,
+        collectedAt,
+        now: () => new Date("2026-08-31T12:00:00.000Z"),
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(error.mock.calls.map(([line]) => line).join("\n")).toContain(
+      "Host collection timestamps are invalid or out of order.",
+    );
+  });
+
+  it("names the host evidence behind an unconfirmed capability list (#10670)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const collapsed: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "inconclusive",
+      exitCode: 3,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-31T12:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.probe.inconclusive",
+          severity: "warning",
+          summary: "Host observations could not be collected safely.",
+        },
+      ],
+      evidence: [
+        {
+          id: "host.probe.stale",
+          summary:
+            "Host observations exceeded their safe reuse window: 41234ms old against a 30000ms window.",
+        },
+      ],
+    };
+
+    expect(() =>
+      assertOnboardSystemReadiness(collapsed, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: true,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("could not confirm required capabilities: host.docker.available");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 41234ms old against a 30000ms window",
+    );
+  });
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "allows Podman only when the portable profile is explicit",
+    () => {
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+      const exit = vi.fn();
+      assertOnboardHostReadiness(hostWithRuntime("podman"), null, {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      });
+      expect(exit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "allows Docker-less onboarding when the native Podman gateway runtime is explicit",
+    () => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      const exit = vi.fn();
+      assertOnboardHostReadiness(hostWithoutDocker(), null, {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      });
+      expect(exit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "rejects unrelated blockers before native Podman host preparation",
+    () => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      const exit = vi.fn((_code: number): never => {
+        throw new Error("exit");
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const host = {
+        ...hostWithMissingGpuIntegration(),
+        dockerInstalled: false,
+        dockerReachable: false,
+        dockerRunning: false,
+        runtime: "unknown" as const,
+      };
+      const gpu: GpuDetection = {
+        type: "nvidia",
+        platform: "linux",
+        count: 1,
+        totalMemoryMB: 24_576,
+        perGpuMB: 24_576,
+        nimCapable: true,
+      };
+
+      expect(() =>
+        assertOnboardHostReadiness(host, gpu, {
+          explicitlyOptedOutGpuPassthrough: false,
+          exitProcess: exit,
+        }),
+      ).toThrow("exit");
+      expect(mocks.prepareRuntimeHost).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.map(([line]) => line)
+          .join("\n"),
+      ).not.toContain("Install Docker");
+    },
+  );
+});
+
+describe("runFatalOnboardRuntimePreflight", () => {
+  it("does not charge fresh onboarding for its host and GPU probes (#10670)", () => {
+    const startedAt = Date.parse("2026-08-31T12:00:00.000Z");
+    let currentTime = startedAt;
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+
+    const result = runFatalOnboardRuntimePreflight(
+      { noGpu: true },
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        assessHost: () => {
+          currentTime += 10_000;
+          return hostWithRuntime("docker");
+        },
+        detectGpu: () => {
+          currentTime += 35_000;
+          return null;
+        },
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+        exitProcess: exit,
+      },
+    );
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(result.readinessReport.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(result.readinessReport.provenance.observedAt).toBe(new Date(startedAt).toISOString());
+  });
+
+  it.each([
+    ["the CLI disable flag", { sandboxGpu: "disable" as const }, {}],
+    ["the environment CPU-only mode", {}, { NEMOCLAW_SANDBOX_GPU: "0" }],
+  ])("treats %s as explicit CPU-only intent", (_label, options, env) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    const result = runFatalOnboardRuntimePreflight(options, {
+      nonInteractive: true,
+      assessHost: () => hostWithMissingGpuIntegration(),
+      detectGpu: () => ({
+        type: "nvidia",
+        count: 1,
+        totalMemoryMB: 24_576,
+        perGpuMB: 24_576,
+        nimCapable: true,
+      }),
+      warnIfHostProxyMissesLoopback: vi.fn(),
+      assertRuntimeProviderHealthy: vi.fn(),
+      validateSandboxGpuPreflight: vi.fn(),
+      exitProcess: vi.fn(() => {
+        throw new Error("unexpected exit");
+      }) as never,
+    });
+
+    expect(result.sandboxGpuConfig.mode).toBe("0");
+  });
+
+  it("does not duplicate locked portable preparation inside runtime preflight", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const assess = vi.fn(() => hostWithRuntime("docker"));
+
+    runFatalOnboardRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        assessHost: assess,
+        detectGpu: () => null,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+      },
+    );
+    expect(assess).toHaveBeenCalledOnce();
+    expect(mocks.preparePortableExperimentalHost).not.toHaveBeenCalled();
+  });
+
+  it("defers image and container checks until the caller explicitly runs them", () => {
+    const bridge = vi.fn();
+    const gpu = vi.fn();
+    const context = {
+      nonInteractive: true,
+      deferEffectfulChecks: true,
+      assessHost: () => hostWithRuntime("docker"),
+      detectGpu: () => null,
+      warnIfHostProxyMissesLoopback: vi.fn(),
+      assertRuntimeProviderHealthy: (_host: HostAssessment, config: SandboxGpuConfig) => {
+        gpu(config);
+        bridge();
+      },
+      validateSandboxGpuPreflight: gpu,
+    };
+
+    const result = runFatalOnboardRuntimePreflight({}, context);
+    expect(bridge).not.toHaveBeenCalled();
+    expect(gpu).not.toHaveBeenCalled();
+
+    runOnboardRuntimeEffectfulPreflightChecks(result, context);
+    expect(bridge).toHaveBeenCalledOnce();
+    expect(gpu).toHaveBeenCalledOnce();
+  });
+
+  it("disables the container-backed WSL GPU prover during host admission", () => {
+    const detect = vi.fn((_deps?: DetectGpuDeps): GpuDetection | null => null);
+    const collectWslNvidiaProduct = vi.fn(() => undefined);
+
+    runFatalOnboardRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        deferEffectfulChecks: true,
+        assessHost: wslDockerDesktopHost,
+        detectGpu: detect,
+        collectWslNvidiaProduct,
+      },
+    );
+
+    expect(collectWslNvidiaProduct).toHaveBeenCalledOnce();
+    expect(detect).toHaveBeenCalledOnce();
+    expect(detect).toHaveBeenCalledWith(
+      expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
+    );
+  });
+
+  it("rejects known GPU configuration errors before bridge or GPU container probes (#7411)", () => {
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const exitProcess = vi.fn((_code: number): never => {
+      throw new Error("invalid GPU configuration");
+    });
+    const context = {
+      nonInteractive: true,
+      deferEffectfulChecks: true,
+      assessHost: () => hostWithRuntime("docker"),
+      detectGpu: () => null,
+      warnIfHostProxyMissesLoopback: vi.fn(),
+      assertRuntimeProviderHealthy: bridge,
+      validateSandboxGpuPreflight: validateGpu,
+      exitProcess,
+    };
+    const result = runFatalOnboardRuntimePreflight({ sandboxGpu: "enable" }, context);
+
+    expect(() => runOnboardRuntimeEffectfulPreflightChecks(result, context)).toThrow(
+      "invalid GPU configuration",
+    );
+    expect(bridge).not.toHaveBeenCalled();
+    expect(validateGpu).not.toHaveBeenCalled();
+  });
+});
+
+describe("readiness-gated runtime preflight", () => {
+  it("recollects host facts after a gateway collection exceeds the freshness window (#7411)", async () => {
+    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const assessHost = vi.fn(() => hostWithRuntime("docker"));
+    const gatewayCollectionDelays = [0, 0, 30_001];
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        collectGatewayReadiness: async () => {
+          currentTime += gatewayCollectionDelays.shift() ?? 0;
+          return collectedGatewayReadiness(
+            managedGatewayReadiness(),
+            new Date(currentTime).toISOString(),
+          );
+        },
+        assessHost,
+        detectGpu: () => null,
+        assertRuntimeProviderHealthy: (_host, config) => {
+          validateGpu(config);
+          bridge();
+        },
+        validateSandboxGpuPreflight: validateGpu,
+      },
+    );
+
+    expect(assessHost).toHaveBeenCalledTimes(3);
+    expect(result.readinessReport.evidence).not.toContainEqual(
+      expect.objectContaining({ id: "host.probe.stale" }),
+    );
+    expect(bridge).toHaveBeenCalledOnce();
+    expect(validateGpu).toHaveBeenCalledOnce();
+  });
+
+  it("recollects gateway facts when refreshing the host expires the paired snapshot (#7411)", async () => {
+    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const gatewayCollectionDelays = [0, 0, 30_001];
+    const hostCollectionDelays = [0, 0, 30_001];
+    const collectGatewayReadiness = vi.fn(async () => {
+      currentTime += gatewayCollectionDelays.shift() ?? 0;
+      return collectedGatewayReadiness(
+        managedGatewayReadiness(),
+        new Date(currentTime).toISOString(),
+      );
+    });
+    const assessHost = vi.fn(() => {
+      currentTime += hostCollectionDelays.shift() ?? 0;
+      return hostWithRuntime("docker");
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        collectGatewayReadiness,
+        assessHost,
+        detectGpu: () => null,
+        assertRuntimeProviderHealthy: (_host, config) => {
+          validateGpu(config);
+          bridge();
+        },
+        validateSandboxGpuPreflight: validateGpu,
+      },
+    );
+
+    expect(assessHost).toHaveBeenCalledTimes(3);
+    expect(collectGatewayReadiness).toHaveBeenCalledTimes(5);
+    expect(result.gatewayReadiness.evidence).not.toContainEqual(
+      expect.objectContaining({ id: "gateway.probe.stale" }),
+    );
+    expect(bridge).toHaveBeenCalledOnce();
+    expect(validateGpu).toHaveBeenCalledOnce();
+  });
+
+  it("rejects the initial gateway snapshot before collecting host facts", async () => {
+    const assessHost = vi.fn(wslDockerDesktopHost);
+    const detectGpu = vi.fn((_deps?: DetectGpuDeps): GpuDetection | null => null);
+    const exitProcess = vi.fn(() => {
+      throw new Error("gateway blocked");
+    });
+    const blocked = managedGatewayReadiness({
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "absent" },
+        { id: "gateway.attachment.valid", state: "absent" },
+        { id: "gateway.reuse.ready", state: "absent" },
+        { id: "gateway.version.compatible", state: "unknown" },
+        { id: "gateway.port.uncontested", state: "unknown" },
+      ],
+      findings: [
+        {
+          id: "gateway.ownership.multiple",
+          severity: "blocking",
+          summary: "Multiple gateway owners were observed.",
+        },
+      ],
+    });
+
+    await expect(
+      runReadinessGatedRuntimePreflight(
+        {},
+        {
+          nonInteractive: true,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(blocked),
+          assessHost,
+          detectGpu,
+          exitProcess: exitProcess as never,
+        },
+      ),
+    ).rejects.toThrow("gateway blocked");
+    expect(assessHost).not.toHaveBeenCalled();
+    expect(detectGpu).not.toHaveBeenCalled();
+  });
+
+  it("runs the bounded WSL GPU proof only after host and gateway admission", async () => {
+    const calls: string[] = [];
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      calls.push(isObservation ? "gpu-observation" : "gpu-runtime-proof");
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 32_768,
+            perGpuMB: 32_768,
+            nimCapable: true,
+            containerGpuProof: { providerId: "docker", passed: true },
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: async () => {
+          calls.push("gateway-admission");
+          return collectedGatewayReadiness();
+        },
+        assessHost: () => {
+          calls.push("host-observation");
+          return wslDockerDesktopHost();
+        },
+        detectGpu,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu-validation");
+          calls.push("bridge-dns");
+        },
+        validateSandboxGpuPreflight: () => calls.push("gpu-validation"),
+      },
+    );
+
+    expect(calls).toEqual([
+      "gateway-admission",
+      "host-observation",
+      "gpu-observation",
+      "gateway-admission",
+      "host-observation",
+      "gpu-observation",
+      "gateway-admission",
+      "gpu-runtime-proof",
+      "host-observation",
+      "gateway-admission",
+      "gpu-validation",
+      "bridge-dns",
+    ]);
+    expect(result.gpu).toMatchObject({
+      containerGpuProof: { providerId: "docker", passed: true },
+    });
+  });
+
+  it("reuses one N1x WSL product observation across GPU and readiness classification", async () => {
+    const collectWslNvidiaProduct = vi.fn(() => ({ n1x: true, stationGb300: false }));
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      !isObservation && deps?.onContainerGpuProof?.({ providerId: "docker", passed: true });
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 63_936,
+            availableMemoryMB: 60_000,
+            perGpuMB: 63_936,
+            nimCapable: true,
+            containerGpuProof: { providerId: "docker", passed: true },
+            n1xWslProduct: deps?.n1xWslProduct ?? null,
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: async () => collectedGatewayReadiness(),
+        assessHost: wslDockerDesktopHost,
+        detectGpu,
+        collectWslNvidiaProduct,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+      },
+    );
+
+    expect(collectWslNvidiaProduct).toHaveBeenCalledOnce();
+    expect(new Set(detectGpu.mock.calls.map(([deps]) => deps?.n1xWslProduct))).toEqual(
+      new Set([true]),
+    );
+    expect(result.n1xWslProduct).toBe(true);
+    expect(result.gpu?.n1xWslProduct).toBe(true);
+  });
+
+  const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
+  const ACCEPTED_5120_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)";
+  const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
+  async function runRealProviderPreflight(
+    gpuName: string,
+    n1xWslProduct: boolean | undefined,
+    provedGpuName = gpuName,
+  ) {
+    // The proof phase lets `detectGpu()` detect WSL itself; N1x classification requires WSL.
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, ${provedGpuName}, 63936, 60000\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const runCaptureImpl = vi.fn((command: readonly string[]) =>
+      command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
+        ? `${gpuName}, 63936, 60000\n`
+        : "",
+    );
+
+    const result = await withLinuxArm64(() =>
+      runReadinessGatedRuntimePreflight(
+        {},
+        {
+          nonInteractive: true,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
+          assessHost: wslDockerDesktopHost,
+          runCaptureImpl,
+          collectWslNvidiaProduct: vi.fn(() =>
+            n1xWslProduct === undefined ? undefined : { n1x: n1xWslProduct, stationGb300: false },
+          ),
+          createArm64ContainerGpuProver: () =>
+            createArm64ContainerGpuProver({
+              platform: "linux",
+              arch: "arm64",
+              resolveRuntimeProvider: () => provider,
+              log: () => undefined,
+            }),
+          warnIfHostProxyMissesLoopback: vi.fn(),
+          assertRuntimeProviderHealthy: vi.fn(),
+          validateSandboxGpuPreflight: vi.fn(),
+        },
+      ),
+    );
+    return { gpu: result.gpu, readinessReport: result.readinessReport, captureHostCommand };
+  }
+
+  it.each([
+    ["an accepted GPU identity and a qualifying chassis model", ACCEPTED_N1X_GPU_NAME, true, "n1x"],
+    ["an accepted GPU identity and an OEM chassis model", ACCEPTED_N1X_GPU_NAME, false, "n1x"],
+    [
+      "the accepted 5120-core GPU identity and an OEM chassis model",
+      ACCEPTED_5120_N1X_GPU_NAME,
+      false,
+      "n1x",
+    ],
+    [
+      "an accepted GPU identity and an inconclusive chassis probe",
+      ACCEPTED_N1X_GPU_NAME,
+      undefined,
+      "n1x",
+    ],
+    ["an unlisted GPU name and a qualifying chassis model", UNLISTED_N1X_GPU_NAME, true, "linux"],
+  ])(
+    "carries a real provider capture through real GPU detection to Ollama selection with %s",
+    async (_label, gpuName, n1xWslProduct, platform) => {
+      const { gpu, captureHostCommand } = await runRealProviderPreflight(gpuName, n1xWslProduct);
+
+      expect(captureHostCommand).toHaveBeenCalledTimes(2);
+      expect(captureHostCommand).toHaveBeenNthCalledWith(
+        2,
+        "docker",
+        expect.arrayContaining(["ps", "--all", "--no-trunc"]),
+        expect.any(Number),
+      );
+      expect(gpu).toMatchObject({
+        platform,
+        containerGpuProof: { providerId: "docker", passed: true },
+        n1xWslProduct: n1xWslProduct ?? null,
+        totalMemoryMB: 63_936,
+        availableMemoryMB: 60_000,
+      });
+      expect(gpu?.computeConstrained).toBeUndefined();
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    },
+  );
+
+  it("keeps an unlisted GPU name compute-constrained through runtime preflight when the chassis model does not qualify", async () => {
+    const { gpu } = await runRealProviderPreflight(UNLISTED_N1X_GPU_NAME, false);
+
+    expect(gpu).toMatchObject({
+      platform: "linux",
+      containerGpuProof: { providerId: "docker", passed: true },
+      n1xWslProduct: false,
+      totalMemoryMB: 63_936,
+      computeConstrained: true,
+    });
+    expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+  });
+
+  it("preserves a rejected bounded WSL GPU proof as an absent readiness capability (#7411, #12073)", async () => {
+    const { gpu, readinessReport } = await runRealProviderPreflight(
+      ACCEPTED_N1X_GPU_NAME,
+      false,
+      "NVIDIA GB300",
+    );
+
+    expect(gpu).toBeNull();
+    expect(readinessReport.capabilities).toContainEqual({
+      id: "host.platform.wsl_gpu_passthrough",
+      state: "absent",
+    });
+    expect(readinessReport.findings).toContainEqual(
+      expect.objectContaining({ id: "host.platform.wsl_gpu_passthrough_unavailable" }),
+    );
+  });
+
+  it("runs and admits the same bounded WSL proof through provider-owned Podman", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      !isObservation && deps?.onContainerGpuProof?.({ providerId: "podman", passed: true });
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 63_936,
+            availableMemoryMB: 60_000,
+            perGpuMB: 63_936,
+            nimCapable: true,
+            containerGpuProof: { providerId: "podman", passed: true },
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: async () => collectedGatewayReadiness(),
+        assessHost: wslPodmanHost,
+        detectGpu,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+      },
+    );
+
+    expect(result.gpu?.containerGpuProof).toEqual({ providerId: "podman", passed: true });
+    expect(result.readinessReport.capabilities).toContainEqual({
+      id: "host.platform.wsl_runtime_available",
+      state: "present",
+    });
+    expect(result.readinessReport.capabilities).toContainEqual({
+      id: "host.platform.wsl_gpu_passthrough",
+      state: "present",
+    });
+  });
+
+  it("rejects an explicit GPU request after a failed WSL proof before later container probes (#7411)", async () => {
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const exitProcess = vi.fn((_code: number): never => {
+      throw new Error("GPU proof rejected");
+    });
+
+    await expect(
+      runReadinessGatedRuntimePreflight(
+        { sandboxGpu: "enable" },
+        {
+          nonInteractive: true,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
+          assessHost: wslDockerDesktopHost,
+          detectGpu: () => null,
+          warnIfHostProxyMissesLoopback: vi.fn(),
+          assertRuntimeProviderHealthy: bridge,
+          validateSandboxGpuPreflight: validateGpu,
+          exitProcess,
+        },
+      ),
+    ).rejects.toThrow("GPU proof rejected");
+
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(bridge).not.toHaveBeenCalled();
+    expect(validateGpu).not.toHaveBeenCalled();
+  });
+
+  it("recollects gateway facts before bridge and GPU probe effects", async () => {
+    const calls: string[] = [];
+    const collectGatewayReadiness = vi.fn(async () => {
+      calls.push("gateway");
+      return collectedGatewayReadiness();
+    });
+
+    await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness,
+        assessHost: () => {
+          calls.push("host");
+          return hostWithRuntime("docker");
+        },
+        detectGpu: () => null,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu");
+          calls.push("bridge");
+        },
+        validateSandboxGpuPreflight: () => calls.push("gpu"),
+      },
+    );
+
+    expect(calls).toEqual([
+      "gateway",
+      "host",
+      "gateway",
+      "host",
+      "gateway",
+      "gateway",
+      "gpu",
+      "bridge",
+    ]);
+  });
+
+  it("uses the already-qualified portable host facts for runtime probe effects", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const calls: string[] = [];
+
+    await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: async () => {
+          calls.push("gateway");
+          return collectedGatewayReadiness();
+        },
+        assessHost: () => {
+          calls.push("host");
+          return hostWithRuntime("docker");
+        },
+        detectGpu: () => null,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu");
+          calls.push("bridge");
+        },
+        validateSandboxGpuPreflight: () => calls.push("gpu"),
+      },
+    );
+
+    expect(calls).toEqual([
+      "gateway",
+      "host",
+      "gateway",
+      "host",
+      "gateway",
+      "gateway",
+      "gpu",
+      "bridge",
+    ]);
+    expect(mocks.preparePortableExperimentalHost).not.toHaveBeenCalled();
+  });
+
+  it("does not run image or container checks when refreshed gateway facts block", async () => {
+    const bridge = vi.fn();
+    const gpu = vi.fn();
+    const exit = vi.fn(() => {
+      throw new Error("blocked");
+    });
+    const blocked = managedGatewayReadiness({
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "present" },
+        { id: "gateway.attachment.valid", state: "present" },
+        { id: "gateway.reuse.ready", state: "present" },
+        { id: "gateway.version.compatible", state: "present" },
+        { id: "gateway.port.uncontested", state: "absent" },
+      ],
+      findings: [
+        {
+          id: "gateway.port.owner_mismatch",
+          severity: "blocking",
+          summary: "The gateway port owner changed.",
+        },
+      ],
+    });
+    const collectGatewayReadiness = vi
+      .fn<() => Promise<CollectedGatewayReadiness>>()
+      .mockResolvedValueOnce(collectedGatewayReadiness())
+      .mockResolvedValueOnce(collectedGatewayReadiness(blocked));
+
+    await expect(
+      runReadinessGatedRuntimePreflight(
+        {},
+        {
+          nonInteractive: true,
+          collectGatewayReadiness,
+          assessHost: () => hostWithRuntime("docker"),
+          detectGpu: () => null,
+          warnIfHostProxyMissesLoopback: vi.fn(),
+          assertRuntimeProviderHealthy: bridge,
+          validateSandboxGpuPreflight: gpu,
+          exitProcess: exit as never,
+        },
+      ),
+    ).rejects.toThrow("blocked");
+    expect(collectGatewayReadiness).toHaveBeenCalledTimes(2);
+    expect(bridge).not.toHaveBeenCalled();
+    expect(gpu).not.toHaveBeenCalled();
+  });
+});
+
+describe("GPU trust-gate rejection reason propagation (#9000)", () => {
+  const gatedContext = (
+    detectGpu: (deps?: DetectGpuDeps) => GpuDetection | null,
+    host: HostAssessment,
+  ) => ({
+    nonInteractive: true,
+    collectGatewayReadiness: async () => collectedGatewayReadiness(),
+    assessHost: () => host,
+    detectGpu,
+    warnIfHostProxyMissesLoopback: vi.fn(),
+    assertRuntimeProviderHealthy: vi.fn(),
+    validateSandboxGpuPreflight: vi.fn(),
+  });
+
+  it("carries the runtime-proof rejection reason when the bounded proof fails (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      deps?.onTrustGateRejection?.(
+        isObservation
+          ? "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted"
+          : "/proc/driver/nvidia is absent and the bounded CUDA proof failed",
+      );
+      return null;
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, wslDockerDesktopHost()),
+    );
+
+    expect(result.gpu).toBeNull();
+    expect(result.gpuTrustGateRejection).toBe(
+      "/proc/driver/nvidia is absent and the bounded CUDA proof failed",
+    );
+  });
+
+  it("carries the observation rejection reason when no runtime proof is required (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      deps?.onTrustGateRejection?.(
+        "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+      );
+      return null;
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, {
+        ...hostWithRuntime("docker"),
+        hasNvidiaGpu: true,
+        nvidiaContainerToolkitInstalled: true,
+        dockerCdiSpecDirs: ["/etc/cdi"],
+      }),
+    );
+
+    expect(result.gpu).toBeNull();
+    expect(result.gpuTrustGateRejection).toBe(
+      "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+    );
+  });
+
+  it("omits the rejection reason when the runtime proof passes (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      isObservation &&
+        deps?.onTrustGateRejection?.(
+          "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+        );
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 32_768,
+            perGpuMB: 32_768,
+            nimCapable: true,
+            containerGpuProof: { providerId: "docker", passed: true },
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, wslDockerDesktopHost()),
+    );
+
+    expect(result.gpu).toMatchObject({
+      containerGpuProof: { providerId: "docker", passed: true },
+    });
+    expect(result.gpuTrustGateRejection).toBeUndefined();
+  });
+});

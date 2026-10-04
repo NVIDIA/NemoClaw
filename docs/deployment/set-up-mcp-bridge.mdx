@@ -1,0 +1,197 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "About Managed MCP Servers"
+sidebar-title: "About Managed MCP Servers"
+description: "Understand how NemoClaw connects sandboxed agents to authenticated Streamable HTTP MCP servers."
+description-agent: "Explains the accepted native OpenShell MCP design, credential and policy boundary, stable-release limitations, and agent adapters. Use when evaluating NemoClaw-managed MCP architecture and security."
+keywords: ["nemoclaw mcp", "authenticated mcp", "openshell credential replacement", "streamable http mcp"]
+content:
+  type: "concept"
+skill:
+  priority: 30
+---
+NemoClaw lets a sandboxed agent use authenticated Streamable HTTP MCP servers without copying external service credentials into the sandbox.
+
+The integration has three parts:
+
+- An OpenShell provider stores credentials outside the sandbox.
+- A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp` and applies explicit JSON-RPC MCP method rules.
+<AgentOnly variant="openclaw">
+- An agent adapter writes the MCP endpoint into OpenClaw config.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- An agent adapter writes the MCP endpoint into Hermes config.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+- An agent adapter writes the MCP endpoint into LangChain Deep Agents Code config.
+</AgentOnly>
+
+This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
+
+Current NemoClaw builds require the pinned stable OpenShell `0.0.116` release, which exposes native `protocol: mcp` policy handling and endpoint-bound credential replacement.
+Development builds are rejected because they do not match the reviewed credential boundary for the supported managed runtime.
+
+NemoClaw accepts Streamable HTTP MCP endpoints only.
+It does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
+
+The sandbox agent connects directly to the configured endpoint, and OpenShell enforces policy and replaces credentials in its existing sandbox egress path.
+No NemoClaw host process remains running after an `mcp` lifecycle command returns.
+
+## Accepted Architecture
+
+The native OpenShell design was [accepted on June 30, 2026](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784) as the normative design for NemoClaw v0.0.74.
+It supersedes the original host-side stdio-to-HTTP proxy proposed in NVIDIA/NemoClaw#566.
+
+NemoClaw does not accept an inline secret-and-command tuple, persist the raw bearer value supplied through `--env`, or operate a host-side MCP data-plane process.
+Host-side MCP bridges, proxies, relays, listeners, and stdio translation are explicitly out of scope.
+
+| Decision boundary | Accepted native OpenShell design | Superseded host proxy design |
+|---|---|---|
+| Credential boundary | OpenShell stores the raw value and resolves a sandbox placeholder only on an authorized request. | A NemoClaw host process would receive and retain the raw value while proxying traffic. |
+| Policy enforcement | OpenShell evaluates the destination, path, adapter identity, pinned addresses, and MCP methods before credential replacement. | The proxy would become a second authorization implementation outside OpenShell policy. |
+| Data-plane exposure | The sandbox connects through OpenShell's existing egress path; NemoClaw leaves no host listener or MCP traffic process. | A host listener and stdio-to-HTTP relay would expand the data plane and local attack surface. |
+| Failure behavior | Provider, policy, and adapter mutations fail closed when source state or live ownership cannot be proven. | Proxy failure could strand a listener, subprocess, or partially persisted secret-bearing launch state. |
+| Crash recovery | Agent-native configuration plus live OpenShell resources are re-read under the per-sandbox lifecycle lock; no MCP registry or destroy marker is required. | Recovery would also have to discover orphan host processes and reconstruct their secret-bearing invocation state. |
+
+The decision record is tracked in [NVIDIA/NemoClaw#566](https://github.com/NVIDIA/NemoClaw/issues/566), and [NVIDIA/NemoClaw#5876](https://github.com/NVIDIA/NemoClaw/pull/5876) implements it.
+
+## Authenticated MCP Security Boundary
+
+Authenticated MCP is the intended configuration.
+The agent stores only an OpenShell resolver placeholder for the recorded credential key.
+OpenShell keeps the raw credential in its provider store and combines credential replacement with generated MCP policy at egress.
+
+<AgentOnly variant="hermes">
+Hermes includes the stable credential handle from the readiness check in this placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while OpenShell still reports it.
+</AgentOnly>
+
+For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.
+The generated policy grants only the configured destination, path, adapter binaries, pinned addresses, explicit MCP method profile, and a 131,072-byte maximum request body.
+
+NemoClaw accepts canonical HTTPS MCP URLs and writes the credential placeholder only into the `Authorization` header.
+
+### DNS Pinning Contract
+
+The MCP integration pins its OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@d1155aa70042d3e2ee49dbfa15346b108b7c1d92`](https://github.com/NVIDIA/OpenShell/tree/d1155aa70042d3e2ee49dbfa15346b108b7c1d92).
+
+With `proxy_connect_by_hostname` disabled, OpenShell uses one socket-address list throughout resolution, validation, and connection:
+
+- [`crates/openshell-supervisor-network/src/proxy.rs:3857-3886`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3857-L3886) produces the list.
+- [`crates/openshell-supervisor-network/src/proxy.rs:3911-3951`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3911-L3951) validates every address.
+- [`crates/openshell-supervisor-network/src/proxy.rs:3983-4043`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3983-L4043) connects through the validated list.
+
+The CONNECT path passes that validated connector to the direct or operator-configured upstream dial path.
+By default, direct connections and corporate-proxy CONNECT requests use the validated address list at [`crates/openshell-supervisor-network/src/proxy.rs:3983-4043`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3983-L4043).
+The explicit HTTP-forward path validates the destination before it connects at [`crates/openshell-supervisor-network/src/proxy.rs:5613-5655`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L5613-L5655).
+
+The exception is OpenShell's operator-controlled `proxy_connect_by_hostname` option.
+When enabled, OpenShell sends the requested hostname to the corporate proxy instead of the validated address, which reopens proxy-side DNS resolution; the upstream source records that residual risk at [`crates/openshell-supervisor-network/src/proxy.rs:3998-4031`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3998-L4031).
+NemoClaw does not enable or prohibit that host-level OpenShell option, so operators who require the pinned-address guarantee must leave it disabled and ensure their gateway configuration does not enable it.
+
+### Stable OpenShell 0.0.116 Limitations
+
+OpenShell v0.0.116 attributes network policy with `/proc/<pid>/exe` and process ancestors, so script-based adapters require Node or Python interpreter grants rather than immutable package-entrypoint identities.
+NemoClaw compensates by restricting each server to its HTTPS destination, path, MCP method profile, DNS pins, and unique least-privilege credential.
+
+Remove the interpreter grants when OpenShell exposes stable script or package entrypoint attribution.
+
+OpenShell v0.0.116 requires a static credential provider to have a complete endpoint binding before the supervisor projects its stable credential handle.
+NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile, creates a dedicated provider for each server, and binds that provider to one generated MCP endpoint with `credential_binding.provider`.
+OpenShell withholds the credential before the binding is active and outside the bound host, port, and path.
+
+Credential keys must still be unique across providers attached to the same sandbox.
+NemoClaw rejects managed MCP credential-key reuse and requires a unique least-privilege token and environment key for each server.
+It also rejects credential-bound definitions for the same normalized endpoint URL when their credential bindings differ, because OpenShell cannot choose between credentials for otherwise indistinguishable requests.
+Entries that intentionally share one credential binding are not ambiguous; otherwise, keep one managed definition for that URL or use distinct endpoint URLs.
+
+A managed MCP provider created by an earlier NemoClaw build can have the profile-less `generic` type and cannot satisfy this binding contract.
+NemoClaw refuses to restart or rebuild that registration.
+Remove the MCP server, export its credential again, and add the server so NemoClaw recreates it with the endpointless profile.
+
+OpenShell v0.0.116 updates, attaches, detaches, and deletes providers by mutable name instead of an atomic immutable identity.
+NemoClaw compensates with randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID and credential-key metadata plus the expected provider type before mutations.
+
+NemoClaw fails closed and preserves retryable state when those checks do not match, but the checks do not provide compare-and-swap behavior against another OpenShell client.
+Do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
+
+Use an MCP service you trust with the credential it receives.
+MCP response bodies and SSE streams return through OpenShell's existing sandbox egress path.
+
+As with any authenticated API, a server that possesses a credential can deliberately return that value in its response.
+This does not expose the raw credential to the sandbox before the request is authorized and sent to that server.
+
+## Agent Adapters
+
+<AgentOnly variant="openclaw">
+OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox.
+Use `mcp migrate --apply` to convert older managed Mcporter entries to native configuration.
+To discard an entry instead, follow [Remove a Server](manage-mcp-servers#remove-a-server); removal requires proven registry ownership.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Hermes writes managed HTTP entries under `/sandbox/.hermes/config.yaml`.
+
+```yaml
+mcp_servers:
+  github:
+    url: https://api.githubcopilot.com/mcp/
+    enabled: true
+    timeout: 120
+    connect_timeout: 60
+    tools:
+      resources: true
+      prompts: true
+    headers:
+      Authorization: Bearer openshell:resolve:env:s0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_GITHUB_MCP_TOKEN
+```
+
+The `s…_` prefix is an illustrative OpenShell stable credential handle.
+Hermes records the handle that the readiness check proves for the live provider.
+
+### Verify the Hermes Reload
+
+The validated transaction helper runs as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable and argument shape.
+It runs as the normal sandbox identity, rejects the legacy root-separated runtime topology, validates the gateway PID and launcher before signaling it, updates the managed compatibility hash, verifies loopback health, and rolls back config and hashes if reload fails.
+
+Within the five-minute reload deadline, if the first signal has not converged after half the budget, the helper may send one additional `SIGUSR1` only after revalidating the gateway identity and managed parent.
+Success requires a replacement gateway identity, healthy loopback endpoints on internal port `18642` and the sandbox's public API port, and a stable final identity.
+
+There is no host listener, persistent control socket, MCP relay, or service for this operation.
+The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+Before converting an older managed Mcporter entry, run `nemoclaw <name> mcp migrate` to preview the change.
+The preview explains that creating the native entry activates behavior OpenClaw previously did not load.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The managed image pins Deep Agents Code `0.1.55` and uses its native `/sandbox/.deepagents/.mcp.json` configuration.
+The launcher validates canonical HTTPS endpoints and OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.
+
+It prefers a sealed in-memory file when available; the anonymous read-only descriptor fallback verifies inode, size, and SHA-256 digest and fails closed on drift.
+NemoClaw mutates only the named server and preserves unrelated native entries. Legacy `.nemoclaw-mcp.json` projections require explicit migration and are never layered with native state.
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+External credential values remain in OpenShell provider state, not sandbox files or NemoClaw state.
+</AgentOnly>
+
+## Next Steps
+
+- [Add an MCP Server](add-an-mcp-server) for endpoint and credential requirements.
+- [Manage MCP Servers](manage-mcp-servers) for status, rotation, restart, removal, rebuild, and destroy behavior.
+- [Troubleshoot MCP Servers](../../reference/troubleshoot-mcp-servers) for failure remediation.
