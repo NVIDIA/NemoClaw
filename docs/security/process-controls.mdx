@@ -165,24 +165,28 @@ For custom container launches outside NemoClaw's managed Docker-driver onboardin
 Managed Deep Agents sandboxes separate the host-configured capability from the active approval state of each TUI thread.
 The default `disabled` mode keeps the TUI auto-approval choice and `dcode -y` unavailable.
 
-An operator can select `thread-opt-in` through a named transactional rebuild, but each thread still requires an explicit TUI choice or `dcode -y` invocation before tool calls run without further confirmation.
+An operator can select `thread-opt-in` through a named transactional rebuild.
+This permits native Auto and YOLO modes, selected through startup configuration, CLI options, or the TUI.
 
 NemoClaw stores the configured mode in a root-owned, mode `0444` image file rather than trusting runtime environment variables.
 A missing, malformed, symlinked, writable, unreadable, or incorrectly owned capability file resolves to `disabled`.
 Ambient `NEMOCLAW_DCODE_AUTO_APPROVAL*` values cannot enable the capability.
 
-When a thread activates auto-approval, the TUI shows the upstream active-state indicator and prints a warning.
+The TUI shows the active approval mode.
+Native notices depend on prior acknowledgement and notification settings.
 Deep Agents Code preserves its native approval state across `/clear`, `/force-clear`, thread switch or resume, and agent switch operations.
-A new process uses the native startup mode, while NemoClaw forces Manual when the sandbox capability is `disabled`.
+A new process uses the native startup mode unless a CLI option selects another mode.
+The `disabled` capability blocks explicit Auto and YOLO selection but does not override saved native startup configuration.
+Set `[startup].mode` to `manual` and verify Manual in the TUI when approval prompts are required.
 The host-side `status` command reports only the configured capability because it does not attest to the current state of a specific TUI thread.
 
 | Aspect | Detail |
 |---|---|
-| Default | `disabled`. Interactive tool calls keep their approval prompts, and thread auto-approval cannot be selected. |
+| Default | `disabled` blocks explicit Auto and YOLO selection. The native startup mode defaults to Manual; a saved startup mode can change it. |
 | What you can change | Use `--dcode-auto-approval thread-opt-in` during a named managed Deep Agents rebuild. Use `--dcode-auto-approval disabled` in another rebuild to revoke the capability. |
-| Risk if enabled | A prompt injection, untrusted repository, or mistaken plan can cause tool calls, including shell commands, to run without another human confirmation for the rest of the active thread. |
+| Risk if enabled | A prompt injection, untrusted repository, or mistaken plan can cause tool calls, including shell commands, to run without human confirmation while an automatic approval mode is active. |
 | Remaining controls | OpenShell egress policy, credential isolation and rewriting, the managed inference route, managed MCP validation, filesystem and process controls, and the other managed runtime restrictions remain active. |
-| Recommendation | Keep `disabled` for sensitive or unfamiliar work. Enable `thread-opt-in` only for bounded tasks in a reviewed workspace, watch the active-state indicator, and start a new thread or rebuild with `disabled` when unattended tool execution is no longer acceptable. |
+| Recommendation | Keep `disabled` and native `[startup].mode` set to `manual` for sensitive or unfamiliar work. Enable `thread-opt-in` only for bounded tasks in a reviewed workspace. To stop automatic approval in an active session, run `/manual` and confirm Manual in the indicator. |
 
 <Warning>
 Treat `thread-opt-in` as permission for unattended shell execution inside the sandbox, not as a policy bypass.
@@ -191,7 +195,7 @@ The sandbox boundary limits where commands run and what external resources they 
 
 ## Headless Deep Agents Approval Boundary
 
-Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
+By default, interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
 Headless `dcode -n` is an explicit automation boundary with no approval UI.
 
 Headless mode automatically approves non-shell tool requests such as file writes and edits.

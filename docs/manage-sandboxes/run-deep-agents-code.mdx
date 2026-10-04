@@ -235,7 +235,8 @@ After you update NemoClaw, finish active tasks and follow [Recover and Rebuild S
 ## Choose an Approval Boundary
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
-Automatic and unrestricted approval modes remain unavailable unless you enable the managed thread opt-in capability.
+Explicit Auto and YOLO selection requires the managed thread opt-in capability.
+Saved startup configuration is handled separately, as described below.
 Interactive shell allowlists use Deep Agents Code's native approval behavior.
 
 Headless `dcode -n` is an explicit automation boundary.
@@ -257,11 +258,13 @@ nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
 
 The `thread-opt-in` setting grants permission to use Deep Agents Code's native approval modes, but it does not activate one by itself.
 Use `dcode -y` or **Enable Auto for this thread** for classifier-backed Auto mode.
-Use the native `--yolo` or `/yolo` path for unrestricted approval after its warning and acknowledgement.
+Use native `--yolo` or `/yolo` for unrestricted approval, subject to native acknowledgement requirements.
 The TUI shows the upstream active-state indicator for the selected mode.
 
 Deep Agents Code preserves its native approval state across `/clear`, `/force-clear`, thread resume or switch, and agent switch operations.
-A new process starts from the native `[startup].mode` setting; NemoClaw forces Manual when the sandbox capability is `disabled`.
+A new process starts from the native `[startup].mode` setting unless a CLI option selects another mode.
+The `disabled` capability blocks explicit Auto and YOLO selection but does not override a saved native startup mode.
+Keep `[startup].mode` set to `manual` when approval prompts are required, and verify Manual in the TUI.
 The host-side status command reports the configured capability, not whether one live TUI thread currently has auto-approval active:
 
 ```bash
@@ -271,7 +274,8 @@ nemo-deepagents <sandbox-name> status
 Thread auto-approval does not bypass OpenShell network policy, credential isolation, the managed inference route, managed MCP validation, or the other Deep Agents runtime restrictions.
 Headless `dcode -n` remains a separate automation boundary with non-shell auto-approval and native shell-allowlist behavior.
 
-Return the sandbox to the default posture with another transactional rebuild:
+Block explicit Auto and YOLO selection with another transactional rebuild.
+Keep the native startup mode set to `manual` as described above:
 
 ```bash
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval disabled --yes
