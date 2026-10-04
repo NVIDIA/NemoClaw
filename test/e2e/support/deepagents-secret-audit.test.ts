@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-const check = path.join(
-  process.cwd(),
-  "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+const check = fileURLToPath(
+  new URL(
+    "../e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+    import.meta.url,
+  ),
 );
 
 it.each([
@@ -30,7 +32,7 @@ it.each([
   ["parser failure", "[100.0] NET:OPEN inference.local", "parser-failure", 1, "could not be read"],
 ])("handles %s in the Deep Agents audit check", (_name, logs, mode, status, message) => {
   const result = spawnSync(
-    "bash",
+    "/bin/bash",
     [
       "-c",
       `
@@ -51,7 +53,7 @@ source "$1"
       encoding: "utf8",
       timeout: 5000,
       env: {
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: "/usr/bin:/bin",
         NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST: "audit-logs",
         AUDIT_FIXTURE: logs,
         AUDIT_MODE: mode,

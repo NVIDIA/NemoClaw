@@ -33,6 +33,7 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
+  nodeInstall?: "verified" | "tampered";
   reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
@@ -61,6 +62,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   sudoLog: string;
   npmTmpLog: string;
   tarLog: string;
+  nodePrefix: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
   const fakeBin = path.join(root, "bin");
@@ -71,7 +73,17 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const sudoLog = path.join(root, "sudo.log");
   const npmTmpLog = path.join(root, "npm-tmp.log");
   const tarLog = path.join(root, "tar.log");
+  const nodePrefix = path.join(root, "node-prefix");
   fs.mkdirSync(fakeBin);
+  fs.mkdirSync(path.join(nodePrefix, "lib/node_modules/npm/node_modules/stale"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(nodePrefix, "lib/node_modules/npm/node_modules/stale/index.js"),
+    "old",
+  );
+  fs.mkdirSync(path.join(nodePrefix, "lib/node_modules/unrelated"));
+  fs.writeFileSync(path.join(nodePrefix, "lib/node_modules/unrelated/index.js"), "keep");
 
   linkSystemCommands(
     fakeBin,
@@ -125,7 +137,14 @@ exec bash -c "\${1:-}"
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : `v${REVIEWED_NODE_VERSION}`}\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then
+  if [ ${options.nodeInstall ? "true" : "false"} = true ] && [ ! -f ${JSON.stringify(path.join(nodePrefix, "lib/node_modules/npm/package.json"))} ]; then
+    printf 'v22.19.0\\n'
+  else
+    printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : `v${REVIEWED_NODE_VERSION}`}\\n'
+  fi
+  exit 0
+fi
 exit 0
 `,
   );
@@ -180,6 +199,14 @@ exec /usr/bin/tar "$@"
     path.join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(sudoLog)}
+if [ ${options.nodeInstall ? "true" : "false"} = true ]; then
+  if [ "\${1:-}" = "rm" ] && [ "\${4:-}" = /usr/local/lib/node_modules/npm ]; then
+    exec /bin/rm -rf -- ${JSON.stringify(path.join(nodePrefix, "lib/node_modules/npm"))}
+  fi
+  if [ "\${1:-}" = "tar" ] && [ "\${5:-}" = /usr/local ]; then
+    exec /usr/bin/tar -xzf "$3" -C ${JSON.stringify(nodePrefix)} --strip-components=1
+  fi
+fi
 if [[ "$*" == *setup-reviewed-npm/verify-and-install-npm.sh* ]]; then
   printf '%s\\n' "$*" | sed -n 's/.*RUNNER_TEMP=\\([^ ]*\\).*/\\1/p' > ${JSON.stringify(npmTmpLog)}
   exit ${options.reviewedNpmFailure ? 42 : 0}
@@ -210,13 +237,23 @@ exit 0
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(curlLog)}
 out=""
+node_archive=false
 while [ "$#" -gt 0 ]; do
+  case "$1" in https://nodejs.org/dist/*) node_archive=true ;; esac
   if [ "$1" = "-o" ]; then
     shift
     out="$1"
   fi
   shift || true
 done
+if [ "$node_archive" = true ] && [ ${options.nodeInstall ? "true" : "false"} = true ]; then
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/node/lib/node_modules/npm"
+  printf '{"version":"11.16.0"}\\n' > "$tmp/node/lib/node_modules/npm/package.json"
+  /usr/bin/tar -czf "$out" -C "$tmp" node
+  rm -rf "$tmp"
+  exit 0
+fi
 case "$(basename "$out")" in
   ${ASSET})
     tmp="$(mktemp -d)"
@@ -255,6 +292,10 @@ if [ "\${1:-}" = "-c" ]; then
   printf '%s: OK\\n' ${JSON.stringify(ASSET)}
   exit 0
 fi
+if [ ${options.nodeInstall ? "true" : "false"} = true ]; then
+  printf '%s  %s\\n' '${options.nodeInstall === "verified" ? "9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca" : "tampered"}' "$1"
+  exit 0
+fi
 exec /usr/bin/sha256sum "$@"
 `,
   );
@@ -269,6 +310,7 @@ exec /usr/bin/sha256sum "$@"
     sudoLog,
     npmTmpLog,
     tarLog,
+    nodePrefix,
   };
 }
 
@@ -299,6 +341,38 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
+  it.each(["verified", "tampered"] as const)(
+    "replaces stale npm files only for a %s Node archive",
+    (nodeInstall) => {
+      const { fake, result } = runLaunchable({ checksum: "match", nodeInstall });
+      try {
+        const out = combinedLaunchableOutput(result, fake.launchLog);
+        expect(result.status, out).toBe(nodeInstall === "verified" ? 0 : 1);
+        expect(
+          fs.existsSync(
+            path.join(fake.nodePrefix, "lib/node_modules/npm/node_modules/stale/index.js"),
+          ),
+        ).toBe(nodeInstall === "tampered");
+        expect(fs.existsSync(path.join(fake.nodePrefix, "lib/node_modules/npm/package.json"))).toBe(
+          nodeInstall === "verified",
+        );
+        expect(
+          fs.readFileSync(
+            path.join(fake.nodePrefix, "lib/node_modules/unrelated/index.js"),
+            "utf8",
+          ),
+        ).toBe("keep");
+        expect(out).toContain(
+          nodeInstall === "tampered"
+            ? "Node.js archive integrity check failed"
+            : `Node.js v${REVIEWED_NODE_VERSION} installed`,
+        );
+      } finally {
+        fake.cleanup();
+      }
+    },
+  );
+
   it("fits within Brev's lifecycle setup-script limit", () => {
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
   });
