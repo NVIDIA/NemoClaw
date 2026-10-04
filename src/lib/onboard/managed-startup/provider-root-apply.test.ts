@@ -35,7 +35,9 @@ const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
 
-function createDockerRootApplyFixture(resolveTarget: () => { resourceHandle: string }) {
+function createDockerRootApplyFixture(
+  resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },
+) {
   const labels = {
     "openshell.ai/managed-by": "openshell",
     "openshell.ai/sandbox-name": SANDBOX_NAME,
@@ -130,9 +132,36 @@ describe("provider-owned managed startup root application", () => {
         },
         { sleep },
       ),
-    ).toThrow(/remained absent after 21 observations over 5000ms/u);
+    ).toThrow(/remained absent after 21 observations over \d+ms \(budget 5000ms\)/u);
     expect(resolveTarget).toHaveBeenCalledTimes(21);
     expect(sleep).toHaveBeenCalledTimes(20);
+  });
+
+  it("bounds slow container discovery by the remaining handoff deadline", () => {
+    let nowMs = 10_000;
+    const resolveTarget = vi.fn((input: { readonly timeoutMs?: number }) => {
+      nowMs += input.timeoutMs === 5_000 ? 3_000 : 2_000;
+      throw new DirectSandboxContainerNotFoundError("container absent");
+    });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+    const sleep = vi.fn();
+
+    expect(() =>
+      applyProviderManagedStartupRootRequest(
+        {
+          runtimeProvider,
+          sandboxName: SANDBOX_NAME,
+          sandboxId: SANDBOX_ID,
+          bootstrapIdentity: "c".repeat(64),
+          request,
+          environment: {},
+        },
+        { now: () => nowMs, sleep },
+      ),
+    ).toThrow(/remained absent after 2 observations over 5000ms \(budget 5000ms\)/u);
+    expect(resolveTarget).toHaveBeenCalledTimes(2);
+    expect(resolveTarget.mock.calls.map(([input]) => input.timeoutMs)).toEqual([5_000, 2_000]);
+    expect(sleep.mock.calls).toEqual([[250]]);
   });
 
   it("does not retry ambiguous container ownership", () => {

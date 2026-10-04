@@ -29,8 +29,9 @@ const ROOT_APPLY_TIMEOUT_MS = 300_000;
 // publish its verified sandbox identity just before the engine exposes the
 // matching container row. Retry only the exact missing-container signal. An
 // ambiguous, stopped, or changed identity still fails immediately, and the
-// terminal error records the complete bounded observation budget.
+// terminal error records the actual observation count and elapsed time.
 const CREATED_CONTAINER_DISCOVERY_ATTEMPTS = 21;
+const CREATED_CONTAINER_DISCOVERY_BUDGET_MS = 5_000;
 const CREATED_CONTAINER_DISCOVERY_INTERVAL_MS = 250;
 const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
 const FIXED_ROOT_ENV = [
@@ -58,6 +59,7 @@ type ProviderManagedStartupRuntime = Readonly<{
 }>;
 
 export interface ProviderManagedStartupRootApplyTiming {
+  readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
 }
 
@@ -102,15 +104,21 @@ function resolveCreatedContainerTarget(
   },
   timing: ProviderManagedStartupRootApplyTiming,
 ) {
+  const now = timing.now ?? Date.now;
+  const startedAt = now();
+  const deadlineMs = startedAt + CREATED_CONTAINER_DISCOVERY_BUDGET_MS;
   let missing: DirectSandboxContainerNotFoundError | undefined;
+  let observations = 0;
   let target: ReturnType<RuntimeProviderPrivilegedSandboxControl["resolveTarget"]> | undefined;
   waitUntil(
     () => {
+      observations += 1;
       try {
         target = runtime.control.resolveTarget({
           registeredSandboxNames: [input.sandboxName],
           sandbox: input.sandbox,
           sandboxName: input.sandboxName,
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - now())),
         });
         return true;
       } catch (error) {
@@ -120,17 +128,20 @@ function resolveCreatedContainerTarget(
       }
     },
     {
+      deadlineMs,
       initialIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
       maxAttempts: CREATED_CONTAINER_DISCOVERY_ATTEMPTS,
       maxIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
+      now,
       ...(timing.sleep ? { sleep: timing.sleep } : {}),
     },
   );
   if (target) return target;
+  const elapsedMs = Math.max(0, Math.ceil(now() - startedAt));
   throw new DirectSandboxContainerNotFoundError(
     `${missing?.message ?? "The direct OpenShell sandbox container was not found."} ` +
-      `The exact container remained absent after ${CREATED_CONTAINER_DISCOVERY_ATTEMPTS} ` +
-      `observations over ${(CREATED_CONTAINER_DISCOVERY_ATTEMPTS - 1) * CREATED_CONTAINER_DISCOVERY_INTERVAL_MS}ms.`,
+      `The exact container remained absent after ${observations} observations over ${elapsedMs}ms ` +
+      `(budget ${CREATED_CONTAINER_DISCOVERY_BUDGET_MS}ms).`,
     { cause: missing },
   );
 }
