@@ -943,7 +943,8 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       `public_key_path = ${tomlString(jwtBundle.publicKeyPath)}`,
       `kid_path = ${tomlString(jwtBundle.kidPath)}`,
       `gateway_id = ${tomlString(gatewayId)}`,
-      `ttl_secs = ${gatewayJwtTtlSecs}`,
+      // Schema 2 omits TTL for non-expiring sandbox sessions; explicit zero is invalid.
+      ...(schemaVersion === 1 ? [`ttl_secs = ${gatewayJwtTtlSecs}`] : []),
       "",
       "[openshell.gateway.auth]",
       "allow_unauthenticated_users = false",

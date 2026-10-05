@@ -10,10 +10,8 @@ import { parse as parseToml } from "smol-toml";
 import { prepareDockerDriverGatewayConfigEnv } from "./docker-driver-gateway-config";
 
 import {
-  DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   jwtBundlePaths,
   mintOpenShellStyleSandboxJwt,
-  parseTomlInteger,
   parseTomlString,
   validateOpenShellStyleSandboxJwt,
   writeGatewayConfig,
@@ -58,7 +56,7 @@ describe("docker-driver-gateway auth contract", () => {
       }
     },
   );
-  it("emits an OpenShell 0.0.85-compatible sandbox JWT bundle and TTL contract", () => {
+  it("emits an OpenShell 0.1.2 sandbox JWT bundle with non-expiring sessions", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -67,7 +65,9 @@ describe("docker-driver-gateway auth contract", () => {
       const publicKeyPath = parseTomlString(toml, "public_key_path");
       const kidPath = parseTomlString(toml, "kid_path");
       const gatewayId = parseTomlString(toml, "gateway_id");
-      const ttlSecs = parseTomlInteger(toml, "ttl_secs");
+      const parsed = parseToml(toml) as {
+        openshell: { gateway: { gateway_jwt: Record<string, unknown> } };
+      };
       const kid = fs.readFileSync(kidPath, "utf-8").trim();
       const now = Math.floor(Date.now() / 1000);
       const sandboxId = "sandbox-contract";
@@ -76,7 +76,7 @@ describe("docker-driver-gateway auth contract", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-      expect(ttlSecs).toBe(DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS);
+      expect(parsed.openshell.gateway.gateway_jwt.ttl_secs).toBeUndefined();
 
       const token = mintOpenShellStyleSandboxJwt({
         signingKeyPath,
@@ -84,7 +84,7 @@ describe("docker-driver-gateway auth contract", () => {
         gatewayId,
         sandboxId,
         iat: now,
-        exp: ttlSecs === 0 ? 0 : now + ttlSecs,
+        exp: 0,
       });
 
       const payload = validateOpenShellStyleSandboxJwt({
@@ -100,7 +100,7 @@ describe("docker-driver-gateway auth contract", () => {
         iss: `openshell-gateway:${gatewayId}`,
         aud: `openshell-gateway:${gatewayId}`,
       });
-      expect(payload?.exp).toBe(ttlSecs === 0 ? 0 : now + ttlSecs);
+      expect(payload?.exp).toBe(0);
       expect(() =>
         validateOpenShellStyleSandboxJwt({
           token,
@@ -174,7 +174,7 @@ describe("docker-driver-gateway auth contract", () => {
       expect(toml).toContain("public_key_path = ");
       expect(toml).toContain("kid_path = ");
       expect(toml).toContain("gateway_id = ");
-      expect(toml).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
+      expect(toml).not.toContain("ttl_secs =");
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain("guest_tls_ca = ");
@@ -208,7 +208,7 @@ describe("docker-driver-gateway auth contract", () => {
         gatewayId: gatewayIdA,
         sandboxId: sandboxIdA,
         iat: now,
-        exp: now + DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+        exp: 0,
       });
 
       expect(

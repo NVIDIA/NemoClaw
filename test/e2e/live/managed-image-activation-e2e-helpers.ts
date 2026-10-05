@@ -324,7 +324,15 @@ async function inspectDockerSandboxContainerId(
 ): Promise<Awaited<ReturnType<HostCliClient["command"]>>> {
   return await host.command(
     "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
+    [
+      "ps",
+      "-aq",
+      "--no-trunc",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
+    ],
     { artifactName, env, timeoutMs: 30_000 },
   );
 }

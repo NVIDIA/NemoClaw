@@ -209,7 +209,7 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   const auth = requireRecord(gateway.auth, "openshell.gateway.auth");
   expect(auth.allow_unauthenticated_users).toBe(false);
   const jwt = requireRecord(gateway.gateway_jwt, "openshell.gateway.gateway_jwt");
-  expect(requireInteger(jwt.ttl_secs, "gateway JWT ttl_secs")).toBe(0);
+  expect(jwt.ttl_secs).toBeUndefined();
   const gatewayId = requireString(jwt.gateway_id, "gateway JWT gateway_id");
   for (const key of ["signing_key_path", "public_key_path", "kid_path"] as const) {
     const filePath = requireString(jwt[key], `gateway JWT ${key}`);

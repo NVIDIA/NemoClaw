@@ -67,6 +67,7 @@ function podmanGatewayRuntime(env: Record<string, string>) {
 function schemaOneGatewayConfig(toml: string, driver: "docker" | "podman"): string {
   const legacy = toml
     .replace("version = 2", "version = 1")
+    .replace(/^(gateway_id = .+)$/m, "$1\nttl_secs = 0")
     .replace(/^allow_driver_config = true\n/m, "")
     .replace('compute_driver = "' + driver + '"', 'compute_drivers = ["' + driver + '"]')
     .replace(/^sandbox_label = /m, "sandbox_namespace = ")
@@ -254,7 +255,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain(`kid_path = "${kidPath}"`);
       expect(toml).toContain(`gateway_id = "${gatewayIdForStateDir(stateDir)}"`);
       expect(toml).toContain(`sandbox_label = "${gatewayIdForStateDir(stateDir)}"`);
-      expect(toml).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
+      expect(toml).not.toContain("ttl_secs =");
       expect(toml).toContain("disable_tls = false");
       expect(toml).toContain("[openshell.gateway.tls]");
       expect(toml).toContain(`cert_path = "${path.join(stateDir, "tls", "server", "tls.crt")}"`);
@@ -362,8 +363,7 @@ describe("docker-driver-gateway config TOML", () => {
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
       expect(parseTomlString(rewritten, "gateway_id")).toBe(gatewayId);
-      expect(rewritten).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
-      expect(rewritten).not.toContain("ttl_secs = 3600");
+      expect(rewritten).not.toContain("ttl_secs =");
       expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
       expect(
         validateOpenShellStyleSandboxJwt({
@@ -398,14 +398,14 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("rejects the legacy JWT TTL on a scoped gateway without mutating the config", () => {
+  it.each([0, 3600])("rejects explicit schema 2 JWT TTL %i without mutating the config", (ttl) => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-scoped-ttl-"));
     try {
       const env = writeGatewayConfig(stateDir);
       const configPath = path.join(stateDir, "openshell-gateway.toml");
       const invalidToml = fs
         .readFileSync(configPath, "utf-8")
-        .replace(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`, "ttl_secs = 3600");
+        .replace(/^(gateway_id = .+)$/m, "$1\nttl_secs = " + ttl);
       fs.writeFileSync(configPath, invalidToml, { encoding: "utf-8", mode: 0o600 });
 
       expect(() =>
