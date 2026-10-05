@@ -52,6 +52,13 @@ const NPM_REPLACEMENT_TEMPLATE = fs.readFileSync(
   "utf8",
 );
 const NPM_REPLACEMENT_DIGEST = "1a678bba2037514891ae28f1b01f6aa7a34fc17fd7b2b997171f58b9fc482e4c";
+// Immutable #12376 preimage at 25f4213a34bbd4d3ed2ee6e76a378469701c0fc2.
+const DCODE_NPM_REPLACEMENT_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "test/fixtures/installer-trust/brev-dcode-npm-replacement.sh.fixture"),
+  "utf8",
+);
+const DCODE_NPM_REPLACEMENT_DIGEST =
+  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
@@ -915,11 +922,11 @@ function expectTrustedRelease(
   expect(result.stdout).toContain("All installer hashes are current");
 }
 
-function parseNpmReplacement(source: string, trustedDigest = NPM_REPLACEMENT_DIGEST) {
+function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
   const root = createFixture();
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
-  fs.writeFileSync(parser, parserSource.replace(NPM_REPLACEMENT_DIGEST, trustedDigest));
+  fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
   const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
   fs.writeFileSync(brev, source);
   return spawnSync(
@@ -940,27 +947,32 @@ function parseNpmReplacement(source: string, trustedDigest = NPM_REPLACEMENT_DIG
 }
 
 describe("installer hash verification", () => {
-  it("admits the reviewed npm replacement only after its trust prerequisite", () => {
-    const before = parseNpmReplacement(NPM_REPLACEMENT_TEMPLATE, "0".repeat(64));
-    expect(before.status).toBe(1);
-    expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
-    const after = parseNpmReplacement(NPM_REPLACEMENT_TEMPLATE);
-    expect(after.status, after.stderr).toBe(0);
-    expect(after.stdout).toContain(`"operationalTemplateSha256":"${NPM_REPLACEMENT_DIGEST}"`);
-  });
+  describe.each([
+    ["cleanup", NPM_REPLACEMENT_TEMPLATE, NPM_REPLACEMENT_DIGEST],
+    ["DCode upgrade", DCODE_NPM_REPLACEMENT_TEMPLATE, DCODE_NPM_REPLACEMENT_DIGEST],
+  ])("%s bootstrap prerequisite", (_name, template, digest) => {
+    it("admits the reviewed npm replacement only after its trust prerequisite", () => {
+      const before = parseNpmReplacement(template, digest, "0".repeat(64));
+      expect(before.status).toBe(1);
+      expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
+      const after = parseNpmReplacement(template, digest);
+      expect(after.status, after.stderr).toBe(0);
+      expect(after.stdout).toContain(`"operationalTemplateSha256":"${digest}"`);
+    });
 
-  it.each([
-    [
-      "broader package deletion",
-      "sudo rm -rf -- /usr/local/lib/node_modules/npm",
-      "sudo rm -rf -- /usr/local/lib/node_modules",
-    ],
-    ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
-  ])("rejects %s in the reviewed npm replacement", (_name, original, replacement) => {
-    const mutated = NPM_REPLACEMENT_TEMPLATE.replace(original, replacement);
-    const result = parseNpmReplacement(mutated);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    it.each([
+      [
+        "broader package deletion",
+        "/usr/local/lib/node_modules/npm",
+        "/usr/local/lib/node_modules",
+      ],
+      ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
+    ])("rejects %s in the reviewed npm replacement", (_name, original, replacement) => {
+      const mutated = template.replace(original, replacement);
+      const result = parseNpmReplacement(mutated, digest);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    });
   });
 
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
