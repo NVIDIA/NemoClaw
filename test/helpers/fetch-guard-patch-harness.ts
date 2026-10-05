@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { OPENCLAW_WORKER_PROXY_SOURCE } from "../fixtures/openclaw-worker-proxy";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const OPENCLAW_VERSION_EXTRACTOR = path.join(
@@ -86,6 +87,18 @@ export function runDockerfilePatchBlock(
   endMarker: string,
   version = CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
 ) {
+  // Legacy regular-module shapes still exercise the classifier independently;
+  // the shipped patch block also requires the pinned 9.5 worker distribution.
+  const worker = path.join(dist, "worker", "worker.mjs");
+  if (!fs.existsSync(worker)) {
+    fs.mkdirSync(path.dirname(worker), { recursive: true });
+    fs.writeFileSync(worker, OPENCLAW_WORKER_PROXY_SOURCE);
+    const manifestPath = path.join(dist, "..", "package.json");
+    const metadata = fs.existsSync(manifestPath)
+      ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+      : {};
+    fs.writeFileSync(manifestPath, JSON.stringify({ ...metadata, version: "2026.9.5" }));
+  }
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     endMarker,

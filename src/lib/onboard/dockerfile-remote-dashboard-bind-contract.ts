@@ -93,6 +93,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
   // Reviewed Tavily preinstall with archive verification before native installation.
   "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
+  // Reviewed separate disposable WeChat and official-channel caches. The
+  // existing messaging applier preserves the generated dashboard binding.
+  "1ee2e169cd5b48c3c4b9f60ce640ee2a36e19c9258025a70fa85481dbf079070",
   // The same Tavily-aware installation with reviewed 2026.9.5 pins.
   "b1d8e91af9b2f10986a27a6bd4c3fc4dda19e22a4a8c44460a0685331a59a1fe",
   // Reviewed local NemoClaw plugin installation with explicit capability
