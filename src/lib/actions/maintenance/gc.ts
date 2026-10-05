@@ -41,7 +41,8 @@ function registeredImages() {
 }
 
 function withHostRegistryLocks(operation: () => void): void {
-  // The caller's portable host fence prevents gateway creation during collection.
+  // The caller holds the portable host fence, so this root snapshot remains
+  // complete through image deletion.
   const registryFiles = listGatewayStateRoots(resolveHome())
     .filter(({ root }) => fs.existsSync(root))
     .map(({ root }) => path.join(root, "sandboxes.json"))
@@ -55,6 +56,8 @@ function withHostRegistryLocks(operation: () => void): void {
 
 export async function garbageCollectImagesWithoutPortableAuthority(
   options: string[] | GarbageCollectImagesOptions = {},
+  withDeletionAdmission: <T>(operation: () => Promise<T> | T) => Promise<T> = async (operation) =>
+    await operation(),
 ): Promise<void> {
   const normalized = normalizeGarbageCollectImagesOptions(options);
   const dryRun = normalized.dryRun === true;
@@ -106,29 +109,50 @@ export async function garbageCollectImagesWithoutPortableAuthority(
     }
   }
 
-  let removed = 0;
-  let failed = 0;
-  withHostRegistryLocks(() => {
-    for (const img of findOrphanedSandboxImages(orphans, registeredImages())) {
-      const rmiResult = dockerRmi(img.tag, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (rmiResult.status === 0) {
-        console.log(`  ${G}✓${R} Removed ${img.tag}`);
-        removed++;
-      } else {
-        const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
-        console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
-        failed++;
-      }
+  const approvedTags = new Set(orphans.map(({ tag }) => tag));
+  await withDeletionAdmission(async () => {
+    // Confirmation may take arbitrarily long. Once it returns, take the host
+    // fence first, then refresh both Docker and every gateway registry before
+    // acquiring per-root locks and deleting anything.
+    let currentImagesOutput = "";
+    try {
+      currentImagesOutput = SANDBOX_IMAGE_REPOS.map((repo) =>
+        dockerListImagesFormat(repo, "{{.Repository}}:{{.Tag}}\t{{.Size}}"),
+      ).join("\n");
+    } catch {
+      console.error("  Failed to re-query Docker images. Is Docker running?");
+      process.exit(1);
     }
-  });
+    const currentImages = parseSandboxImageRows(currentImagesOutput).filter(({ tag }) =>
+      approvedTags.has(tag),
+    );
+    const currentOrphans = findOrphanedSandboxImages(currentImages, registeredImages());
+    let removed = 0;
+    let failed = 0;
+    withHostRegistryLocks(() => {
+      // Registry writers that can publish a gateway image also hold the host
+      // fence. Per-root locks additionally protect legacy/non-image mutations.
+      for (const img of findOrphanedSandboxImages(currentOrphans, registeredImages())) {
+        const rmiResult = dockerRmi(img.tag, {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "pipe"],
+          ignoreError: true,
+          suppressOutput: true,
+        });
+        if (rmiResult.status === 0) {
+          console.log(`  ${G}✓${R} Removed ${img.tag}`);
+          removed++;
+        } else {
+          const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
+          console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
+          failed++;
+        }
+      }
+    });
 
-  console.log("");
-  if (removed > 0) console.log(`  ${G}✓${R} Removed ${removed} orphaned image(s).`);
-  if (failed > 0) console.log(`  ${YW}⚠${R} Failed to remove ${failed} image(s).`);
-  if (failed > 0) process.exit(1);
+    console.log("");
+    if (removed > 0) console.log(`  ${G}✓${R} Removed ${removed} orphaned image(s).`);
+    if (failed > 0) console.log(`  ${YW}⚠${R} Failed to remove ${failed} image(s).`);
+    if (failed > 0) process.exit(1);
+  });
 }

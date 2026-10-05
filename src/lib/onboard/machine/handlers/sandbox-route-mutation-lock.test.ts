@@ -1,11 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("sandbox registration route transaction", () => {
+  beforeEach(() => {
+    vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-route-")));
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME, { force: true, recursive: true });
+    vi.unstubAllEnvs();
+  });
+
   it("allows valid peer-route drift after waiting for the gateway lock", async () => {
     let releaseGateway!: () => void;
     const gatewayReleased = new Promise<void>((resolve) => {
@@ -61,6 +74,9 @@ describe("sandbox registration route transaction", () => {
     });
     const createSandbox = vi.fn(async () => {
       events.push("create");
+      expect(fs.existsSync(path.join(process.env.HOME!, ".nemoclaw-portable-host.lock"))).toBe(
+        true,
+      );
       return "my-assistant";
     });
     const { deps } = createDeps({

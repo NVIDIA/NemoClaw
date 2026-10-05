@@ -518,7 +518,7 @@ export async function backupAllUnderPortableHostFence(
 export async function garbageCollectImages(
   options: string[] | GarbageCollectImagesOptions = {},
 ): Promise<void> {
-  return withHermesPortableMaintenanceAdmission("gc", () =>
-    garbageCollectImagesWithoutPortableAuthority(options),
+  return garbageCollectImagesWithoutPortableAuthority(options, (operation) =>
+    withHermesPortableMaintenanceAdmission("gc", async () => await operation()),
   );
 }

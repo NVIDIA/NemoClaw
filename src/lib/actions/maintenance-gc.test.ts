@@ -31,7 +31,6 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({}));
 vi.mock("../state/portable-uninstall-retirement", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/portable-uninstall-retirement")>()),
   isCurrentPortableHostFenceHeld: () => true,
-  withPortableHostFence: async (_home: string, operation: () => Promise<unknown>) => operation(),
 }));
 
 let home: string;
@@ -225,11 +224,14 @@ describe("garbage collection across gateway registries", () => {
     expect(mocks.dockerRmi).not.toHaveBeenCalled();
   });
 
-  it("preserves an image registered while confirmation is open (#12582)", async () => {
+  it("refreshes sibling roots and image ownership after confirmation (#12582)", async () => {
     writeRegistry(8080, aliceImage);
     mocks.prompt.mockImplementation(async () => {
       expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json.lock"))).toBe(false);
-      writeRegistry(8090, bobImage);
+      expect(fs.existsSync(path.join(home, ".nemoclaw-portable-host.lock"))).toBe(false);
+      // This tag was in the original orphan candidate list, but becomes live
+      // in a newly-created sibling root while the user is deciding.
+      writeRegistry(8090, orphanImage);
       return "y";
     });
 
@@ -246,7 +248,10 @@ describe("garbage collection across gateway registries", () => {
     });
     await collect({});
 
-    expect(mocks.dockerRmi.mock.calls.map(([tag]) => tag)).toEqual([orphanImage]);
+    expect(mocks.dockerRmi).toHaveBeenCalledOnce();
+    expect(mocks.dockerRmi.mock.calls[0]?.[0]).toBe(bobImage);
+    expect(mocks.dockerListImagesFormat).toHaveBeenCalledTimes(6);
+    expect(fs.existsSync(path.join(home, ".nemoclaw-portable-host.lock"))).toBe(false);
   });
 
   it("refuses deletion when sibling state becomes unsafe during confirmation (#12582)", async () => {
