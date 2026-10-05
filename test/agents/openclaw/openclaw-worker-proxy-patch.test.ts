@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import vm from "node:vm";
-import { describe, expect, it } from "vitest";
-import { patchOpenClawWorkerProxyText } from "../../../scripts/lib/patch-openclaw-worker-proxy.mts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  patchOpenClawWorkerProxy,
+  patchOpenClawWorkerProxyText,
+} from "../../../scripts/lib/patch-openclaw-worker-proxy.mts";
 
 // Exact expressions from the 2026.9.5 worker, with network calls replaced by
 // observable return values. Locals retain their reviewed bundled identities.
@@ -109,5 +115,69 @@ describe("OpenClaw 2026.9.5 worker proxy compatibility", () => {
     expect(result.preflight().policy.hostnameAllowlist).toEqual(["inference.local"]);
     expect(result.namespace.withStrictGuardedFetchMode()({}).mode).toBe("trusted_env_proxy");
     expect(result.timeout).toBe(60_000);
+  });
+});
+
+describe("OpenClaw worker patch file ownership", () => {
+  let root: string;
+  let dist: string;
+  let worker: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-worker-patch-"));
+    dist = path.join(root, "dist");
+    worker = path.join(dist, "worker", "worker.mjs");
+    fs.mkdirSync(path.dirname(worker), { recursive: true });
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.5" }));
+    fs.writeFileSync(worker, SOURCE, { mode: 0o600 });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("patches the opened worker and remains idempotent", () => {
+    expect(patchOpenClawWorkerProxy(dist)).toBe(true);
+    expect(fs.readFileSync(worker, "utf8")).toBe(patchOpenClawWorkerProxyText(SOURCE));
+    expect(patchOpenClawWorkerProxy(dist)).toBe(false);
+  });
+
+  it("does not write to a replacement pathname after reading the worker", () => {
+    const originalRead = fs.readFileSync;
+    const openedWorker = path.join(root, "opened-worker.mjs");
+    vi.spyOn(fs, "readFileSync")
+      .mockImplementationOnce(() => JSON.stringify({ version: "2026.9.5" }))
+      .mockImplementationOnce((descriptor) => {
+        const contents = originalRead(descriptor, "utf8");
+        fs.renameSync(worker, openedWorker);
+        fs.writeFileSync(worker, "replacement must remain unchanged");
+        return contents;
+      });
+
+    expect(patchOpenClawWorkerProxy(dist)).toBe(true);
+    expect(fs.readFileSync(worker, "utf8")).toBe("replacement must remain unchanged");
+    expect(fs.readFileSync(openedWorker, "utf8")).toBe(patchOpenClawWorkerProxyText(SOURCE));
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a symlink without changing its target", () => {
+    const target = path.join(root, "target.mjs");
+    fs.renameSync(worker, target);
+    fs.symlinkSync(target, worker);
+
+    expect(() => patchOpenClawWorkerProxy(dist)).toThrow();
+    expect(fs.readFileSync(target, "utf8")).toBe(SOURCE);
+  });
+
+  it("leaves a missing worker absent", () => {
+    fs.unlinkSync(worker);
+    expect(patchOpenClawWorkerProxy(dist)).toBe(false);
+    expect(fs.existsSync(worker)).toBe(false);
+  });
+
+  it("leaves an unreviewed worker unchanged", () => {
+    fs.writeFileSync(worker, "unreviewed worker contents");
+    expect(() => patchOpenClawWorkerProxy(dist)).toThrow(/Unreviewed/);
+    expect(fs.readFileSync(worker, "utf8")).toBe("unreviewed worker contents");
   });
 });

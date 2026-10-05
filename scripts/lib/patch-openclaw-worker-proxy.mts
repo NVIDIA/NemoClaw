@@ -53,17 +53,39 @@ export function patchOpenClawWorkerProxyText(source: string): string {
 
 export function patchOpenClawWorkerProxy(dist: string): boolean {
   const worker = path.join(dist, "worker", "worker.mjs");
-  if (!fs.existsSync(worker)) return false;
-  const metadata = JSON.parse(fs.readFileSync(path.join(dist, "..", "package.json"), "utf8")) as {
-    version?: string;
-  };
-  if (metadata.version !== "2026.9.5") {
-    throw new Error(`Unreviewed OpenClaw worker version: ${metadata.version}`);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(worker, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
-  const source = fs.readFileSync(worker, "utf8");
-  const patched = patchOpenClawWorkerProxyText(source);
-  if (patched !== source) fs.writeFileSync(worker, patched);
-  return patched !== source;
+  try {
+    if (!fs.fstatSync(descriptor).isFile())
+      throw new Error("OpenClaw worker is not a regular file");
+    const metadata = JSON.parse(fs.readFileSync(path.join(dist, "..", "package.json"), "utf8")) as {
+      version?: string;
+    };
+    if (metadata.version !== "2026.9.5") {
+      throw new Error(`Unreviewed OpenClaw worker version: ${metadata.version}`);
+    }
+    const source = fs.readFileSync(descriptor, "utf8");
+    const patched = patchOpenClawWorkerProxyText(source);
+    if (patched === source) return false;
+    // Keep the checked, read, and written file identity bound to one descriptor.
+    // A replaced pathname must never redirect this write to another file.
+    const bytes = Buffer.from(patched);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (written === 0) throw new Error("OpenClaw worker patch write made no progress");
+      offset += written;
+    }
+    fs.ftruncateSync(descriptor, bytes.length);
+    return true;
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
