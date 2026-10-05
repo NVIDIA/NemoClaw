@@ -2129,6 +2129,7 @@ name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
  "http",
  "nemoclaw-provider",
  "nemoclaw-runtime",

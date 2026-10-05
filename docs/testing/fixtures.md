@@ -237,7 +237,8 @@ OpenShell and the upstream Ollama inventory are local protocol fixtures; no mode
 
 ## Standalone Cache and Credential Resources
 
-On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing Python 3.
+On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing `python3` and `sha256sum`, such as an agent image.
+The fixture container runs as root, so the image's own user does not matter.
 From the repository root:
 
 ```sh
@@ -251,8 +252,8 @@ The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.t
 The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
 Missing or substituted credential volumes must stop apply before compute creation and preserve state.
 Teardown sets the container count to zero while keeping both volume declarations; ordinary `tofu destroy` is deliberately blocked by their retention rules.
-The runner removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
-Its Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
+The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
+The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 
 ## Fabric Discovery and Execution
 
