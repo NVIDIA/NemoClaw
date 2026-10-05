@@ -314,7 +314,7 @@ ADD --chmod=0444 --checksum=sha256:98c792f39650b00818c05dcc407902034dc4092f36859
 ADD --chmod=0444 --checksum=sha256:89d5895c64d5b1099df79ba1f6cf3f054fd0265cb5e17acb94de84d46bc01085 https://registry.npmjs.org/import-meta-resolve/-/import-meta-resolve-4.2.0.tgz /import-meta-resolve-4.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:41f6a60b13cf29eebdd06723223dc68ff1d47721d56e4fef93d2d450167d9dc0 https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz /inflate-0.4.1.tgz
 ADD --chmod=0444 --checksum=sha256:d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz /inherits-2.0.4.tgz
-ADD --chmod=0444 --checksum=sha256:35e23227dfeca9179f03f899a9e3a21faf542a8079821bce95d5620642d75873 https://registry.npmjs.org/ip-address/-/ip-address-10.5.0.tgz /ip-address-10.5.0.tgz
+ADD --chmod=0444 --checksum=sha256:25a406ee4388fa3d47380ad57b816087fa82a681cc710cccbfe9162cffa8a57a https://registry.npmjs.org/ip-address/-/ip-address-10.7.0.tgz /ip-address-10.7.0.tgz
 ADD --chmod=0444 --checksum=sha256:4301746e43e8a85a6a41e268f02178b27e6ba58e78e6913ab105d3871618083b https://registry.npmjs.org/ip-address/-/ip-address-10.7.2.tgz /ip-address-10.7.2.tgz
 ADD --chmod=0444 --checksum=sha256:7441d9623f67fe4160eccfd82ae9a404dcd55e1e4f1b68e06e2374dade4e8fee https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz /ipaddr.js-1.9.1.tgz
 ADD --chmod=0444 --checksum=sha256:1a230b0b25c81eff06bdee3856a742fd17260169b0bf958de9368c4b3ce2ddee https://registry.npmjs.org/is-docker/-/is-docker-3.0.0.tgz /is-docker-3.0.0.tgz
@@ -395,6 +395,7 @@ ADD --chmod=0444 --checksum=sha256:a70348669b01db602faf140e984e61b01c4380f9b4bf5
 ADD --chmod=0444 --checksum=sha256:615af90e363f8f276b4b54f8e6c163cf3686dce1d8867dd7e52cbed4d38d2dab https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz /node-fetch-3.3.2.tgz
 ADD --chmod=0444 --checksum=sha256:940450fb4158bddc23ae156432a67338a4d7ab6a585b639c61b3b0a14d2bac24 https://registry.npmjs.org/node-gyp-build/-/node-gyp-build-4.8.4.tgz /node-gyp-build-4.8.4.tgz
 ADD --chmod=0444 --checksum=sha256:c28df2b8de694493420c9f090c53f1cc9d087b64ba7b6b59e262588198688ef5 https://registry.npmjs.org/@lydell/node-pty/-/node-pty-1.2.0-beta.15.tgz /node-pty-1.2.0-beta.15.tgz
+ADD --chmod=0444 --checksum=sha256:f65675c6fc745a4f15a2abd316883e715ab53afbc4b4fbb2ff57ed280360b9b6 https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.1.tgz /node-server-2.1.1.tgz
 ADD --chmod=0444 --checksum=sha256:45d02627ce61f2eeb27bb0f6b7480dfe5e2206bb1edee68e39518e049fad1082 https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.3.tgz /node-server-2.1.3.tgz
 ADD --chmod=0444 --checksum=sha256:82163aa3e3a46ef2a49f8d20f21b67af52724b5be35246d685c1180b9f918ddf https://registry.npmjs.org/npm-run-path/-/npm-run-path-6.0.0.tgz /npm-run-path-6.0.0.tgz
 ADD --chmod=0444 --checksum=sha256:db23d012df85d2c0308c7b3fd3bd538664d9e0e1dca1aa96e659641b76457a8f https://registry.npmjs.org/nth-check/-/nth-check-3.0.1.tgz /nth-check-3.0.1.tgz
@@ -431,13 +432,13 @@ ADD --chmod=0444 --checksum=sha256:c0063cf4e8865ef0e944b3853b046b01571036b62be5c
 ADD --chmod=0444 --checksum=sha256:425bf8c725d23bc5ac76bcedd10d9cdbbd6354c7273dd7def44417cfbca8889b https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz /process-nextick-args-2.0.1.tgz
 ADD --chmod=0444 --checksum=sha256:c93b729e135824bcc1f0f1bffca03a6559fa1779f5bdfb5028e2f42d61f60f37 https://registry.npmjs.org/@clack/prompts/-/prompts-1.8.0.tgz /prompts-1.8.0.tgz
 ADD --chmod=0444 --checksum=sha256:df0241b3046b505d27396da6eef107f14dffb108f77aa89cfd9611a928eb6dfe https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz /protobufjs-7.6.6.tgz
-ADD --chmod=0444 --checksum=sha256:205de58fb0e9e9ce2e1d2903f634f9be1852f024883fa037eb6ab1cd0c0e6c6b https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.2.tgz /protobufjs-8.7.2.tgz
+ADD --chmod=0444 --checksum=sha256:a15bcc96a98552075bb81f566c378e97f6cba3c4be362337718937715da24819 https://registry.npmjs.org/protobufjs/-/protobufjs-8.8.0.tgz /protobufjs-8.8.0.tgz
 ADD --chmod=0444 --checksum=sha256:a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz /proxy-addr-2.0.7.tgz
+ADD --chmod=0444 --checksum=sha256:ffcc8055b78b0852b2889a426ad3a3003b60bc79df704faca194157efa2b2587 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz /proxy-addr-2.0.8.tgz
 ADD --chmod=0444 --checksum=sha256:e9c52dbf1e382319d5da00b8d964805859b7eb1424450e049d12743d7e19fc9a https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz /proxy-from-env-2.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:46f9a1ff34b00eec7c475c6618d6424b92380cb901adefa8e88c0553f0269d0f https://registry.npmjs.org/@openclaw/proxyline/-/proxyline-0.3.12.tgz /proxyline-0.3.12.tgz
 ADD --chmod=0444 --checksum=sha256:0c7274f0c299f39c2fddf54a2e0039b785977b0173c02d0b3f65fad68923e2b0 https://registry.npmjs.org/qrcode/-/qrcode-1.5.4.tgz /qrcode-1.5.4.tgz
 ADD --chmod=0444 --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
-ADD --chmod=0444 --checksum=sha256:c0278b636e7a016d6e835cd8f194a63c276dff430620e4a04344a4ba8892c0f9 https://registry.npmjs.org/qs/-/qs-6.15.3.tgz /qs-6.15.3.tgz
 ADD --chmod=0444 --checksum=sha256:f7a1bfc96c3a0c1172f1f3ef3c280f5ce8054841922e715f0d686da62d7beba4 https://registry.npmjs.org/qs/-/qs-6.16.0.tgz /qs-6.16.0.tgz
 ADD --chmod=0444 --checksum=sha256:825835957ba239b99390a106286e1ba6df7bca736ff1ed79409681fc550672e3 https://registry.npmjs.org/quickjs-wasi/-/quickjs-wasi-3.6.0.tgz /quickjs-wasi-3.6.0.tgz
 ADD --chmod=0444 --checksum=sha256:51b79ec072db6788b132680256e9e733af8bb091df4f8ce8562ca631118f0fae https://registry.npmjs.org/range-parser/-/range-parser-1.3.0.tgz /range-parser-1.3.0.tgz
@@ -479,9 +480,9 @@ ADD --chmod=0444 --checksum=sha256:3b256b6421300bcc962d891b1588fd4b64e84e339b9c2
 ADD --chmod=0444 --checksum=sha256:3b2a54f0c5e7ad898c8f0ffda2a6805fb2cc5d68f53addf0b4a9ec0db9d0d06e https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz /side-channel-weakmap-1.0.2.tgz
 ADD --chmod=0444 --checksum=sha256:9d3b58a811ecf6a641537387289274cd14f5bb912a27e4f1f2a74182bca8b795 https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz /signal-exit-4.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:9e4d29b24315611de5a1767ca1b09716f40bb04534836295fe36d80c643974b3 https://registry.npmjs.org/sisteransi/-/sisteransi-1.0.5.tgz /sisteransi-1.0.5.tgz
-ADD --chmod=0444 --checksum=sha256:1a9f206cf9aba09bab51e2f80e34dbea9d830074aa5527280b7e9c8718792cc3 https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz /slack-2026.9.5.tgz
 
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-4
+ADD --chmod=0444 --checksum=sha256:1a9f206cf9aba09bab51e2f80e34dbea9d830074aa5527280b7e9c8718792cc3 https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz /slack-2026.9.5.tgz
 ADD --chmod=0444 --checksum=sha256:bdbca10d17ff5a5802d5acfc7b2f22f9f9bf587632a95650d3c5f513c7092b86 https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz /source-map-0.6.1.tgz
 ADD --chmod=0444 --checksum=sha256:5d9b04ef3e6824fdcf91cfcc03ab427fae486bc6859735805593f51b3554f636 https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz /source-map-support-0.5.21.tgz
 ADD --chmod=0444 --checksum=sha256:99ae8b2159aa2d25a0186b7b07d8ef21478370af2f9755d905f8055f8b67307b https://registry.npmjs.org/sqlite-vec/-/sqlite-vec-0.1.9.tgz /sqlite-vec-0.1.9.tgz
@@ -609,7 +610,7 @@ RUN --network=none set -eu; \
         --cache /out/npm-cache; \
     node /scripts/checks/verify-managed-messaging-offline-install.mts --lockfile /opt/managed-image-messaging-runtime/package-lock.json --prefix /opt/managed-image-messaging-runtime; npm cache verify --cache /out/npm-cache; \
     node /scripts/lib/seed-reviewed-npm-cache.mts \
-        --packuments-only \
+        --packuments-only --omit-bundled-versions \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \
         --registry-origin https://registry.npmjs.org/; \
