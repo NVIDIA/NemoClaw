@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
 import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
@@ -72,13 +72,13 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
   };
 }
 
-export function isResumeProviderSurfaceReady(
+export async function isResumeProviderSurfaceReady(
   gatewayName: string,
   provider: string | null | undefined,
   preferredInferenceApi: string | null | undefined,
   credentialEnv: string | null | undefined,
   endpointUrl: string | null | undefined,
-): boolean {
+): Promise<boolean> {
   if (
     provider !== "compatible-anthropic-endpoint" ||
     preferredInferenceApi !== "openai-completions" ||
@@ -87,9 +87,9 @@ export function isResumeProviderSurfaceReady(
     return true;
   }
 
-  const metadata = readGatewayProviderMetadata(
+  const metadata = await readGatewayProviderMetadata(
     provider,
-    runOpenshell as unknown as Parameters<typeof readGatewayProviderMetadata>[1],
+    createCliOpenShellProviderAdapter(),
     gatewayName,
   );
   return matchesGatewayProviderBinding(metadata, {

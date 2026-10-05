@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { cliOpenShellInstalledVersionObserver } from "../adapters/openshell/installed-version-cli";
+import {
+  cliOpenShellInstalledVersionObserver,
+  createCliOpenShellInstalledVersionObserver,
+} from "../adapters/openshell/installed-version-cli";
 import { parseOpenShellVersionFromText } from "../adapters/openshell/version-text";
 import { ROOT } from "../runner";
 
@@ -14,6 +17,14 @@ export function getInstalledOpenshellVersion(versionOutput: string | null = null
   if (versionOutput !== null) return parseOpenShellVersionFromText(versionOutput);
   const observation = cliOpenShellInstalledVersionObserver.observeInstalledVersion();
   return observation.ok ? observation.version : null;
+}
+
+export function createVersionObserver(resolveBinary: () => string) {
+  return (environment?: NodeJS.ProcessEnv) =>
+    createCliOpenShellInstalledVersionObserver({
+      ...(environment ? { environment } : {}),
+      resolveBinary,
+    }).observeInstalledVersion();
 }
 
 /**

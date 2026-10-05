@@ -9,6 +9,10 @@ import {
   buildSelectedOpenShellSubprocessEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/command-argv";
+import type {
+  OpenShellInstalledVersion,
+  OpenShellInstalledVersionObservation,
+} from "../../adapters/openshell/installed-version";
 import { gatewayHostRuntimeEnvironment } from "../runtime-provider/configured-runtime";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
@@ -59,7 +63,9 @@ export interface DockerDriverGatewayStartDeps {
   getDockerDriverGatewayStateDir: GatewayRuntimeHelpers["getDockerDriverGatewayStateDir"];
   getGatewayPortListenerRawScan: GatewayRuntimeHelpers["getGatewayPortListenerRawScan"];
   getTrustedActiveOpenShellGatewayUserServiceStopTarget?: typeof getTrustedActiveOpenShellGatewayUserServiceStopTarget;
-  getInstalledOpenshellVersion: typeof import("../openshell-version").getInstalledOpenshellVersion;
+  observeInstalledOpenshellVersion(
+    environment?: NodeJS.ProcessEnv,
+  ): OpenShellInstalledVersionObservation;
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
   isDockerDriverGatewayProcess: GatewayRuntimeHelpers["isDockerDriverGatewayProcess"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
@@ -200,16 +206,6 @@ export function createDockerDriverGatewayStart(
           ...gatewayHostRuntimeEnvironment(process.env),
         }
       : undefined;
-    const runtimeOptions = selectedRuntimeEnv
-      ? {
-          env: selectedRuntimeEnv,
-          replaceEnv: true,
-        }
-      : {};
-    const runCaptureOpenshell: DockerDriverGatewayStartDeps["runCaptureOpenshell"] = (
-      args,
-      options = {},
-    ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
     let registrationAttempt: Promise<boolean> | undefined;
     const registerDockerDriverGatewayEndpoint = () =>
       (registrationAttempt ??= deps.registerDockerDriverGatewayEndpoint(runtimeSelection));
@@ -241,8 +237,14 @@ export function createDockerDriverGatewayStart(
         );
       }
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
-      const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-      const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
+      const versionObservation = deps.observeInstalledOpenshellVersion(selectedRuntimeEnv);
+      const installedVersion: OpenShellInstalledVersion | null = versionObservation.ok
+        ? {
+            version: versionObservation.version,
+            development: versionObservation.development,
+          }
+        : null;
+      const gatewayEnv = deps.getDockerDriverGatewayEnv(installedVersion);
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,
@@ -413,7 +415,7 @@ export function createDockerDriverGatewayStart(
           deps.getDockerDriverGatewayEndpoint,
         ),
         gatewayBin: driftGatewayBin,
-        openshellVersion: deps.getInstalledOpenshellVersion(openshellVersionOutput),
+        openshellVersion: installedVersion?.version ?? null,
         dockerHost: process.env.DOCKER_HOST || null,
       });
       const pollCount = deps.envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);

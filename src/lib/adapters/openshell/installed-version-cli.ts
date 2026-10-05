@@ -108,7 +108,7 @@ export function createCliOpenShellInstalledVersionObserver(
       }
       const version = parseOpenShellVersionFromText(output);
       return version
-        ? { ok: true, version }
+        ? { ok: true, version, development: /\bdev[0-9.]*/iu.test(output) }
         : failure("malformed", "OpenShell returned an unrecognized version.");
     },
   };

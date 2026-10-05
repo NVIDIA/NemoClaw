@@ -7,8 +7,13 @@ export type OpenShellInstalledVersionError = Readonly<{
 }>;
 
 export type OpenShellInstalledVersionObservation =
-  | Readonly<{ ok: true; version: string }>
+  | Readonly<{ ok: true; version: string; development: boolean }>
   | Readonly<{ ok: false; error: OpenShellInstalledVersionError }>;
+
+export type OpenShellInstalledVersion = Readonly<{
+  version: string;
+  development: boolean;
+}>;
 
 export type ObserveOpenShellInstalledVersionRequest = Readonly<{
   timeoutMs?: number;

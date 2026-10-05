@@ -27,6 +27,7 @@ import {
   type OpenShellProviderRequest,
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
+  type VerifyOpenShellProviderProfileRequest,
 } from "./provider-adapter";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
@@ -703,6 +704,50 @@ export function createCliOpenShellProviderAdapter(
         });
   };
 
+  const verifyProviderProfile: OpenShellProviderAdapter["verifyProviderProfile"] = async (
+    request: VerifyOpenShellProviderProfileRequest,
+  ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
+    const readProfileFile =
+      deps.readProfileFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
+    const expected = (() => {
+      try {
+        return parseCheckedInProviderProfileContract(readProfileFile(request.profilePath));
+      } catch {
+        return null;
+      }
+    })();
+    if (!expected) {
+      return failure({
+        kind: "validation",
+        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
+      });
+    }
+    if (
+      (request.expectedProfileId !== undefined &&
+        expected.profileId !== request.expectedProfileId) ||
+      (request.requireEndpointless === true &&
+        (expected.boundary.endpoints.length > 0 ||
+          expected.boundary.binaries.length > 0 ||
+          expected.boundary.inference_capable))
+    ) {
+      return success({ matches: false });
+    }
+    const result = invoke(
+      ["provider", "profile", "export", expected.profileId, "--output", "json"],
+      request,
+      undefined,
+      2,
+      true,
+    );
+    const error = commandError(result);
+    if (error) return failure(error);
+    return success({
+      matches: exportedProviderProfileMatchesContract(commandStdout(result), expected),
+    });
+  };
+
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (
     request: DeleteOpenShellProviderRequest,
   ) => {
@@ -912,6 +957,7 @@ export function createCliOpenShellProviderAdapter(
     updateProvider,
     importProviderProfile,
     inspectProviderProfile,
+    verifyProviderProfile,
     deleteProvider,
     detachProvider,
     attachProvider,

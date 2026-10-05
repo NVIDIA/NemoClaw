@@ -389,7 +389,7 @@ describe("assessRecoveredProviderCredentialReuse", () => {
 });
 
 describe("resolveRecoveredProviderCredentialReuse", () => {
-  it("leaves the normal validation path untouched when a host credential exists", () => {
+  it("leaves the normal validation path untouched when a host credential exists", async () => {
     const state = {
       provider: "compatible-endpoint",
       endpointUrl: "https://inference.example/v1",
@@ -403,7 +403,7 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
     });
 
     expect(
-      resolveRecoveredProviderCredentialReuse(
+      await resolveRecoveredProviderCredentialReuse(
         {
           selected: { key: "custom" },
           remoteConfig: { label: "Other OpenAI-compatible endpoint", providerType: "openai" },
@@ -431,7 +431,7 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("uses the pre-delete registry route after destructive removal", () => {
+  it("uses the pre-delete registry route after destructive removal", async () => {
     const state = {
       provider: "compatible-endpoint",
       endpointUrl: "https://inference.example/v1",
@@ -443,7 +443,7 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
     });
 
     expect(
-      resolveRecoveredProviderCredentialReuse(
+      await resolveRecoveredProviderCredentialReuse(
         {
           selected: { key: "custom" },
           remoteConfig: { label: "Other OpenAI-compatible endpoint", providerType: "openai" },
@@ -485,13 +485,13 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
     expect(readRecordedInferenceRoute).not.toHaveBeenCalled();
   });
 
-  it("rejects an effective model override that differs from the atomic recovered route", () => {
+  it("rejects an effective model override that differs from the atomic recovered route", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit ${code}`);
     }) as never);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      expect(() =>
+      await expect(
         resolveRecoveredProviderCredentialReuse(
           {
             selected: { key: "custom" },
@@ -525,7 +525,7 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
             note: vi.fn(),
           },
         ),
-      ).toThrow("exit 1");
+      ).rejects.toThrow("exit 1");
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();

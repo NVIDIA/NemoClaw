@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../adapters/openshell/provider-adapter-cli";
 import type { ChannelManifest } from "../messaging/manifest";
 import {
   bridgeProviderNamesForChannel,
@@ -22,6 +26,13 @@ const SA_JSON = JSON.stringify({
   private_key: "fake-test-private-key-material",
 });
 const normalizeCredentialValue = (v: unknown) => String(v ?? "").trim();
+
+function profileAdapter(run: RunProviderCommand, source?: string) {
+  return createCliOpenShellProviderAdapter({
+    run,
+    ...(source === undefined ? {} : { readProfileFile: () => source }),
+  });
+}
 
 // Injected in-memory profile mirroring the co-located google-chat-bridge profile,
 // so the unit tests do not touch the filesystem or the manifest registry.
@@ -185,18 +196,17 @@ describe("collectMessagingBridgeTokenDefs", () => {
 });
 
 describe("matchesRegisteredMessagingBridgeProfile", () => {
-  it("accepts only the checked-in static credential boundary", () => {
+  it("accepts only the checked-in static credential boundary", async () => {
     const runOpenshell = vi.fn(() => ({
       status: 0,
       stdout: JSON.stringify(DISCORD_PROFILE_DOC),
     }));
 
     expect(
-      matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
+      await matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
-        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-        runOpenshell,
+        providerAdapter: profileAdapter(runOpenshell, YAML.stringify(DISCORD_PROFILE_DOC)),
       }),
     ).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
@@ -205,7 +215,7 @@ describe("matchesRegisteredMessagingBridgeProfile", () => {
     );
   });
 
-  it("rejects a registered static profile with endpoint authority", () => {
+  it("rejects a registered static profile with endpoint authority", async () => {
     const runOpenshell = vi.fn(() => ({
       status: 0,
       stdout: JSON.stringify({
@@ -215,16 +225,52 @@ describe("matchesRegisteredMessagingBridgeProfile", () => {
     }));
 
     expect(
-      matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
+      await matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
-        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-        runOpenshell,
+        providerAdapter: profileAdapter(runOpenshell, YAML.stringify(DISCORD_PROFILE_DOC)),
       }),
     ).toBe(false);
   });
 
-  it("rejects a registered refreshing profile with altered refresh authority", () => {
+  it("rejects a static profile when checked-in and live boundaries both gain authority", async () => {
+    const profileWithEndpoint = {
+      ...DISCORD_PROFILE_DOC,
+      endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+    };
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify(profileWithEndpoint),
+    }));
+
+    expect(
+      await matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        providerAdapter: profileAdapter(runOpenshell, YAML.stringify(profileWithEndpoint)),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects a checked-in profile whose id does not match the selected bridge type", async () => {
+    const mismatchedProfile = { ...DISCORD_PROFILE_DOC, id: "other-profile" };
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify(mismatchedProfile),
+    }));
+
+    expect(
+      await matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        providerAdapter: profileAdapter(runOpenshell, YAML.stringify(mismatchedProfile)),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects a registered refreshing profile with altered refresh authority", async () => {
     const runOpenshell = vi.fn(() => ({
       status: 0,
       stdout: JSON.stringify({
@@ -242,23 +288,22 @@ describe("matchesRegisteredMessagingBridgeProfile", () => {
     }));
 
     expect(
-      matchesRegisteredMessagingBridgeProfile(GC_PROFILE.profileId, {
+      await matchesRegisteredMessagingBridgeProfile(GC_PROFILE.profileId, {
         root: "/repo",
         profiles: [GC_PROFILE],
-        readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
-        runOpenshell,
+        providerAdapter: profileAdapter(runOpenshell, YAML.stringify(GC_PROFILE_DOC)),
       }),
     ).toBe(false);
   });
 
-  it("does not apply the static-profile check to other provider types", () => {
+  it("does not apply the static-profile check to other provider types", async () => {
     const runOpenshell = vi.fn();
 
     expect(
-      matchesRegisteredMessagingBridgeProfile("generic", {
+      await matchesRegisteredMessagingBridgeProfile("generic", {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
-        runOpenshell,
+        providerAdapter: profileAdapter(runOpenshell),
       }),
     ).toBeNull();
     expect(runOpenshell).not.toHaveBeenCalled();
@@ -288,7 +333,7 @@ describe("listMessagingBridgeProfiles", () => {
 
   it.each(["openclaw", "hermes"] as const)(
     "accepts OpenShell's canonical Google Chat export for %s (#10971)",
-    (agent) => {
+    async (agent) => {
       const profile = listMessagingBridgeProfiles().find(
         (candidate) => candidate.channelId === "googlechat" && candidate.agent === agent,
       );
@@ -321,11 +366,13 @@ describe("listMessagingBridgeProfiles", () => {
       }));
 
       expect(
-        matchesRegisteredMessagingBridgeProfile(profile!.profileId, {
+        await matchesRegisteredMessagingBridgeProfile(profile!.profileId, {
           root: "/repo",
           profiles: [profile!],
-          readFileSync: () => checkedIn,
-          runOpenshell: () => ({ status: 0, stdout: JSON.stringify(canonicalExport) }),
+          providerAdapter: profileAdapter(
+            () => ({ status: 0, stdout: JSON.stringify(canonicalExport) }),
+            checkedIn,
+          ),
         }),
       ).toBe(true);
     },

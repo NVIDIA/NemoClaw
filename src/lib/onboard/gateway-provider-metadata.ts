@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { reportsExactProviderNotFound } from "../adapters/openshell/provider-diagnostic-cli";
-import type { OpenShellProviderMetadata } from "../adapters/openshell/provider-adapter";
-import {
-  isValidCliOpenShellProviderIdentifier,
-  parseCliOpenShellProviderMetadata,
-} from "../adapters/openshell/provider-metadata-cli";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderMetadata,
+} from "../adapters/openshell/provider-adapter";
+import { parseCliOpenShellProviderMetadata } from "../adapters/openshell/provider-metadata-cli";
 
-const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 
 export type GatewayProviderMetadata = Omit<OpenShellProviderMetadata, "revision">;
@@ -85,112 +83,68 @@ export function matchesGatewayCredentialFamilyProviderBinding(
   );
 }
 
-type GatewayProviderCommandResult = {
-  status?: number | null;
-  stdout?: unknown;
-  stderr?: unknown;
-  output?: unknown;
-  error?: unknown;
-  signal?: unknown;
-};
-
-type GatewayProviderRunner = (
-  args: string[],
-  options: {
-    ignoreError: true;
-    maxBuffer?: number;
-    suppressOutput: true;
-    stdio: ["ignore", "pipe", "pipe"];
-    timeout?: number;
-  },
-) => GatewayProviderCommandResult;
-
 export type GatewayCredentialOnlyProviderInspection =
   | { readonly kind: "collision" }
   | { readonly kind: "exact" }
   | { readonly kind: "indeterminate" }
   | { readonly kind: "missing" };
 
-function commandStreamText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Buffer.isBuffer(value)) return value.toString("utf8");
-  if (Array.isArray(value)) return value.map(commandStreamText).filter(Boolean).join("\n");
-  return "";
-}
-
-function providerCommandOutput(result: GatewayProviderCommandResult): string {
-  const streams = [result.stderr, result.stdout]
-    .map(commandStreamText)
-    .filter((value) => value.length > 0);
-  return streams.length > 0 ? streams.join("\n") : commandStreamText(result.output);
-}
-
-function inspectGatewayCredentialBinding(
+async function inspectGatewayCredentialBinding(
   expected: GatewayCredentialOnlyProviderBinding,
-  runOpenshell: GatewayProviderRunner,
+  providerAdapter: Pick<OpenShellProviderAdapter, "getProvider">,
   matches: (
     metadata: GatewayProviderMetadata | null,
     expected: GatewayCredentialOnlyProviderBinding,
   ) => boolean,
-): GatewayCredentialOnlyProviderInspection {
-  let result: GatewayProviderCommandResult;
+  gatewayName?: string | null,
+): Promise<GatewayCredentialOnlyProviderInspection> {
   try {
-    result = runOpenshell(["provider", "get", expected.name], {
-      ignoreError: true,
-      maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: PROVIDER_PROBE_TIMEOUT_MS,
+    const result = await providerAdapter.getProvider({
+      providerName: expected.name,
+      target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+      timeoutMs: PROVIDER_PROBE_TIMEOUT_MS,
     });
+    if (!result.ok) {
+      return result.error.kind === "command" && result.error.reason === "not_found"
+        ? { kind: "missing" }
+        : { kind: "indeterminate" };
+    }
+    const { revision: _revision, ...metadata } = result.value;
+    return matches(metadata, expected) ? { kind: "exact" } : { kind: "collision" };
   } catch {
     return { kind: "indeterminate" };
   }
-
-  const output = providerCommandOutput(result);
-  if (result.error || result.signal || result.status !== 0) {
-    return !result.error &&
-      !result.signal &&
-      result.status === 1 &&
-      reportsExactProviderNotFound(output, expected.name, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
-      ? { kind: "missing" }
-      : { kind: "indeterminate" };
-  }
-
-  const metadata = parseGatewayProviderMetadata(output);
-  return matches(metadata, expected) ? { kind: "exact" } : { kind: "collision" };
 }
 
 /** Distinguish a credential family from absence and lookup failure. */
 export function inspectGatewayCredentialFamilyProviderBinding(
   expected: GatewayCredentialFamilyProviderBinding,
-  runOpenshell: GatewayProviderRunner,
-): GatewayCredentialOnlyProviderInspection {
+  providerAdapter: Pick<OpenShellProviderAdapter, "getProvider">,
+  gatewayName?: string | null,
+): Promise<GatewayCredentialOnlyProviderInspection> {
   return inspectGatewayCredentialBinding(
     expected,
-    runOpenshell,
+    providerAdapter,
     matchesGatewayCredentialFamilyProviderBinding,
+    gatewayName,
   );
 }
 
 /** Read one exact provider identity without reading or exporting credential values. */
-export function readGatewayProviderMetadata(
+export async function readGatewayProviderMetadata(
   name: string,
-  runOpenshell: GatewayProviderRunner,
+  providerAdapter: Pick<OpenShellProviderAdapter, "getProvider">,
   gatewayName?: string | null,
-): GatewayProviderMetadata | null {
-  if (!isValidCliOpenShellProviderIdentifier(name)) return null;
-
-  const args = ["provider", "get"];
-  if (gatewayName) args.push("-g", gatewayName);
-  args.push(name);
-  const result = runOpenshell(args, {
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) return null;
-
-  const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
-  const metadata = parseGatewayProviderMetadata(output);
-  return metadata?.name === name ? metadata : null;
+): Promise<GatewayProviderMetadata | null> {
+  try {
+    const result = await providerAdapter.getProvider({
+      providerName: name,
+      target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    });
+    if (!result.ok) return null;
+    const { revision: _revision, ...metadata } = result.value;
+    return metadata.name === name ? metadata : null;
+  } catch {
+    return null;
+  }
 }

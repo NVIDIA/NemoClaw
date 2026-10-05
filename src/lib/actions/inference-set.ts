@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
+import {
+  createDefaultCliOpenShellInferenceRouteObserver,
+  prepareCliOpenShellInferenceRouteTransport,
+} from "../adapters/openshell/inference-route-runtime";
 import type {
   OpenShellInferenceRouteObservation,
   OpenShellInferenceRouteObserver,
@@ -83,8 +86,8 @@ import {
 } from "./inference-set-provider";
 import {
   buildInferenceSetFailure,
-  createDefaultInferenceSetRouteObserver,
   createDefaultInferenceSetRouteMutator,
+  createProductionInferenceSetRouteMutator,
   queryRegisteredGatewayProviders,
 } from "./inference-set-provider-diagnostics";
 import {
@@ -312,10 +315,10 @@ function defaultDeps(): InferenceSetDeps {
     setOpenClawConfigValues,
     recomputeSandboxConfigHash,
     prepareRunOpenshell: () => {
-      getOpenshellBinary();
+      prepareCliOpenShellInferenceRouteTransport();
     },
-    inferenceRouteMutator: createDefaultInferenceSetRouteMutator(captureResolvedOpenshellAsync),
-    inferenceRouteObserver: createDefaultInferenceSetRouteObserver(captureResolvedOpenshellAsync),
+    inferenceRouteMutator: createProductionInferenceSetRouteMutator(),
+    inferenceRouteObserver: createDefaultCliOpenShellInferenceRouteObserver(),
     providerAdapter: createDefaultInferenceSetProviderAdapter(),
     appendAuditEntry,
     log: console.log,

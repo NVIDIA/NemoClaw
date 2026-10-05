@@ -358,7 +358,7 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
     });
     expect(mocks.readGatewayProviderMetadata).toHaveBeenCalledWith(
       "my-assistant-brave-search",
-      mocks.runOpenshell,
+      expect.objectContaining({ getProvider: expect.any(Function) }),
       "nemoclaw",
     );
     expect(mocks.ensureValidatedWebSearchCredential).not.toHaveBeenCalled();

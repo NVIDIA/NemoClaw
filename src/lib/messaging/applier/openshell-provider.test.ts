@@ -86,6 +86,9 @@ function providerAdapter(
     inspectProviderProfile: vi
       .fn<OpenShellProviderAdapter["inspectProviderProfile"]>()
       .mockResolvedValue({ ok: true, value: { credentialKeys: [] } }),
+    verifyProviderProfile: vi
+      .fn<OpenShellProviderAdapter["verifyProviderProfile"]>()
+      .mockResolvedValue({ ok: true, value: { matches: true } }),
     deleteProvider: vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
       .mockResolvedValue({ ok: true }),

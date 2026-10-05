@@ -3,15 +3,15 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { HERMES_PORTABLE_OPENSHELL_VERSION } from "../adapters/openshell/resolve-shared";
+import type { OpenShellInstalledVersionObservation } from "../adapters/openshell/installed-version";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 export interface SandboxRegistryMetadataDeps {
-  getCurrentRuntimeProviderId(): string;
-  getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
-  runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  getCurrentRuntimeProvider(): { identity: { id: string } };
+  observeInstalledOpenshellVersion(): OpenShellInstalledVersionObservation;
 }
 
 export interface SandboxRegistryMetadataHelpers {
@@ -85,10 +85,11 @@ export function createSandboxRegistryMetadataHelpers(
       ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
       // Persist the selected managed provider identity. The provider may use
       // compatibility compute plumbing internally without becoming Docker.
-      openshellDriver: deps.getCurrentRuntimeProviderId(),
-      openshellVersion: deps.getInstalledOpenshellVersion(
-        deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
-      ),
+      openshellDriver: deps.getCurrentRuntimeProvider().identity.id,
+      openshellVersion: (() => {
+        const observation = deps.observeInstalledOpenshellVersion();
+        return observation.ok ? observation.version : null;
+      })(),
     };
   }
 

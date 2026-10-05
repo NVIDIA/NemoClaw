@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { getCredential } from "../../credentials/store";
 import {
   type WebSearchProvider,
@@ -49,18 +49,22 @@ import type { RebuildTargetConfig } from "./rebuild-target-config";
  * the recreate will never read. Agents that never reuse the binding, and any
  * run with a host key staged, keep the validation path.
  */
-function canReuseGatewayWebSearchCredential(
+async function canReuseGatewayWebSearchCredential(
   target: RebuildTargetConfig,
   sb: RebuildSandboxEntry,
   provider: WebSearchProvider,
   log: RebuildLog,
-): boolean {
+): Promise<boolean> {
   if (target.agentDefinition) return false;
   const credentialEnv = webSearchEnvFor(provider);
   if (getCredential(credentialEnv)) return false;
   const providerName = `${sb.name}-${provider}-search`;
   const matches = matchesGatewayCredentialFamilyProviderBinding(
-    readGatewayProviderMetadata(providerName, runOpenshell, resolveSandboxGatewayName(sb)),
+    await readGatewayProviderMetadata(
+      providerName,
+      createCliOpenShellProviderAdapter(),
+      resolveSandboxGatewayName(sb),
+    ),
     {
       name: providerName,
       type: provider,
@@ -85,7 +89,7 @@ async function preflightRebuildWebSearchCredential(
   if (!config) return true;
   const provider = webSearchProviderForConfig(config);
   const label = webSearchLabelFor(provider);
-  if (canReuseGatewayWebSearchCredential(target, sb, provider, log)) return true;
+  if (await canReuseGatewayWebSearchCredential(target, sb, provider, log)) return true;
   try {
     const credential = await rebuildOnboardDependencies.ensureValidatedWebSearchCredential(
       config,

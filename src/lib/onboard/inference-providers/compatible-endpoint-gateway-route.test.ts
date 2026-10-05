@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 
 import {
   AUTOMATIC_GATEWAY_PORT_RANGE_END,
@@ -245,7 +246,12 @@ describe("recovered provider reuse", () => {
     const commands: string[] = [];
     const runOpenshell = vi.fn((args: string[]) => {
       commands.push(args.join(" "));
-      return { status: 0, stdout: "", stderr: "" };
+      return {
+        status: 0,
+        stdout:
+          "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+        stderr: "",
+      };
     });
     return { commands, runOpenshell };
   }
@@ -265,7 +271,7 @@ describe("recovered provider reuse", () => {
     expect(
       await reuseRegisteredProviderWithGatewayEndpoint({
         ...reuseArgs,
-        runOpenshell,
+        providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
         upsertProvider,
       }),
     ).toEqual({ ok: true });
@@ -282,7 +288,7 @@ describe("recovered provider reuse", () => {
       await reuseRegisteredProviderWithGatewayEndpoint({
         ...reuseArgs,
         providerType: "anthropic",
-        runOpenshell,
+        providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
         upsertProvider,
       }),
     ).toEqual({ ok: true });

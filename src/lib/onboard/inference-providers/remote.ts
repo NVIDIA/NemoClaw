@@ -204,6 +204,22 @@ export async function setupRemoteProviderInference(
     error(`  Unsupported provider configuration: ${provider}`);
     return exitProcess(1);
   }
+  const providerAdapter =
+    deps.providerAdapter ??
+    createManagedProviderAdapter((command, options) => {
+      const result = runOpenshell(command, options);
+      return {
+        ...result,
+        stdout:
+          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
+            ? result.stdout
+            : null,
+        stderr:
+          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
+            ? result.stderr
+            : null,
+      };
+    });
   const bedrockSetup = await bedrockRuntimeOnboard.setupBedrockRuntimeInference({
     sandboxName,
     provider,
@@ -299,7 +315,7 @@ export async function setupRemoteProviderInference(
             credentialEnv: resolvedCredentialEnv,
             endpointUrl: resolvedEndpointUrl,
             gatewayEndpointUrl,
-            runOpenshell,
+            providerAdapter,
             upsertProvider,
           });
         } else {
@@ -352,7 +368,7 @@ export async function setupRemoteProviderInference(
                 provider,
                 sandboxName,
                 runOpenshell,
-                providerAdapter: deps.providerAdapter,
+                providerAdapter,
                 redact,
                 compactText,
               });

@@ -672,6 +672,8 @@ const {
   redactDiagnostic: runner.redactFullWithUrls,
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
+const providerAdapter = onboardProviders.createCliOpenShellProviderAdapter({ run: runOpenshell });
+const observeInstalledOpenshellVersion = openshellVersion.createVersionObserver(getOpenshellBinary);
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -696,7 +698,7 @@ const { refreshDockerDriverGatewayReuseState } =
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
-    runCaptureOpenshell,
+    observeInstalledOpenshellVersion,
     getDockerDriverGatewayStateDir,
     resolveOpenShellSandboxBinary,
     getDockerDriverGatewayPid,
@@ -1351,7 +1353,7 @@ const dockerDriverGatewayStart = createDockerDriverGatewayStart({
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayStateDir,
   getGatewayPortListenerRawScan,
-  getInstalledOpenshellVersion,
+  observeInstalledOpenshellVersion,
   isDockerDriverGatewayHttpReady,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
@@ -1415,10 +1417,8 @@ const { recoverGatewayRuntime, startDockerDriverGateway, startGateway, startGate
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    getCurrentRuntimeProviderId: () =>
-      setupNimFlow.resolveCurrentRuntimeProviderBundle().identity.id,
-    getInstalledOpenshellVersion,
-    runCaptureOpenshell,
+    getCurrentRuntimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle,
+    observeInstalledOpenshellVersion,
   });
 const sandboxCreateOrchestrationRuntime = {
   DASHBOARD_PORT,
@@ -2072,7 +2072,7 @@ async function handleRemoteProviderSelection(
       state.assertRouteCompatible?.();
       if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
       else
-        recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+        await recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
           {
             selected,
             remoteConfig,
@@ -2091,7 +2091,7 @@ async function handleRemoteProviderSelection(
             readGatewayProviderMetadata: (provider) =>
               onboardProviders.readGatewayProviderMetadata(
                 provider,
-                runOpenshell,
+                providerAdapter,
                 args.gatewayName ?? GATEWAY_NAME,
               ),
             note,

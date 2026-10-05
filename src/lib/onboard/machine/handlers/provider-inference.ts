@@ -252,7 +252,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       preferredInferenceApi: string | null | undefined,
       credentialEnv: string | null | undefined,
       endpointUrl: string | null | undefined,
-    ): boolean;
+    ): boolean | Promise<boolean>;
     recordStateSkipped(
       state: "provider_selection" | "inference",
       metadata?: Record<string, unknown> | null,
@@ -1462,13 +1462,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         forceInferenceSetup = true;
       }
       if (
-        !deps.isResumeProviderSurfaceReady(
+        !(await deps.isResumeProviderSurfaceReady(
           gatewayName,
           provider,
           preferredInferenceApi,
           credentialEnv,
           endpointUrl,
-        )
+        ))
       ) {
         forceInferenceSetup = true;
         deps.log(

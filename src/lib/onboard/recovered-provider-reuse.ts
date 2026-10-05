@@ -73,7 +73,9 @@ type RecoveredProviderSelectionDeps = {
     provider: string,
     excludeSandboxName: string | null,
   ): string[] | null;
-  readGatewayProviderMetadata(provider: string): GatewayProviderMetadata | null;
+  readGatewayProviderMetadata(
+    provider: string,
+  ): GatewayProviderMetadata | null | Promise<GatewayProviderMetadata | null>;
   note(message: string): void;
 };
 
@@ -241,10 +243,10 @@ export function assessRecoveredProviderCredentialReuse(options: {
 }
 
 /** Apply the pure reuse decision to the non-interactive onboarding state. */
-export function resolveRecoveredProviderCredentialReuse(
+export async function resolveRecoveredProviderCredentialReuse(
   options: RecoveredProviderSelection,
   deps: RecoveredProviderSelectionDeps,
-): boolean {
+): Promise<boolean> {
   const { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox } = options;
   if (deps.resolveProviderCredential(selectedCredentialEnv)) return false;
 
@@ -270,7 +272,7 @@ export function resolveRecoveredProviderCredentialReuse(
     recoveredPreferredInferenceApi: recoveredRoute?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: selectedCredentialEnv,
-    gatewayProvider: deps.readGatewayProviderMetadata(state.provider),
+    gatewayProvider: await deps.readGatewayProviderMetadata(state.provider),
     endpointIdentity: customFlavor
       ? {
           flavor: customFlavor,

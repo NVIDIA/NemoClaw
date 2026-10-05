@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../adapters/openshell/provider-adapter-cli";
 
 import {
   inspectGatewayCredentialFamilyProviderBinding,
@@ -20,6 +24,10 @@ const COMPLETE_OUTPUT = [
   "  \u001b[2mCredential keys:\u001b[0m COMPATIBLE_API_KEY",
   "  \u001b[2mConfig keys:\u001b[0m OPENAI_BASE_URL, EXTRA_FLAG",
 ].join("\n");
+
+function providerAdapter(run: RunProviderCommand) {
+  return createCliOpenShellProviderAdapter({ run });
+}
 
 describe("gateway provider metadata", () => {
   it("matches only an exact non-secret provider binding (#6289)", () => {
@@ -92,7 +100,7 @@ describe("gateway provider metadata", () => {
     ).toBe(false);
   });
 
-  it("distinguishes exact, missing, incompatible, and indeterminate credential providers", () => {
+  it("distinguishes exact, missing, incompatible, and indeterminate credential providers", async () => {
     const expected = {
       name: "alpha-telegram-bridge",
       type: "nemoclaw-mcp-v1",
@@ -102,31 +110,46 @@ describe("gateway provider metadata", () => {
       "Name: alpha-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n";
 
     expect(
-      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({ status: 0, stdout: exact })),
+      await inspectGatewayCredentialFamilyProviderBinding(
+        expected,
+        providerAdapter(() => ({ status: 0, stdout: exact })),
+      ),
     ).toEqual({ kind: "exact" });
     expect(
-      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
-        status: 0,
-        stdout: exact.replace("Type: nemoclaw-mcp-v1", "Type: generic"),
-      })),
+      await inspectGatewayCredentialFamilyProviderBinding(
+        expected,
+        providerAdapter(() => ({
+          status: 0,
+          stdout: exact.replace("Type: nemoclaw-mcp-v1", "Type: generic"),
+        })),
+      ),
     ).toEqual({ kind: "collision" });
     expect(
-      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
-        status: 1,
-        stderr:
-          "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
-      })),
+      await inspectGatewayCredentialFamilyProviderBinding(
+        expected,
+        providerAdapter(() => ({
+          status: 1,
+          stderr:
+            "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+        })),
+      ),
     ).toEqual({ kind: "missing" });
     expect(
-      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
-        status: 1,
-        stderr: 'Error: status: Unavailable, message: "provider not found"',
-      })),
+      await inspectGatewayCredentialFamilyProviderBinding(
+        expected,
+        providerAdapter(() => ({
+          status: 1,
+          stderr: 'Error: status: Unavailable, message: "provider not found"',
+        })),
+      ),
     ).toEqual({ kind: "indeterminate" });
     expect(
-      inspectGatewayCredentialFamilyProviderBinding(expected, () => {
-        throw new Error("transport failure");
-      }),
+      await inspectGatewayCredentialFamilyProviderBinding(
+        expected,
+        providerAdapter(() => {
+          throw new Error("transport failure");
+        }),
+      ),
     ).toEqual({ kind: "indeterminate" });
   });
 
@@ -160,10 +183,13 @@ describe("gateway provider metadata", () => {
       "Unicode lookalike inside the provider name",
       "Name: compat\u0456ble-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
     ],
-  ])("rejects adversarial %s", (_label, output) => {
+  ])("rejects adversarial %s", async (_label, output) => {
     expect(parseGatewayProviderMetadata(output)).toBeNull();
     expect(
-      readGatewayProviderMetadata("compatible-endpoint", () => ({ status: 0, stdout: output })),
+      await readGatewayProviderMetadata(
+        "compatible-endpoint",
+        providerAdapter(() => ({ status: 0, stdout: output })),
+      ),
     ).toBeNull();
   });
 
@@ -183,31 +209,39 @@ describe("gateway provider metadata", () => {
     });
   });
 
-  it("reads only the exact requested provider without exposing command output", () => {
+  it("reads only the exact requested provider without exposing command output", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: Buffer.from(COMPLETE_OUTPUT) }));
 
-    expect(readGatewayProviderMetadata("compatible-endpoint", runOpenshell)).toEqual(
-      parseGatewayProviderMetadata(COMPLETE_OUTPUT),
-    );
+    expect(
+      await readGatewayProviderMetadata("compatible-endpoint", providerAdapter(runOpenshell)),
+    ).toEqual(parseGatewayProviderMetadata(COMPLETE_OUTPUT));
     expect(runOpenshell).toHaveBeenCalledWith(["provider", "get", "compatible-endpoint"], {
       ignoreError: true,
+      maxBuffer: 64 * 1024,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
     });
   });
 
-  it("scopes provider inspection to an explicit non-default gateway", () => {
+  it("scopes provider inspection to an explicit non-default gateway", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
 
     expect(
-      readGatewayProviderMetadata("compatible-endpoint", runOpenshell, "nemoclaw-9090"),
+      await readGatewayProviderMetadata(
+        "compatible-endpoint",
+        providerAdapter(runOpenshell),
+        "nemoclaw-9090",
+      ),
     ).toEqual(parseGatewayProviderMetadata(COMPLETE_OUTPUT));
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "get", "-g", "nemoclaw-9090", "compatible-endpoint"],
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
       },
     );
   });
@@ -255,17 +289,27 @@ describe("gateway provider metadata", () => {
     expect(parseGatewayProviderMetadata(`${COMPLETE_OUTPUT}\n${"x".repeat(16 * 1024)}`)).toBeNull();
   });
 
-  it("rejects command failures, mismatched names, and unsafe requested names", () => {
-    expect(readGatewayProviderMetadata("compatible-endpoint", () => ({ status: 1 }))).toBeNull();
+  it("rejects command failures, mismatched names, and unsafe requested names", async () => {
     expect(
-      readGatewayProviderMetadata("other-provider", () => ({
-        status: 0,
-        stdout: COMPLETE_OUTPUT,
-      })),
+      await readGatewayProviderMetadata(
+        "compatible-endpoint",
+        providerAdapter(() => ({ status: 1 })),
+      ),
+    ).toBeNull();
+    expect(
+      await readGatewayProviderMetadata(
+        "other-provider",
+        providerAdapter(() => ({
+          status: 0,
+          stdout: COMPLETE_OUTPUT,
+        })),
+      ),
     ).toBeNull();
 
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
-    expect(readGatewayProviderMetadata("../compatible-endpoint", runOpenshell)).toBeNull();
+    expect(
+      await readGatewayProviderMetadata("../compatible-endpoint", providerAdapter(runOpenshell)),
+    ).toBeNull();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -277,16 +321,19 @@ describe("gateway provider metadata", () => {
     ],
     ["gateway failure", { status: 1, stderr: "gateway unavailable" }, "indeterminate"],
     ["null status", { status: null, stderr: "transport closed" }, "indeterminate"],
-  ] as const)("classifies %s without authorizing a create (#9875)", (_label, result, kind) => {
-    expect(
-      inspectGatewayCredentialFamilyProviderBinding(
-        {
-          name: "alpha-telegram-bridge",
-          type: "nemoclaw-mcp-v1",
-          credentialKey: "TELEGRAM_BOT_TOKEN",
-        },
-        () => result,
-      ),
-    ).toEqual({ kind });
-  });
+  ] as const)(
+    "classifies %s without authorizing a create (#9875)",
+    async (_label, result, kind) => {
+      expect(
+        await inspectGatewayCredentialFamilyProviderBinding(
+          {
+            name: "alpha-telegram-bridge",
+            type: "nemoclaw-mcp-v1",
+            credentialKey: "TELEGRAM_BOT_TOKEN",
+          },
+          providerAdapter(() => result),
+        ),
+      ).toEqual({ kind });
+    },
+  );
 });

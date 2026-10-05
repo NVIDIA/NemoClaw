@@ -141,7 +141,11 @@ describe("gateway lifecycle late binding", () => {
         getDockerDriverGatewayStateDir: () => stateDir,
         getGatewayPortListenerRawScan: () => ({ complete: true, pids: [5444] }),
         getTrustedActiveOpenShellGatewayUserServiceStopTarget: serviceTarget,
-        getInstalledOpenshellVersion: () => "0.0.0",
+        observeInstalledOpenshellVersion: () => ({
+          ok: true,
+          version: "0.0.0",
+          development: false,
+        }),
         isDockerDriverGatewayHttpReady: async () => false,
         isDockerDriverGatewayProcess: () => true,
         isDockerDriverGatewayProcessAlive: () => false,
@@ -564,6 +568,11 @@ describe("gateway lifecycle late binding", () => {
       return { OPENSHELL_SERVER_PORT: String(port) };
     });
     const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
+    const observeInstalledOpenshellVersion = vi.fn((_environment?: NodeJS.ProcessEnv) => ({
+      ok: true as const,
+      version: "0.0.0",
+      development: false,
+    }));
     const runtimeIdentitySpy = vi
       .spyOn(dockerDriverGatewayLaunch, "buildDockerDriverGatewayRuntimeIdentity")
       .mockImplementation((options) => ({
@@ -601,7 +610,7 @@ describe("gateway lifecycle late binding", () => {
       getDockerDriverGatewayRuntimeDrift: () => null,
       getDockerDriverGatewayStateDir: () => stateDir,
       getGatewayPortListenerRawScan: () => ({ complete: true, pids: [] }),
-      getInstalledOpenshellVersion: () => "0.0.0",
+      observeInstalledOpenshellVersion,
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcess: () => true,
       isDockerDriverGatewayProcessAlive: () => false,
@@ -676,18 +685,16 @@ describe("gateway lifecycle late binding", () => {
       expect(runtimeIdentityOptions?.env?.OPENSHELL_TOKEN).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_TLS).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-      expect(runCaptureOpenshell).toHaveBeenCalledTimes(1);
-      const versionOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
-        | { env?: Record<string, string>; replaceEnv?: boolean }
-        | undefined;
-      expect(versionOptions).toMatchObject({
-        env: expect.objectContaining({
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(observeInstalledOpenshellVersion).toHaveBeenCalledTimes(1);
+      const versionEnvironment = observeInstalledOpenshellVersion.mock.calls[0]?.[0];
+      expect(versionEnvironment).toEqual(
+        expect.objectContaining({
           OPENSHELL_GATEWAY: "resumed",
           OPENSHELL_WORKSPACE: "default",
           OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
         }),
-        replaceEnv: true,
-      });
+      );
       expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
         target: { kind: "named", gatewayName: "resumed" },
         runtimeSelection: {
@@ -696,10 +703,10 @@ describe("gateway lifecycle late binding", () => {
           localTlsDir: path.join(stateDir, "tls"),
         },
       });
-      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
-      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
-      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_GATEWAY_AUTH");
+      expect(versionEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+      expect(versionEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+      expect(versionEnvironment).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
+      expect(versionEnvironment).not.toHaveProperty("OPENSHELL_DISABLE_GATEWAY_AUTH");
       expect(verifyReachability).toHaveBeenCalledWith(
         false,
         expect.objectContaining({ port: 9777 }),

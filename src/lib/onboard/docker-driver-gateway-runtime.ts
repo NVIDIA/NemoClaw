@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenShellInstalledVersion } from "../adapters/openshell/installed-version";
 import { isErrnoException } from "../core/errno";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
@@ -100,7 +101,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     opts: DockerDriverGatewayServicePortOwnershipOptions,
   ): DockerDriverGatewayServicePortOwnership;
   getDockerDriverGatewayEnv(
-    versionOutput?: string | null,
+    versionInput?: string | OpenShellInstalledVersion | null,
     platform?: NodeJS.Platform,
   ): Record<string, string>;
   getDockerDriverGatewayPid(): number | null;
@@ -226,9 +227,18 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return null;
   }
 
-  function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
-    const installedVersion = deps.getInstalledOpenshellVersion(versionOutput);
-    if (deps.shouldUseOpenshellDevChannel() || deps.isOpenshellDevVersion(versionOutput)) {
+  function getOpenShellDockerSupervisorImage(
+    versionInput: string | OpenShellInstalledVersion | null = null,
+  ): string {
+    const installedVersion =
+      typeof versionInput === "string"
+        ? deps.getInstalledOpenshellVersion(versionInput)
+        : (versionInput?.version ?? deps.getInstalledOpenshellVersion());
+    const development =
+      typeof versionInput === "string"
+        ? deps.isOpenshellDevVersion(versionInput)
+        : (versionInput?.development ?? false);
+    if (deps.shouldUseOpenshellDevChannel() || development) {
       throw new Error(
         `OpenShell Docker-driver gateway recovery requires exact stable OpenShell ${QUALIFIED_STABLE_OPENSHELL_VERSION}; development builds are not supported.`,
       );
@@ -256,7 +266,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   }
 
   function getDockerDriverGatewayEnv(
-    versionOutput: string | null = null,
+    versionInput: string | OpenShellInstalledVersion | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
     const dockerHost = process.env.DOCKER_HOST;
@@ -276,7 +286,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       podmanSocketPath,
-      getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
+      getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionInput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
     });

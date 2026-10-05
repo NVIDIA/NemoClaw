@@ -26,9 +26,12 @@ async function makeHelpers(driverName: string) {
   // resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
   const metadata = await import("./sandbox-registry-metadata");
   return metadata.createSandboxRegistryMetadataHelpers({
-    getCurrentRuntimeProviderId: () => driverName,
-    getInstalledOpenshellVersion: () => "0.0.42",
-    runCaptureOpenshell: () => null,
+    getCurrentRuntimeProvider: () => ({ identity: { id: driverName } }),
+    observeInstalledOpenshellVersion: () => ({
+      ok: true,
+      version: "0.0.42",
+      development: false,
+    }),
   });
 }
 
@@ -133,9 +136,12 @@ describe("sandbox registry metadata", () => {
     });
 
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getCurrentRuntimeProviderId: () => "docker",
-      getInstalledOpenshellVersion: () => "0.0.44",
-      runCaptureOpenshell: () => "openshell 0.0.44",
+      getCurrentRuntimeProvider: () => ({ identity: { id: "docker" } }),
+      observeInstalledOpenshellVersion: () => ({
+        ok: true,
+        version: "0.0.44",
+        development: false,
+      }),
     });
 
     // A different derived identity proves the recorded null is explicit rather than absent.
@@ -188,9 +194,12 @@ describe("sandbox registry metadata", () => {
     const registry = await import("../state/registry");
     const authority = await import("./workload/authority");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getCurrentRuntimeProviderId: () => "docker",
-      getInstalledOpenshellVersion: () => "0.0.44",
-      runCaptureOpenshell: () => "openshell 0.0.44",
+      getCurrentRuntimeProvider: () => ({ identity: { id: "docker" } }),
+      observeInstalledOpenshellVersion: () => ({
+        ok: true,
+        version: "0.0.44",
+        development: false,
+      }),
     });
 
     helpers.updateReusedSandboxMetadata(
@@ -314,9 +323,12 @@ describe("sandbox registry metadata", () => {
     const dashboardPorts = await import("./dashboard-port");
     const gatewayRegistry = await import("../state/gateway-registry");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getCurrentRuntimeProviderId: () => "docker",
-      getInstalledOpenshellVersion: () => "0.0.44",
-      runCaptureOpenshell: () => "openshell 0.0.44",
+      getCurrentRuntimeProvider: () => ({ identity: { id: "docker" } }),
+      observeInstalledOpenshellVersion: () => ({
+        ok: true,
+        version: "0.0.44",
+        development: false,
+      }),
     });
 
     helpers.updateReusedSandboxMetadata(
@@ -391,9 +403,12 @@ describe("getSandboxRuntimeRegistryFields openshellDriver", () => {
     const metadata = await import("./sandbox-registry-metadata");
     let driverName = "docker";
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getCurrentRuntimeProviderId: () => driverName,
-      getInstalledOpenshellVersion: () => "0.0.42",
-      runCaptureOpenshell: () => null,
+      getCurrentRuntimeProvider: () => ({ identity: { id: driverName } }),
+      observeInstalledOpenshellVersion: () => ({
+        ok: true,
+        version: "0.0.42",
+        development: false,
+      }),
     });
 
     driverName = "kubernetes";

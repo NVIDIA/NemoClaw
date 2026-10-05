@@ -597,4 +597,5 @@ module.exports = {
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,
+  createCliOpenShellProviderAdapter,
 };

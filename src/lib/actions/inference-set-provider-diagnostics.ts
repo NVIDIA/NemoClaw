@@ -7,6 +7,7 @@ import {
   createCliOpenShellInferenceRouteMutator,
   createCliOpenShellInferenceRouteObserver,
 } from "../adapters/openshell/inference-route-cli";
+import { createDefaultCliOpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route-runtime";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { CLI_NAME } from "../cli/branding";
@@ -26,6 +27,12 @@ export function redactInferenceSetRouteDiagnostic(value: string): string {
 
 export function createDefaultInferenceSetRouteMutator(capture: CaptureOpenShellInferenceRoute) {
   return createCliOpenShellInferenceRouteMutator(capture, {
+    redactDiagnostic: redactInferenceSetRouteDiagnostic,
+  });
+}
+
+export function createProductionInferenceSetRouteMutator() {
+  return createDefaultCliOpenShellInferenceRouteMutator({
     redactDiagnostic: redactInferenceSetRouteDiagnostic,
   });
 }

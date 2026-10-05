@@ -89,6 +89,10 @@ export type OpenShellProviderProfileInspection = Readonly<{
   credentialKeys: readonly string[];
 }>;
 
+export type OpenShellProviderProfileVerification = Readonly<{
+  matches: boolean;
+}>;
+
 export type CreateOpenShellProviderRequest = OpenShellProviderRequest &
   Readonly<{
     name: string;
@@ -119,6 +123,13 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
+  }>;
+
+export type VerifyOpenShellProviderProfileRequest = OpenShellProviderRequest &
+  Readonly<{
+    profilePath: string;
+    expectedProfileId?: string;
+    requireEndpointless?: boolean;
   }>;
 
 export type DeleteOpenShellProviderRequest = OpenShellProviderRequest &
@@ -176,6 +187,10 @@ export interface OpenShellProviderAdapter {
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderProfileInspection>>;
+
+  verifyProviderProfile(
+    request: VerifyOpenShellProviderProfileRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderProfileVerification>>;
 
   deleteProvider(request: DeleteOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 

@@ -23,7 +23,11 @@ describe("CLI OpenShell installed-version observer (#11832)", () => {
       resolveBinary: () => "/fixture/bin/openshell",
     });
 
-    expect(observer.observeInstalledVersion()).toEqual({ ok: true, version: "0.0.116" });
+    expect(observer.observeInstalledVersion()).toEqual({
+      ok: true,
+      version: "0.0.116",
+      development: false,
+    });
     expect(capture).toHaveBeenCalledExactlyOnceWith("/fixture/bin/openshell", ["-V"], {
       cwd: "/fixture/repo",
       encoding: "utf8",
@@ -47,6 +51,19 @@ describe("CLI OpenShell installed-version observer (#11832)", () => {
       error: { kind: "unavailable" },
     });
     expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("retains development-build identity without exposing raw output", () => {
+    const observer = createCliOpenShellInstalledVersionObserver({
+      capture: () => result({ stdout: "openshell 0.0.116-dev.4+gabc123" }),
+      resolveBinary: () => "/fixture/openshell",
+    });
+
+    expect(observer.observeInstalledVersion()).toEqual({
+      ok: true,
+      version: "0.0.116",
+      development: true,
+    });
   });
 
   it("rejects invalid timeouts and relative binaries before execution", () => {

@@ -358,12 +358,13 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
-    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
+    const providerAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const profileMatches = await messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
-      { root: deps.root, runOpenshell },
+      { root: deps.root, providerAdapter },
     );
     if (profileMatches === false) return { kind: "indeterminate" };
-    const observed = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
+    const observed = await providerAdapter.getProvider({
       target: { kind: "selected" },
       providerName: binding.name,
     });

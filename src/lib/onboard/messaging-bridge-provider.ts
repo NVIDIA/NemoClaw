@@ -18,11 +18,8 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
-import {
-  exportedProviderProfileMatchesContract,
-  parseCheckedInProviderProfileContract,
-} from "../adapters/openshell/provider-profile";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
 import type {
   ChannelManifest,
@@ -41,14 +38,6 @@ const PROVIDER_PROFILE_FILE_BY_AGENT: Readonly<Record<MessagingAgentId, string>>
   openclaw: "openclaw.yaml",
   hermes: "hermes.yaml",
 };
-
-type RunOpenshell = (
-  args: string[],
-  // The runner accepts a wider options shape; we only set ignoreError + stdio
-  // here, so erase the type at the boundary to keep this module free of the
-  // runner.ts internals.
-  opts: any,
-) => { status: number | null; stderr?: string | Buffer | null; stdout?: string | Buffer | null };
 
 /** Discovered bridge profile for one channel/agent, parsed from its profile YAML. */
 export interface MessagingBridgeProfile {
@@ -108,63 +97,27 @@ export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSec
 
 export interface MatchRegisteredMessagingBridgeProfileDeps {
   readonly root: string;
-  readonly runOpenshell: RunOpenshell;
+  readonly providerAdapter: Pick<OpenShellProviderAdapter, "verifyProviderProfile">;
   readonly profiles?: readonly MessagingBridgeProfile[];
-  readonly readFileSync?: (file: string) => string;
-}
-
-function bufferOrStringToText(value: string | Buffer | null | undefined): string {
-  if (typeof value === "string") return value;
-  if (value && typeof (value as Buffer).toString === "function")
-    return (value as Buffer).toString();
-  return "";
-}
-
-function profileMatchesCheckedInBoundary(
-  profile: MessagingBridgeProfile,
-  exported: string,
-  readFileSync: (file: string) => string,
-): boolean {
-  try {
-    const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
-    return (
-      expected !== null &&
-      expected.profileId === profile.profileId &&
-      (profile.strategy !== null ||
-        (expected.boundary.endpoints.length === 0 &&
-          expected.boundary.binaries.length === 0 &&
-          expected.boundary.inference_capable === false)) &&
-      exportedProviderProfileMatchesContract(exported, expected)
-    );
-  } catch {
-    return false;
-  }
 }
 
 /** Compare a registered bridge profile with its checked-in credential boundary. */
-export function matchesRegisteredMessagingBridgeProfile(
+export async function matchesRegisteredMessagingBridgeProfile(
   providerType: string,
   deps: MatchRegisteredMessagingBridgeProfileDeps,
-): boolean | null {
+): Promise<boolean | null> {
   const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
     (candidate) => candidate.profileId === providerType,
   );
   if (!profile) return null;
-  const exported = deps.runOpenshell(
-    ["provider", "profile", "export", profile.profileId, "--output", "json"],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  if (exported.status !== 0) return false;
-  return profileMatchesCheckedInBoundary(
-    profile,
-    bufferOrStringToText(exported.stdout),
-    deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
-  );
+  const result = await deps.providerAdapter.verifyProviderProfile({
+    profilePath: profile.profilePath,
+    expectedProfileId: profile.profileId,
+    requireEndpointless: profile.strategy === null,
+    target: { kind: "selected" },
+    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  return result.ok && result.value.matches;
 }
 
 function isSafeChannelId(value: string): boolean {

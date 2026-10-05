@@ -47,6 +47,10 @@ function providerAdapter(
     ok: true,
     value: { credentialKeys: [] },
   });
+  const verifyProviderProfile: OpenShellProviderAdapter["verifyProviderProfile"] = async () => ({
+    ok: true,
+    value: { matches: true },
+  });
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async () => ({
     ok: true,
   });
@@ -68,6 +72,7 @@ function providerAdapter(
     updateProvider: vi.fn(updateProvider),
     importProviderProfile: vi.fn(importProviderProfile),
     inspectProviderProfile: vi.fn(inspectProviderProfile),
+    verifyProviderProfile: vi.fn(verifyProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
     attachProvider: vi.fn(attachProvider),

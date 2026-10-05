@@ -12,7 +12,8 @@ import {
   listRecordedModelRouterPorts,
   resolveHome,
 } from "../../state/gateway-registry";
-import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
+import type { UpsertProvider, UpsertProviderResult } from "./types";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
 // in nemoclaw-blueprint/policies/presets/local-inference.yaml.
@@ -167,7 +168,7 @@ export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
   credentialEnv: string | null | undefined;
   endpointUrl: string | null | undefined;
   gatewayEndpointUrl: string | null | undefined;
-  runOpenshell: RunOpenshell;
+  providerAdapter: Pick<OpenShellProviderAdapter, "getProvider">;
   upsertProvider: UpsertProvider;
 }): Promise<UpsertProviderResult> {
   const {
@@ -176,19 +177,19 @@ export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
     credentialEnv,
     endpointUrl,
     gatewayEndpointUrl,
-    runOpenshell,
+    providerAdapter,
     upsertProvider,
   } = args;
   // The caller has already authorized the recovered provider's non-secret
   // credential/config identity through assessRecoveredProviderCredentialReuse.
-  const existing = runOpenshell(["provider", "get", provider], {
-    ignoreError: true,
-    suppressOutput: true,
+  const existing = await providerAdapter.getProvider({
+    providerName: provider,
+    target: { kind: "selected" },
   });
-  if (existing.status !== 0) {
+  if (!existing.ok) {
     return {
       ok: false,
-      status: existing.status || 1,
+      status: 1,
       message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
     };
   }

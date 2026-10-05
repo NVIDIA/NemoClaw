@@ -147,7 +147,11 @@ function createDockerDriverReuseApplication(
       OPENSHELL_DRIVERS: "docker",
       OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
     }),
-    runCaptureOpenshell: vi.fn(() => "openshell 0.0.99"),
+    observeInstalledOpenshellVersion: vi.fn(() => ({
+      ok: true as const,
+      version: "0.0.99",
+      development: false,
+    })),
     getDockerDriverGatewayStateDir: () => "/tmp/nemoclaw-gateway",
     resolveOpenShellSandboxBinary: () => "/opt/openshell-sandbox",
     getDockerDriverGatewayPid: () => 42,
