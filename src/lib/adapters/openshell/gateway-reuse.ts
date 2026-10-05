@@ -11,6 +11,7 @@ export type OpenShellGatewayReuseObservation = Readonly<{
   namedMetadata: boolean;
   shouldSelect: boolean;
   endpoints: readonly (string | null)[];
+  namedEndpoint?: string | null;
   endpointBinding: "match" | "mismatch" | "unknown";
   error?: OpenShellSandboxError;
 }>;

@@ -13,7 +13,10 @@
  */
 
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
-import type { OpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse";
+import type {
+  OpenShellGatewayReuseObservation,
+  OpenShellGatewayReuseObserver,
+} from "../adapters/openshell/gateway-reuse";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -550,14 +553,17 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
     prepareExternalGatewayClient(owner);
     const request = { target: { kind: "named" as const, gatewayName: owner.gatewayName } };
+    const declaredEndpoint = new URL(owner.endpoint).origin;
     const observeRegistration = () =>
       deps.observer.observeGatewayReuse({ ...request, expectedGatewayPort: owner.gatewayPort });
+    const matchesDeclaredEndpoint = (observation: OpenShellGatewayReuseObservation) =>
+      observation.endpointBinding === "match" && observation.namedEndpoint === declaredEndpoint;
     const existing = await observeRegistration();
     if (existing.error) {
       throw new GatewayOwnershipError("gateway_registration_failed", existing.error.message, owner);
     }
     const reusedRegistration = existing.namedMetadata;
-    if (reusedRegistration && (!existing.healthy || existing.endpointBinding !== "match")) {
+    if (reusedRegistration && (!existing.healthy || !matchesDeclaredEndpoint(existing))) {
       throw new GatewayOwnershipError(
         "gateway_registration_failed",
         `OpenShell gateway registration '${owner.gatewayName}' does not match the healthy declared endpoint. ` +
@@ -597,7 +603,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       observed.error ||
       !observed.healthy ||
       !observed.namedMetadata ||
-      observed.endpointBinding !== "match"
+      !matchesDeclaredEndpoint(observed)
     ) {
       getGatewayOwner();
       throw new GatewayOwnershipError(

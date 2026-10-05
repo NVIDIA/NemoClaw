@@ -28,7 +28,12 @@ describe("gateway reuse CLI observation", () => {
       },
       expectedGatewayPort: 8080,
     });
-    expect(result).toMatchObject({ healthy: true, namedMetadata: true, endpointBinding: "match" });
+    expect(result).toMatchObject({
+      healthy: true,
+      namedMetadata: true,
+      namedEndpoint: "https://127.0.0.1:8080",
+      endpointBinding: "match",
+    });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["status", "-g", "nemoclaw"],
       ["gateway", "list", "-o", "json"],
@@ -152,6 +157,24 @@ describe("gateway reuse CLI observation", () => {
       }),
     ).toMatchObject({ endpointBinding: "mismatch" });
   });
+  it.each(["http://127.0.0.1:8080", "https://[::1]:8080"])(
+    "preserves same-port endpoint identity for %s",
+    async (endpoint) => {
+      const capture = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, output: healthy })
+        .mockResolvedValue({
+          status: 0,
+          output: JSON.stringify([{ name: "nemoclaw", endpoint, active: true }]),
+        });
+      expect(
+        await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
+          target,
+          expectedGatewayPort: 8080,
+        }),
+      ).toMatchObject({ endpointBinding: "match", namedEndpoint: endpoint });
+    },
+  );
   it("rejects malformed or ambiguous gateway registry output", async () => {
     const capture = vi
       .fn()

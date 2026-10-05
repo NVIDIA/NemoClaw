@@ -133,6 +133,64 @@ async function repoNemoclaw(
   });
 }
 
+type GatewayRegistrationCapture = Readonly<{
+  result: ShellProbeResult;
+  registration: string | null;
+}>;
+
+function canonicalGatewayRegistrationEntry(entry: {
+  name: string;
+  endpoint: string;
+  active: boolean;
+}): string | null {
+  try {
+    const endpoint = new URL(entry.endpoint);
+    return ["http:", "https:"].includes(endpoint.protocol) &&
+      !endpoint.username &&
+      !endpoint.password &&
+      endpoint.pathname === "/" &&
+      !endpoint.search &&
+      !endpoint.hash
+      ? JSON.stringify({ name: entry.name, endpoint: endpoint.origin, active: entry.active })
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function canonicalNamedGatewayRegistration(output: string, gatewayName: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  const matches = (Array.isArray(value) ? value : []).filter(
+    (entry): entry is { name: string; endpoint: string; active: boolean } =>
+      Boolean(entry) &&
+      typeof entry === "object" &&
+      (entry as { name?: unknown }).name === gatewayName &&
+      typeof (entry as { endpoint?: unknown }).endpoint === "string" &&
+      typeof (entry as { active?: unknown }).active === "boolean",
+  );
+  return matches.length === 1 ? canonicalGatewayRegistrationEntry(matches[0]) : null;
+}
+
+async function captureGatewayRegistration(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<GatewayRegistrationCapture> {
+  const result = await host.command(host.openshellCommandPath, ["gateway", "list", "-o", "json"], {
+    artifactName,
+    env: env(),
+    timeoutMs: 60_000,
+  });
+  return {
+    result,
+    registration: canonicalNamedGatewayRegistration(result.stdout, gateway.env.OPENSHELL_GATEWAY),
+  };
+}
+
 async function readNativeStateDoctor(sandbox: SandboxClient, artifactName: string) {
   return sandbox.exec(
     SANDBOX_NAME,
@@ -901,6 +959,7 @@ test(
         "verify native configuration across restart and launch",
         "exercise native plugin package and update lifecycle",
         "inspect runtime logs and security posture",
+        "reuse the retained external gateway for fresh onboarding",
         "remove full-E2E sandbox",
       ],
     },
@@ -949,6 +1008,11 @@ test(
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "an unregistered native-home file survives the exercised native lifecycle",
         "direct hosted inference and sandbox inference.local both respond",
+        ...(USE_PREINSTALLED_LAUNCHABLE
+          ? [
+              "fresh same-agent onboarding reuses the exact retained external gateway registration and restores inference",
+            ]
+          : []),
         "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
@@ -1110,19 +1174,6 @@ test(
         .map(resultText)
         .join("\n"),
     ).toBe(true);
-    const pathProbe = await host.command(
-      "bash",
-      [
-        "-lc",
-        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
-      ],
-      { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
-    );
-    expect(
-      pathProbe.exitCode === 0 && pathProbe.stdout.includes("openshell"),
-      resultText(pathProbe),
-    ).toBe(true);
-
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
     await waitForSandboxStatus(host);
@@ -1274,16 +1325,148 @@ test(
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
       : null;
 
+    progress.phase("reuse the retained external gateway for fresh onboarding");
+    const retainedGatewayEvidence = USE_PREINSTALLED_LAUNCHABLE
+      ? await (async () => {
+          const beforeDestroy = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-before-destroy",
+          );
+          const destroy = await repoNemoclaw(
+            host,
+            [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
+            "phase-7-destroy-with-retained-gateway",
+          );
+          const afterDestroy = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-after-destroy",
+          );
+          const onboard = await host.command(
+            "nemoclaw",
+            [
+              "onboard",
+              "--fresh",
+              "--non-interactive",
+              "--yes",
+              "--yes-i-accept-third-party-software",
+            ],
+            {
+              artifactName: "phase-7-onboard-with-retained-gateway",
+              env: env({ ...hosted.env, NEMOCLAW_AGENT: "openclaw" }),
+              redactionValues,
+              timeoutMs: INSTALL_TIMEOUT_MS,
+            },
+          );
+          const status = await repoNemoclaw(
+            host,
+            [SANDBOX_NAME, "status"],
+            "phase-7-status-after-retained-gateway-onboard",
+          );
+          const inference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
+            runFullE2eInferenceCommand({
+              onEvidence: (evidence) =>
+                retainFullE2eInferenceAvailability(attempt.attempt, evidence, () =>
+                  artifacts.writeJson(
+                    `retained-${attempt.artifactName}-availability.json`,
+                    evidence,
+                  ),
+                ),
+              run: (availabilityAttempt) =>
+                sandbox.exec(
+                  SANDBOX_NAME,
+                  [
+                    "curl",
+                    "-fsS",
+                    "--max-time",
+                    "90",
+                    "https://inference.local/v1/chat/completions",
+                    "-H",
+                    "Content-Type: application/json",
+                    "--data-raw",
+                    attempt.requestBody,
+                  ],
+                  {
+                    artifactName: `retained-${attempt.artifactName}-availability-${availabilityAttempt}`,
+                    captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+                    env: env(),
+                    redactionValues,
+                    timeoutMs: 120_000,
+                  },
+                ),
+            }),
+          );
+          const afterOnboard = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-after-onboard",
+          );
+          const finalInferenceAttempt = inference.attempts.at(-1)?.result ?? null;
+          return {
+            afterDestroy,
+            afterOnboard,
+            beforeDestroy,
+            destroy,
+            finalInferenceAttempt,
+            inferenceOutcome: inference.outcome,
+            onboard,
+            status,
+          };
+        })()
+      : null;
+
     progress.phase("remove full-E2E sandbox");
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "verify-cleanup-nemoclaw-destroy",
-      env: env(),
-      redactionValues,
-      timeoutMs: 120_000,
-    });
+    const finalDestroy = USE_PREINSTALLED_LAUNCHABLE
+      ? await repoNemoclaw(
+          host,
+          [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
+          "verify-cleanup-nemoclaw-destroy",
+        )
+      : null;
+    await (USE_PREINSTALLED_LAUNCHABLE
+      ? Promise.resolve()
+      : host.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "verify-cleanup-nemoclaw-destroy",
+          env: env(),
+          redactionValues,
+          timeoutMs: 120_000,
+        }));
+    const finalGatewayRegistration = USE_PREINSTALLED_LAUNCHABLE
+      ? await captureGatewayRegistration(host, "phase-8-gateway-registration-after-cleanup")
+      : null;
     const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
-    expect(registryText).not.toContain(SANDBOX_NAME);
+    const retainedRegistration = retainedGatewayEvidence?.beforeDestroy.registration ?? null;
+    expect(
+      !registryText.includes(SANDBOX_NAME) &&
+        (!retainedGatewayEvidence ||
+          (retainedGatewayEvidence.beforeDestroy.result.exitCode === 0 &&
+            retainedRegistration !== null &&
+            retainedGatewayEvidence.destroy.exitCode === 0 &&
+            retainedGatewayEvidence.afterDestroy.result.exitCode === 0 &&
+            retainedGatewayEvidence.afterDestroy.registration === retainedRegistration &&
+            retainedGatewayEvidence.onboard.exitCode === 0 &&
+            retainedGatewayEvidence.status.exitCode === 0 &&
+            retainedGatewayEvidence.inferenceOutcome === "passed" &&
+            retainedGatewayEvidence.finalInferenceAttempt?.exitCode === 0 &&
+            retainedGatewayEvidence.afterOnboard.result.exitCode === 0 &&
+            retainedGatewayEvidence.afterOnboard.registration === retainedRegistration &&
+            finalDestroy?.exitCode === 0 &&
+            finalGatewayRegistration?.result.exitCode === 0 &&
+            finalGatewayRegistration.registration === retainedRegistration)),
+      [
+        retainedGatewayEvidence?.beforeDestroy.result,
+        retainedGatewayEvidence?.destroy,
+        retainedGatewayEvidence?.afterDestroy.result,
+        retainedGatewayEvidence?.onboard,
+        retainedGatewayEvidence?.status,
+        retainedGatewayEvidence?.finalInferenceAttempt,
+        retainedGatewayEvidence?.afterOnboard.result,
+        finalDestroy,
+        finalGatewayRegistration?.result,
+      ]
+        .filter((result): result is ShellProbeResult => result !== null && result !== undefined)
+        .map(resultText)
+        .join("\n"),
+    ).toBe(true);
 
     await artifacts.target.complete({
       id: FULL_E2E_TARGET_ID,

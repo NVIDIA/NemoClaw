@@ -49,6 +49,7 @@ const MATCHING_REGISTRATION = {
   namedMetadata: true,
   shouldSelect: false,
   endpoints: [DECLARATION.endpoint],
+  namedEndpoint: DECLARATION.endpoint,
   endpointBinding: "match" as const,
 };
 
@@ -817,6 +818,14 @@ describe("gateway host runtime attachment probe", () => {
 
   it.each([
     ["a conflicting endpoint", { ...MATCHING_REGISTRATION, endpointBinding: "mismatch" as const }],
+    [
+      "a same-port endpoint with another scheme",
+      { ...MATCHING_REGISTRATION, namedEndpoint: "https://127.0.0.1:8080" },
+    ],
+    [
+      "a same-port endpoint with another loopback host",
+      { ...MATCHING_REGISTRATION, namedEndpoint: "http://[::1]:8080" },
+    ],
     [
       "an unhealthy endpoint",
       { ...MATCHING_REGISTRATION, gatewayReuseState: "stale" as const, healthy: false },
