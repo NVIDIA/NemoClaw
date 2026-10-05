@@ -81,24 +81,40 @@ function createSedWrapper(tmp: string): string {
   return fakeBin;
 }
 
+function prepareReviewedWorkerFixture(dist: string): void {
+  // Legacy regular-module shapes still exercise the classifier independently;
+  // the shipped patch block also requires the pinned 9.5 worker distribution.
+  const worker = path.join(dist, "worker", "worker.mjs");
+  fs.mkdirSync(path.dirname(worker), { recursive: true });
+  try {
+    fs.writeFileSync(worker, OPENCLAW_WORKER_PROXY_SOURCE, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
+    throw error;
+  }
+  const manifest = fs.openSync(
+    path.join(dist, "..", "package.json"),
+    fs.constants.O_RDWR | fs.constants.O_CREAT,
+    0o600,
+  );
+  try {
+    const source = fs.readFileSync(manifest, "utf8");
+    const metadata = source ? JSON.parse(source) : {};
+    const updated = Buffer.from(JSON.stringify({ ...metadata, version: "2026.9.5" }));
+    fs.writeSync(manifest, updated, 0, updated.length, 0);
+    fs.ftruncateSync(manifest, updated.length);
+  } finally {
+    fs.closeSync(manifest);
+  }
+}
+
 export function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
   endMarker: string,
   version = CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
 ) {
-  // Legacy regular-module shapes still exercise the classifier independently;
-  // the shipped patch block also requires the pinned 9.5 worker distribution.
-  const worker = path.join(dist, "worker", "worker.mjs");
-  if (!fs.existsSync(worker)) {
-    fs.mkdirSync(path.dirname(worker), { recursive: true });
-    fs.writeFileSync(worker, OPENCLAW_WORKER_PROXY_SOURCE);
-    const manifestPath = path.join(dist, "..", "package.json");
-    const metadata = fs.existsSync(manifestPath)
-      ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
-      : {};
-    fs.writeFileSync(manifestPath, JSON.stringify({ ...metadata, version: "2026.9.5" }));
-  }
+  prepareReviewedWorkerFixture(dist);
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     endMarker,
