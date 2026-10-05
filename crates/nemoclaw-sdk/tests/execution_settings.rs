@@ -3,7 +3,7 @@
 use nemoclaw_sdk::{config::Document, fabric_config};
 use serde_json::{Value, json};
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap()
+    crate::support::fixture("local.yaml")
 }
 #[test]
 fn invocation_timeout_projects_to_public_runtime_for_any_adapter() {

@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
-#[path = "support/examples.rs"]
-mod examples;
+use crate::examples;
 
 use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(name);
-    serde_saphyr::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    crate::support::example(name)
 }
 
 fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {

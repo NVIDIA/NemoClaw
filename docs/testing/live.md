@@ -50,8 +50,8 @@ The read-only live storage test requires an explicit OpenTofu runtime state file
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
-  cargo test -p nemoclaw-sdk --test managed_live \
-  retained_inference_credentials_preserve_their_reference_binding -- --ignored
+  cargo test -p nemoclaw-sdk --test integration \
+  managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
 
 The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
@@ -189,7 +189,7 @@ This scenario does not qualify Relay or Switchyard.
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.
-Set `NEMOCLAW_TEST_SSH_ENGINE` to an explicit SSH URL and `NEMOCLAW_TEST_ENGINE_ID` to an independently observed daemon ID, then run `cargo test -p nemoclaw-sdk --test ssh_live ssh_observes -- --ignored`.
+Set `NEMOCLAW_TEST_SSH_ENGINE` to an explicit SSH URL and `NEMOCLAW_TEST_ENGINE_ID` to an independently observed daemon ID, then run `cargo test -p nemoclaw-sdk --test integration ssh_live::ssh_observes -- --ignored`.
 Run `ssh_failure` separately against rejected authentication, an untrusted host key, or an unavailable endpoint; it must report observation failure, not absence.
 
 The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the full ID of a stopped container labeled `nemoclaw.experiment=ssh-transport`.

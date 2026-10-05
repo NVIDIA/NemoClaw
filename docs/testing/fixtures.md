@@ -121,7 +121,7 @@ They cover immutable model resolution, bounded readiness, retained storage, serv
 ```sh
 cargo test -p nemoclaw-runtime ollama
 cargo test -p nemoclaw-provider --lib
-cargo test -p nemoclaw-sdk --test service_references --test multiple_providers
+cargo test -p nemoclaw-sdk --test integration -- service_references:: multiple_providers::
 ```
 
 The [Docker-provider lifecycle fixture](#docker-provider-lifecycle) checks the managed proxy through the SDK and its production provider graph.
@@ -187,7 +187,7 @@ Runtime separation has focused checks:
 
 ```sh
 cargo test -p nemoclaw-runtime
-cargo test -p nemoclaw-sdk --test runtime_boundaries
+cargo test -p nemoclaw-sdk --test integration -- runtime_boundaries::
 ```
 
 The supervisor tests use an ordinary owned process and validated memory thresholds, without a DGX Spark document.

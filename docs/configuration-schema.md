@@ -44,7 +44,7 @@ Generation fails when a public field or object has no description.
 Run the focused tests and freshness check:
 
 ```sh
-cargo test --locked -p nemoclaw-sdk --test config_input --test config_schema --test config_validation
+cargo test --locked -p nemoclaw-sdk --test integration -- config_input:: config_schema:: config_validation::
 cargo test --locked -p nemoclaw-build --test schema --lib
 cargo run --locked -p nemoclaw-build -- schema --check
 ```

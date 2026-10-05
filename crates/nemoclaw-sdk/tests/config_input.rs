@@ -5,10 +5,7 @@ use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(name);
-    serde_saphyr::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    crate::support::example(name)
 }
 
 fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {

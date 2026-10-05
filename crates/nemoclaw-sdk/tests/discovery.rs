@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use crate::transport;
 use nemoclaw_provider::{
     docker::Connections, engine_observation::observe_engine, engine_observation::observe_fabric,
 };
