@@ -37,10 +37,7 @@ pub use journey_state::{
 };
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;
-pub use target_assessment::{
-    CompatibilityStatus, DiscoveryAssessment, DiscoveryKey, assess_target,
-    discovery_key_for_document,
-};
+pub use target_assessment::{CompatibilityStatus, DiscoveryAssessment, assess_target};
 
 mod fingerprint;
 mod sdk_schema;

@@ -52,7 +52,7 @@ pub fn discovery_queries(
     document: &Document,
     route_name: Option<&str>,
 ) -> Result<Vec<DiscoveryQuery>, Diagnostics> {
-    let key = crate::discovery_key_for_document(document)?;
+    let key = crate::target_assessment::target_of(document)?;
     let selected = inference_request_for_document(document, route_name)?;
     let mut queries: Vec<DiscoveryQuery> = plan_queries(document)
         .map_err(|error| crate::diagnostics::diagnostic("discovery", &error.to_string()))?

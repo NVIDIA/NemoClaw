@@ -9,13 +9,12 @@ use super::{
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
-    Capabilities, JourneyDefinition, PartialDocument, TargetPrerequisite,
-    discovery_key_for_document, inference_request_for_document,
+    Capabilities, JourneyDefinition, PartialDocument, TargetPrerequisite, discovery_queries,
+    inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken,
     config::Document,
-    discovery::DiscoveryRequest,
     discovery_session::{DiscoveryObservation, DiscoveryQuery},
 };
 use ratatui::{Terminal, backend::TestBackend};
@@ -601,12 +600,13 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
         .unwrap()
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
-    let key = discovery_key_for_document(&document).unwrap();
+    let engine = discovery_queries(&document, None)
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Engine(_)))
+        .expect("a managed gateway reads its engine");
     wizard.observations.record(
-        DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine,
-            compute_driver: key.compute_driver,
-        }),
+        engine,
         DiscoveryObservation::Engine(nemoclaw_sdk::discovery::EngineObservation {
             status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
             reason: Some("target rejected engine".into()),

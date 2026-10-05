@@ -3,6 +3,9 @@
 //! Authoring integration tests, linked into one binary.
 //! Each file is a module; shared helpers are declared once here.
 
+#[path = "support.rs"]
+mod support;
+
 #[path = "deployment_identity.rs"]
 mod deployment_identity;
 #[path = "deployment_journey.rs"]

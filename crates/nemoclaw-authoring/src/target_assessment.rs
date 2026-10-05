@@ -3,22 +3,20 @@
 
 use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway, HarnessKind},
+    config::{ComputeDriver, Document, Gateway},
     discovery::{DiscoveryRequest, ObservationStatus},
     discovery_session::DiscoveryObservations,
     fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
 
-/// Inputs determining which target observations can constrain the current document.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiscoveryKey {
+/// What a one-sandbox document's target is read through.
+pub(crate) struct Target {
     /// Explicit engine for image inspection; never inferred for an external gateway.
-    pub engine: String,
+    pub(crate) engine: String,
     /// Whether engine prerequisites and hardware describe a gateway we manage.
-    pub managed_gateway: bool,
-    pub compute_driver: ComputeDriver,
-    pub image: String,
-    pub harness: HarnessKind,
+    pub(crate) managed_gateway: bool,
+    pub(crate) compute_driver: ComputeDriver,
+    pub(crate) image: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,20 +35,15 @@ pub struct DiscoveryAssessment {
     pub reasons: Vec<String>,
 }
 
-/// Read target dependencies from SDK-valid desired state.
-pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, Diagnostics> {
+/// Read the target from SDK-valid desired state.
+pub(crate) fn target_of(document: &Document) -> Result<Target, Diagnostics> {
     let [sandbox] = document.spec.sandboxes.as_slice() else {
         return Err(diagnostic(
             "sandbox",
             "guided discovery requires one sandbox",
         ));
     };
-    let harness = document
-        .sandbox_harness(sandbox)
-        .map_err(|error| diagnostic("harness", &error.to_string()))?
-        .kind
-        .clone();
-    Ok(DiscoveryKey {
+    Ok(Target {
         engine: match &document.spec.gateway {
             Gateway::Managed(gateway) => gateway.engine.clone(),
             Gateway::External(gateway) => gateway.engine.clone(),
@@ -58,7 +51,6 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
         managed_gateway: document.spec.gateway.as_managed().is_some(),
         compute_driver: sandbox.runtime.provider,
         image: sandbox.image.ref_.clone(),
-        harness,
     })
 }
 
@@ -69,7 +61,7 @@ pub fn assess_target(
     document: &Document,
     observations: &DiscoveryObservations,
 ) -> Result<DiscoveryAssessment, Diagnostics> {
-    let key = discovery_key_for_document(document)?;
+    let key = target_of(document)?;
     let engine_request = DiscoveryRequest {
         engine: key.engine.clone(),
         compute_driver: key.compute_driver,

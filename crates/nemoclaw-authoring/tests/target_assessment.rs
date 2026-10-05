@@ -3,7 +3,7 @@
 
 use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, DiscoveryAssessment, JourneyDefinition, PartialDocument,
-    assess_target, discovery_key_for_document, inference_request_for_document,
+    assess_target, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway, InferenceApi, InferenceProviderKind},
@@ -26,7 +26,7 @@ fn document() -> Document {
 
 /// The queries that read a document's engine and its sandbox image.
 fn engine_query(document: &Document) -> DiscoveryQuery {
-    let key = discovery_key_for_document(document).unwrap();
+    let key = crate::support::target(document);
     DiscoveryQuery::Engine(DiscoveryRequest {
         engine: key.engine,
         compute_driver: key.compute_driver,
@@ -34,7 +34,7 @@ fn engine_query(document: &Document) -> DiscoveryQuery {
 }
 
 fn fabric_query(document: &Document) -> DiscoveryQuery {
-    let key = discovery_key_for_document(document).unwrap();
+    let key = crate::support::target(document);
     DiscoveryQuery::Fabric {
         engine: key.engine,
         image: key.image,
@@ -52,7 +52,7 @@ struct Observed {
 
 impl Observed {
     fn observations(&self, document: &Document) -> DiscoveryObservations {
-        let key = discovery_key_for_document(document).unwrap();
+        let key = crate::support::target(document);
         let mut observations = DiscoveryObservations::new();
         if let Some(engine) = &self.engine {
             observations.record(
@@ -117,7 +117,7 @@ fn observed_target(document: &Document) -> Observed {
             image: nemoclaw_sdk::fabric_capabilities::ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),
-                repo_digests: vec![discovery_key_for_document(document).unwrap().image],
+                repo_digests: vec![crate::support::target(document).image],
                 ..Default::default()
             },
             compatibility: None,
@@ -376,7 +376,7 @@ fn external_document(engine: &str) -> Document {
 fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
     let document = external_document("ssh://images@example.com");
     assert_eq!(
-        discovery_key_for_document(&document).unwrap().engine,
+        crate::support::target(&document).engine,
         "ssh://images@example.com"
     );
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
@@ -420,7 +420,7 @@ fn switching_to_a_managed_gateway_requires_an_engine_observation() {
     document.spec.gateway = serde_json::from_value(serde_json::json!({
         "management": "external",
         "endpoint": "https://gateway.example:8080",
-        "engine": discovery_key_for_document(&managed).unwrap().engine,
+        "engine": crate::support::target(&managed).engine,
     }))
     .unwrap();
     let external = document;

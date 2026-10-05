@@ -1455,7 +1455,7 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
 
 #[test]
 fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
-    use nemoclaw_authoring::{discovery_key_for_document, inference_request_for_document};
+    use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
         discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
         discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
@@ -1493,7 +1493,7 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
         .document()
         .unwrap()
         .clone();
-    let key = discovery_key_for_document(&document).unwrap();
+    let key = crate::support::target(&document);
     let mut observations = DiscoveryObservations::new()
         .with(
             DiscoveryQuery::Engine(DiscoveryRequest {

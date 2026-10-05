@@ -3,7 +3,7 @@
 
 use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, JourneyDefinition, JourneyScope, PartialDocument,
-    TargetPrerequisite, discovery_key_for_document, inference_request_for_document,
+    TargetPrerequisite, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     config::Document,
@@ -42,7 +42,7 @@ fn target_facts(
     engine: Option<EngineObservation>,
     fabric: Option<FabricObservation>,
 ) -> DiscoveryObservations {
-    let key = discovery_key_for_document(document).unwrap();
+    let key = crate::support::target(document);
     let mut sheet = DiscoveryObservations::new();
     if let Some(engine) = engine {
         sheet.record(
@@ -103,7 +103,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     );
 
     let document = unresolved.materialized_document().unwrap();
-    let key = discovery_key_for_document(document).unwrap();
+    let key = crate::support::target(document);
     let engine = EngineObservation {
         status: ObservationStatus::Available,
         reason: None,
