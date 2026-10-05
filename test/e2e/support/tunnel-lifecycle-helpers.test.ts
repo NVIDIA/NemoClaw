@@ -15,6 +15,7 @@ import {
   getCloudflaredLogPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
+  resolveTunnelLifecycleDashboardPort,
   tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
@@ -111,6 +112,14 @@ describe("tunnel lifecycle cleanup registration", () => {
 });
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
+  it("exercises a non-default dashboard port without a trusted catalogue override", () => {
+    expect(resolveTunnelLifecycleDashboardPort({})).toBe("18790");
+  });
+
+  it("preserves the explicitly selected dashboard port", () => {
+    expect(resolveTunnelLifecycleDashboardPort({ NEMOCLAW_DASHBOARD_PORT: "18791" })).toBe("18791");
+  });
+
   it("rejects a live cloudflared command targeting another dashboard port", () => {
     expect(
       cloudflaredTargetsRegisteredPort(

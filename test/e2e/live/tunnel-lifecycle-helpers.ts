@@ -24,7 +24,12 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const TEST_SANDBOX_PREFIX = "e2e-tunnel-life";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
-const LOCAL_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
+export function resolveTunnelLifecycleDashboardPort(env: NodeJS.ProcessEnv = process.env): string {
+  // Manual PR runs use main's catalogue, which may not carry the candidate's port override.
+  return env.NEMOCLAW_DASHBOARD_PORT ?? "18790";
+}
+
+const LOCAL_DASHBOARD_PORT = resolveTunnelLifecycleDashboardPort();
 const TEST_TIMEOUT_MS = testTimeout(
   Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
 );
