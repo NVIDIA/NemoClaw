@@ -125,7 +125,7 @@ describe("destroySandbox cross-root registry authority", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 
-  it("confirms a sibling-root destroy in the caller before the worker starts", async () => {
+  it("confirms a sibling-root destroy in the caller and declines gateway cleanup while other sandboxes remain", async () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
     writeSiblingRegistry(["alpha", "beta"]);
     const harness = createDestroyHarness({ promptResponses: ["yes"] });
@@ -134,7 +134,11 @@ describe("destroySandbox cross-root registry authority", () => {
 
     expect(harness.promptSpy).toHaveBeenCalledOnce();
     expect(harness.runOwningRegistryWorkerSpy).toHaveBeenCalledWith(
-      { operation: "destroy", sandboxName: "alpha", options: { yes: true } },
+      {
+        operation: "destroy",
+        sandboxName: "alpha",
+        options: { yes: true, cleanupGatewayPromptAnswer: false },
+      },
       SIBLING_PORT,
     );
   });
@@ -199,13 +203,14 @@ describe("destroySandbox cross-root registry authority", () => {
     );
   });
 
-  it("refuses to hand a sibling-root destroy to a worker while this process holds the host fence", async () => {
+  it("refuses to hand a sibling-root destroy to a worker while this process holds the host fence and names the invoking CLI", async () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
     writeSiblingRegistry(["alpha"]);
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({ invokedCliName: "nemohermes" });
     vi.spyOn(harness.owningRegistryDependencies, "isHostFenceHeld").mockReturnValue(true);
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "Cannot transfer destroy for 'alpha' while another lifecycle command owns the host fence.",
+      "Cannot transfer destroy for 'alpha' while another lifecycle command owns the host fence. Run 'nemohermes alpha destroy' directly.",
     );
     expect(harness.runOwningRegistryWorkerSpy).not.toHaveBeenCalled();
   });

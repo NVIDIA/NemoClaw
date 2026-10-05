@@ -6,7 +6,12 @@ import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/
 import type { ConfigObject } from "../security/credential-filter";
 import type { InferenceSetDeps } from "./inference-set";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import {
+  baseSession,
+  createDeps,
+  HERMES_TARGET,
+  type CaptureOpenshell,
+} from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 const ADAPTER_TOKEN = "test-route-token";
@@ -43,7 +48,7 @@ function providerCapture(options: {
   providerName: string;
   providerType: "openai" | "anthropic";
   credentialEnv: string;
-}): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
+}): CaptureOpenshell & ReturnType<typeof vi.fn> {
   let resourceVersion = 4;
   const configKey = options.providerType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
   const output = () =>
@@ -77,7 +82,7 @@ function providerCapture(options: {
       default:
         return { status: 0, stdout: "", stderr: "", output: "" };
     }
-  }) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
+  }) as CaptureOpenshell & ReturnType<typeof vi.fn>;
 }
 
 function failRegistryRead(): never {
@@ -244,7 +249,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     capture.mockImplementation((args, opts) =>
       args[0] === "inference" && args[1] === "set"
         ? { status: 1, stdout: "", stderr: "selection failed", output: "selection failed" }
@@ -364,7 +369,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     capture.mockImplementation((args, opts) =>
       args[0] === "provider" && args[1] === "update"
         ? {
@@ -613,7 +618,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     let inferenceSetCalls = 0;
     const restoreFailure = {
       status: 1,

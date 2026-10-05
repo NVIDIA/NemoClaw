@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { BackupResult } from "../state/sandbox";
+import * as snapshotBackup from "../actions/sandbox/snapshot/backup-authority";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
@@ -24,6 +25,30 @@ function makeBackup(overrides: Partial<BackupResult> = {}): BackupResult {
 }
 
 describe("backupSandboxBeforeRecreate", () => {
+  it("routes the default recreation backup through managed authority", () => {
+    const backup = makeBackup();
+    const managedBackup = vi
+      .spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority")
+      .mockReturnValue(backup);
+    const getSandbox = vi.fn(() => null);
+
+    try {
+      const result = backupSandboxBeforeRecreate({
+        sandboxName: "managed-assistant",
+        getSandbox,
+        log: vi.fn(),
+        errorLog: vi.fn(),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(managedBackup).toHaveBeenCalledWith("managed-assistant", {
+        getSandbox,
+      });
+    } finally {
+      managedBackup.mockRestore();
+    }
+  });
+
   it("returns ok with backup result on success", () => {
     const backup = makeBackup();
     const backupImpl = vi.fn().mockReturnValue(backup);

@@ -2,18 +2,19 @@
   "schemaVersion": 1,
   "defaultPolicy": "deny",
   "reviewedArchivePackages": [
-    "@openclaw/brave-plugin@2026.9.1",
-    "@openclaw/diagnostics-otel@2026.9.1",
-    "@openclaw/discord@2026.9.1",
-    "@openclaw/googlechat@2026.9.1",
-    "@openclaw/msteams@2026.9.1",
-    "@openclaw/slack@2026.9.1",
-    "@openclaw/whatsapp@2026.9.1",
+    "@openclaw/brave-plugin@2026.9.2",
+    "@openclaw/diagnostics-otel@2026.9.2",
+    "@openclaw/discord@2026.9.2",
+    "@openclaw/googlechat@2026.9.2",
+    "@openclaw/msteams@2026.9.2",
+    "@openclaw/slack@2026.9.2",
+    "@openclaw/tavily-plugin@2026.9.2",
+    "@openclaw/whatsapp@2026.9.2",
     "@tencent-weixin/openclaw-weixin@2.4.9",
     "@zed-industries/codex-acp@0.11.1",
     "openclaw@2026.3.11",
     "openclaw@2026.4.24",
-    "openclaw@2026.9.1"
+    "openclaw@2026.9.2"
   ],
   "allowedLifecycleScripts": [
     {
@@ -23,7 +24,7 @@
       "explicitCommand": "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"
     },
     {
-      "packageSpec": "openclaw@2026.9.1",
+      "packageSpec": "openclaw@2026.9.2",
       "event": "postinstall",
       "manifestCommand": "node scripts/postinstall-bundled-plugins.mjs",
       "explicitCommand": "node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"

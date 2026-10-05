@@ -192,7 +192,7 @@ export function prepareSandboxStoppedStateCapture(
     throw new SandboxSnapshotProviderError("provider returned invalid stopped state capture");
   }
   return {
-    capture: (fd) => prepared.capture(fd),
+    capture: (fd, maxBytes) => prepared.capture(fd, maxBytes),
     assertCurrent: () => prepared.assertCurrent(),
   };
 }

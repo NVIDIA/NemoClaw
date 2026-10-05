@@ -16,10 +16,6 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  liveE2eManagedImageCatalog,
-  readLiveE2eManagedImageCatalogContracts,
-} from "../../../src/lib/onboard/workload/preparation.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -43,6 +39,7 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { selectedE2eManagedImageReference } from "../fixtures/managed-image-receipt.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
   inferenceResponseModel,
@@ -99,6 +96,13 @@ interface AnthropicResponse {
   content?: Array<{ text?: unknown }>;
 }
 
+interface OpenClawModelConfig {
+  id?: unknown;
+  name?: unknown;
+  contextWindow?: unknown;
+  maxTokens?: unknown;
+}
+
 interface OpenClawConfig {
   agents?: {
     defaults?: {
@@ -114,12 +118,7 @@ interface OpenClawConfig {
         baseUrl?: unknown;
         apiKey?: unknown;
         api?: unknown;
-        models?: Array<{
-          id?: unknown;
-          name?: unknown;
-          contextWindow?: unknown;
-          maxTokens?: unknown;
-        }>;
+        models?: OpenClawModelConfig[];
       }
     >;
   };
@@ -257,8 +256,10 @@ function commandEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
 
 function writeCustomOpenClawDockerfile(home: string): string {
   const environment = commandEnv(home);
-  const selectedCatalog = liveE2eManagedImageCatalog(environment)!;
-  const contract = readLiveE2eManagedImageCatalogContracts(selectedCatalog).get("openclaw")!;
+  const baseImage = selectedE2eManagedImageReference({
+    environment,
+    expectedAgent: "openclaw",
+  });
 
   const buildContext = path.join(home, "custom-openclaw-image");
   const dockerfilePath = path.join(buildContext, "Dockerfile");
@@ -276,7 +277,7 @@ function writeCustomOpenClawDockerfile(home: string): string {
   fs.writeFileSync(
     dockerfilePath,
     [
-      `FROM ${contract.reference}`,
+      `FROM ${baseImage}`,
       "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
       "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
       `RUN node -e ${shellQuote(bakeRoute)}`,
@@ -592,17 +593,15 @@ async function assertRegistryAndSession(
   }
 }
 
-async function assertOpenClawConfig(
+async function readAndAssertOpenClawConfig(
   sandbox: SandboxClient,
   home: string,
   expected: {
     model: string;
     inferenceApi: string;
     artifactName: string;
-    contextWindow?: number | null;
-    maxTokens?: number | null;
   },
-): Promise<void> {
+): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
     SANDBOX_NAME,
     ["cat", "/sandbox/.openclaw/openclaw.json"],
@@ -629,18 +628,34 @@ async function assertOpenClawConfig(
   expect(provider?.apiKey).toBe("unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
-  const expectedContextWindow =
-    expected.contextWindow === null
-      ? undefined
-      : (expected.contextWindow ?? selectedModel?.contextWindow);
-  const expectedMaxTokens =
-    expected.maxTokens === null ? undefined : (expected.maxTokens ?? selectedModel?.maxTokens);
-  expect(selectedModel?.contextWindow).toBe(expectedContextWindow);
-  expect(selectedModel?.maxTokens).toBe(expectedMaxTokens);
-  expect(
-    expected.maxTokens === null ||
-      (typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0),
-  ).toBe(true);
+  return selectedModel;
+}
+
+async function assertOpenClawConfig(
+  sandbox: SandboxClient,
+  home: string,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+  },
+): Promise<void> {
+  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
+  expect(typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0).toBe(true);
+}
+
+async function assertInitialOpenClawConfig(
+  sandbox: SandboxClient,
+  home: string,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+  },
+): Promise<void> {
+  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
+  expect(selectedModel?.contextWindow).toBeUndefined();
+  expect(selectedModel?.maxTokens).toBeUndefined();
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -933,11 +948,9 @@ async function runInitialRouteLifecycle(options: {
   sandbox: SandboxClient;
 }): Promise<void> {
   const verify = async (artifactSuffix: string): Promise<void> => {
-    await assertOpenClawConfig(options.sandbox, options.home, {
+    await assertInitialOpenClawConfig(options.sandbox, options.home, {
       model: options.model,
       inferenceApi: "openai-completions",
-      contextWindow: null,
-      maxTokens: null,
       artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
     });
     await checkOpenClawGatewayInference(
@@ -1130,7 +1143,6 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
-    const customDockerfile = writeCustomOpenClawDockerfile(home);
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1144,6 +1156,7 @@ test(
     cleanup.trackDisposable("close baseline inference provider", async () => {
       await baselineProvider?.close();
     });
+    const customDockerfile = writeCustomOpenClawDockerfile(home);
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-openclaw-inference-switch",
       env: commandEnv(home),

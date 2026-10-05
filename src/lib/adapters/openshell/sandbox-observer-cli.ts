@@ -15,6 +15,10 @@ import {
 } from "./sandbox-observer";
 import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
+import { captureOpenshellCommand } from "./client";
+import { resolveOpenshell } from "./resolve";
+import { assertCliOpenShellTarget } from "./sandbox-command-cli";
+import { OpenShellGatewayEndpointOverrideError } from "../../openshell-gateway-endpoint-guard";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 
@@ -76,6 +80,7 @@ export type CaptureSandboxCommand = CaptureOpenShellCommand;
 export type CliOpenShellSandboxObserverDeps = Readonly<{
   capture: CaptureSandboxCommand;
   defaultTimeoutMs?: number;
+  environment?: NodeJS.ProcessEnv;
   now?: () => number;
 }>;
 
@@ -478,6 +483,19 @@ export function createCliOpenShellSandboxObserver(
   const listSandboxes = async (
     request: ListOpenShellSandboxesRequest,
   ): Promise<OpenShellSandboxResult<OpenShellSandboxInventory>> => {
+    try {
+      assertCliOpenShellTarget(request.target, deps.environment ?? process.env);
+    } catch (error) {
+      return failure(
+        error instanceof OpenShellGatewayEndpointOverrideError
+          ? { kind: "transport", reason: "endpoint_override", message: error.message }
+          : {
+              kind: "command",
+              reason: "invalid_request",
+              message: "Invalid OpenShell sandbox observation target.",
+            },
+      );
+    }
     const result = await capture(targetArgs("list", request.target), {
       ignoreError: true,
       includeStderr: true,
@@ -490,4 +508,17 @@ export function createCliOpenShellSandboxObserver(
   };
 
   return { listSandboxes };
+}
+
+/** Build the production observer while keeping CLI capture inside the adapter. */
+export function createRuntimeCliOpenShellSandboxObserver(
+  rootDir: string,
+): OpenShellSandboxObserver {
+  return createCliOpenShellSandboxObserver({
+    capture: (args, options) => {
+      const openshell = resolveOpenshell();
+      if (!openshell) return { status: 1, output: "" };
+      return captureOpenshellCommand(openshell, args, { cwd: rootDir, ...options });
+    },
+  });
 }

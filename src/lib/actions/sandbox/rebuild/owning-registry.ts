@@ -77,7 +77,7 @@ const WORKER_OPERATION_LABELS: Readonly<Record<OwningRegistryWorkerInput["operat
 function assertWorkerPlatformSupported(platform: NodeJS.Platform): void {
   if (platform === "win32") {
     throw new Error(
-      "Delegated owning-registry rebuild work is unsupported on native Windows. Run NemoClaw inside WSL.",
+      "Delegated owning-registry work is unsupported on native Windows. Run NemoClaw inside WSL.",
     );
   }
 }
@@ -593,6 +593,7 @@ export async function delegateDestroyToOwningRegistry(
   homeDir: string,
   currentRegistryFile: string,
   confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
+  cliName: string,
 ): Promise<boolean> {
   const hit = rebuildOwningRegistryDependencies.findSandbox(input.sandboxName, homeDir);
   if (!hit || path.resolve(hit.registryFile) === path.resolve(currentRegistryFile)) return false;
@@ -601,7 +602,7 @@ export async function delegateDestroyToOwningRegistry(
   }
   if (rebuildOwningRegistryDependencies.isHostFenceHeld(homeDir)) {
     throw new Error(
-      `Cannot transfer destroy for '${input.sandboxName}' while another lifecycle command owns the host fence. Run 'nemoclaw ${input.sandboxName} destroy' directly.`,
+      `Cannot transfer destroy for '${input.sandboxName}' while another lifecycle command owns the host fence. Run '${cliName} ${input.sandboxName} destroy' directly.`,
     );
   }
   const options = await confirm(input.options);

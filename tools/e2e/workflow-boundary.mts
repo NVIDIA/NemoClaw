@@ -205,6 +205,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
   "openshell-credential-generation-window",
+  "portable-hermes-finalization",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
 ]);
@@ -762,11 +763,6 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
-const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
-  "src/lib/actions/sandbox/auto-pair-approval.ts",
-  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
@@ -788,9 +784,6 @@ export function focusedE2eJobsForChangedFiles(
     }
     for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
       if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
-    }
-    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
-      addMapValue(matchedFilesByJob, "snapshot-commands", file);
     }
   }
   return [...matchedFilesByJob]
@@ -1704,6 +1697,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       }
       if (jobName === "managed-image-multiarch-startup") {
         return step.name === "Checkout trusted Hermes resolver" ? [index] : [];
+      }
+      if (jobName === "portable-hermes-finalization") {
+        return step.name === "Check out the exact candidate" ? [index] : [];
       }
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
@@ -2832,6 +2828,16 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       (step) => step.uses === E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference,
     );
     if (setupIndex < 0) continue;
+    const setupInputs = asRecord(jobSteps[setupIndex]!.with);
+    const preservesDockerCli = setupInputs["isolate-docker-cli"] === "false";
+    if (jobName === "portable-hermes-finalization" && !preservesDockerCli) {
+      errors.push(
+        "portable-hermes-finalization must retain the Docker client for its Podman compatibility proof",
+      );
+    }
+    if (jobName !== "portable-hermes-finalization" && preservesDockerCli) {
+      errors.push(`${jobName} must not retain the Docker client during native Podman execution`);
+    }
     const restores = jobSteps
       .map((step, index) => ({ index, step }))
       .filter(
@@ -2839,14 +2845,28 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       );
     const preSetupRestores = restores.filter(({ index }) => index < setupIndex);
     const postSetupRestores = restores.filter(({ index }) => index > setupIndex);
-    const requiresStaleRecovery = jobName === "hermes-gpu-startup";
+    const requiresStaleRecovery = new Set([
+      "hermes-gpu-startup",
+      "portable-hermes-finalization",
+    ]).has(jobName);
+    const expectedPreRestoreName =
+      jobName === "portable-hermes-finalization"
+        ? "Recover stale Docker isolation before Portable Podman E2E"
+        : "Recover Docker CLI before native Podman E2E";
+    const expectedPreRestoreCondition =
+      jobName === "portable-hermes-finalization"
+        ? ""
+        : "${{ matrix.runtime_provider == 'podman' }}";
+    const expectedPostRestoreCondition =
+      jobName === "portable-hermes-finalization"
+        ? "always()"
+        : "${{ always() && matrix.runtime_provider == 'podman' }}";
     if (
       requiresStaleRecovery &&
       (preSetupRestores.length !== 1 ||
         preSetupRestores[0]!.index !== setupIndex - 1 ||
-        preSetupRestores[0]!.step.name !== "Recover Docker CLI before native Podman E2E" ||
-        stringValue(preSetupRestores[0]!.step.if) !==
-          "${{ matrix.runtime_provider == 'podman' }}" ||
+        preSetupRestores[0]!.step.name !== expectedPreRestoreName ||
+        stringValue(preSetupRestores[0]!.step.if) !== expectedPreRestoreCondition ||
         !isDeepStrictEqual(asRecord(preSetupRestores[0]!.step.with), { enabled: "true" }))
     ) {
       errors.push(
@@ -2865,8 +2885,7 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
     );
     if (
       postSetupRestores.length !== 1 ||
-      stringValue(postSetupRestores[0]!.step.if) !==
-        "${{ always() && matrix.runtime_provider == 'podman' }}" ||
+      stringValue(postSetupRestores[0]!.step.if) !== expectedPostRestoreCondition ||
       !isDeepStrictEqual(asRecord(postSetupRestores[0]!.step.with), { enabled: "true" })
     ) {
       errors.push(
@@ -3004,7 +3023,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||
     asRecord(staging?.with).enabled !==
-      "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}" ||
+      "${{ (contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'portable-hermes-finalization')) && 'true' || 'false' }}" ||
     asRecord(staging?.with)["github-token"] !== "${{ github.token }}"
   ) {
     errors.push(
@@ -3622,7 +3641,9 @@ export function validateNativePodmanSetupAction(
 ): string[] {
   const actionSource = readFileSync(actionPath, "utf8");
   const action = asRecord(YAML.parse(actionSource));
+  const inputs = asRecord(action.inputs);
   const steps = asSteps(asRecord(action.runs).steps);
+  const artifact = steps.find((step) => step.name === "Resolve native Podman toolchain artifact");
   const start = steps.find((step) => step.name === "Start native Podman runtime");
   const isolate = steps.find(
     (step) => step.name === "Remove Docker CLI from native Podman execution",
@@ -3638,6 +3659,21 @@ export function validateNativePodmanSetupAction(
   }
 
   if (!start) return ["native Podman setup action must start the runtime"];
+  if (
+    asRecord(inputs.toolchain).default !== "native-6.1" ||
+    asRecord(inputs["isolate-docker-cli"]).default !== "true" ||
+    asRecord(artifact?.env).TOOLCHAIN_PROFILE !== "${{ inputs.toolchain }}" ||
+    !stringValue(artifact?.run).includes("native-6.1)") ||
+    !stringValue(artifact?.run).includes("portable-5.7)") ||
+    !stringValue(artifact?.run).includes(
+      "podman_source_sha=0370128fc8dcae93533334324ef838db8f8da8cb",
+    ) ||
+    !stringValue(artifact?.run).includes(
+      'echo "::error::Unsupported reviewed Podman toolchain: $TOOLCHAIN_PROFILE"',
+    )
+  ) {
+    errors.push("native Podman setup must select only reviewed toolchain contracts");
+  }
   if (!run.includes('systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"')) {
     errors.push("native Podman setup must start the runner user manager");
   }
@@ -3719,7 +3755,7 @@ export function validateNativePodmanSetupAction(
   }
   const isolationRun = stringValue(isolate?.run);
   if (
-    isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
+    isolate?.if !== "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}" ||
     steps.at(-1) !== isolate ||
     !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
     !isolationRun.includes('runtime_state_path="$restore_root/runtime.json"') ||

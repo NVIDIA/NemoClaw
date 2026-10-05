@@ -43,7 +43,7 @@ function makeArgs(sandboxName: string | null) {
 }
 
 function createHarness() {
-  const runOpenshell = vi.fn((args: string[]) =>
+  const runOpenshell = vi.fn((args: string[], _options?: { ignoreError?: boolean }) =>
     args[0] === "provider" && args[1] === "get" ? ANTHROPIC_PROVIDER : SUCCESS,
   );
   const upsertProvider = vi.fn(async () => ({ ok: true }));
@@ -53,13 +53,50 @@ function createHarness() {
     throw new Error(`EXIT_CALLED:${code}`);
   });
   const error = vi.fn();
+  const inferenceRouteMutator: RemoteProviderDeps["inferenceRouteMutator"] = {
+    setInferenceRoute: vi.fn(async (request) => {
+      const args = [
+        "inference",
+        "set",
+        "-g",
+        request.target.gatewayName,
+        ...(request.verification === "skip" ? ["--no-verify"] : []),
+        "--provider",
+        request.route.provider,
+        "--model",
+        request.route.model,
+        ...(request.verificationTimeoutSeconds === undefined
+          ? []
+          : ["--timeout", String(request.verificationTimeoutSeconds)]),
+      ];
+      const result = runOpenshell(args, { ignoreError: true });
+      return result.status === 0
+        ? { ok: true as const }
+        : {
+            ok: false as const,
+            ambiguous: false,
+            error: {
+              kind: "command" as const,
+              reason: "failed" as const,
+              exitCode: result.status,
+              message: String(result.stderr || result.stdout || "route update failed"),
+            },
+          };
+    }),
+  };
+  const reserveSandboxInferenceRoute = vi.fn<RemoteProviderDeps["reserveSandboxInferenceRoute"]>(
+    () => true,
+  );
   const deps = {
     runOpenshell,
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator,
     upsertProvider,
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: vi.fn(() => true),
     registry: { updateSandbox: vi.fn(() => true) },
+    reserveSandboxInferenceRoute,
     exitProcess,
     error,
     log: vi.fn(),
@@ -365,7 +402,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
         persist: vi.fn(),
         restore,
       });
-      harness.deps.registry.updateSandbox.mockImplementation(() => {
+      harness.deps.reserveSandboxInferenceRoute.mockImplementation(() => {
         entries.push(pending);
         return true;
       });
@@ -413,6 +450,142 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     pinnedAddresses: ["127.0.0.1"],
   };
 
+  it("reserves an unpublished owner before retaining a proxy after an ambiguous route result", async () => {
+    const harness = createHarness();
+    const events: string[] = [];
+    const pendingOwners: SandboxEntry[] = [];
+    const persist = vi.fn(() => events.push("persist"));
+    const restore = vi.fn(() => events.push("restore"));
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+      restore,
+    });
+    harness.deps.inferenceRouteMutator = {
+      setInferenceRoute: vi.fn(async () => {
+        events.push("mutate");
+        return {
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "command" as const,
+            reason: "indeterminate" as const,
+            exitCode: null,
+            message: "route result unknown",
+          },
+        };
+      }),
+    };
+    harness.deps.reserveSandboxInferenceRoute.mockImplementation((name, route) => {
+      events.push("reserve");
+      pendingOwners.push({
+        name,
+        ...route,
+        credentialEnv: NO_AUTH_ENV,
+        pendingRouteReservation: true,
+      });
+      return true;
+    });
+    vi.mocked(withOllamaProxyLifecycleTransaction).mockImplementation(async (operation) => {
+      try {
+        return await operation();
+      } finally {
+        events.push("destroy-check");
+        let proxyRunning = false;
+        stopDestroyedSandboxProxy(
+          "old-owner",
+          { name: "old-owner", provider: "ollama-local" },
+          () => ({ sandboxes: [], defaultSandbox: null }),
+          {
+            listInferenceRouteOwners: () => pendingOwners,
+            killStaleProxyIfUnused: (hasOwner) => {
+              proxyRunning = hasOwner();
+              return !proxyRunning;
+            },
+          },
+        );
+        expect(proxyRunning).toBe(true);
+      }
+    });
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(events).toEqual(["mutate", "reserve", "persist", "destroy-check"]);
+    expect(pendingOwners).toEqual([
+      expect.objectContaining({
+        name: SANDBOX,
+        provider: "compatible-endpoint",
+        model: MODEL,
+        credentialEnv: NO_AUTH_ENV,
+        pendingRouteReservation: true,
+      }),
+    ]);
+    expect(restore).not.toHaveBeenCalled();
+    expect(harness.deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.deps.log).not.toHaveBeenCalledWith(expect.stringContaining("✓"));
+  });
+
+  it.each([
+    ["returns false", () => false, "Could not reserve durable ownership"],
+    [
+      "throws",
+      () => {
+        throw new Error("reservation write outcome unknown");
+      },
+      "reservation write outcome unknown",
+    ],
+  ])(
+    "retains the proxy when ambiguous-route ownership persistence $0",
+    async (_, reserve, message) => {
+      const harness = createHarness();
+      const persist = vi.fn();
+      const restore = vi.fn();
+      vi.mocked(noAuthProxy).mockReturnValue({
+        baseUrl: "http://host.openshell.internal:11435/v1",
+        credentialValue: "proxy-token",
+        persist,
+        restore,
+      });
+      harness.deps.inferenceRouteMutator = {
+        setInferenceRoute: vi.fn(async () => ({
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "command" as const,
+            reason: "indeterminate" as const,
+            exitCode: null,
+            message: "route result unknown",
+          },
+        })),
+      };
+      harness.deps.reserveSandboxInferenceRoute.mockImplementation(reserve);
+
+      await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow(message);
+      expect(persist).toHaveBeenCalledOnce();
+      expect(restore).not.toHaveBeenCalled();
+      expect(harness.deps.registry.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a proxy-backed route without a named owner before provider or route mutation", async () => {
+    const harness = createHarness();
+    const restore = vi.fn();
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist: vi.fn(),
+      restore,
+    });
+
+    await expect(
+      setupRemoteProviderInference({ ...args, sandboxName: null }, harness.deps),
+    ).rejects.toThrow("A named sandbox is required");
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
+    expect(harness.deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+  });
+
   it("registers the protected proxy URL and generated credential (#7424)", async () => {
     const harness = createHarness();
     const persist = vi.fn();
@@ -446,6 +619,8 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--no-verify",
         "--provider",
         "compatible-endpoint",
@@ -488,7 +663,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       },
       message: "reservation failed",
     },
-  ])("restores proxy state when route reservation is $outcome", async ({ reserve, message }) => {
+  ])("retains proxy state when route reservation is $outcome", async ({ reserve, message }) => {
     const harness = createHarness();
     const persist = vi.fn();
     const restore = vi.fn();
@@ -499,12 +674,12 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       persist,
       restore,
     });
-    harness.deps.registry.updateSandbox.mockImplementation(reserve);
+    harness.deps.reserveSandboxInferenceRoute.mockImplementation(reserve);
 
     await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow(message);
-    expect(persist).not.toHaveBeenCalled();
-    expect(restore).toHaveBeenCalledOnce();
-    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+    expect(persist).toHaveBeenCalledOnce();
+    expect(restore).not.toHaveBeenCalled();
+    expect(process.env[NO_AUTH_ENV]).toBe("proxy-token");
   });
 
   it("stops before registration when proxy startup fails (#7424)", async () => {
@@ -619,6 +794,8 @@ describe("llama.cpp existing-server provider registration", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--no-verify",
         "--provider",
         "llama-cpp-local",

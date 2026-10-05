@@ -187,7 +187,7 @@ The managed launchers disable the following mutable or unsupported behavior:
 
 Interactive sessions retain Deep Agents Code's native local behavior for shell allowlists, startup commands, interpreter and programmatic-tool settings, and user hooks.
 These processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
-NemoClaw snapshots and restores `hooks.json` plus the supported interpreter and startup-mode keys in `config.toml` during a managed rebuild.
+OpenShell preserves the complete native home, and managed rebuild transfers it without interpreting `hooks.json` or selected `config.toml` keys.
 
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
