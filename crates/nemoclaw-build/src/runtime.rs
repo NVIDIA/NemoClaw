@@ -188,8 +188,7 @@ mod tests {
             )
             .unwrap();
             let rust_target = target(platform).unwrap();
-            let mut compiler = Command::new("sh");
-            compiler.args(["-c", include_str!("runtime_fixture.sh"), "fixture-cargo"]);
+            let compiler = fake_cargo();
             let binary =
                 compile_retained_source(root.path(), &archive, rust_target, compiler).unwrap();
             assert_eq!(
@@ -198,5 +197,56 @@ mod tests {
                 "{platform}"
             );
         }
+    }
+
+    /// This test binary, re-run as the `cargo` that retained compilation calls.
+    fn fake_cargo() -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "runtime::tests::fake_cargo_entry",
+                "--nocapture",
+                "--",
+            ])
+            .env("NEMOCLAW_BUILD_FAKE_CARGO", "1");
+        command
+    }
+
+    /// Checks the retained build's arguments and environment, then writes a
+    /// stand-in binary naming its target. Does nothing in ordinary test runs.
+    #[test]
+    fn fake_cargo_entry() {
+        if std::env::var_os("NEMOCLAW_BUILD_FAKE_CARGO").is_none() {
+            return;
+        }
+        let args: Vec<String> = std::env::args()
+            .skip_while(|arg| arg != "--")
+            .skip(1)
+            .collect();
+        let directory = std::env::current_dir().unwrap();
+        let prefix = directory.to_str().unwrap();
+        let var = |name: &str| std::env::var(name).unwrap();
+        assert_eq!(fs::read_to_string("input").unwrap(), "retained source");
+        assert_eq!(
+            args[..5],
+            ["build", "--locked", "--offline", "--release", "--target"]
+        );
+        assert_eq!(args[6..8], ["-p", "nemoclaw-runtime"]);
+        assert_eq!(var("GIT_CEILING_DIRECTORIES"), prefix);
+        assert_eq!(
+            var("RUSTFLAGS"),
+            format!("--remap-path-prefix={prefix}=/workspace")
+        );
+        assert_eq!(
+            var("CFLAGS"),
+            format!("-ffile-prefix-map={prefix}=/workspace")
+        );
+        assert_eq!(var("CXXFLAGS"), var("CFLAGS"));
+        let release = Path::new(&var("CARGO_TARGET_DIR"))
+            .join(&args[5])
+            .join("release");
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("nemoclaw-runtime"), &args[5]).unwrap();
     }
 }
