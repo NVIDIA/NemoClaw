@@ -10,6 +10,7 @@ import {
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
 import {
   observeSandboxOnGateway,
@@ -24,10 +25,7 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
-import {
-  isSupportedOpenRouterModelsRoute404,
-  runSandboxInferenceInvocationProbe,
-} from "../inference-route-health";
+import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
@@ -311,10 +309,7 @@ export async function requireLaunchSemanticHealth(
     if (strictRouteHealth && agentName !== "langchain-deepagents-code") return;
     const supportedOpenRouterModelsRouteUnsupported =
       inference.healthy &&
-      isSupportedOpenRouterModelsRoute404(
-        { agentName, provider: entry.provider ?? null },
-        inference.httpStatus,
-      );
+      isOpenRouterRuntimeAdapterModelsRoute404(entry.provider, inference.httpStatus);
     if (strictRouteHealth || supportedOpenRouterModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);

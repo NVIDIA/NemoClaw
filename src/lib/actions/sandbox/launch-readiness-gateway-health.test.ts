@@ -206,7 +206,7 @@ const SANDBOX = "alpha";
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
-const CATALOGLESS_OPENROUTER_AGENTS = ["openclaw", "hermes"] as const;
+const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
@@ -317,7 +317,7 @@ describe("Deep Agents Code launch readiness", () => {
 });
 
 describe("OpenRouter launch readiness", () => {
-  it.each(CATALOGLESS_OPENROUTER_AGENTS)(
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
     "accepts the %s catalog 404 after the recorded inference request succeeds (#12621)",
     async (agentName) => {
       const agent = loadAgent(agentName);
@@ -344,7 +344,7 @@ describe("OpenRouter launch readiness", () => {
     },
   );
 
-  it.each(CATALOGLESS_OPENROUTER_AGENTS)(
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
     "rejects the %s catalog 404 when the recorded inference request fails (#12621)",
     async (agentName) => {
       const agent = loadAgent(agentName);

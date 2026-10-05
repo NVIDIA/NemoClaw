@@ -38,8 +38,8 @@ The row reports `healthy` only when the route returns a structurally valid resul
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
-OpenClaw, Hermes, and Deep Agents Code use NemoClaw's Chat Completions-only OpenRouter adapter.
-Its models route returns `404` by design, so `status` requires a successful inference request before it reports these routes as healthy.
+The recorded `openrouter-api` provider uses NemoClaw's Chat Completions-only OpenRouter adapter.
+Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.
 When the models route responds and `status` sends an inference request, a failing row names the endpoint that request used.
 When the models route itself does not respond, the row names the models route.
 An HTTP `401` or `403` response reports `unauthorized`.

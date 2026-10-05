@@ -21,12 +21,12 @@ import os from "node:os";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
-  isSupportedOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "./inference/openrouter";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
@@ -260,16 +260,15 @@ async function fetchGatewayVersion(
 type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 
 /**
- * Agent and provider behind the deployment, normalised into the context
+ * Provider behind the deployment, normalized into the context
  * `status` uses so the two readiness paths cannot drift (#10080).
  */
 export type InferenceRouteContext = {
-  agentName?: string | null;
   provider?: string | null;
 };
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
-  return { agentName: context.agentName ?? null, provider: context.provider ?? null };
+  return { provider: context.provider ?? null };
 }
 
 type InferenceRouteProbe = {
@@ -368,7 +367,7 @@ async function resolveExpectedModelsRoute404(
       status: "ok",
       detail:
         "inference.local served an inference request; its models route answers " +
-        "HTTP 404 by design for this agent and provider",
+        "HTTP 404 by design for the OpenRouter adapter",
       httpCode: probe.httpCode,
     };
   }
@@ -377,11 +376,11 @@ async function resolveExpectedModelsRoute404(
     status: "unhealthy",
     detail:
       `inference.local answered HTTP ${probe.httpCode} on its models route and serves no model ` +
-      `catalog by design for this agent and provider, but no inference request confirmed the ` +
+      `catalog by design for the OpenRouter adapter, but no inference request confirmed the ` +
       `selected model: ${reason}`,
     httpCode: probe.httpCode,
     hint:
-      "This agent and provider serve no model catalog, so the models route answering HTTP 404 is " +
+      "The OpenRouter adapter serves no model catalog, so the models route answering HTTP 404 is " +
       "expected. The inference request itself failed. Confirm the provider credential and the " +
       "selected model, then re-run: nemoclaw <sandbox> status.",
   };
@@ -396,7 +395,7 @@ async function verifyInferenceRoute(
 ): Promise<InferenceRouteProbe> {
   const routeContext = toRouteHealthContext(context);
   const isExpected404 = (result: InferenceRouteProbe) =>
-    isSupportedOpenRouterModelsRoute404(routeContext, result.httpCode);
+    isOpenRouterRuntimeAdapterModelsRoute404(routeContext.provider, result.httpCode);
   // An ordinary 404 still gets the startup budget: a route can answer before
   // its model catalog is registered, and the inference probe already recovers
   // a late route (#6849). Only the 404 that is expected settles immediately,

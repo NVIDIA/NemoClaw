@@ -97,7 +97,7 @@ describe("OpenRouter adapter deployment verification", () => {
     const options = {
       retryDelaysMs: [],
       sleep: async (_ms: number) => {},
-      inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
+      inferenceRouteContext: { provider: "openrouter-api" },
     };
 
     const served = await verifyDeployment("my-sandbox", buildChain(), deps, options);

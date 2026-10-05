@@ -1285,7 +1285,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ### Onboarding reports a model-catalog HTTP 404
 
 NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
-For OpenClaw, Hermes, and LangChain Deep Agents Code, an `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
 NemoClaw accepts that response only after a bounded inference request serves the selected model.
 Onboarding and `status` report the route ready when that request succeeds.
 
@@ -1302,7 +1302,7 @@ Confirm the OpenRouter credential and selected model, then continue the recorded
 $$nemoclaw onboard --resume
 ```
 
-For other agents or providers, an `HTTP 404` response still means that the route served no supported model catalog.
+For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
 Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
 Then continue the recorded session:
 

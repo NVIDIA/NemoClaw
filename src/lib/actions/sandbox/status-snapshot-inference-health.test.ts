@@ -605,7 +605,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
   });
 
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"])(
     "reports a %s OpenRouter 404 route as ready once an invocation succeeds (#12621)",
     async (agentName) => {
       const gateway: SandboxInferenceRouteHealth = {
