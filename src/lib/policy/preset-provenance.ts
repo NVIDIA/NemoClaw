@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "../onboard/hermes-managed-tools";
-import { DCODE_AGENT_NAME, DCODE_ONLY_POLICY_PRESETS } from "../onboard/observability-policy-presets";
+import {
+  DCODE_AGENT_NAME,
+  DCODE_ONLY_POLICY_PRESETS,
+} from "../onboard/observability-policy-presets";
 import { OPENCLAW_ONLY_POLICY_PRESETS } from "../onboard/openclaw-otel-policy-presets";
 
 export type PresetProvenance =
