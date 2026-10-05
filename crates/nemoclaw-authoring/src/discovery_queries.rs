@@ -5,7 +5,7 @@ use crate::Diagnostics;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document},
     discovery::{DiscoveryRequest, ObservationStatus},
-    discovery_session::{DiscoveryObservations, DiscoveryQuery},
+    discovery_session::{DiscoveryObservations, DiscoveryQuery, plan_queries},
     inference_discovery::EndpointRequest,
 };
 
@@ -38,46 +38,35 @@ pub fn inference_request_for_document(
         .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))
 }
 
-/// Every query the journey asks about the target for an SDK-valid document.
+/// Every query the journey asks about the target for an SDK-valid document:
+/// the SDK's `plan_queries`, so onboarding and planning ask the same questions,
+/// less what onboarding does not ask yet, plus the credential checks.
 ///
-/// The inputs come from the document the way planning derives them: the
-/// endpoint request is the SDK's, and the engine, image, and gateway are the
-/// ones the document names. An external gateway's engine only stores images,
-/// so it is read for image metadata and is never probed as the gateway's
-/// engine or hardware. Planning also reads the hardware of each managed
-/// service's engine; onboarding does not until a decision consumes it.
+/// Three exclusions are deliberate. Only the selected route's inference
+/// catalog is read. Hardware is read only for the managed gateway's engine,
+/// not for each managed service's, until a decision consumes it. And an
+/// unresolved engine has nowhere to read an image from, so there is no image
+/// read; the TUI never targets a local daemon for it, and the assessment
+/// reports the missing engine instead.
 pub fn discovery_queries(
     document: &Document,
     route_name: Option<&str>,
 ) -> Result<Vec<DiscoveryQuery>, Diagnostics> {
     let key = crate::discovery_key_for_document(document)?;
-    let mut queries = Vec::new();
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine.clone(),
-            compute_driver: key.compute_driver,
-        }));
-    }
-    if !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Fabric {
-            engine: key.engine.clone(),
-            image: key.image.clone(),
-        });
-    }
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Hardware {
-            engine: key.engine.clone(),
-        });
-    }
-    if let Some(request) = inference_request_for_document(document, route_name)?
-        .filter(|request| request.validate().is_ok())
-    {
-        queries.push(DiscoveryQuery::Inference(request));
-    }
-    queries.push(DiscoveryQuery::Gateway {
-        gateway: document.spec.gateway.clone(),
-        compute_drivers: vec![key.compute_driver],
-    });
+    let selected = inference_request_for_document(document, route_name)?;
+    let mut queries: Vec<DiscoveryQuery> = plan_queries(document)
+        .map_err(|error| crate::diagnostics::diagnostic("discovery", &error.to_string()))?
+        .into_iter()
+        .filter(|query| match query {
+            DiscoveryQuery::Inference(request) => selected.as_ref() == Some(request),
+            DiscoveryQuery::Hardware { engine } => {
+                key.managed_gateway && !engine.is_empty() && *engine == key.engine
+            }
+            DiscoveryQuery::Engine(request) => !request.engine.is_empty(),
+            DiscoveryQuery::Fabric { engine, .. } => !engine.is_empty(),
+            DiscoveryQuery::Gateway { .. } | DiscoveryQuery::Credential { .. } => true,
+        })
+        .collect();
     queries.extend(document.credential_names().into_iter().map(|reference| {
         DiscoveryQuery::Credential {
             reference: reference.into(),

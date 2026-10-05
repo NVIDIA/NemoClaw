@@ -148,7 +148,8 @@ Each observation is keyed by its query, so an observation about one engine, imag
 A read that could not be made is recorded as an unknown observation with its reason, so it stays distinct from a query never asked and is not repeated on every pass.
 A `DiscoverySource` answers queries: `DiscoverySession` reads the real target through the provider, and `RecordedDiscovery` replays recorded observations, so decisions can be tested for any hardware without owning it.
 `discovery_queries` returns the queries a journey asks for an SDK-valid document.
-It derives them the way planning does and differs in two named ways, which tests compare against the compiled plan: onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
+They are the SDK's `plan_queries`, the list a plan compiles into its discovery data sources, so onboarding and planning cannot ask different questions, plus the credential checks.
+Three exclusions are deliberate and tested: only the selected route's inference catalog is read, onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
 `environment_queries` returns the queries that need no answers, which are the local engines, so the first question can use them.
 `discover` repeats observe and merge until nothing asked for is missing, so a read can depend on an earlier one.
 Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman, through `RecordedDiscovery`.
