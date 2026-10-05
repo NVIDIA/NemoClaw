@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  getNativeCompatibleProviderAuthority,
   clearNativeCompatibleProviderAuthority,
+  getNativeCompatibleProviderAuthority,
 } from "../../state/registry/native-compatible-provider-authority";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {

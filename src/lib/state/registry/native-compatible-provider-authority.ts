@@ -34,3 +34,5 @@ export function clearNativeCompatibleProviderAuthority(
     save(state);
   });
 }
+
+export { getNativeCompatibleProviderAuthority } from "./persistence";

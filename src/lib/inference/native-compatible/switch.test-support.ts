@@ -94,7 +94,7 @@ export async function nativeCompatibleRotationFixture() {
     providerId: "new-owned-compatible",
     addresses: next.addresses,
   };
-  const attachments = new Map([
+  const attachments = new Map<string, Set<string>>([
     ["alpha", new Set([previous.profile.providerName])],
     ["beta", new Set([previous.profile.providerName])],
   ]);

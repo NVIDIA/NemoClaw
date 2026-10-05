@@ -24,12 +24,7 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
-import {
-  load,
-  save,
-  readNativeCompatibleProviderAuthority,
-  applyNativeCompatibleProviderAuthority,
-} from "./registry/persistence";
+import { load, save, applyNativeCompatibleProviderAuthority } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
@@ -1111,9 +1106,7 @@ export function setChannelDisabled(name: string, channel: string, disabled: bool
   return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }
 
-export function getNativeCompatibleProviderAuthority(gatewayName: string, profileId: string) {
-  return readNativeCompatibleProviderAuthority(load(), gatewayName, profileId);
-}
+export { getNativeCompatibleProviderAuthority } from "./registry/persistence";
 
 export function setNativeCompatibleProviderAuthority(
   gatewayName: string,

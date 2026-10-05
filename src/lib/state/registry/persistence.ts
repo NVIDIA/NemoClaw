@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { normalizeNativeCompatibleProviderAuthorities } from "./native-compatible-provider-authority-state";
+import {
+  normalizeNativeCompatibleProviderAuthorities,
+  readNativeCompatibleProviderAuthority,
+} from "./native-compatible-provider-authority-state";
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -295,3 +298,7 @@ export {
   readNativeCompatibleProviderAuthority,
   applyNativeCompatibleProviderAuthority,
 } from "./native-compatible-provider-authority-state";
+
+export function getNativeCompatibleProviderAuthority(gatewayName: string, profileId: string) {
+  return readNativeCompatibleProviderAuthority(load(), gatewayName, profileId);
+}
