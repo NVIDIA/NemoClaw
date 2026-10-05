@@ -1,15 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  OpenShellInferenceRouteMutationResult,
+  SetOpenShellInferenceRouteRequest,
+} from "../../adapters/openshell/inference-route";
 import {
   checkGatewayRouteCompatibility,
   GatewayRouteConflictError,
   isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
+import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
+
+const CONNECT_ROUTE_MUTATION_TIMEOUT_MS = 30_000;
+
+export type ConnectInferenceRouteMutationResult = OpenShellInferenceRouteMutationResult;
+
+export function connectInferenceRouteMutationRequest(
+  gatewayName: string,
+  provider: string,
+  model: string,
+): SetOpenShellInferenceRouteRequest {
+  return {
+    target: { kind: "named", gatewayName },
+    route: { provider, model },
+    verification: "skip",
+    timeoutMs: CONNECT_ROUTE_MUTATION_TIMEOUT_MS,
+    ...(["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)
+      ? { verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS }
+      : {}),
+  };
+}
 
 /** Identify the legacy cluster gateway without branching on managed provider IDs. */
 export function sandboxUsesLegacyClusterGateway(sandbox: SandboxEntry | null): boolean {
@@ -42,28 +66,6 @@ export function canSandboxGatewayRouteRealign(
 ): boolean {
   const result = sandboxGatewayRouteCompatibility(sandboxName, sb, gatewayName, sandboxes);
   return result.ok || isAdvisoryGatewayRouteConflict(result);
-}
-
-export function buildGatewayInferenceSetArgs(
-  gatewayName: string,
-  provider: string,
-  model: string,
-): string[] {
-  const args = [
-    "inference",
-    "set",
-    "-g",
-    gatewayName,
-    "--provider",
-    provider,
-    "--model",
-    model,
-    "--no-verify",
-  ];
-  if (["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)) {
-    args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
-  }
-  return args;
 }
 
 export function assertSandboxGatewayRouteCompatible(
