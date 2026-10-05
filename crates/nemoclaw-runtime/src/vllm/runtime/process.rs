@@ -133,26 +133,31 @@ mod tests {
         .unwrap();
         assert!(command.spawn().unwrap().wait().await.unwrap().success());
         assert!(readiness.url.ends_with("/v1/models"));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        readiness.url = format!("http://{}/v1/models", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(socket.read_u8().await.unwrap());
-            }
-            let request = String::from_utf8(request).unwrap();
-            assert!(request.starts_with("GET /v1/models HTTP/1.1"));
-            assert!(request.contains(&format!("authorization: Bearer {key}\r\n")));
-            socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
-        });
+        let expected = format!("Bearer {key}");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests = seen.clone();
+        let server = crate::http_fixture::Fixture::start_tcp(move |request| {
+            let authorized = request.header("authorization") == Some(expected.as_str());
+            requests
+                .lock()
+                .unwrap()
+                .push((request.method, request.path, authorized));
+            Some((if authorized { 200 } else { 401 }, Vec::new()))
+        })
+        .await;
+        readiness.url = format!("{}/v1/models", server.endpoint);
+        // A wrong credential gets 401 and retries; the bound turns that into a failure.
+        readiness.interval = Duration::from_millis(10);
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-        wait_ready(readiness, tx).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), wait_ready(readiness, tx))
+            .await
+            .expect("readiness accepted the bearer key")
+            .unwrap();
         assert_eq!(rx.recv().await, Some(true));
-        server.await.unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [("GET".to_owned(), "/v1/models".to_owned(), true)]
+        );
     }
 
     #[tokio::test]

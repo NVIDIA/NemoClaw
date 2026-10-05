@@ -9,8 +9,7 @@ mod examples;
 mod provider_scope;
 #[path = "support/config.rs"]
 mod support;
-#[cfg(unix)]
-#[path = "../../test-support/docker.rs"]
+#[path = "../../test-support/http.rs"]
 mod transport;
 
 #[path = "agent_tools.rs"]

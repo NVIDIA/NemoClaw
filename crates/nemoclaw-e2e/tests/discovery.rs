@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use nemoclaw_e2e::http_fixture as transport;
 use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 use serde_json::{Value, json};
