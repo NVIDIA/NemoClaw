@@ -6,7 +6,7 @@
 This page classifies every target read by what it depends on.
 Plan and onboarding must make consistent decisions from the same facts, so the reads that need no plan belong upstream of both.
 It records the current state and does not change behavior.
-Verified against revision `478f318c5`.
+Verified against revision `160786001`.
 
 ## Layers
 
@@ -21,7 +21,9 @@ Layer-1 and layer-2 reads need no resources.
 
 ## Classification
 
-Each row names the SDK variant in [`DiscoveryObservation`](../../crates/nemoclaw-sdk/src/discovery.rs) and the provider data source that produces it.
+Each row names the variant and the provider data source that produces it.
+Layer-1 and layer-2 variants are in [`DiscoveryObservation`](../../crates/nemoclaw-sdk/src/discovery.rs), which plan and onboarding share.
+Layer-3 variants are in [`PlanObservation`](../../crates/nemoclaw-sdk/src/deployment/reporting.rs), which only a plan report holds.
 
 | Observation | Data source | Layer | Plan uses it to | Onboarding uses it to |
 |---|---|---|---|---|
@@ -41,7 +43,7 @@ Two data sources are not in the enum.
 
 ## Where layers are fused
 
-- `DiscoveryObservation` holds all three layers in one enum.
+- `DiscoveryObservation` holds layers 1 and 2 without separating them.
 - `FabricObservation` carries raw image data and an optional verdict.
 - The image data source returns one observation and also graph inputs that resources consume (`compile.rs` wires `runtime_json` and `binaries_json`).
 - `EngineObservation` and `GatewayObservation` fold a verdict into `status`.
@@ -55,20 +57,19 @@ Two data sources are not in the enum.
 | Judgment | Where |
 |---|---|
 | Image compatibility | The provider's image data source and onboarding's `assess_target`, both through `assess_image` |
-| Resolved or unresolved | `DiscoveryReport::unresolved` on typed values, `Plan::discovery_deferred` on raw JSON by name prefix, and onboarding's `assess_target` |
+| Resolved or unresolved | `DiscoveryReport::unresolved` for plan, and onboarding's `assess_target` |
 | Gateway compatibility | `GatewayObservation::from_result` and the report's resolved check |
-| Gating or advisory | The `supplemental` match in `reporting.rs` and the `inference` and `service` check in `plan.rs` |
 
-The names `endpoint_N`, `target_N`, and `sandbox_N` must agree across `populate`, `is_observation`, `category`, and `discovery_deferred`.
+Plan classifies deferrals only from its typed report; `Plan::discovery_deferred` adds the one case the report cannot hold, a discovery output OpenTofu cannot compute yet.
+The names `endpoint_N`, `target_N`, and `sandbox_N` must agree across `populate`, `is_observation`, and `category`.
 
 ## Implications
 
 These follow from the tables and are not decisions.
 
-- Layer-3 variants can leave the shared enum for a plan-only type.
-- One query-keyed container can replace the report's `targets` and `observations`.
+- Onboarding could read Fabric compatibility from the observation, as plan does, if its Fabric query carried the sandbox's requirements and the engine's platform.
 - A raw image observation can be separate from its verdict, while the data source keeps the outputs the graph needs.
-- One classifier can replace the three resolved-or-unresolved implementations.
+- The CLI prints the report's `targets` and `observations`, so a query-keyed report would change that output.
 
 ## Not verified
 
