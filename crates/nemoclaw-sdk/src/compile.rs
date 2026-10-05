@@ -347,12 +347,7 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
 
 fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
     let provider = gateway_provider(&document.spec.gateway);
-    let drivers: std::collections::BTreeSet<_> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| &sandbox.runtime.provider)
-        .collect();
+    let drivers = crate::discovery_session::gateway_drivers(document);
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":{},

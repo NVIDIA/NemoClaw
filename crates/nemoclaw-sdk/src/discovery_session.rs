@@ -12,7 +12,7 @@
 use crate::{
     CancellationToken, EnvironmentSecrets, Error,
     bundle::Bundle,
-    config::{ComputeDriver, Gateway},
+    config::{ComputeDriver, ConfigError, Document, Gateway},
     discovery::{
         DiscoveryRequest, EngineObservation, FabricObservation, GatewayObservation,
         ObservationStatus,
@@ -56,7 +56,7 @@ pub enum DiscoveryQuery {
 
 pub use crate::discovery::DiscoveryObservation;
 impl DiscoveryQuery {
-    fn data(&self) -> Result<(&'static str, Value), Error> {
+    pub(crate) fn data(&self) -> Result<(&'static str, Value), Error> {
         Ok(match self {
             Self::Engine(request) => (
                 "engine_capabilities",
@@ -124,6 +124,60 @@ impl DiscoveryQuery {
             }
         }
     }
+}
+
+/// The compute drivers the gateway must support for `document`'s sandboxes.
+pub(crate) fn gateway_drivers(document: &Document) -> std::collections::BTreeSet<ComputeDriver> {
+    document
+        .spec
+        .sandboxes
+        .iter()
+        .map(|sandbox| sandbox.runtime.provider)
+        .collect()
+}
+
+/// The reads a plan makes of the target for `document`, in the order it names
+/// them: the gateway, each external inference endpoint, the hardware of every
+/// engine that services or a managed gateway use, a managed gateway's engine,
+/// and one image read per sandbox. The image reads are per sandbox, sorted by
+/// sandbox name, because each carries that sandbox's own requirements.
+pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
+    let mut queries = vec![DiscoveryQuery::Gateway {
+        gateway: document.spec.gateway.clone(),
+        compute_drivers: gateway_drivers(document).into_iter().collect(),
+    }];
+    queries.extend(
+        crate::inference_discovery::endpoint_requests(document)
+            .map_err(|_| ConfigError::new("inference discovery inputs are invalid"))?
+            .into_iter()
+            .map(DiscoveryQuery::Inference),
+    );
+    let mut engines = crate::services::discovery_engines(document)?;
+    if let Some(gateway) = document.spec.gateway.as_managed() {
+        engines.insert(gateway.engine.clone());
+    }
+    queries.extend(
+        engines
+            .into_iter()
+            .map(|engine| DiscoveryQuery::Hardware { engine }),
+    );
+    let engine = match &document.spec.gateway {
+        Gateway::Managed(gateway) => &gateway.engine,
+        Gateway::External(gateway) => &gateway.engine,
+    };
+    if document.spec.gateway.as_managed().is_some() {
+        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
+            engine: engine.clone(),
+            compute_driver: document.spec.sandboxes[0].runtime.provider,
+        }));
+    }
+    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
+    sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
+    queries.extend(sandboxes.into_iter().map(|sandbox| DiscoveryQuery::Fabric {
+        engine: engine.clone(),
+        image: sandbox.image.ref_.clone(),
+    }));
+    Ok(queries)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -531,7 +585,7 @@ impl DiscoverySource for DiscoverySession {
     }
 }
 
-fn literal(value: &str) -> String {
+pub(crate) fn literal(value: &str) -> String {
     value.replace("${", "$${").replace("%{", "%%{")
 }
 
