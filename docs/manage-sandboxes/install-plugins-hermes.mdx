@@ -79,9 +79,9 @@ nemohermes <name> gateway restart
 nemohermes <name> status
 ```
 
-Hermes user plugins and lazy packages live in declared Hermes state, so they
-survive native restart and state-preserving rebuild or restore without a
-NemoClaw plugin ownership record:
+Hermes user plugins and lazy packages live in the agent's native home, so they
+survive native restart and the complete native-home transfer performed by a
+state-preserving rebuild or restore without a NemoClaw plugin ownership record:
 
 ```bash
 nemohermes <name> rebuild --yes

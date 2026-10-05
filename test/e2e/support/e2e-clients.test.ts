@@ -338,7 +338,7 @@ describe("E2E fixture clients", () => {
       expect(runner.calls.map(({ args }) => args)).toEqual([
         ["install.sh", "--non-interactive", "--fresh"],
         ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
-        ["-lc", LAUNCH_TURN_SCRIPT],
+        ["-c", LAUNCH_TURN_SCRIPT],
       ]);
       expect(runner.calls[2]?.options?.env?.NEMOCLAW_OPENSHELL_COMMAND).toBe(
         "/home/runner/.local/bin/openshell",
@@ -709,12 +709,16 @@ describe("E2E fixture clients", () => {
     const pidRunner = new FakeRunner();
     pidRunner.stdout = "12345\n";
     const pidHost = new HostCliClient(pidRunner, { cliPath: "nemoclaw" });
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     await expect(
-      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime(),
+      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime({
+        env: privateRuntimeEnv,
+      }),
     ).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
+    expect(pidRunner.calls[0]?.options?.env?.HOME).toBe(privateRuntimeEnv.HOME);
 
     const containerRunner = new FakeRunner();
     containerRunner.exitCode = 1;
@@ -738,6 +742,7 @@ describe("E2E fixture clients", () => {
 
   it("gateway client proves registration, listener, and host runtime are removed", async () => {
     const runner = new FakeRunner();
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
     runner.enqueue({ exitCode: 1 });
     runner.enqueue({ exitCode: 1 });
@@ -749,6 +754,7 @@ describe("E2E fixture clients", () => {
 
     await gateway.expectRemoved("nemoclaw", {
       artifactName: "final-gateway",
+      env: privateRuntimeEnv,
       gatewayPort: 18_080,
     });
 
@@ -766,6 +772,9 @@ describe("E2E fixture clients", () => {
     expect(runner.calls[1].options).toMatchObject({
       artifactName: "final-gateway-listener",
     });
+    expect(
+      runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
+    ).toBe(true);
   });
 
   it("gateway client rejects an inconclusive listener absence probe", async () => {
@@ -1013,23 +1022,67 @@ describe("E2E fixture clients", () => {
     expect(runner.calls).toEqual([]);
   });
 
-  it("sandbox client preserves shell-looking payloads as argv after --", async () => {
+  it("sandbox client preserves exec options and shell-looking payloads after --", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"]);
+    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"], {
+      artifactName: "baseline-sandbox-exec-alive",
+      timeoutMs: 60_000,
+    });
 
-    expect(runner.calls[0]?.args).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "assistant",
-      "--",
-      "sh",
-      "-c",
-      "echo '$TOKEN' && rm -rf /tmp/not-real",
-    ]);
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "sh",
+        "-c",
+        "echo '$TOKEN' && rm -rf /tmp/not-real",
+      ],
+      options: {
+        artifactName: "baseline-sandbox-exec-alive",
+        timeoutMs: 60_000,
+      },
+    });
   });
+
+  it.each([
+    { exitCode: 0, timedOut: false },
+    { exitCode: 1, timedOut: false },
+    { exitCode: null, timedOut: true },
+  ])(
+    "sandbox client forwards native patch stdin and preserves its outcome ($exitCode, $timedOut)",
+    async (outcome) => {
+      const runner = new FakeRunner();
+      runner.enqueue(outcome);
+      const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+      const patch = JSON.stringify({ model: 'vendor/model"; $(not-a-command)' });
+      const result = await sandbox.exec("assistant", ["openclaw", "config", "patch", "--stdin"], {
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(runner.calls[0]?.args).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "openclaw",
+        "config",
+        "patch",
+        "--stdin",
+      ]);
+      expect(runner.calls[0]?.options).toMatchObject({
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(result).toMatchObject(outcome);
+    },
+  );
 
   it("sandbox client passes trusted shell scripts through the named sandbox exec form", async () => {
     const runner = new FakeRunner();

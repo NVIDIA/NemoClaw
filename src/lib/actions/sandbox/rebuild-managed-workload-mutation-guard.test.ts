@@ -59,12 +59,13 @@ describe("managed workload rebuild mutation guard", () => {
     expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", undefined)).toBeNull();
   });
 
-  it("stages compatible-endpoint OpenClaw reasoning authority before deletion", () => {
+  it("rejects a changed compatible endpoint without selected-route context evidence", () => {
     const catalogHandoff = {
       agent: "openclaw",
       previousProfile: {
         inference: { model: "previous-model", upstreamProvider: "nvidia-prod" },
         dashboard: { agent: "openclaw", bindAddress: "127.0.0.1", wslExposure: false },
+        tuning: { contextWindow: 16_384 },
       },
     } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff;
     const targetConfig = {
@@ -84,10 +85,10 @@ describe("managed workload rebuild mutation guard", () => {
       .spyOn(managedWorkload, "stageManagedWorkloadRebuildProfile")
       .mockReturnValue(handoff);
     vi.spyOn(managedRebuildProfileDependencies, "resolveContextWindowForModel").mockReturnValue(
-      131_072,
+      null,
     );
 
-    expect(
+    expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,
         targetConfig,
@@ -100,23 +101,10 @@ describe("managed workload rebuild mutation guard", () => {
         messagingPlan: null,
         environment: {},
       }),
-    ).toBe(handoff);
-    expect(stage).toHaveBeenCalledWith(
-      catalogHandoff,
-      expect.objectContaining({
-        inference: expect.objectContaining({
-          model: "reasoning-model",
-          upstreamProvider: "compatible-endpoint",
-          api: "openai-completions",
-        }),
-      }),
-      {},
-      {
-        openClawContextWindow: 131_072,
-        openClawReasoning: true,
-        openClawReasoningEffort: "high",
-      },
+    ).toThrow(
+      "Cannot determine a context window for the current OpenClaw target 'compatible-endpoint/reasoning-model'.",
     );
+    expect(stage).not.toHaveBeenCalled();
 
     vi.spyOn(
       managedRebuildProfileDependencies,
@@ -128,6 +116,9 @@ describe("managed workload rebuild mutation guard", () => {
       inferenceApi: "unsupported-api",
       inferenceCompat: null,
     });
+    vi.spyOn(managedRebuildProfileDependencies, "resolveContextWindowForModel").mockReturnValue(
+      16_384,
+    );
     expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,

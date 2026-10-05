@@ -11,7 +11,7 @@ import {
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
-import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
+import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import { resolveOpenshell } from "./openshell-resolver.js";
 import {
   type CollectPlatformIdentityOptions,
@@ -128,18 +128,25 @@ export interface CreateHostReadinessReportOptions {
   maxObservationAgeMs?: number;
 }
 
-/** Collect the Windows product once with the same bounded readiness transport. */
-export function collectN1xWslProductObservation(
+export interface WslNvidiaProductObservation {
+  n1xWslProduct: boolean | null;
+  stationGb300WslProduct: boolean | null;
+}
+
+/** Collect and classify the Windows product once with the bounded readiness transport. */
+export function collectWslNvidiaProductObservation(
   isWsl: boolean,
-  collector: typeof collectN1xWslProduct = collectN1xWslProduct,
-): boolean | null {
+  collector: typeof collectWslNvidiaProduct = collectWslNvidiaProduct,
+): WslNvidiaProductObservation {
   const probeEnv = buildSystemReadinessProbeEnv();
-  return (
-    collector({
-      isWsl,
-      runCaptureImpl: createSystemReadinessCapture(probeEnv),
-    }) ?? null
-  );
+  const observed = collector({
+    isWsl,
+    runCaptureImpl: createSystemReadinessCapture(probeEnv),
+  });
+  return {
+    n1xWslProduct: observed?.n1x ?? null,
+    stationGb300WslProduct: observed?.stationGb300 ?? null,
+  };
 }
 
 function safeReportText(value: string): string {
