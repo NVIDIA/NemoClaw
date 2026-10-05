@@ -4,7 +4,9 @@
 import { describe, expect, it } from "vitest";
 
 import { computeCapabilityPreflight, detectVllmProfile, resolveVllmModelRuntime } from "./vllm";
-import { VLLM_MODELS } from "./vllm-models";
+import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
+import { vllmInstallTestReadiness } from "./vllm-install.test-support";
+import { resolveHostLocalVllmSelection } from "./serving/host-local-vllm-selection";
 
 const LINUX_VLLM_RUNTIMES = [
   {
@@ -29,7 +31,65 @@ const LINUX_VLLM_RUNTIMES = [
   },
 ] as const;
 
+function sparkReadiness(memoryBytes: number | undefined) {
+  const profile = detectVllmProfile({ platform: "spark" })!;
+  return vllmInstallTestReadiness(profile).map(({ nodeId, report }) => ({
+    nodeId,
+    report: {
+      ...report,
+      observations: report.observations.map((observation) =>
+        ["host.gpu.memory_total_bytes", "host.gpu.memory_per_device_bytes"].includes(observation.id)
+          ? {
+              id: observation.id,
+              state: memoryBytes === undefined ? ("unknown" as const) : ("present" as const),
+              value: memoryBytes,
+            }
+          : observation,
+      ),
+    },
+  }));
+}
+
 describe("vLLM catalog runtime selection", () => {
+  it.each([
+    [60_000_000_000, "", "spark-single-64gb.v1", 32768, 1, 0.5],
+    [61_614_325_760, "", "spark-single-64gb.v1", 32768, 1, 0.5],
+    [61_614_325_760, "qwen3.6-35b-a3b-nvfp4", "spark-single-64gb.v1", 32768, 1, 0.5],
+    [64_000_000_000, "", "spark-single.v1", 262144, 4, 0.4],
+    [130_000_000_000, "", "spark-single.v1", 262144, 4, 0.4],
+  ] as const)(
+    "selects the Spark serving limits for %i bytes with model override '%s'",
+    (memoryBytes, model, recipeSuffix, context, sequences, utilization) => {
+      const result = resolveHostLocalVllmSelection(
+        detectVllmProfile({ platform: "spark" })!,
+        { NEMOCLAW_VLLM_MODEL: model },
+        { automatic: true, readinessReports: sparkReadiness(memoryBytes) },
+      );
+      expect(result).toMatchObject({
+        kind: "selected",
+        recipeId: `vllm.qwen3-6-35b-a3b-nvfp4.${recipeSuffix}`,
+      });
+      const selected = result as Extract<typeof result, { kind: "selected" }>;
+      const command = buildVllmServeCommand(selected.model, {});
+      expect(command).toContain(`--max-model-len ${String(context)}`);
+      expect(command).toContain(`--max-num-seqs ${String(sequences)}`);
+      expect(command).toContain(`--gpu-memory-utilization ${String(utilization)}`);
+    },
+  );
+
+  it.each([59_999_999_999, undefined])(
+    "rejects managed Qwen with insufficient or unknown Spark capacity: %s",
+    (memoryBytes) => {
+      expect(
+        resolveHostLocalVllmSelection(
+          detectVllmProfile({ platform: "spark" })!,
+          { NEMOCLAW_VLLM_MODEL: "qwen3.6-35b-a3b-nvfp4" },
+          { automatic: true, readinessReports: sparkReadiness(memoryBytes) },
+        ),
+      ).toMatchObject({ kind: "rejected" });
+    },
+  );
+
   it.each(LINUX_VLLM_RUNTIMES)(
     "materializes the Linux amd64 $model runtime and enforces its GPU floor (#9673)",
     ({

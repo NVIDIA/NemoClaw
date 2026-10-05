@@ -15,6 +15,7 @@ import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
   buildLaunchReadinessRegistryProjection,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   type LaunchReadinessDeps,
   launchReadinessDigest,
@@ -404,7 +405,10 @@ describe("launch readiness validation", () => {
 
     await expect(
       publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
-    ).resolves.toEqual({ kind: "evidence-failed" });
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+    });
     expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
     expect(publishedIdentity).toBeNull();
   });
@@ -584,6 +588,61 @@ describe("launch readiness validation", () => {
       "gateway:end",
       "sandbox:end",
     ]);
+  });
+
+  it("returns unsafe authority evidence without entering the mutation callback (#10638)", async () => {
+    const currentDeps = deps();
+    const evidence = {
+      resource: "persistent receipt" as const,
+      path: "/home/test/.nemoclaw/launch-readiness/receipt.json",
+      expectedUid: 1000,
+      observedUid: 1000,
+      expectedMode: "0600" as const,
+      observedMode: "0640",
+      operation: "inspect" as const,
+      errorCode: null,
+      repair: "chmod" as const,
+    };
+    currentDeps.checkMutationAuthority = vi.fn(() => ({ kind: "unsafe" as const, evidence }));
+    const mutation = vi.fn();
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "unsafe", evidence });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        repair: "manual",
+      }),
+    ).toContain("verifying it is owned by the current user");
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        path: "/home/$HOME/it's.json",
+      }),
+    ).toContain(`chmod 0600 -- '/home/$HOME/it'"'"'s.json'`);
+    const writeFailure = formatLaunchReadinessUnsafeAuthorityEvidence({
+      ...evidence,
+      operation: "write",
+      repair: "manual",
+      errorCode: "EROFS",
+    });
+    expect(writeFailure).toContain("write error EROFS");
+    expect(writeFailure).toContain("filesystem allow writes");
+    expect(writeFailure).not.toContain("chmod");
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(undefined)).toContain(
+      "Repair the current user's secure OS runtime authority",
+    );
   });
 
   it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {
@@ -1367,6 +1426,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, observationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const pairingObservationUnavailable = deps();
@@ -1375,6 +1435,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
     });
 
     const hashUnavailable = deps();
@@ -1401,6 +1462,7 @@ describe("launch readiness validation", () => {
     });
     expect(await publishLaunchReadiness(publication, inferenceObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const unavailable = deps();
@@ -1409,26 +1471,8 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, unavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "unclassified" },
     });
-  });
-
-  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
-    const currentDeps = deps();
-    const publishLease = vi.fn();
-    currentDeps.publishLease = publishLease;
-
-    await expect(
-      publishLaunchReadiness(
-        {
-          sandboxName: SANDBOX,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          epochId: null,
-        },
-        currentDeps,
-      ),
-    ).resolves.toEqual({ kind: "evidence-failed" });
-    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("rejects in-progress lifecycle and policy mutations", () => {

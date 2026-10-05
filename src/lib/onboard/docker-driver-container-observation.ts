@@ -17,6 +17,7 @@ export interface LabeledSandboxContainer {
 
 export interface DockerDriverContainerObservationDeps {
   readonly dockerCapture?: DockerCapture;
+  readonly ignoreError?: boolean;
 }
 
 function loadDockerCapture(): DockerCapture {
@@ -39,7 +40,7 @@ export function findLabeledSandboxContainers(
       "--format",
       "{{.Names}}\t{{.Status}}",
     ],
-    { ignoreError: true, timeout: DOCKER_PROBE_TIMEOUT_MS },
+    { ignoreError: deps.ignoreError !== false, timeout: DOCKER_PROBE_TIMEOUT_MS },
   );
   return output
     .split(/\r?\n/u)

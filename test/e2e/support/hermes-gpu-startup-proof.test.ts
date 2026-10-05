@@ -19,6 +19,11 @@ const HEALTHY_NEW_GATEWAY = [
   "  Starting OpenShell gateway...",
   "Docker-driver gateway is healthy",
 ].join("\n");
+const HEALTHY_PODMAN_GATEWAY = [
+  "  ✓ Podman runtime: rootless server 6.1.0 (client 6.1.0), cgroups v2, linux/amd64",
+  "  Starting OpenShell gateway via managed service...",
+  "  ✓ OpenShell gateway managed service is healthy",
+].join("\n");
 const NON_FALLBACK_DISCLOSURE_CASES = [
   ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[0]],
   ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[1]],
@@ -42,6 +47,20 @@ const VALID_MANAGED_AUTHORITY = {
 } as unknown as ManagedWorkloadAuthority;
 
 describe("Hermes GPU startup output contract", () => {
+  it("accepts observed Podman managed-service startup output", () => {
+    expect(() =>
+      assertHermesGpuStartupOutputContract("native-success", "podman", HEALTHY_PODMAN_GATEWAY),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["docker", HEALTHY_PODMAN_GATEWAY],
+    ["podman", HEALTHY_NEW_GATEWAY],
+    ["podman", HEALTHY_PODMAN_GATEWAY.replace(" is healthy", " is unavailable")],
+  ] as const)("rejects a wrong runtime or unhealthy gateway for %s", (runtime, output) => {
+    expect(() => assertHermesGpuStartupOutputContract("native-success", runtime, output)).toThrow();
+  });
+
   it.each(["native-success", "compatibility-only"] as const)(
     "accepts %s output without legacy Docker container progress text (#9362)",
     (route) => {

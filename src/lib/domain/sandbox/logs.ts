@@ -32,20 +32,6 @@ export function normalizeSandboxLogsOptions(
   };
 }
 
-/** Legacy argv owner retained for the deferred policy-denial log consumer. */
-export function buildSandboxLogsArgs(
-  sandboxName: string,
-  options: SandboxLogsOptions,
-  gatewayName?: string,
-): string[] {
-  const args = ["logs"];
-  if (gatewayName) args.push("-g", gatewayName);
-  args.push(sandboxName, "-n", options.lines, "--source", "all");
-  if (options.since) args.push("--since", options.since);
-  if (options.follow) args.push("--tail");
-  return args;
-}
-
 // Tail-merge helpers (closes #4100)
 
 const EPOCH_TIMESTAMP_RE = /^\[(\d+)(?:\.(\d+))?\]/;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NEMOCLAW_CONFIG_KIND } from "./model";
+import type { WebSearchProvider } from "../inference/web-search/provider";
 
 export const V1ALPHA1_EXPORT_API_VERSION = "nemoclaw.nvidia.com/v1alpha1" as const;
 
@@ -10,6 +11,63 @@ const V1_SLUG_PATTERN = /^[a-z][a-z0-9-]{0,39}$/u;
 export function isV1Alpha1ExportName(value: unknown): value is string {
   return typeof value === "string" && V1_SLUG_PATTERN.test(value);
 }
+
+interface V1Alpha1HostedInferenceProvider {
+  readonly name: string;
+  readonly provider: "anthropic" | "openai";
+  readonly api: "anthropic-messages" | "openai-completions" | "openai-responses";
+  readonly endpoint: string;
+  readonly credential?: Readonly<{ env: string }>;
+  readonly serviceRef?: never;
+}
+
+interface V1Alpha1ServiceInferenceProvider {
+  readonly name: string;
+  readonly provider: "openai";
+  readonly api: "openai-completions";
+  readonly serviceRef: string;
+  readonly endpoint?: never;
+  readonly credential?: never;
+}
+
+export interface V1Alpha1OllamaProxyService {
+  readonly kind: "ollamaProxy";
+  readonly image: null;
+  readonly endpoint: string;
+  readonly upstream: Readonly<{
+    endpoint: string;
+    model: Readonly<{ name: string; digest: string }>;
+  }>;
+}
+
+export interface V1Alpha1VllmService {
+  readonly kind: "vllm";
+  readonly authentication: "bearer";
+  readonly hardware: Readonly<{
+    architecture: "amd64";
+    minComputeCapability: 90;
+    minGpuMemoryBytes: 96_000_000_000;
+    minDriverMajor: 580;
+  }>;
+  readonly container: Readonly<{ ipc: "host"; sharedMemoryGiB: 32 }>;
+  readonly image: null;
+  readonly model: Readonly<{ repository: string; revision: string }>;
+  readonly serving: Readonly<{
+    modelName: string;
+    mambaBackend: "flashinfer";
+    enforceEager: false;
+    toolParser: "qwen3_coder";
+    reasoningParser: "nemotron_v3";
+    port: number;
+    contextTokens: 65_536;
+    maxSequences: 1;
+    batchTokens: 4096;
+    startupTimeoutSeconds: 1800;
+  }>;
+  readonly memory: Readonly<{ gpuMemoryUtilization: 0.75 }>;
+}
+
+export type V1Alpha1ExportService = V1Alpha1OllamaProxyService | V1Alpha1VllmService;
 
 export interface V1Alpha1ExportAgent {
   readonly name: string;
@@ -24,7 +82,7 @@ export interface V1Alpha1ExportAgent {
   readonly tools?:
     | Readonly<{ disclosure: "direct" | "progressive" }>
     | Readonly<{ allow: readonly "read"[] }>;
-  readonly integrationRefs?: readonly "brave-search"[];
+  readonly integrationRefs?: readonly `${WebSearchProvider}-search`[];
 }
 
 interface V1Alpha1ExportSandboxBase {
@@ -34,13 +92,18 @@ interface V1Alpha1ExportSandboxBase {
     policy: Readonly<{ explicit: Readonly<Record<string, unknown>> }>;
     proxy?: Readonly<{ host: string; port: number }>;
   }>;
-  readonly integrations?: Readonly<{
-    "brave-search": Readonly<{
-      kind: "webSearch";
-      provider: "brave";
-      credential: Readonly<{ env: string }>;
-    }>;
-  }>;
+  readonly integrations?: Readonly<
+    Partial<
+      Record<
+        `${WebSearchProvider}-search`,
+        Readonly<{
+          kind: "webSearch";
+          provider: WebSearchProvider;
+          credential: Readonly<{ env: string }>;
+        }>
+      >
+    >
+  >;
 }
 
 interface V1Alpha1ExportHarness {
@@ -59,25 +122,22 @@ export type V1Alpha1ExportSandbox = V1Alpha1ExportSandboxBase &
       }>
     | Readonly<{
         harness: V1Alpha1ExportHarness & Readonly<{ kind: "hermes" | "openclaw" }>;
-        image: null;
+        image?: never;
         agent: Readonly<V1Alpha1ExportAgent>;
       }>
   );
 
-/** Producer-owned pre-release v1 shape emitted by v0. Null placeholders are resolved at v1 release. */
+/** Producer-owned pre-release v1 shape emitted by v0. */
 export interface V1Alpha1Export {
   readonly apiVersion: typeof V1ALPHA1_EXPORT_API_VERSION;
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
     gateway: Readonly<{ management: "managed"; endpoint: string }>;
-    inferenceProviders: readonly Readonly<{
-      name: string;
-      provider: "anthropic" | "openai";
-      api: "anthropic-messages" | "openai-completions" | "openai-responses";
-      endpoint: string;
-      credential?: Readonly<{ env: string }>;
-    }>[];
+    services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
+    inferenceProviders: readonly Readonly<
+      V1Alpha1HostedInferenceProvider | V1Alpha1ServiceInferenceProvider
+    >[];
     sandboxes: readonly V1Alpha1ExportSandbox[];
   }>;
 }

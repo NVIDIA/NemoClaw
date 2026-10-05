@@ -21,7 +21,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        SOURCE_RUN_ID: "33211526093"
+        SOURCE_RUN_ID: "36952890255"
       run: |
         set -euo pipefail
         verify_artifact() {
@@ -39,13 +39,13 @@ runs:
                  END { exit found ? 0 : 1 }'
         }
         verify_artifact \
-          9701949732 \
-          native-runtime-podman-toolchain-amd64 \
-          sha256:79df1953e5963113b74ee335c8889dcbefafbb865745ce79e310858b7cd23d58
+          11204862350 \
+          native-podman-e2e-toolchain-amd64 \
+          sha256:61f7ce077100d1591ae0260efa7e98dd3a247d97c9cd5c4f6979436587a9f9c4
         verify_artifact \
-          9701918188 \
-          native-runtime-podman-toolchain-arm64 \
-          sha256:4f311eb5a64157e7baf9d7851c9a6432204cdeb0983d4fa03fffdc7db4cb1e39
+          11204862356 \
+          native-podman-e2e-toolchain-arm64 \
+          sha256:9a674eb624375eae90f09249e2ac6d2b27bdea5f430e3dc2953a13f00667102b
 
     - name: Download immutable native Podman amd64 toolchain
       if: ${{ inputs.enabled == 'true' }}
@@ -53,8 +53,8 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         repository: NVIDIA/NemoClaw
-        run-id: "33211526093"
-        name: native-runtime-podman-toolchain-amd64
+        run-id: "36952890255"
+        artifact-ids: "11204862350"
         path: ${{ runner.temp }}/native-podman-e2e-toolchain-amd64
 
     - name: Download immutable native Podman arm64 toolchain
@@ -63,8 +63,8 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         repository: NVIDIA/NemoClaw
-        run-id: "33211526093"
-        name: native-runtime-podman-toolchain-arm64
+        run-id: "36952890255"
+        artifact-ids: "11204862356"
         path: ${{ runner.temp }}/native-podman-e2e-toolchain-arm64
 
     - name: Publish native Podman amd64 toolchain for this run

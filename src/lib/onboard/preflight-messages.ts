@@ -14,8 +14,25 @@
 
 import { failLine, warnLine } from "../cli/terminal-style";
 import { formatNvidiaGpuPreflightLines, type GpuDetection } from "../inference/nim";
+import type { SystemReadinessReport } from "../readiness/types";
 import { cliDisplayName, cliName } from "./branding";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+
+const ONBOARD_OS_RELEASE_WARNING_IDS = new Set([
+  "host.os.release_unqualified",
+  "host.os.release_inconclusive",
+]);
+
+/** Present admitted host OS qualification warnings before onboarding effects. */
+export function printOnboardOsReleaseWarnings(
+  report: Pick<SystemReadinessReport, "findings">,
+): void {
+  for (const finding of report.findings) {
+    if (finding.severity === "warning" && ONBOARD_OS_RELEASE_WARNING_IDS.has(finding.id)) {
+      console.error(warnLine(finding.summary));
+    }
+  }
+}
 
 /** Docker cannot be reached, so onboarding cannot continue. */
 export function printDockerNotReachableError(): void {

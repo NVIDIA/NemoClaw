@@ -39,10 +39,16 @@ export type RuntimeProviderMutationOperation =
   | "workload-cleanup";
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
+  | "external-image-preparation"
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
   | "workload-cleanup";
+
+export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
+  const normalized = driverName?.trim().toLowerCase();
+  return !normalized || normalized === "vm" ? "docker" : normalized;
+}
 
 export interface RuntimeProviderIdentity {
   readonly contractVersion: typeof RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION;
@@ -108,6 +114,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
+  readonly runtimeSocketPath: string | null;
   readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;
@@ -162,7 +169,10 @@ export interface RuntimeProviderGatewayHostRuntime {
     run(
       args: readonly string[],
       timeoutMs: number,
-      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+      options?: {
+        maxOutputBytes: number;
+        environment?: Record<string, string>;
+      },
     ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
@@ -309,6 +319,12 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderExternalImageSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  readonly agents: readonly ("openclaw" | "hermes")[];
+};
+
 export type RuntimeProviderNativeArtifactSupport = {
   readonly exactDigestReferences: boolean;
   readonly platforms: readonly "windows/x64"[];
@@ -319,6 +335,8 @@ export type RuntimeProviderNativeArtifactSupport = {
 
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  /** Missing or null until this provider supports user-supplied immutable images. */
+  readonly externalImageSupport?: RuntimeProviderExternalImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
   /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
   readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
@@ -422,18 +440,30 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly paths: readonly string[];
 }
 
+export interface RuntimeProviderStoppedNativeHomeCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly expectedResourceHandle?: string;
+  readonly root: string;
+  readonly protectedPaths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
       "registeredSandboxNames" | "sandbox" | "sandboxName"
-    >,
+    > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  clearStoppedNativeHome?(
+    input: RuntimeProviderStoppedNativeHomeCleanupInput,
   ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(
@@ -550,6 +580,22 @@ export interface RuntimeProviderSnapshotRestoreSource {
   readonly runtime: RuntimeProviderRuntimeReceipt;
 }
 
+export interface RuntimeProviderStoppedStateProjection {
+  /** Canonical complete native home/workspace root owned by the stopped runtime. */
+  readonly nativeRoot: string;
+  readonly managedStateRoots?: readonly {
+    readonly mountTarget: string;
+    readonly resourceIdentity: string;
+    readonly ownershipLabels: Readonly<Record<string, string>>;
+  }[];
+}
+
+export interface RuntimeProviderStoppedStateCapture {
+  /** The caller owns the private destination fd and archive validation. */
+  capture(archiveFd: number, maxBytes: number): Promise<void>;
+  assertCurrent(): void;
+}
+
 export interface RuntimeProviderSnapshotRestoreReceipt {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -664,15 +710,29 @@ export type RuntimeProviderSnapshotSurface =
       preflight(
         operation: RuntimeProviderSnapshotOperation,
         sandbox: SandboxEntry,
+        timeoutMs?: number,
       ): RuntimeProviderSnapshotPreflightReceipt;
       capture(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
+        timeoutMs?: number,
       ): RuntimeProviderRuntimeReceipt;
+      /** Optional read-only filesystem capture from an identified stopped runtime. */
+      prepareStoppedStateCapture?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotRestoreSource,
+        projection: RuntimeProviderStoppedStateProjection,
+      ): RuntimeProviderStoppedStateCapture | null;
       /** Compare provider-owned acceleration encodings without widening central authority. */
       canRepresentAcceleration?(
         source: RuntimeProviderRuntimeReceipt["acceleration"],
         target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
+      /** An explicit provider-owned transition for restoring captured filesystem state. */
+      canRestoreLifecycle?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotLifecycleState,
+        target: RuntimeProviderSnapshotLifecycleState,
       ): boolean;
       validateRestore(
         sandbox: SandboxEntry,

@@ -26,6 +26,8 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   NemoClawAgentToolsConfigSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
@@ -33,8 +35,10 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
-import { ExportSourceValuesSchema } from "./export-evidence";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import { ExportSourceValuesSchema, exportWebSearchBinding } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -145,10 +149,6 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
-}
-
-function hasBraveSearch(entry: ObservedExportRegistry): boolean {
-  return entry.webSearchEnabled === true && entry.webSearchProvider === "brave";
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -346,7 +346,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ["spec.sandboxes[].observability", entry.observabilityEnabled, "observability"],
     [
       "spec.sandboxes[].integrations.webSearch",
-      !hasBraveSearch(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
+      !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
@@ -540,6 +540,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.preferredInferenceApi,
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
+  const search = exportWebSearchBinding(entry);
   return buildManagedStartupProfile({
     agent,
     inference: {
@@ -553,7 +554,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       compatibility: projection.compatibility,
     },
     dashboard: projection.dashboard,
-    webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
+    webSearch: search ? { fetchEnabled: true, provider: search.provider } : null,
     toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
@@ -561,7 +562,9 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     observabilityEnabled: deepAgentsObservability(agent),
     environment:
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
-        ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
+        ? {
+            NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW),
+          }
         : {},
     corporateCa: null,
   }).profile;
@@ -577,23 +580,26 @@ function exportedObservability(
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
-function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
-  if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
+function projectAgentSettings(profile: ManagedStartupProfile) {
+  if (profile.agentConfig.agent !== "openclaw") {
     return {};
   }
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw;
   const overrides = Object.fromEntries(
     Object.entries(profile.tuning).filter(
       ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
     ),
   );
-  const execution = {
-    ...(profile.agentConfig.agentTimeoutSeconds === defaults.agentConfig.agentTimeoutSeconds
-      ? {}
-      : { timeoutSeconds: profile.agentConfig.agentTimeoutSeconds }),
-    ...(profile.agentConfig.heartbeatEvery === defaults.agentConfig.heartbeatEvery
-      ? {}
-      : { heartbeatEvery: profile.agentConfig.heartbeatEvery }),
-  };
+  const execution: { timeoutSeconds?: number; heartbeatEvery?: string } = {};
+  if (profile.agentConfig.agentTimeoutSeconds !== defaults.execution.timeoutSeconds) {
+    execution.timeoutSeconds = profile.agentConfig.agentTimeoutSeconds;
+  }
+  if (
+    profile.agentConfig.heartbeatEvery !== defaults.execution.heartbeatEvery &&
+    profile.agentConfig.heartbeatEvery !== null
+  ) {
+    execution.heartbeatEvery = profile.agentConfig.heartbeatEvery;
+  }
   return {
     ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
     ...(Object.keys(execution).length === 0 ? {} : { execution }),
@@ -654,7 +660,7 @@ function supportedAgentSettingsProfile(
   ) {
     return expected;
   }
-  const settings = projectAgentSettings(profile, expected);
+  const settings = projectAgentSettings(profile);
   if (
     !Check(NemoClawInferenceTuningSchema, profile.tuning) ||
     (settings.execution !== undefined &&
@@ -737,7 +743,16 @@ function expectedProfileWithObservedHostSettings(
   profile: ManagedStartupProfile,
 ): ManagedStartupProfile | null {
   try {
-    const expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    const servingPreset = profile.inference?.servingPreset;
+    if (
+      expected.inference &&
+      (servingPreset === undefined ||
+        servingPreset === null ||
+        servingPreset === EXPORTED_VLLM_PROFILE_ID)
+    ) {
+      expected = { ...expected, inference: { ...expected.inference, servingPreset } };
+    }
     // Managed workload authority validates the CA bundle and digest before this comparison.
     // V1 omits the source host's CA trust; all other profile fields remain checked.
     return { ...expected, corporateCa: profile.corporateCa };
@@ -771,7 +786,8 @@ function classifyManagedStartupProfile(
   const supported = supportedAgentSettingsProfile(profile, expected);
   if (
     !supported ||
-    (entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
+    ((entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID ||
+      profile.inference?.servingPreset === EXPORTED_VLLM_PROFILE_ID) &&
       profile.tuning.contextWindow !== EXPORTED_VLLM_CONTEXT_WINDOW)
   ) {
     return [
@@ -888,7 +904,8 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
       ),
     );
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inference.provider);
-  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
+  const search = exportWebSearchBinding(entry);
+  const expectedAdditionalProviders = search ? [search.name] : [];
   if (
     !isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) ||
     new Set(sandbox.providerNames).size !== sandbox.providerNames.length
@@ -903,11 +920,12 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
   return findings;
 }
 
-function validBraveProfile(
+function validSearchProfile(
   provider: NonNullable<QualifiedExportSnapshot["webSearchProvider"]>,
+  profileId: string,
 ): boolean {
   const { profile, profileWorkspace } = provider;
-  if (!profile || profile.id !== "brave" || !isValidNemoClawBoundedText(profile.resourceVersion))
+  if (!profile || profile.id !== profileId || !isValidNemoClawBoundedText(profile.resourceVersion))
     return false;
   if (profile.source === "builtin") {
     return isDeepStrictEqual(
@@ -925,22 +943,24 @@ function validBraveProfile(
 
 function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
-  if (!hasBraveSearch(registry)) {
+  const search = exportWebSearchBinding(registry);
+  if (!search) {
     return provider === undefined
       ? []
       : [finding("source.webSearch", "ambiguous", "Unexpected web-search provider evidence.")];
   }
+  const label = search.provider === "brave" ? "Brave" : "Tavily";
   if (!provider) {
     return [
       finding(
         "source.webSearch",
         "missing-provenance",
-        "Live Brave provider evidence is required.",
+        `Live ${label} provider evidence is required.`,
       ),
     ];
   }
   if (
-    !validBraveProfile(provider) ||
+    !validSearchProfile(provider, search.profileId) ||
     !isValidNemoClawBoundedText(provider.id) ||
     !isValidNemoClawBoundedText(provider.resourceVersion) ||
     !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||
@@ -953,21 +973,14 @@ function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFin
         provider.credentialKeys,
         provider.configKeys,
       ],
-      [
-        gateway.name,
-        sandbox.workspace,
-        `${registry.name}-brave-search`,
-        "brave",
-        ["BRAVE_API_KEY"],
-        [],
-      ],
+      [gateway.name, sandbox.workspace, search.name, search.profileId, [search.credentialEnv], []],
     )
   ) {
     return [
       finding(
         "source.webSearch",
         "drifted",
-        "The live Brave provider does not match its managed binding.",
+        `The live ${label} provider does not match its managed binding.`,
       ),
     ];
   }
@@ -1059,7 +1072,70 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
   return findings;
 }
 
-function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function validateManagedVllmRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const serving = inference.managedServing?.serving;
+  if (
+    inference.provider !== "vllm-local" ||
+    inference.api !== "openai-completions" ||
+    inference.credentialEnv !== null ||
+    !serving ||
+    !Check(NemoClawManagedVllmServingSchema, serving) ||
+    inference.model !== serving.model.servedName ||
+    inference.endpoint !== `http://host.openshell.internal:${String(serving.hostPort)}/v1`
+  ) {
+    return [
+      finding(
+        "spec.services",
+        "missing-provenance",
+        "Managed vLLM export requires the fixed verified serving deployment.",
+      ),
+    ];
+  }
+  return [];
+}
+
+function validateOllamaRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const serving = inference.ollamaServing?.serving;
+  const validServing = serving === undefined ? false : Check(NemoClawOllamaServingSchema, serving);
+  const representationMatches = isDeepStrictEqual(
+    [
+      inference.topology,
+      inference.provider,
+      inference.api,
+      [null, OLLAMA_LOCAL_CREDENTIAL_ENV].includes(inference.credentialEnv),
+      validServing,
+      inference.model,
+      inference.endpoint,
+      serving?.model.servedName,
+      serving?.daemon.hostPort === serving?.proxy.hostPort,
+    ],
+    [
+      "local",
+      "ollama-local",
+      "openai-completions",
+      true,
+      true,
+      serving?.model.servedName,
+      `http://host.openshell.internal:${String(serving?.proxy.hostPort)}/v1`,
+      serving?.model.servedName,
+      false,
+    ],
+  );
+  if (!representationMatches) {
+    return [
+      finding(
+        "spec.services[].upstream",
+        "drifted",
+        "The attached Ollama daemon, managed proxy, model, or sandbox route could not be verified.",
+      ),
+    ];
+  }
+  return [];
+}
+
+function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
   const findings: ExportFinding[] = [];
   if (
@@ -1096,21 +1172,12 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
   return findings;
 }
 
-function validateInitialCompatibility(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (
-    inference.topology === "managed" ||
-    inference.provider === "ollama-local" ||
-    inference.ollamaServing
-  )
-    return [
-      finding(
-        "spec.inferenceProviders",
-        "unsupported",
-        "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
-      ),
-    ];
-  return [];
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaRepresentation(snapshot);
+  if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);
+  return validateHostedInferenceRepresentation(snapshot);
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -1260,8 +1327,6 @@ function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
-  const compatibilityFindings = validateInitialCompatibility(snapshot);
-  if (compatibilityFindings.length > 0) return compatibilityFindings;
   return [
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
@@ -1341,12 +1406,13 @@ function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettin
 }
 
 function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
-  if (!hasBraveSearch(entry)) return {};
+  const search = exportWebSearchBinding(entry);
+  if (!search) return {};
   return {
     webSearch: {
-      provider: "brave" as const,
+      provider: search.provider,
       agentRefs: ["primary"],
-      credential: { env: "BRAVE_API_KEY" },
+      credential: { env: search.credentialEnv },
     },
   };
 }
@@ -1355,7 +1421,12 @@ function projectVerifiedTools(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
-  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  if (
+    entry.agent !== "openclaw" ||
+    authority === null ||
+    authority.profile.tools.disclosure === V1ALPHA1_RUNTIME_DEFAULTS.openclaw.tools.disclosure
+  )
+    return {};
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 
@@ -1389,9 +1460,7 @@ function completeVerifiedSource(
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const settings = authority
-    ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-    : {};
+  const settings = authority ? projectAgentSettings(authority.profile) : {};
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
@@ -1417,6 +1486,7 @@ function completeVerifiedSource(
   return {
     kind: "verified",
     source,
+    ...(authority?.corporateCa ? { corporateCaOmitted: true as const } : {}),
   };
 }
 
