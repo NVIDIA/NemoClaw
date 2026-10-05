@@ -15,27 +15,22 @@ type UpgradeSandboxes = typeof upgradeSandboxes;
 
 type ManifestAgentType = "openclaw" | "hermes";
 
-const MANIFEST_DIR_BY_AGENT: Record<ManifestAgentType, string> = {
-  openclaw: "/sandbox/.openclaw",
-  hermes: "/sandbox/.hermes",
-};
-
 function makeManifest(sandboxName: string, agentType: ManifestAgentType = "openclaw") {
   const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
   return {
-    version: 1,
+    version: 2,
     sandboxName,
     timestamp,
     agentType,
     agentVersion: "2026.5.27",
     expectedVersion: "2026.5.27",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: MANIFEST_DIR_BY_AGENT[agentType],
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar" as const,
+      sha256: "a".repeat(64),
+    },
     backupPath: `/tmp/rebuild-backups/${sandboxName}/${timestamp}`,
     blueprintDigest: null,
-    snapshotVersion: 1,
   };
 }
 
@@ -411,8 +406,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       options: { auto: true },
       expectedRebuilds: 2,
       expectedSequence: [
-        "warning:/sandbox/.openclaw",
-        "warning:/sandbox/.hermes",
+        "warning:/sandbox",
+        "warning:/sandbox",
         "rebuild:openclaw-box",
         "rebuild:hermes-box",
       ],
@@ -423,15 +418,14 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       mode: "check-only",
       options: { check: true },
       expectedRebuilds: 0,
-      expectedSequence: ["warning:/sandbox/.openclaw", "warning:/sandbox/.hermes"],
+      expectedSequence: ["warning:/sandbox", "warning:/sandbox"],
       expectExit: true,
     },
   ] as const)(
-    "warns with each agent's restore path before $mode mixed recovery (#7073)",
+    "warns about each complete native archive before $mode mixed recovery (#7073)",
     async ({ options, expectedRebuilds, expectedSequence, expectExit }) => {
       const sequence: string[] = [];
       const warningMessages: string[] = [];
-      const statePaths = ["/sandbox/.openclaw", "/sandbox/.hermes"];
       const harness = createRecoveryHarness(["openclaw-box", "hermes-box"], {
         manifestAgentTypes: { "openclaw-box": "openclaw", "hermes-box": "hermes" },
         registryOverrides: {
@@ -443,11 +437,11 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
         const message = String(args[0]);
         warningMessages.push(...[message].filter((entry) => entry.includes("⚠ Recovery restores")));
         sequence.push(
-          ...statePaths
-            .filter((candidate) =>
-              message.includes(`Recovery restores ${JSON.stringify(candidate)} state only`),
+          ...[message]
+            .filter((entry) =>
+              entry.includes('complete native home/workspace archive rooted at "/sandbox"'),
             )
-            .map((statePath) => `warning:${statePath}`),
+            .map(() => "warning:/sandbox"),
         );
       });
       harness.rebuildSpy.mockImplementation(async (name: string) => {
@@ -462,28 +456,14 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
         ? expect(harness.upgradeSandboxes(options)).rejects.toThrow("process.exit(1)")
         : expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined());
 
-      expect(warningMessages).toHaveLength(statePaths.length);
-      expect(
-        warningMessages.map((message) =>
-          statePaths.filter((statePath) =>
-            message.includes(`Recovery restores ${JSON.stringify(statePath)} state only`),
-          ),
-        ),
-      ).toEqual(statePaths.map((statePath) => [statePath]));
-      statePaths.forEach((statePath) => {
-        expect(console.log).toHaveBeenCalledWith(
-          expect.stringContaining(
-            `Recovery restores ${JSON.stringify(statePath)} state only for this sandbox`,
-          ),
-        );
-      });
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining("Files outside this recorded managed state path"),
-      );
-      expect(console.log).toHaveBeenCalledWith(expect.stringContaining("/sandbox/user-data"));
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining("NOT preserved by the recreate"),
-      );
+      expect(warningMessages).toEqual([
+        expect.stringContaining('complete native home/workspace archive rooted at "/sandbox"'),
+        expect.stringContaining('complete native home/workspace archive rooted at "/sandbox"'),
+      ]);
+      expect(warningMessages).toEqual([
+        expect.stringContaining("OpenShell-owned credential stores and host-only secrets"),
+        expect.stringContaining("OpenShell-owned credential stores and host-only secrets"),
+      ]);
       expect(harness.rebuildSpy).toHaveBeenCalledTimes(expectedRebuilds);
       expect(sequence).toEqual(expectedSequence);
     },

@@ -28,6 +28,7 @@ import {
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
 } from "./openshell-gateway-upgrade-fixture.mts";
+import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -1289,8 +1290,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "src/lib/actions/sandbox/gateway-state.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "tools/e2e/sandbox-survival-timeout-contract.mts",
     ],
-    timeoutMinutes: 30,
+    timeoutMinutes: SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
@@ -1298,6 +1300,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-survival",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  managedRuntimeTarget("snapshot-commands", {
+    displayName: "Snapshot compatibility: exposes complete-state replacements",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
+    profile: "standard",
+    timeoutMinutes: 40,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    owningPaths: ["src/lib/cli/public-display-defaults.ts"],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_SANDBOX_NAME: "e2e-snapshot",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -1422,27 +1440,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
 
-  managedRuntimeTarget("snapshot-commands", {
-    displayName: "Snapshot: restores selected sandbox state without credential leaks",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 40,
-    installMode: "none",
-    restoreCli: false,
-    exposeCliBin: false,
-    owningPaths: [
-      "test/e2e/live/snapshot-credential-scanner.ts",
-      "src/lib/actions/sandbox/auto-pair-approval.ts",
-      "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-      "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-    ],
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-snapshot",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   runtimeAgnosticTarget("spark-install", {
     displayName: "Install: leaves NemoClaw and OpenShell usable after standard installation",
     agentRuntime: "unresolved",
@@ -1479,7 +1476,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: hostedInference,
   }),
   managedRuntimeTarget("state-backup-restore", {
-    displayName: "Backup: restores workspace files and memory",
+    displayName: "Backup: rebuild restores the complete native home",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
@@ -1761,7 +1758,10 @@ export function catalogueTargetsForChangedFiles(
     return [...E2E_TARGET_CATALOGUE];
   }
   return E2E_TARGET_CATALOGUE.filter((entry) =>
-    files.some((file) => entry.owningPaths.some((owner) => pathMatches(file, owner))),
+    files.some(
+      (file) =>
+        file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
+    ),
   );
 }
 

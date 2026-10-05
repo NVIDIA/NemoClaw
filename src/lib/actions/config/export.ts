@@ -67,7 +67,11 @@ export type ConfigExportFailure =
   | ({ readonly kind: "output"; readonly target: "file" } & YamlExportFailure);
 
 export type ConfigExportOutcome =
-  | { readonly ok: true; readonly completion: ConfigExportCompletion }
+  | {
+      readonly ok: true;
+      readonly completion: ConfigExportCompletion;
+      readonly corporateCaOmitted?: true;
+    }
   | { readonly ok: false; readonly failure: ConfigExportFailure };
 
 export async function runConfigExport(
@@ -90,11 +94,12 @@ export async function runConfigExport(
     documentUid: dependencies.createDocumentUid(),
   });
   const rendered = renderCanonicalNemoClawConfig(config);
+  const omittedCa = observation.corporateCaOmitted ? { corporateCaOmitted: true as const } : {};
 
   if (request.target.kind === "stdout") {
     try {
       await dependencies.writeStdout(rendered.yaml);
-      return { ok: true, completion: { kind: "stdout" } };
+      return { ok: true, completion: { kind: "stdout" }, ...omittedCa };
     } catch {
       return {
         ok: false,
@@ -110,6 +115,7 @@ export async function runConfigExport(
   }
   return {
     ok: true,
+    ...omittedCa,
     completion: {
       kind: "file",
       result: {

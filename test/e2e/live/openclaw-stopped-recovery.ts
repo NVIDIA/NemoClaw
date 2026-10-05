@@ -74,11 +74,13 @@ export async function proveStoppedDockerAgentRecovery(
   assert.equal(labels["openshell.ai/sandbox-id"], source.id);
   assert.equal(running, true);
   const marker = `stopped-source-${Date.now()}`;
+  const unknownRootMarker = `${marker}-unknown-root`;
   const markerPath =
     agentName === "openclaw"
       ? "/sandbox/.openclaw/workspace/.stopped-recovery-marker"
       : "/sandbox/.deepagents/.state/.stopped-recovery-marker";
-  const writeMarker = `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)}`;
+  const unknownRootMarkerPath = "/sandbox/.stopped-recovery-unknown-root-marker";
+  const writeMarkers = `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)} && printf '%s' ${shellQuote(unknownRootMarker)} > ${shellQuote(unknownRootMarkerPath)}`;
   // #11165: retain agent-owned state while the managed login profile is broken.
   // The ordinary healthy rebuild above this proof remains a separate control.
   const prepared =
@@ -88,7 +90,7 @@ export async function proveStoppedDockerAgentRecovery(
           [
             "/bin/sh",
             "-c",
-            `${writeMarker} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
+            `${writeMarkers} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} ${shellQuote(unknownRootMarkerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
           ],
           {
             artifactName: `${prefix}-stopped-source-write-marker`,
@@ -96,7 +98,7 @@ export async function proveStoppedDockerAgentRecovery(
             timeoutMs: 10_000,
           },
         )
-      : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarker} && sync`], {
+      : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarkers} && sync`], {
           artifactName: `${prefix}-stopped-source-write-marker`,
           env,
         });
@@ -122,12 +124,20 @@ export async function proveStoppedDockerAgentRecovery(
     artifactName: `${prefix}-stopped-replacement-container`,
   });
   assert.notEqual(replacement, container);
-  const restored = await sandbox.exec(sandboxName, ["cat", markerPath], {
-    artifactName: `${prefix}-stopped-source-restored-marker`,
-    env,
-  });
-  assertExitZero(restored, "read restored workspace state");
-  assert.equal(restored.stdout.trim(), marker);
+  const restored = await sandbox.exec(
+    sandboxName,
+    [
+      "sh",
+      "-c",
+      `cat ${shellQuote(markerPath)} && printf '\\n' && cat ${shellQuote(unknownRootMarkerPath)}`,
+    ],
+    {
+      artifactName: `${prefix}-stopped-source-restored-marker`,
+      env,
+    },
+  );
+  assertExitZero(restored, "read restored declared and unknown native-root state");
+  assert.equal(restored.stdout.trim(), `${marker}\n${unknownRootMarker}`);
   await artifacts.writeJson(`${prefix}-stopped-source-recovery.json`, {
     applicable: true,
     agentName,
@@ -136,6 +146,7 @@ export async function proveStoppedDockerAgentRecovery(
     replacementContainerId: replacement,
     sourcePhase: "Error",
     ...(agentName === "openclaw" ? { workspacePreserved: true } : { agentStatePreserved: true }),
+    unknownNativeRootStatePreserved: true,
     restorationProof,
   });
 }

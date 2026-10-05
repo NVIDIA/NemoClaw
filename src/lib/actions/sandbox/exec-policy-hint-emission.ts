@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
-
-import { captureOpenshell } from "../../adapters/openshell/runtime";
-import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
-import { buildSandboxLogsArgs, getLogsProbeTimeoutMs } from "../../domain/sandbox/logs";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import { getLogsProbeTimeoutMs } from "../../domain/sandbox/logs";
 import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hint-detection";
 import { buildPolicyDenialExecHint, shouldProbePolicyDenial } from "./exec-policy-hint-rendering";
 
@@ -19,7 +17,10 @@ export const POLICY_HINT_PROBE_ATTEMPTS = 3;
 export const POLICY_HINT_PROBE_RETRY_MS = 120;
 export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
 
-export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
+export type PolicyDenialLogProbe = (
+  sandboxName: string,
+  gatewayName?: string,
+) => string | Promise<string>;
 export type PolicyDenialAuditEnabler = (
   sandboxName: string,
   gatewayName?: string,
@@ -56,21 +57,23 @@ async function defaultEnableAudit(sandboxName: string, gatewayName?: string): Pr
   if (!result.ok) throw new Error(result.error.message);
 }
 
-function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
-  const options: SandboxLogsOptions = {
-    follow: false,
+async function defaultProbeLogs(sandboxName: string, gatewayName?: string): Promise<string> {
+  const result = await cliOpenShellSandboxLogs.read({
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    sandboxName,
+    source: "openshell",
     lines: String(POLICY_HINT_TAIL_LINES),
     since: null,
-  };
-  const result = captureOpenshell(buildSandboxLogsArgs(sandboxName, options, gatewayName), {
-    ignoreError: true,
-    includeStderr: true,
-    timeout: runtimeTimeoutMs(),
+    timeoutMs: runtimeTimeoutMs(),
   });
-  if (result.error || result.status !== 0) {
-    throw result.error ?? new Error(`failed to read audit logs (exit ${result.status})`);
+  if (result.outcome.kind === "failed" || result.outcome.exitCode !== 0) {
+    throw new Error(
+      result.outcome.kind === "failed"
+        ? result.outcome.error.message
+        : `failed to read audit logs (exit ${result.outcome.exitCode})`,
+    );
   }
-  return String(result.output ?? "");
+  return result.content + result.diagnostic;
 }
 
 /**
@@ -113,7 +116,7 @@ export async function maybeEmitPolicyDenialHint(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let logOutput: string;
     try {
-      logOutput = probeLogs(sandboxName, gatewayName);
+      logOutput = await probeLogs(sandboxName, gatewayName);
     } catch {
       // Deliberately silent for the same output-preservation boundary: a failed
       // optional probe must not append host diagnostics to the child's error.

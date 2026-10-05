@@ -93,6 +93,11 @@ export type ConnectHarnessOptions = {
   sessionOutcome?: OpenShellSandboxSessionOutcome;
   agentName?: string;
   inferenceGetOutput?: string;
+  inferenceSetResult?: {
+    status: number | null;
+    output?: string;
+    signal?: NodeJS.Signals | null;
+  };
   isWsl?: boolean;
   frontOllamaWithProxy?: boolean;
   inferenceProbeResponses?: Array<
@@ -575,6 +580,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
             : "Provider: unknown\nModel: unknown\n"),
       };
     }
+    if (argv[0] === "inference" && argv[1] === "set" && options.inferenceSetResult) {
+      return options.inferenceSetResult;
+    }
     if (argv[0] === "forward" && argv[1] === "list") {
       const sandboxName = String(registryEntries[0]?.name ?? "alpha");
       const port = String(registryEntries[0]?.dashboardPort ?? 18_789);
@@ -639,6 +647,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(runtime, "captureResolvedOpenshell")
     .mockImplementation(captureOpenshellImplementation);
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockReturnValue({ status: 0 });
+  vi.spyOn(runtime, "captureResolvedOpenshellAsync").mockImplementation(async (args, options) => {
+    runtime.runOpenshell(args, {
+      ignoreError: true,
+      timeout: (options as { timeout?: number }).timeout,
+    });
+    return captureOpenshellImplementation(args);
+  });
   const withGatewayRouteMutationLockSpy = vi
     .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
     .mockImplementation(

@@ -43,6 +43,13 @@ The install refuses package removals, preserving the runner's Docker and contain
   Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
+- The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
+  runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
+  rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
+  source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
+  components. Select it with
+  `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
+  gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -147,7 +154,8 @@ This boundary keeps candidate source separate from the trusted workflow implemen
 The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
 For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
-When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+When those paths are unchanged, the planner finds the PR base's latest reviewed image input on the trusted workflow commit's first-parent history.
+It selects the nearest fully successful cohort publication at or after that commit.
 It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
 It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
 The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
@@ -178,6 +186,12 @@ These are two required acceptance executions, not retries; either failure remain
 OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
 that require elevated scopes. It approves only the request ID emitted by the current sandbox's
 non-admin CLI, after the existing selector verifies that device and its requested scopes.
+The fixture transfers its approval script through non-terminal `exec --stdin`, then runs the
+verified script bytes in a subshell of the prepared `connect` shell. The subshell inherits its
+approval wrapper while isolating the script's exit and cleanup trap. This preserves the credential boundary
+without feeding a bulk script through terminal line editing. Cleanup removes the temporary
+script after success or failure; a cleanup failure also fails the fixture. The fixture checks
+the transferred bytes against the host's digest before evaluation and rejects a replaced script.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
@@ -367,6 +381,12 @@ The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+
+WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
+probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
+Other errors stop setup. The helper masks `docker.service` and `docker.socket` in the job-owned
+distro so the masks survive a restart. The test script checks Docker again immediately before
+Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
@@ -639,6 +659,9 @@ The fixture retries read-only daemon readiness checks on connection refusal or c
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
 Cleanup destroys each sandbox before its inference runtime and removes private output files.
+The attached-Ollama export scenario gives the candidate CLI a private per-test `HOME`. Cleanup
+removes its sandbox, stops the gateway runtime, and removes the gateway registration before it
+removes that state and the exported YAML.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -758,6 +781,26 @@ do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
+## Full E2E inference availability
+
+`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
+It requires a successful response containing the expected answer.
+`live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
+`support/full-e2e-inference-probe.test.ts` verifies that behavior.
+The stateless request has no tools or conversation persistence, so repeating it
+has no application mutation. It may consume another inference request.
+
+The probe retries once after five seconds only when curl exits 22 with empty
+stdout and exactly reports HTTP 503. This reports service unavailability but
+does not identify whether the gateway or upstream produced it. Every request
+has its own command artifact and a 90-second curl limit. Each reply-budget
+attempt logs bounded availability evidence, including recovery or exhaustion,
+before writing its artifact. The aggregate log survives an artifact-write failure
+and is retained after Brev cleanup; the artifact exists only when its write succeeds.
+The existing two reply budgets permit at most four requests in total.
+Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
+The existing response validation and answer assertion remain unchanged.
+
 ## Launch-readiness locked-image acceptance
 
 Use the repository helper to test an existing OpenClaw sandbox without
@@ -778,12 +821,28 @@ The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
 runs two logical `launch` sessions during the same fixed lease. Each logical
 session may retry once with a fresh run ID and input only when the OpenClaw
 session store contains a structured transient provider-unavailability record
-and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+and cleanup succeeds. A managed `openai-completions` assistant record with empty
+array content, `stopReason=error`, and string `errorCode=503` qualifies regardless
+of provider error wording. Conflicting error classes and authentication or policy
+diagnostics still prevent retry. Other eligible server codes require the known
+`InternalServerError` or `ServiceUnavailableError` class.
+Authentication, authorization, policy, malformed-response,
 cleanup, and unknown failures stop the acceptance test without retrying.
 Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
+Empty-message failures include the message index, role, and allowlisted provider
+error metadata from JSONL or SQLite. Provider error text and unknown field values
+are omitted. These diagnostics do not change failure classification or retries.
+Failed launch attempts also retain the last turn-verifier exit status and fixed
+cleanup stages: started, child reaped, and completed with cleanup status. Only the
+existing final provider marker authorizes a retry after successful cleanup.
+Baseline and PTY cleanup calls run independently so a fatal shell error in one
+cannot skip the other. Failed calls retain their last 2 KiB of error output through
+the fixture's normal redaction boundary, and any cleanup failure prevents retry.
+The host launch harness uses a non-login Bash shell with its supplied environment.
+It does not source user login or logout files. A failing logout file can disrupt Bash 5.1 exit-trap cleanup.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
@@ -986,6 +1045,11 @@ lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
+
+On Docker, managed-image activation also adopts the published OpenClaw and
+Hermes digests through `--from-image`. It confirms OpenShell readiness, the
+durable external-image receipt, NemoClaw destruction, and shared image
+retention. The external-image check does not run on Podman.
 
 ## Device-auth health classification
 
@@ -1779,7 +1843,9 @@ The full-main `Release qualification` aggregate does not use this receipt.
 The `base-image-publication` job first resolves any authenticated PR managed-image catalog.
 When a PR catalog is selected, explicit targets with no `jobs` selector and no `managed-image-` target use it without waiting for main's base images.
 Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.
-Runs without a PR catalog require a trusted main base and managed-image publication; PR runs select the nearest fully successful publication on the PR base first-parent history.
+Runs without a PR catalog require a trusted main base and managed-image publication.
+PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
+The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
 It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
@@ -1880,6 +1946,11 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
+To run Portable Hermes finalization evidence, set
+`jobs=portable-hermes-finalization` and leave `targets` empty. This explicit lane
+selects Podman 5.7 itself, uses the exact candidate checkout, and obtains its
+runtime binary and helper artifact through trusted workflow jobs before
+candidate execution.
 A trusted `main` workflow step validates the open PR before candidate checkout.
 It requires `NVIDIA/NemoClaw` as the source repository before authorizing the full ordinary plan and credential profiles.
 A second validation after checkout rejects a changed selected commit, base commit, repository, or

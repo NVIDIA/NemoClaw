@@ -65,6 +65,7 @@ import { buildManagedStartupOnboardProfile } from "../managed-startup/onboard-pr
 import {
   createManagedStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
+  externalImageWorkloadMatches,
   prepareHermesPortableOnboardSandboxLaunch,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
@@ -386,6 +387,50 @@ describe("managed workload onboard orchestration", () => {
     await expectUnsupportedHermesPortableSources(runtime, prepared, expectedDockerfilePath);
   });
 
+  it("allows an external image for ordinary Docker onboarding (#11932)", async () => {
+    const workload = {
+      source: {
+        kind: "external-image",
+        reference: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn(() => null);
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, false)).resolves.toBe(
+      workload,
+    );
+    expect(ensurePreparedProfile).toHaveBeenCalledExactlyOnceWith(workload);
+  });
+
+  it("rejects an external image for Portable onboarding (#11932)", async () => {
+    const workload = {
+      source: {
+        kind: "external-image",
+        reference: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn();
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, true)).rejects.toThrow(
+      "Portable OpenClaw onboarding cannot use a user-supplied Docker image because that path requires Docker lifecycle operations.",
+    );
+    expect(ensurePreparedProfile).not.toHaveBeenCalled();
+  });
+
   it("keeps a portable image contract inert before lifecycle activation (#11079)", async () => {
     const workload = {
       source: { kind: "portable-image" },
@@ -628,6 +673,142 @@ describe("managed workload onboard orchestration", () => {
     expect(preparedLaunch.launch).not.toHaveProperty("createCommand");
     expect(preparedLaunch.launch).not.toHaveProperty("createArgv");
     expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
+  });
+
+  it("launches an external image by exact digest without a build", async () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const prepareSandboxBuildPatchConfig = vi.fn();
+    const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
+      runtime: {
+        runtimeProvider: null,
+        ensurePreparedWorkload: vi.fn(),
+        ensurePreparedProfile: vi.fn(),
+      },
+      workload: {
+        source: {
+          kind: "external-image",
+          reference,
+          platform: "linux/amd64",
+          runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+          toolDisclosure: "progressive",
+        },
+        release: null,
+        fallbackDiagnostic: null,
+      },
+      legacy: {},
+      plan: {
+        intent: { sandboxGpuLogMessage: null },
+        rebindMessagingTokenDefs: async () => [],
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: null,
+        chatUiUrl: "http://127.0.0.1:18789",
+        sandboxName: "external-openclaw",
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "18789",
+        hermesDashboardState: { enabled: false, config: null },
+        manageDashboard: true,
+        openshellShellCommand: (args: string[]) => args.join(" "),
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "openai",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        dockerDriverGateway: false,
+        gatewayPort: 8080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan: vi.fn(async () => ({
+          activeMessagingChannels: [],
+          compatibilityPolicyPath: null,
+          createRequest: {
+            sandboxName: "external-openclaw",
+            source: { reference },
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          gpuRoutePlan: "none",
+          initialSandboxPolicy: {
+            appliedPresets: [],
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          messagingProviders: [],
+          sandboxGpuLogMessage: null,
+          activateDeferredProviderEffects: null,
+        })),
+        prepareSandboxBuildPatchConfig,
+      },
+    } as never);
+
+    expect(preparedLaunch.createRequestPlan.source.reference).toBe(reference);
+    expect(preparedLaunch.launch.prebuild).toEqual({ imageRef: null, imageId: null });
+    expect(prepareSandboxBuildPatchConfig).not.toHaveBeenCalled();
+  });
+
+  it("persists the requested and local immutable identities in an external image receipt", () => {
+    const reference = `ghcr.io/example/hermes@sha256:${"a".repeat(64)}`;
+    const runtimeImageContentId = `sha256:${"b".repeat(64)}` as const;
+    expect(
+      resolveOnboardSandboxWorkloadReceipt({
+        runtime: { ensurePreparedProfile: vi.fn() },
+        workload: {
+          source: {
+            kind: "external-image",
+            reference,
+            platform: "linux/amd64",
+            runtimeImageContentId,
+            toolDisclosure: "direct",
+          },
+        },
+        registryImageRef: null,
+        prebuildImageRef: null,
+        firstCreateOutput: "",
+        createOutput: "",
+        buildId: "unused",
+        extractBuiltImageRef: vi.fn(),
+        resolveSandboxImageTagFromCreateOutput: vi.fn(),
+      } as never),
+    ).toEqual({
+      resolvedImageTag: reference,
+      workloadReceipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId,
+        shared: true,
+      },
+    });
+  });
+
+  it("requires the registered external-image receipt to match the requested digest", () => {
+    const first = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const second = `ghcr.io/example/openclaw@sha256:${"b".repeat(64)}`;
+    const receipt = {
+      schemaVersion: 1,
+      kind: "external-image",
+      reference: first,
+      platform: "linux/amd64",
+      runtimeImageContentId: `sha256:${"c".repeat(64)}`,
+      shared: true,
+    } as const;
+
+    expect(externalImageWorkloadMatches(first, receipt)).toBe(true);
+    expect(externalImageWorkloadMatches(second, receipt)).toBe(false);
+    expect(
+      externalImageWorkloadMatches(first, { ...receipt, runtimeImageContentId: "invalid" }),
+    ).toBe(false);
   });
 
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
