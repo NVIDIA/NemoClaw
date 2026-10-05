@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 
 import {
   loadManagedLlamaCppApiKey,
@@ -415,7 +416,7 @@ NODE`),
       runtimeOwnerSandboxName: SANDBOX_NAME,
       expectedModel: recipe.spec.model.servedName,
       expectedReceipt: receipt,
-      gatewayPort: recipe.spec.serve.port,
+      gatewayPort: GATEWAY_PORT,
       homeDir: os.homedir(),
       environment: destroyEnv,
       operation: runtimeProvider.hostLocalInference.createOperation({

@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
     fetchGatewayAuthTokenFromSandbox: vi.fn(async () => "token"),
     getVersion: vi.fn(() => "1.2.3"),
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
+    createOpenShellDebugDiagnostics: vi.fn(() => ({ collect: vi.fn() })),
     listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
@@ -63,7 +64,10 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
-vi.mock("../lib/diagnostics/debug", () => ({ runDebug: vi.fn() }));
+vi.mock("../lib/diagnostics/debug", () => ({
+  createOpenShellDebugDiagnostics: mocks.createOpenShellDebugDiagnostics,
+  runDebug: vi.fn(),
+}));
 vi.mock("../lib/diagnostics/debug-command", () => ({
   runDebugCommandWithOptions: mocks.runDebugCommandWithOptions,
 }));

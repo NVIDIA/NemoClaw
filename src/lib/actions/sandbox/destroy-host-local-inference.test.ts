@@ -278,7 +278,6 @@ async function runDestroy(
             inspectOpenShellSandboxIdentityFingerprint: options.inspectSandboxIdentityFingerprint,
           }
         : {}),
-      wipeSandboxState: () => undefined,
       deleteConvergence: {
         now: () => convergenceClockMs,
         sleep: (milliseconds) => {
@@ -406,7 +405,6 @@ describe("sandbox destroy host-local inference transaction", () => {
       runtimeProviders: { mxc: runtimeProvider.bundle },
       deps: {
         inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
-        wipeSandboxState: () => undefined,
       },
     });
 
@@ -526,7 +524,6 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
-        wipeSandboxState: () => undefined,
       },
     });
 
@@ -562,7 +559,6 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
-        wipeSandboxState: () => undefined,
       },
     });
 
