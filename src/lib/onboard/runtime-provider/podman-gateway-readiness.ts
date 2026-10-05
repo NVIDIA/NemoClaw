@@ -142,8 +142,18 @@ function isRunningProcess(
 ): boolean {
   const owner = deps.runHost("ps", ["-p", String(pid), "-o", "uid="], input.environment);
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
-  const status = deps.runHost("ps", ["-p", String(pid), "-o", "stat="], input.environment);
-  return status.status === 0 && /^[DIKPRSUW]/u.test(status.stdout.trim());
+  const args = ["-p", String(pid), "-o", "stat="];
+  if (input.platform === "linux") args.push("-L");
+  const status = deps.runHost("ps", args, input.environment);
+  const states = status.stdout
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => line.trim());
+  return (
+    status.status === 0 &&
+    states.every((state) => /^[DIKPRSUWXZx]/u.test(state)) &&
+    states.some((state) => /^[DIKPRSUW]/u.test(state))
+  );
 }
 
 function observeOwnedListener(
