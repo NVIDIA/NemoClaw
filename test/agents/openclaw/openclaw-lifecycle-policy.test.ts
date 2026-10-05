@@ -57,6 +57,11 @@ const messagingApplier = fs.readFileSync(
   "utf8",
 );
 
+const optionalInstaller = fs.readFileSync(
+  "scripts/lib/install-reviewed-openclaw-plugin.mts",
+  "utf8",
+);
+
 const codexBlock = between(
   dockerfile,
   "AS codex-acp-runtime",
@@ -93,8 +98,10 @@ console.log(JSON.stringify({
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
     runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
     base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
-    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"'),
+    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*node \/scripts\/lib\/install-reviewed-openclaw-plugin\.mts/.test(optionalPluginBlock) &&
+      optionalPluginBlock.includes('"$plugin_archive" "$plugin_spec" "$expected_integrity" "$expected_tarball"') &&
+      optionalInstaller.includes('NPM_CONFIG_IGNORE_SCRIPTS: "true"') &&
+      optionalInstaller.includes('npm_config_ignore_scripts: "true"'),
     messagingPlugin: [
       '"--force",',
       '"--accept-capabilities",',
