@@ -658,7 +658,7 @@ esac
     }
 
     #[tokio::test]
-    async fn discovery_reuses_initialization_but_refreshes_evidence_without_apply_or_state() {
+    async fn discovery_reuses_initialization_but_refreshes_observations_without_apply_or_state() {
         let (_bundle, mut session) = fixture();
         let directory = session.directory.path().to_owned();
         for engine in ["unix:///first.sock", "unix:///second.sock"] {

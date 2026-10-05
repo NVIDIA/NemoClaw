@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Decisions that depend on the environment are tested by replaying a recorded
-//! fact sheet, with no engine or hardware present.
+//! Decisions that depend on the environment are tested by replaying recorded
+//! observations, with no engine or hardware present.
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument, environment_queries};
 use nemoclaw_sdk::{
     CancellationToken,

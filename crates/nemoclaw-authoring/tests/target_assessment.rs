@@ -20,6 +20,25 @@ fn says(assessment: &DiscoveryAssessment, text: &str) -> bool {
         .any(|reason| reason.contains(text))
 }
 
+/// Fail with the reasons the assessment actually gave, not just "false".
+#[track_caller]
+fn assert_says(assessment: &DiscoveryAssessment, text: &str) {
+    assert!(
+        says(assessment, text),
+        "expected a reason containing {text:?}, got {:?}",
+        assessment.reasons
+    );
+}
+
+#[track_caller]
+fn assert_silent(assessment: &DiscoveryAssessment, text: &str) {
+    assert!(
+        !says(assessment, text),
+        "expected no reason containing {text:?}, got {:?}",
+        assessment.reasons
+    );
+}
+
 fn document() -> Document {
     Document::parse(&include_bytes!("../../../examples/onboarding/openclaw.yaml")[..]).unwrap()
 }
@@ -41,9 +60,9 @@ fn fabric_query(document: &Document) -> DiscoveryQuery {
     }
 }
 
-/// What reading a document's target returned. The observations it produces hold the
-/// observations under that document's own engine, driver, and image, as a
-/// a journey's observations do after reading it.
+/// What reading a document's target returned. The observations it produces are
+/// recorded under that document's own engine, driver, and image, as a journey's
+/// observations are after reading it.
 #[derive(Clone)]
 struct Observed {
     engine: Option<EngineObservation>,
@@ -149,12 +168,7 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
         .retain(|adapter| adapter.descriptor["adapter_id"] != "nvidia.fabric.openclaw");
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-    assert!(
-        assessment
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("fabric_plan"))
-    );
+    assert_says(&assessment, "fabric_plan");
     observed.fabric.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
         observed.assess(&document).status,
@@ -165,11 +179,8 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     // A failed read is unknown, not unasked.
-    assert!(says(&assessment, "The selected engine remains unverified"));
-    assert!(!says(
-        &assessment,
-        "The selected engine has not been observed"
-    ));
+    assert_says(&assessment, "The selected engine remains unverified");
+    assert_silent(&assessment, "The selected engine has not been observed");
 }
 
 #[test]
@@ -181,13 +192,13 @@ fn a_read_that_failed_is_unknown_so_unverified_rather_than_unobserved() {
         .with(fabric.clone(), fabric.unknown("image unreadable"));
     let assessment = assess_target(&document, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(says(&assessment, "The selected engine remains unverified"));
-    assert!(says(&assessment, "Fabric capabilities remain unverified"));
-    assert!(!says(&assessment, "not been observed"));
+    assert_says(&assessment, "The selected engine remains unverified");
+    assert_says(&assessment, "Fabric capabilities remain unverified");
+    assert_silent(&assessment, "not been observed");
 }
 
 #[test]
-fn changing_the_target_leaves_old_facts_behind() {
+fn changing_the_target_leaves_old_observations_behind() {
     let document = document();
     let mut observed = observed_target(&document);
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
@@ -203,32 +214,23 @@ fn changing_the_target_leaves_old_facts_behind() {
     gateway.engine = "unix:///another-target.sock".into();
     let assessment = assess_target(&moved, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(says(
-        &assessment,
-        "The selected engine has not been observed"
-    ));
+    assert_says(&assessment, "The selected engine has not been observed");
 }
 
 #[test]
-fn changing_only_image_keeps_engine_facts_and_leaves_the_image_unobserved() {
+fn changing_only_image_keeps_engine_observations_and_leaves_the_image_unobserved() {
     let document = document();
     let observations = observed_target(&document).observations(&document);
     let mut changed = document.clone();
     changed.spec.sandboxes[0].image.ref_ = "another-image".into();
     let assessment = assess_target(&changed, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(says(
-        &assessment,
-        "Fabric capabilities have not been observed"
-    ));
-    assert!(!says(
-        &assessment,
-        "The selected engine has not been observed"
-    ));
+    assert_says(&assessment, "Fabric capabilities have not been observed");
+    assert_silent(&assessment, "The selected engine has not been observed");
 }
 
 #[test]
-fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
+fn identity_edits_keep_observations_and_runtime_edits_recheck_engine() {
     let capabilities = Capabilities::available();
     let original = document();
     let observations = observed_target(&original).observations(&original);
@@ -258,10 +260,7 @@ fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
     let mut changed_driver = renamed.clone();
     changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     let assessment = assess_target(&changed_driver, &observations).unwrap();
-    assert!(says(
-        &assessment,
-        "The selected engine has not been observed"
-    ));
+    assert_says(&assessment, "The selected engine has not been observed");
 }
 
 #[test]
@@ -297,12 +296,7 @@ fn native_configuration_is_checked_by_the_fabric_planner() {
         Some(serde_json::from_value(serde_json::json!({"not_in_the_owner_schema": true})).unwrap());
     let assessment = observed_target(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-    assert!(
-        assessment
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("fabric_plan"))
-    );
+    assert_says(&assessment, "fabric_plan");
 }
 
 #[test]
@@ -380,10 +374,7 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         "ssh://images@example.com"
     );
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
-    assert!(says(
-        &assessment,
-        "Fabric capabilities have not been observed"
-    ));
+    assert_says(&assessment, "Fabric capabilities have not been observed");
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
 
     let mut observed = observed_target(&document);
@@ -399,10 +390,7 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
 
     let changed = external_document("ssh://different-images@example.com");
     let assessment = assess_target(&changed, &observed.observations(&document)).unwrap();
-    assert!(says(
-        &assessment,
-        "Fabric capabilities have not been observed"
-    ));
+    assert_says(&assessment, "Fabric capabilities have not been observed");
 }
 
 #[test]
@@ -410,7 +398,7 @@ fn external_gateway_without_an_image_engine_stays_unverified_and_names_the_missi
     let document = external_document("");
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(says(&assessment, "spec.gateway.engine"));
+    assert_says(&assessment, "spec.gateway.engine");
 }
 
 #[test]
@@ -430,8 +418,5 @@ fn switching_to_a_managed_gateway_requires_an_engine_observation() {
         ..observed_target(&external)
     };
     let assessment = assess_target(&managed, &observed.observations(&external)).unwrap();
-    assert!(says(
-        &assessment,
-        "The selected engine has not been observed"
-    ));
+    assert_says(&assessment, "The selected engine has not been observed");
 }

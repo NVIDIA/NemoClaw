@@ -1420,7 +1420,7 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
 }
 
 #[test]
-fn sparse_journey_delegation_requires_current_target_evidence() {
+fn sparse_journey_delegation_requires_current_target_observations() {
     let capabilities = Capabilities::available();
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
@@ -1454,7 +1454,7 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
 }
 
 #[test]
-fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
+fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
     use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
         discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},

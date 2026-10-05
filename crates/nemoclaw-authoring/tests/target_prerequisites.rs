@@ -37,7 +37,7 @@ fn installed_catalog() -> FabricCatalog {
 }
 
 /// The target observations a journey would hold after reading `document`'s engine and image.
-fn target_facts(
+fn target_observations(
     document: &Document,
     engine: Option<EngineObservation>,
     fabric: Option<FabricObservation>,
@@ -79,7 +79,7 @@ fn express() -> JourneyDefinition {
 }
 
 #[test]
-fn required_target_compatibility_stays_unverified_without_current_evidence() {
+fn required_target_compatibility_stays_unverified_without_current_observations() {
     let capabilities = Capabilities::available();
     let ordinary = express().start(&capabilities).unwrap();
     assert!(
@@ -128,7 +128,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
         },
         compatibility: None,
     };
-    let compatible = target_facts(document, Some(engine.clone()), Some(fabric.clone()));
+    let compatible = target_observations(document, Some(engine.clone()), Some(fabric.clone()));
     let verified = state
         .resolve_with_observations(&capabilities, &compatible)
         .unwrap();
@@ -141,7 +141,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     // Observations read for another image say nothing about this one.
     let mut other_image = document.clone();
     other_image.spec.sandboxes[0].image.ref_ = "sha256:old-image".into();
-    let stale = target_facts(&other_image, Some(engine), Some(fabric));
+    let stale = target_observations(&other_image, Some(engine), Some(fabric));
     let unresolved = state
         .resolve_with_observations(&capabilities, &stale)
         .unwrap();
@@ -159,7 +159,7 @@ fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisi
     let plain = state.resolve(&capabilities).unwrap();
     let document = plain.materialized_document().unwrap();
     assert!(plain.ready_document().is_some());
-    let conflict = target_facts(
+    let conflict = target_observations(
         document,
         Some(EngineObservation {
             status: ObservationStatus::Unavailable,
@@ -193,7 +193,7 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         .unwrap();
     let base = state.resolve(&capabilities).unwrap();
     let document = base.assessment().document().unwrap();
-    let mut observations = target_facts(
+    let mut observations = target_observations(
         document,
         Some(EngineObservation {
             status: ObservationStatus::Unavailable,
