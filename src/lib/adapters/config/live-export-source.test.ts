@@ -77,10 +77,15 @@ function mockBraveLiveSource() {
   return search;
 }
 
-function mockNativeNvidiaSource() {
+function mockNativeNvidiaSource(profileWorkspace = "default") {
   mockSupportedLiveSource(3, 3, nativeNvidiaEntry());
-  raw.getProvider.mockResolvedValue({ provider: nativeNvidiaProvider() });
-  raw.getProviderProfile.mockResolvedValue({ profile: nativeNvidiaProfile() });
+  raw.getProvider.mockResolvedValue({ provider: { ...nativeNvidiaProvider(), profileWorkspace } });
+  raw.getProviderProfile.mockResolvedValue({
+    profile: {
+      ...nativeNvidiaProfile(),
+      ...(profileWorkspace === "" ? { scope: "platform" } : {}),
+    },
+  });
   raw.getSandbox.mockResolvedValue({
     sandbox: {
       ...inventory().sandbox,
@@ -460,46 +465,53 @@ describe("live export snapshot reader", () => {
     });
   });
 
-  it("exports canonical YAML for the native NVIDIA hosted provider (#11154)", async () => {
-    mockNativeNvidiaSource();
-    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
-      status: 1,
-      output: "No inference route is configured.",
-    });
-    const writeStdout = vi.fn(async (_yaml: string) => {});
-    const publish = vi.fn();
-    const result = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: parseNemoClawConfigDocumentName("alpha"),
-        target: { kind: "stdout" },
-      },
-      {
-        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
-        createDocumentUid: () =>
-          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
-        writeStdout,
-        publish,
-      },
-    );
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const yaml = writeStdout.mock.calls[0]![0];
-    const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.inferenceProviders).toEqual([
-      {
-        name: "hosted-nvidia-prod",
-        provider: "openai",
-        api: "openai-completions",
-        endpoint,
-        credential: { env: "NVIDIA_INFERENCE_API_KEY" },
-      },
-    ]);
-    expect(document.spec.sandboxes[0].harness.kind).toBe("openclaw");
-    expect(yaml).not.toContain(readFailureCanary);
-    expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
-    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-  });
+  it.each(["", "default"])(
+    "exports canonical YAML for native NVIDIA binding %j (#11154)",
+    async (profileWorkspace) => {
+      mockNativeNvidiaSource(profileWorkspace);
+      vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+        status: 1,
+        output: "No inference route is configured.",
+      });
+      const writeStdout = vi.fn(async (_yaml: string) => {});
+      const publish = vi.fn();
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+          writeStdout,
+          publish,
+        },
+      );
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      expect(document.spec.inferenceProviders).toEqual([
+        {
+          name: "hosted-nvidia-prod",
+          provider: "openai",
+          api: "openai-completions",
+          endpoint,
+          credential: { env: "NVIDIA_INFERENCE_API_KEY" },
+        },
+      ]);
+      expect(document.spec.sandboxes[0].harness.kind).toBe("openclaw");
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: "nvidia", workspace: profileWorkspace },
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains the legacy shared-route NVIDIA export without a native receipt", async () => {
     mockSupportedLiveSource();
@@ -543,7 +555,7 @@ describe("live export snapshot reader", () => {
       providerChange: { credentials: { OTHER_API_KEY: readFailureCanary } },
     },
     { label: "missing credentials", providerChange: { credentials: {} } },
-    { label: "unverified profile scope", providerChange: { profileWorkspace: "foreign" } },
+    { label: "foreign profile binding", providerChange: { profileWorkspace: "foreign" } },
     {
       label: "receipt identity mismatch",
       providerChange: {
@@ -553,7 +565,7 @@ describe("live export snapshot reader", () => {
   ])("rejects native NVIDIA $label without publishing YAML", async ({ providerChange }) => {
     mockNativeNvidiaSource();
     raw.getProvider.mockResolvedValue({
-      provider: { ...nativeNvidiaProvider(), ...providerChange },
+      provider: { ...nativeNvidiaProvider(), profileWorkspace: "default", ...providerChange },
     });
     const writeStdout = vi.fn();
     const publish = vi.fn();

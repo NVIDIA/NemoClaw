@@ -1546,6 +1546,7 @@ function completeVerifiedSource(
   return {
     kind: "verified",
     source,
+    ...(authority?.corporateCa ? { corporateCaOmitted: true as const } : {}),
   };
 }
 

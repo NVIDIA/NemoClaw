@@ -350,7 +350,11 @@ export type VerifiedExportSource = ExportSourceValues & {
 };
 
 export type ExportSourceVerificationResult =
-  | Readonly<{ kind: "verified"; source: VerifiedExportSource }>
+  | Readonly<{
+      kind: "verified";
+      source: VerifiedExportSource;
+      corporateCaOmitted?: true;
+    }>
   | Readonly<{ kind: "rejected"; findings: NonEmptyExportFindings }>;
 
 /** The only observation port. Each call reads one complete source snapshot. */
