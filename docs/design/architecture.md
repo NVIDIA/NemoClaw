@@ -107,6 +107,7 @@ The [onboarding prototype](onboarding-journeys.md) records supported question co
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
+[Discovery layers](discovery-layers.md) classifies each read by what it depends on.
 It does not create deployment state.
 Discovery observations are keyed by the query that produced them: an engine and compute driver, a hardware engine, an engine and image, an inference endpoint request, a gateway, or a credential reference.
 Onboarding looks up the current document's queries, so an observation made for a different engine, compute driver, image, or inference endpoint request is never found.
