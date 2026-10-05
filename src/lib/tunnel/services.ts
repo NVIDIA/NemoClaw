@@ -832,7 +832,7 @@ export interface LegacyCloudflaredMigrationDeps {
 }
 
 /**
- * Move one live pre-#11628 dashboard tunnel record into the host-scoped state
+ * Move one live legacy sandbox-scoped dashboard tunnel record into the host-scoped state
  * directory. Dedicated Google Chat tunnel directories are never candidates.
  * Multiple live records are ambiguous and fail closed.
  */

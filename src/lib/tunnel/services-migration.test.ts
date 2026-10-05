@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CloudflaredState } from "./services";
 import { migrateLegacyCloudflaredState, resolveTunnelPidDir } from "./services";
 
-describe("legacy tunnel state recovery (#11628)", () => {
+describe("legacy tunnel state migration (#11628)", () => {
   const gatewayPort = 18_080;
   let home: string;
   let legacyRoot: string;

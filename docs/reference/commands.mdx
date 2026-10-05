@@ -3388,7 +3388,9 @@ If the recorded cloudflared PID is live but its process identity cannot be inspe
 
 ### `$$nemoclaw tunnel status`
 
-Show the cloudflared public-URL tunnel status for the gateway environment that `NEMOCLAW_GATEWAY_PORT` selects. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be inspected. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel; restore process-inspection access and retry. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
+Show the cloudflared public-URL tunnel status for the OpenShell gateway port that `NEMOCLAW_GATEWAY_PORT` selects. Before reporting status, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be inspected. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel; restore process-inspection access and retry. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
+
+When no live managed tunnel record exists, non-Windows hosts scan the current user's process list and report an unrecorded `cloudflared` executable as a conflict. On Windows, or when process listing fails, this scan reports no conflict.
 
 ```bash
 $$nemoclaw tunnel status

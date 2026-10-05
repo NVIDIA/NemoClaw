@@ -85,7 +85,7 @@ describe("findUnmanagedCloudflaredPids", () => {
     expect(pids).toEqual([100]);
   });
 
-  it("fails closed to no discovery when the process list is unavailable", () => {
+  it("returns no unmanaged processes when the process list is unavailable", () => {
     expect(
       findUnmanagedCloudflaredPids(null, () => {
         throw new Error("ps unavailable");
