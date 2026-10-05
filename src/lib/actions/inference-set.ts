@@ -1016,10 +1016,18 @@ async function detachPreviousNativeNvidiaBeforePublish(input: {
   return true;
 }
 
-function nativeNvidiaDepartureRegistryFields(
-  detached: boolean,
-): Pick<SandboxEntry, "nativeNvidiaProviderAttachment"> | Record<string, never> {
-  return detached ? { nativeNvidiaProviderAttachment: undefined } : {};
+function nativeNvidiaDepartureRegistryFields(input: {
+  detached: boolean;
+  authority?: NativeNvidiaProviderAttachment;
+}):
+  | Pick<SandboxEntry, "nativeNvidiaProviderAttachment" | "nativeNvidiaProviderAuthority">
+  | Record<string, never> {
+  return input.detached
+    ? {
+        nativeNvidiaProviderAttachment: undefined,
+        nativeNvidiaProviderAuthority: input.authority,
+      }
+    : {};
 }
 
 async function restorePreviousNativeNvidiaAfterFailedPublish(input: {
@@ -1508,6 +1516,9 @@ async function runInferenceSetWithoutHostLock(
   const previousNativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
     entry.nativeNvidiaProviderAttachment,
   );
+  const previousNativeNvidiaAuthority = normalizeNativeNvidiaProviderAttachment(
+    entry.nativeNvidiaProviderAuthority,
+  );
   assertNativeNvidiaMigrationReady({
     provider,
     previousProvider,
@@ -1518,6 +1529,7 @@ async function runInferenceSetWithoutHostLock(
     ? resolveGatewayNativeNvidiaProviderAuthority({
         gatewayName: preparedRoute.gatewayName,
         recordedAttachment: previousNativeNvidiaAttachment,
+        recordedAuthority: previousNativeNvidiaAuthority,
         sandboxes: routeSandboxes,
       })
     : undefined;
@@ -1780,7 +1792,13 @@ async function runInferenceSetWithoutHostLock(
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-      ...nativeNvidiaDepartureRegistryFields(previousNativeNvidiaDetached),
+      ...(nativeNvidiaProviderAttachment
+        ? { nativeNvidiaProviderAuthority: nativeNvidiaProviderAttachment }
+        : {}),
+      ...nativeNvidiaDepartureRegistryFields({
+        detached: previousNativeNvidiaDetached,
+        authority: previousNativeNvidiaAttachment ?? previousNativeNvidiaAuthority,
+      }),
     });
     if (
       !deps.updateSandbox(

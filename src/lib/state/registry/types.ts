@@ -135,6 +135,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  /** Durable ownership authority for the gateway-scoped native NVIDIA provider. */
+  nativeNvidiaProviderAuthority?: NativeNvidiaProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

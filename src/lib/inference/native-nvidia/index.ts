@@ -52,23 +52,37 @@ export function isNativeNvidiaProvider(provider: string | null | undefined): boo
 export function resolveGatewayNativeNvidiaProviderAuthority(input: {
   gatewayName: string;
   recordedAttachment?: NativeNvidiaProviderAttachment | null;
+  recordedAuthority?: NativeNvidiaProviderAttachment | null;
   sandboxes: ReadonlyArray<{
     gatewayName?: string | null;
     provider?: string | null;
     nativeNvidiaProviderAttachment?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
   }>;
 }): NativeNvidiaProviderAttachment | undefined {
+  if (input.recordedAttachment && input.recordedAuthority) {
+    if (input.recordedAttachment.providerId !== input.recordedAuthority.providerId) {
+      throw new NativeNvidiaProviderError(
+        `Gateway '${input.gatewayName}' has conflicting native NVIDIA provider ownership receipts. No provider was changed.`,
+      );
+    }
+    return input.recordedAttachment;
+  }
   if (input.recordedAttachment) return input.recordedAttachment;
+  if (input.recordedAuthority) return input.recordedAuthority;
 
   const authorities = new Map<string, NativeNvidiaProviderAttachment>();
   for (const sandbox of input.sandboxes) {
-    if (sandbox.gatewayName !== input.gatewayName || !isNativeNvidiaProvider(sandbox.provider)) {
-      continue;
-    }
-    const attachment = normalizeNativeNvidiaProviderAttachment(
-      sandbox.nativeNvidiaProviderAttachment,
+    if (sandbox.gatewayName !== input.gatewayName) continue;
+    const authority = normalizeNativeNvidiaProviderAttachment(
+      sandbox.nativeNvidiaProviderAuthority,
     );
-    if (attachment) authorities.set(attachment.providerId, attachment);
+    const attachment = isNativeNvidiaProvider(sandbox.provider)
+      ? normalizeNativeNvidiaProviderAttachment(sandbox.nativeNvidiaProviderAttachment)
+      : undefined;
+    for (const receipt of [authority, attachment]) {
+      if (receipt) authorities.set(receipt.providerId, receipt);
+    }
   }
   if (authorities.size > 1) {
     throw new NativeNvidiaProviderError(

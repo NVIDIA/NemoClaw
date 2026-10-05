@@ -25,6 +25,9 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
+    expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAuthority).toMatchObject({
+      providerId: "provider-id",
+    });
 
     registry.reserveSandboxInferenceRoute("alpha", {
       provider: "anthropic-prod",
@@ -36,6 +39,7 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
     });
 
     expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAttachment).toBeUndefined();
+    expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAuthority).toBeUndefined();
   } finally {
     await fs.rm(home, { recursive: true, force: true });
     vi.unstubAllEnvs();
