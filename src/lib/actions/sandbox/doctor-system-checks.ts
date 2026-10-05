@@ -171,12 +171,34 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
+function legacyCloudflaredMigrationWarning(
+  sandboxName: string,
+  migrateState: typeof migrateLegacyCloudflaredState,
+): DoctorCheck | null {
+  try {
+    migrateState({ sandboxName });
+    return null;
+  } catch (error) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: error instanceof Error ? error.message : "legacy cloudflared migration failed",
+      hint: `stop unintended cloudflared processes, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+    };
+  }
+}
+
 export function cloudflaredDoctorCheck(
-  _sandboxName: string,
+  sandboxName: string,
   readState: typeof readCloudflaredState = readCloudflaredState,
+  migrateState: typeof migrateLegacyCloudflaredState = migrateLegacyCloudflaredState,
 ): DoctorCheck {
   const usesProductionState = readState === readCloudflaredState;
-  if (usesProductionState) migrateLegacyCloudflaredState();
+  if (usesProductionState) {
+    const warning = legacyCloudflaredMigrationWarning(sandboxName, migrateState);
+    if (warning) return warning;
+  }
   const state = readState(resolveTunnelPidDir());
   const managedPid =
     state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"

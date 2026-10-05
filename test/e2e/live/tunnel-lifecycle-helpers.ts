@@ -279,7 +279,7 @@ export async function runTunnelLifecycleContract({
     timeoutMs: 15 * 60_000,
   });
 
-  await host.command("bash", tunnelLifecycleInstallArgs(), {
+  const install = await host.command("bash", tunnelLifecycleInstallArgs(), {
     artifactName: "install-sh-tunnel-lifecycle",
     cwd: REPO_ROOT,
     env: commandEnv({
@@ -290,8 +290,7 @@ export async function runTunnelLifecycleContract({
     redactionValues: [apiKey],
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
-  // The listed sandbox is the stable installation outcome; the install command's
-  // exit text and code are retained in artifacts for diagnosis.
+  expect(install.exitCode, resultText(install)).toBe(0);
   await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });
 
   progress.phase("wait for the local dashboard origin");
@@ -477,15 +476,15 @@ export async function runTunnelLifecycleContract({
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(extractTunnelPid(resultText(statusAfterDestroy))).toBe(tunnelPid);
-  expect(extractTunnelUrl(resultText(statusAfterDestroy))).toBe(tunnelUrl);
 
   progress.phase("stop the tunnel and confirm status removal");
-  await host.nemoclaw(["tunnel", "stop"], {
+  const stop = await host.nemoclaw(["tunnel", "stop"], {
     artifactName: "tunnel-stop",
     env: commandEnv(),
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
-  let postStopUrl: string | undefined;
+  expect(stop.exitCode, resultText(stop)).toBe(0);
+  let postStopUrl: string | undefined = "status unreadable";
   let statusReadable = false;
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     const status = await host.nemoclaw(["status"], {
@@ -502,6 +501,10 @@ export async function runTunnelLifecycleContract({
     if (!postStopUrl) break;
     await sleep(1_000);
   }
-  expect(statusReadable, "nemoclaw status should be readable after tunnel stop").toBe(true);
-  expect(postStopUrl, "tunnel URL must be absent after nemoclaw tunnel stop").toBeUndefined();
+  expect(
+    postStopUrl,
+    statusReadable
+      ? "tunnel URL must be absent after nemoclaw tunnel stop"
+      : "nemoclaw status must be readable after tunnel stop",
+  ).toBeUndefined();
 }

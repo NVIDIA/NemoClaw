@@ -173,4 +173,17 @@ describe("doctor system checks", () => {
       hint: "process identity is unavailable; restore process inspection access, then retry",
     });
   });
+
+  it("reports legacy tunnel migration conflicts without aborting doctor", () => {
+    const { cloudflaredDoctorCheck } = requireDist(modulePath);
+    const result = cloudflaredDoctorCheck("my-sandbox", undefined, () => {
+      throw new Error("Multiple recorded cloudflared processes are running");
+    });
+
+    expect(result).toMatchObject({
+      status: "warn",
+      detail: "Multiple recorded cloudflared processes are running",
+      hint: "stop unintended cloudflared processes, then rerun `nemoclaw my-sandbox doctor`",
+    });
+  });
 });

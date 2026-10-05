@@ -28,6 +28,7 @@ import {
   getServiceStatuses,
   getTunnelUrl,
   migrateLegacyCloudflaredState,
+  type CloudflaredState,
   type ProcessControl,
   readCloudflaredState,
   readWindowsProcessCommandLine,
@@ -70,8 +71,8 @@ function fakeCloudflaredProcessControl(): ProcessControl {
 }
 
 describe("findUnmanagedCloudflaredPids", () => {
-  it("finds only executable cloudflared processes not already managed", () => {
-    const pids = findUnmanagedCloudflaredPids(200, () =>
+  it("finds only executable cloudflared processes not recorded by NemoClaw", () => {
+    const pids = findUnmanagedCloudflaredPids([200, 500], () =>
       [
         "  100 cloudflared cloudflared tunnel --url http://localhost:18789",
         "  200 /usr/local/bin/cloudflared /usr/local/bin/cloudflared tunnel run",
@@ -81,7 +82,7 @@ describe("findUnmanagedCloudflaredPids", () => {
       ].join("\n"),
     );
 
-    expect(pids).toEqual([100, 500]);
+    expect(pids).toEqual([100]);
   });
 
   it("fails closed to no discovery when the process list is unavailable", () => {
@@ -152,12 +153,10 @@ describe("getServiceStatuses", () => {
   });
 
   it("detects a stale PID file as not running with null pid", () => {
-    // Write a PID that doesn't correspond to a running process
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
     const statuses = getServiceStatuses({ pidDir });
     const cf = statuses.find((s) => s.name === "cloudflared");
     expect(cf?.running).toBe(false);
-    // Dead processes should have pid normalized to null
     expect(cf?.pid).toBeNull();
   });
 
@@ -240,21 +239,21 @@ describe("host-scoped tunnel PID directory (#11628)", () => {
 
 describe("legacy tunnel state migration (#11628)", () => {
   const targetPidDir = resolveTunnelPidDir();
-  let legacyPidDirs: string[];
+  let legacyRoot: string;
 
   beforeEach(() => {
-    legacyPidDirs = [];
+    legacyRoot = mkdtempSync(join(tmpdir(), "nemoclaw-legacy-root-"));
     rmSync(targetPidDir, { recursive: true, force: true });
   });
 
   afterEach(() => {
-    for (const pidDir of legacyPidDirs) rmSync(pidDir, { recursive: true, force: true });
+    rmSync(legacyRoot, { recursive: true, force: true });
     rmSync(targetPidDir, { recursive: true, force: true });
   });
 
-  function createLegacyState(pid: number): string {
-    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-services-legacy-11628-"));
-    legacyPidDirs.push(pidDir);
+  function createLegacyState(name: string, pid: number): string {
+    const pidDir = join(legacyRoot, `nemoclaw-services-${name}`);
+    mkdirSync(pidDir);
     writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
     writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com\n", {
       mode: 0o600,
@@ -262,8 +261,9 @@ describe("legacy tunnel state migration (#11628)", () => {
     return pidDir;
   }
 
-  it("adopts one verified legacy record into host state", () => {
-    const legacyPidDir = createLegacyState(4242);
+  it("adopts one verified record owned by the selected gateway registry", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    const foreignPidDir = createLegacyState("foreign", 4343);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
@@ -271,9 +271,13 @@ describe("legacy tunnel state migration (#11628)", () => {
         migrateLegacyCloudflaredState(
           {},
           {
-            legacyPidDirs: () => [legacyPidDir],
+            legacyPidDirs: () => [foreignPidDir, legacyPidDir],
+            registeredSandboxNames: () => ["legacy"],
             readState: (pidDir) =>
-              pidDir === legacyPidDir ? { kind: "running", pid: 4242 } : { kind: "stopped" },
+              new Map<string, CloudflaredState>([
+                [legacyPidDir, { kind: "running", pid: 4242 }],
+                [foreignPidDir, { kind: "running", pid: 4343 }],
+              ]).get(pidDir) ?? { kind: "stopped" },
           },
         ),
       ).toBe(true);
@@ -286,17 +290,19 @@ describe("legacy tunnel state migration (#11628)", () => {
       "legacy.trycloudflare.com",
     );
     expect(existsSync(join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(foreignPidDir, "cloudflared.pid"))).toBe(true);
   });
 
   it("fails closed when multiple verified legacy records are live", () => {
-    const first = createLegacyState(4242);
-    const second = createLegacyState(4343);
+    const first = createLegacyState("first", 4242);
+    const second = createLegacyState("second", 4343);
 
     expect(() =>
       migrateLegacyCloudflaredState(
         {},
         {
           legacyPidDirs: () => [first, second],
+          registeredSandboxNames: () => ["first", "second"],
           readState: (pidDir) => {
             if (pidDir === first) return { kind: "running", pid: 4242 };
             if (pidDir === second) return { kind: "running", pid: 4343 };
@@ -312,7 +318,7 @@ describe("legacy tunnel state migration (#11628)", () => {
   });
 
   it("fails closed when host and legacy records are both live", () => {
-    const legacyPidDir = createLegacyState(4343);
+    const legacyPidDir = createLegacyState("legacy", 4343);
     mkdirSync(targetPidDir, { recursive: true });
     writeFileSync(join(targetPidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -321,6 +327,7 @@ describe("legacy tunnel state migration (#11628)", () => {
         {},
         {
           legacyPidDirs: () => [legacyPidDir],
+          registeredSandboxNames: () => ["legacy"],
           readState: (pidDir) =>
             pidDir === targetPidDir
               ? { kind: "running", pid: 4242 }
@@ -355,14 +362,12 @@ describe("showStatus", () => {
   });
 
   it("does not show tunnel URL when cloudflared is not running", () => {
-    // Write a stale log file but no running process
     writeFileSync(join(pidDir, "cloudflared.log"), "https://abc-def.trycloudflare.com");
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showStatus({ pidDir });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
-    // Should NOT show the URL since cloudflared is not actually running
     expect(output).not.toContain("Public URL");
     logSpy.mockRestore();
   });
@@ -649,7 +654,6 @@ describe("readCloudflaredState", () => {
   });
 
   it("returns stale-pid-process when the PID is dead (kernel ESRCH)", () => {
-    // PID > max(int32) is virtually guaranteed dead on macOS/Linux.
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
     const state = readCloudflaredState(pidDir);
     expect(state.kind).toBe("stale-pid-process");
@@ -751,7 +755,6 @@ describe("stopAll", () => {
         status: 0,
         signal: null,
       };
-      // Return an empty model list so the unload's for-loop is a no-op.
       if (command === "curl" && args.some((a) => a.endsWith("/api/ps"))) {
         reply.stdout = JSON.stringify({ models: [] });
         reply.output = ["", reply.stdout, ""];
@@ -1415,7 +1418,6 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     vi.restoreAllMocks();
   });
 
-  // Scenario 14
   it("calls registration with the raw discovered URL and the opts sandbox name", async () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1438,7 +1440,6 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     );
   });
 
-  // Scenario 15
   it("skips registration and warns when no sandbox name is available", async () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1455,7 +1456,6 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     expect(output).toContain("No sandbox name available — skipping tunnel-origin registration");
   });
 
-  // Scenario 16
   it("does not register when no tunnel URL is produced, but still prints the banner", async () => {
     // A present-but-URL-less cloudflared would force startAll's 15s URL-wait
     // poll and exceed the 5s test budget, so drive the same tunnelUrl==="" branch

@@ -20,14 +20,20 @@ import { basename, join } from "node:path";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
-import { DASHBOARD_PORT } from "../core/ports";
+import { DASHBOARD_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   clearPendingOllamaModelCleanup as clearDefaultPendingOllamaModelCleanup,
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
 import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
+import { listGatewayStateRoots, resolveHome } from "../state/gateway-registry";
 import { resolveNemoclawStateDir } from "../state/paths";
+import {
+  listPendingSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+  listSandboxNamesInGatewayRoot,
+} from "../state/registry/cross-port";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
@@ -203,7 +209,7 @@ function commandLineMayWrapCloudflared(commandLine: string): boolean {
 
 /** Find current-user cloudflared processes that have no NemoClaw PID record. */
 export function findUnmanagedCloudflaredPids(
-  managedPid: number | null,
+  managedPid: number | readonly number[] | null,
   captureProcessList: () => string = () =>
     execFileSync("ps", ["-x", "-o", "pid=", "-o", "comm=", "-o", "args="], {
       encoding: "utf-8",
@@ -219,18 +225,49 @@ export function findUnmanagedCloudflaredPids(
     return [];
   }
 
+  const managedPids = new Set(
+    managedPid === null ? [] : typeof managedPid === "number" ? [managedPid] : managedPid,
+  );
   return output.split(/\r?\n/).flatMap((line) => {
     const match = /^\s*(\d+)\s+(\S+)(?:\s+(.*))?$/.exec(line);
     if (!match) return [];
     const pid = Number(match[1]);
-    if (!Number.isSafeInteger(pid) || pid <= 0 || pid === managedPid) return [];
+    if (!Number.isSafeInteger(pid) || pid <= 0 || managedPids.has(pid)) return [];
     const executable = basename(match[2] ?? "").toLowerCase();
     return executable === "cloudflared" || executable === "cloudflared.exe" ? [pid] : [];
   });
 }
 
+function nemoClawManagedCloudflaredPids(): number[] {
+  try {
+    const home = resolveHome();
+    const sandboxNames = new Set([
+      ...listPublishedSandboxNamesAcrossGatewayRoots(home),
+      ...listPendingSandboxNamesAcrossGatewayRoots(home),
+    ]);
+    const pidDirs = new Set([
+      resolvePidDir({}),
+      ...listGatewayStateRoots(home).map(({ root }) => join(root, "state", "tunnel")),
+      ...[...sandboxNames].flatMap((name) => [
+        `/tmp/nemoclaw-services-${name}`,
+        `/tmp/nemoclaw-services-${name}-googlechat`,
+      ]),
+    ]);
+    return [...pidDirs].flatMap((pidDir) => {
+      const state = readCloudflaredState(pidDir);
+      return state.kind === "running" || state.kind === "unverified-pid-process" ? [state.pid] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function unmanagedCloudflaredPids(opts: ServiceOptions, managedPid: number | null): number[] {
-  return (opts.unmanagedCloudflaredPids ?? findUnmanagedCloudflaredPids)(managedPid);
+  if (opts.unmanagedCloudflaredPids) return opts.unmanagedCloudflaredPids(managedPid);
+  return findUnmanagedCloudflaredPids([
+    ...(managedPid === null ? [] : [managedPid]),
+    ...nemoClawManagedCloudflaredPids(),
+  ]);
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -789,6 +826,7 @@ function legacyTunnelPidDirs(): string[] {
 export interface LegacyCloudflaredMigrationDeps {
   legacyPidDirs?: () => string[];
   readState?: (pidDir: string) => CloudflaredState;
+  registeredSandboxNames?: () => readonly string[];
 }
 
 /**
@@ -804,10 +842,18 @@ export function migrateLegacyCloudflaredState(
 
   const targetPidDir = resolvePidDir(opts);
   const readState = deps.readState ?? readCloudflaredState;
+  const registeredSandboxNames =
+    deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(GATEWAY_PORT));
   ensurePidDir(targetPidDir);
   const targetState = readState(targetPidDir);
+  const eligiblePidDirs = new Set(
+    registeredSandboxNames().map((name) =>
+      basename(resolveSandboxServicePidDir({ sandboxName: name })),
+    ),
+  );
 
   const candidates = (deps.legacyPidDirs ?? legacyTunnelPidDirs)().flatMap((pidDir) => {
+    if (!eligiblePidDirs.has(basename(pidDir))) return [];
     const state = readState(pidDir);
     return state.kind === "running" ? [{ pidDir, pid: state.pid }] : [];
   });
