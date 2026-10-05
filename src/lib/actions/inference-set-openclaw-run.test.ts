@@ -125,6 +125,82 @@ describe("runInferenceSet OpenClaw routing", () => {
     );
   });
 
+  it("creates a new native NVIDIA provider after reset removes retained authority", async () => {
+    const providerId = "22222222-3333-4444-8555-666666666666";
+    let providerPresent = false;
+    let attached = false;
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => {
+      providerPresent = true;
+      return { ok: true };
+    });
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider: vi.fn(async () =>
+        providerPresent
+          ? {
+              ok: true as const,
+              value: {
+                name: "nemoclaw-nvidia-prod-v1",
+                type: "nemoclaw-nvidia-inference-v1",
+                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+                configKeys: [],
+                revision: { id: providerId, resourceVersion: 1 },
+              },
+            }
+          : {
+              ok: false as const,
+              error: {
+                kind: "command" as const,
+                reason: "not_found" as const,
+                message: "provider not found",
+              },
+            },
+      ),
+      createProvider,
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? ["nemoclaw-nvidia-prod-v1"] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+      providerAdapter,
+      resolveCredentialValue: () => "replacement-credential",
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect(createProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "nemoclaw-nvidia-prod-v1",
+      type: "nemoclaw-nvidia-inference-v1",
+      credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "replacement-credential" }],
+      config: [],
+      fromExisting: false,
+    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId }),
+        nativeNvidiaProviderAuthority: expect.objectContaining({ providerId }),
+      }),
+    );
+  });
+
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
     let attached = true;
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {

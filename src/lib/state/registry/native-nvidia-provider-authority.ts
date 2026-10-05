@@ -34,7 +34,19 @@ export function setNativeNvidiaProviderAuthority(
 export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
   withLock(() => {
     const data = load();
-    if (!applyRemoveNativeNvidiaProviderAuthority(data, gatewayName)) return;
+    let changed = applyRemoveNativeNvidiaProviderAuthority(data, gatewayName);
+    for (const [sandboxName, sandbox] of Object.entries(data.sandboxes)) {
+      if (
+        sandbox.gatewayName !== gatewayName ||
+        sandbox.nativeNvidiaProviderAuthority === undefined
+      ) {
+        continue;
+      }
+      const { nativeNvidiaProviderAuthority: _removedAuthority, ...retained } = sandbox;
+      data.sandboxes[sandboxName] = retained;
+      changed = true;
+    }
+    if (!changed) return;
     save(data);
   });
 }

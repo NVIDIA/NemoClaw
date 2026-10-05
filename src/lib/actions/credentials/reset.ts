@@ -141,6 +141,11 @@ export async function runCredentialsResetAction(
     recovery.error?.kind === "command" &&
     recovery.error.reason === "not_found"
   ) {
+    if (nativeNvidiaProvider) {
+      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+        target.gatewayName,
+      );
+    }
     const removedLocal = forgetExtraProvider(key);
     return ok([
       removedLocal
