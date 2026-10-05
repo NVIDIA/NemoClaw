@@ -117,6 +117,9 @@ describe("sandbox registration route transaction", () => {
       },
       updateSandboxRegistry: () => {
         events.push("registry");
+        expect(fs.existsSync(path.join(process.env.HOME!, ".nemoclaw-portable-host.lock"))).toBe(
+          true,
+        );
       },
     });
 
