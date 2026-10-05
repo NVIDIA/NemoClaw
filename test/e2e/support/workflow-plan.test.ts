@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(78);
+    expect(plan.coverageMatrix).toHaveLength(79);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -158,7 +158,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
