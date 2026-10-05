@@ -9,8 +9,6 @@ import {
   type ProcessSessionResult,
 } from "../../core/process-session";
 import { spawnExitCode } from "../../core/process-exit";
-import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { isValidName } from "../../sandbox-name-contract";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import type { OpenshellAsyncCaptureSignalSource } from "./client";
 import { captureOpenshellCommandAsyncResult } from "./command-execution";
@@ -27,6 +25,13 @@ import {
 } from "./sandbox-command";
 import { buildSandboxCommandStdio } from "./sandbox-command-stdio";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import {
+  assertCliOpenShellSandboxName,
+  assertCliOpenShellSessionTarget,
+  assertCliOpenShellTarget,
+} from "./target-validation";
+
+export { assertCliOpenShellSandboxName, assertCliOpenShellTarget } from "./target-validation";
 
 import { runCapturedProcess, type CapturedProcessChild } from "../../core/process-capture";
 import type {
@@ -93,17 +98,6 @@ export type CliOpenShellSandboxCommandExecutorDeps = Readonly<{
 
 function targetArgs(target: OpenShellGatewayTarget): string[] {
   return target.kind === "named" ? ["-g", target.gatewayName] : [];
-}
-
-function assertTarget(target: OpenShellGatewayTarget, environment = process.env): void {
-  if (target.kind === "named" && !isValidName(target.gatewayName)) {
-    throw new Error("Invalid OpenShell gateway name");
-  }
-  assertNoOpenShellGatewayEndpointOverride(environment);
-}
-
-function assertSandboxName(sandboxName: string): void {
-  if (!isValidName(sandboxName)) throw new Error("Invalid OpenShell sandbox name");
 }
 
 export function buildCliOpenShellSandboxExecArgs(
@@ -273,8 +267,8 @@ export function createCliOpenShellSandboxCommandExecutor(
   const runBuffered = deps.runBuffered ?? runCliOpenShellBufferedCommand;
   return {
     probeDirectory: async (request) => {
-      assertSandboxName(request.sandboxName);
-      assertTarget(request.target);
+      assertCliOpenShellSandboxName(request.sandboxName);
+      assertCliOpenShellTarget(request.target);
       const binary = resolveBinary();
       if (!binary) {
         return {
@@ -302,9 +296,9 @@ export function createCliOpenShellSandboxCommandExecutor(
       return result.status === 1 ? { state: "missing" } : { state: "unobservable" };
     },
     runBuffered: async (request) => {
-      assertSandboxName(request.sandboxName);
+      assertCliOpenShellSandboxName(request.sandboxName);
       const environment = request.environment ?? deps.hostEnv ?? buildSubprocessEnv();
-      assertTarget(request.target, environment);
+      assertCliOpenShellTarget(request.target, environment);
       const binary = resolveBinary();
       if (!binary) {
         return {
@@ -328,8 +322,8 @@ export function createCliOpenShellSandboxCommandExecutor(
       return bufferedCommandCompletion(result);
     },
     runStreaming: async (request) => {
-      assertSandboxName(request.sandboxName);
-      assertTarget(request.target);
+      assertCliOpenShellSandboxName(request.sandboxName);
+      assertCliOpenShellTarget(request.target);
       const binary = resolveBinary();
       if (!binary) return unavailableBinary();
       const result = await runCliOpenShellStreamingCommand(
@@ -421,12 +415,6 @@ function sessionOutcome(
 }
 
 function sessionArgs(request: OpenShellSandboxSessionRequest): string[] {
-  if (
-    !isValidName(request.sandboxName) ||
-    (request.target.kind === "named" && !isValidName(request.target.gatewayName))
-  ) {
-    throw new Error("Invalid OpenShell session target");
-  }
   if (request.kind === "connect") {
     // OpenShell 0.0.116 changed `sandbox connect` from opening a fresh SSH
     // shell to attaching the sandbox's registered main process. NemoClaw's
@@ -465,7 +453,7 @@ export function createCliOpenShellSandboxSessionExecutor(
       let binary: string | null;
       let args: string[];
       try {
-        assertNoOpenShellGatewayEndpointOverride(environment);
+        assertCliOpenShellSessionTarget(request.sandboxName, request.target, environment);
         args = sessionArgs(request);
         binary = (deps.resolveBinary ?? resolveOpenshellBinaryOrNull)();
       } catch (error) {

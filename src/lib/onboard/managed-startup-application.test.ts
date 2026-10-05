@@ -43,7 +43,6 @@ function agentConfigFor(agent: ManagedStartupAgent): ManagedStartupAgentConfig {
         agentTimeoutSeconds: 900,
         heartbeatEvery: null,
         extraAgents: { agents: [], defaults: {}, main: {} },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
         minimalBootstrap: true,
       };
     case "hermes":

@@ -27,6 +27,8 @@ describe("standard E2E execution profile", () => {
   });
 
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
+    // The original 70-minute path now includes native configuration and plugin lifecycle work.
+    expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
     expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
       FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     );
@@ -87,11 +89,11 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;
     };
-    workflow.jobs["catalogue-brave-nvidia-inference"]!.with.trusted_main =
+    workflow.jobs["catalogue-nvidia-inference"]!.with.trusted_main =
       "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue-brave-nvidia-inference must pass trusted_main from the catalogue matrix",
+      "catalogue-nvidia-inference must pass trusted_main from the catalogue matrix",
     );
   });
 
@@ -204,8 +206,6 @@ describe("standard E2E execution profile", () => {
     steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
     steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
       "\necho candidate-controlled";
-    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
-      "echo unsafe swap";
     steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
       "sudo apt-get install cloudflared";
     steps.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.with!.name =
@@ -230,7 +230,6 @@ describe("standard E2E execution profile", () => {
         expect.arrayContaining([
           "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
-          "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
           "standard E2E profile must install only the reviewed cloudflared package",
           "standard E2E profile must download the run-scoped reviewed SDK archive",
           "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
@@ -320,19 +319,19 @@ describe("standard E2E execution profile", () => {
       (step) => step.name === "Write E2E evidence manifest",
     )!.run!;
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-evidence-manifest-"));
-    const artifactDirectory = path.join("e2e-artifacts", "live", "snapshot-commands");
+    const artifactDirectory = path.join("e2e-artifacts", "live", "onboard-resume");
     const environment = {
       ...process.env,
       ARTIFACT_DIRECTORY: artifactDirectory,
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
       COVERAGE_VARIANT: "default-podman",
-      EXECUTION_ID: "snapshot-commands-default-podman",
+      EXECUTION_ID: "onboard-resume-default-podman",
       JOB_STATUS: "success",
       RUNTIME_PROVIDER: "podman",
       RUN_ATTEMPT: "2",
       RUN_ID: "123",
-      TARGET_ID: "snapshot-commands",
+      TARGET_ID: "onboard-resume",
       WORKFLOW_REPOSITORY: "NVIDIA/NemoClaw",
       WORKFLOW_SHA: "b".repeat(40),
     };
@@ -355,8 +354,8 @@ describe("standard E2E execution profile", () => {
         ),
       ).toEqual({
         kind: "nemoclaw-e2e-evidence-v1",
-        targetId: "snapshot-commands",
-        executionId: "snapshot-commands-default-podman",
+        targetId: "onboard-resume",
+        executionId: "onboard-resume-default-podman",
         coverageVariant: "default-podman",
         runtimeProvider: "podman",
         candidate: { repository: "NVIDIA/NemoClaw", sha: "a".repeat(40) },

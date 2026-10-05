@@ -16,33 +16,17 @@ const coordinatorMock = vi.hoisted(() => ({
 vi.mock("./managed-startup/coordinator", () => coordinatorMock);
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import {
-  mockRootReplayFilesystem,
-  observeMatchingLink,
-  observeMatchingRename,
-  observeMatchingRenameTarget,
-  observeMatchingUnlink,
-} from "../../../test/helpers/managed-startup-root-replay-filesystem";
-import {
-  MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION,
-  MANAGED_BOOTSTRAP_REQUEST_FILE,
-  parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
-} from "./managed-bootstrap/envelope";
-import {
-  applyManagedBootstrapEnvelope,
-  type ManagedBootstrapImageRuntimeExpected,
-  main as mainManagedBootstrapImageRuntime,
-  managedBootstrapEnvelopeClaimPaths,
-  recoverManagedBootstrapEnvelopeClaim,
-} from "./managed-bootstrap/image-runtime";
+import { mockRootReplayFilesystem } from "../../../test/helpers/managed-startup-root-replay-filesystem";
 import {
   applyManagedStartupImageProfile,
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
+  MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_PROFILE_ENV,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
+  normalizeManagedStartupWorkspaceRoot,
+  publishManagedStartupCompletionAfterCommit,
   type ManagedStartupImageActionPlanInput,
   main as mainManagedStartupImageRuntime,
 } from "./managed-startup/image-runtime";
@@ -51,7 +35,6 @@ import {
   fingerprintManagedStartupProfile,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
-  type ManagedStartupProfile,
 } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import * as sharedStateTransaction from "./managed-startup/shared-state-transaction";
@@ -354,6 +337,140 @@ describe("managed startup image runtime", () => {
     }
   });
 
+  it.each([
+    ["openclaw", 998, 998, 0o755],
+    ["hermes", 998, 999, 0o755],
+    ["langchain-deepagents-code", 0, 999, 0o1775],
+    ["pi", 999, 999, 0o755],
+  ] as const)("restores the declared %s workspace-root posture", (agent, uid, gid, mode) => {
+    const lstat = vi
+      .fn()
+      .mockReturnValueOnce({
+        gid: 999,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        mode: 0o040000 | 0o755,
+        uid: 999,
+      })
+      .mockReturnValueOnce({
+        gid,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        mode: 0o040000 | mode,
+        uid,
+      });
+    const chown = vi.fn();
+    const chmod = vi.fn();
+
+    normalizeManagedStartupWorkspaceRoot(agent, { lstat, chown, chmod });
+
+    expect(chown).toHaveBeenCalledExactlyOnceWith("/sandbox", uid, gid);
+    expect(chmod).toHaveBeenCalledExactlyOnceWith("/sandbox", mode);
+    expect(lstat).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a symlinked workspace root before mutation", () => {
+    const chown = vi.fn();
+    const chmod = vi.fn();
+
+    expect(() =>
+      normalizeManagedStartupWorkspaceRoot("langchain-deepagents-code", {
+        lstat: () => ({
+          gid: 999,
+          isDirectory: () => false,
+          isSymbolicLink: () => true,
+          mode: 0o120777,
+          uid: 999,
+        }),
+        chown,
+        chmod,
+      }),
+    ).toThrow(/workspace root must be one real directory/u);
+    expect(chown).not.toHaveBeenCalled();
+    expect(chmod).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when workspace-root normalization does not settle", () => {
+    expect(() =>
+      normalizeManagedStartupWorkspaceRoot("langchain-deepagents-code", {
+        lstat: () => ({
+          gid: 999,
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          mode: 0o040000 | 0o1775,
+          uid: 999,
+        }),
+        chown: () => undefined,
+        chmod: () => undefined,
+      }),
+    ).toThrow(/workspace root does not match its declared posture/u);
+  });
+
+  it("recognizes the identity-bound completion wait used by the non-root startup hold", async () => {
+    await expect(
+      mainManagedStartupImageRuntime([
+        "--wait-for-completion",
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "not-an-identity",
+      ]),
+    ).rejects.toThrow(/bootstrap identity argument is missing or invalid/u);
+  });
+
+  it("publishes the authorized completion marker only after shared state commits", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const runtimeWrites: string[] = [];
+    const filesystem = mockRootReplayFilesystem(runtimeWrites);
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    const transactionStatus = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("pending");
+    const beginTransaction = vi
+      .spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction")
+      .mockReturnValue(true);
+
+    const applied = await applyManagedStartupRootRequest(
+      createManagedStartupRootApplyRequest({ agent: "openclaw", encodedProfile }),
+      {},
+      { bootstrapIdentity },
+    );
+
+    expect(applied.transactionPending).toBe(true);
+    expect(beginTransaction).toHaveBeenCalledWith(expect.objectContaining({ agent: "openclaw" }), {
+      bootstrapIdentity,
+    });
+    expect(filesystem.hasFile(MANAGED_STARTUP_RUNTIME_ENV_FILE)).toBe(true);
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(false);
+    expect(() =>
+      publishManagedStartupCompletionAfterCommit("openclaw", fingerprint, bootstrapIdentity),
+    ).toThrow(/requires a committed shared-state transaction/u);
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(false);
+
+    transactionStatus.mockReturnValue("committed");
+    publishManagedStartupCompletionAfterCommit("openclaw", fingerprint, bootstrapIdentity);
+
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(true);
+    expect(filesystem.readFile(MANAGED_STARTUP_COMPLETION_FILE)).toContain(fingerprint);
+  });
+
   it("verifies copied transaction status only through a read-only receipt mount", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const profileFingerprint = fingerprintManagedStartupProfile(profile);
@@ -386,6 +503,53 @@ describe("managed startup image runtime", () => {
       { readOnlyReceipt: true },
     );
     expect(write).toHaveBeenCalledWith("pending\n");
+  });
+
+  it("reports committed in-sandbox transaction state for resume recovery", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const profileFingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("committed");
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await mainManagedStartupImageRuntime([
+      "--shared-state-transaction-status",
+      "--agent",
+      profile.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+    ]);
+
+    expect(status).toHaveBeenCalledWith({
+      agent: profile.agent,
+      profileFingerprint,
+      bootstrapIdentity,
+    });
+    expect(write).toHaveBeenCalledWith("committed\n");
+  });
+
+  it("rolls back a pending transaction inside its exact managed sandbox", async () => {
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const rollback = vi
+      .spyOn(sharedStateTransaction, "rollbackManagedStartupSharedStateTransaction")
+      .mockReturnValue(true);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mainManagedStartupImageRuntime([
+      "--rollback-shared-state-transaction",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      bootstrapIdentity,
+    ]);
+
+    expect(rollback).toHaveBeenCalledWith("openclaw", { bootstrapIdentity });
   });
 
   function mockRootOwnedPolicyInstallPaths(
@@ -569,877 +733,5 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
-  });
-
-  it("publishes bootstrap completion only after application and preserves attempt identity", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    const bootstrapIdentity = "b".repeat(64);
-    const requestFile = MANAGED_BOOTSTRAP_REQUEST_FILE;
-    const completionFile = MANAGED_BOOTSTRAP_COMPLETION_FILE;
-    const rootApplyRequest = createManagedStartupRootApplyRequest({
-      agent: profile.agent,
-      encodedProfile,
-    });
-    const filesystem = mockRootReplayFilesystem(
-      [],
-      new Map([
-        [
-          requestFile,
-          {
-            contents: serializeManagedBootstrapEnvelope({
-              bootstrapIdentity,
-              rootApplyRequest,
-            }),
-            mode: 0o400,
-          },
-        ],
-      ]),
-    );
-    const beginTransaction = vi
-      .spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction")
-      .mockReturnValue(true);
-    coordinatorMock.coordinateManagedStartupApplication.mockImplementation(async () => {
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      return {
-        adapterApplied: false,
-        application: {
-          status: "committed",
-          stateDirectory: "/var/lib/nemoclaw/managed-startup",
-          generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-          profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-          corporateCaPath: null,
-          fingerprint,
-          expectedAgent: "openclaw",
-          profile,
-        },
-      };
-    });
-
-    await expect(
-      applyManagedBootstrapEnvelope(
-        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
-        {},
-        requestFile,
-        completionFile,
-      ),
-    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
-
-    expect(filesystem.hasFile(requestFile)).toBe(false);
-    expect(beginTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: profile.agent }),
-      { bootstrapIdentity },
-    );
-    expect(
-      fingerprintManagedStartupProfile(
-        beginTransaction.mock.calls[0]?.[0] as ManagedStartupProfile,
-      ),
-    ).toBe(fingerprint);
-    expect(parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? "")).toEqual(
-      {
-        schemaVersion: MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION,
-        agent: profile.agent,
-        bootstrapIdentity,
-        profileFingerprint: fingerprint,
-        transactionPending: true,
-      },
-    );
-  });
-
-  it("applies and verifies bootstrap completion through the CLI modes", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    const bootstrapIdentity = "b".repeat(64);
-    const rootApplyRequest = createManagedStartupRootApplyRequest({
-      agent: profile.agent,
-      encodedProfile,
-    });
-    mockRootReplayFilesystem(
-      [],
-      new Map([
-        [
-          MANAGED_BOOTSTRAP_REQUEST_FILE,
-          {
-            contents: serializeManagedBootstrapEnvelope({
-              bootstrapIdentity,
-              rootApplyRequest,
-            }),
-            mode: 0o400,
-          },
-        ],
-      ]),
-    );
-    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
-      true,
-    );
-    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
-      adapterApplied: false,
-      application: {
-        status: "committed",
-        stateDirectory: "/var/lib/nemoclaw/managed-startup",
-        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-        corporateCaPath: null,
-        fingerprint,
-        expectedAgent: "openclaw",
-        profile,
-      },
-    });
-    vi.spyOn(
-      sharedStateTransaction,
-      "getManagedStartupSharedStateTransactionStatus",
-    ).mockReturnValue("pending");
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const cliArguments = [
-      "--agent",
-      profile.agent,
-      "--profile-fingerprint",
-      fingerprint,
-      "--bootstrap-identity",
-      bootstrapIdentity,
-    ];
-
-    await mainManagedBootstrapImageRuntime(["--apply-bootstrap-file", ...cliArguments]);
-    expect(log).toHaveBeenLastCalledWith(
-      `[managed-startup] applied ${profile.agent} profile ${fingerprint}; transaction pending`,
-    );
-    await mainManagedBootstrapImageRuntime(["--verify-bootstrap-completion", ...cliArguments]);
-    expect(log).toHaveBeenLastCalledWith(
-      `[managed-startup] verified ${profile.agent} profile ${fingerprint} bootstrap ${bootstrapIdentity}; transaction pending`,
-    );
-  });
-
-  it.each([
-    ["unsafe metadata", 0o444, "b".repeat(64), /mode 0400/u],
-    ["mismatched identity", 0o400, "c".repeat(64), /identity does not match/u],
-  ])(
-    "rejects bootstrap envelope %s without consuming the canonical request",
-    async (_label, mode, envelopeIdentity, error) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const request = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: envelopeIdentity,
-        rootApplyRequest: createManagedStartupRootApplyRequest({
-          agent: profile.agent,
-          encodedProfile: encodeManagedStartupProfile(profile),
-        }),
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([[MANAGED_BOOTSTRAP_REQUEST_FILE, { contents: request, mode }]]),
-      );
-
-      await expect(applyManagedBootstrapEnvelope(expected, {})).rejects.toThrow(error);
-      expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(request);
-      expect(filesystem.hasFile(managedBootstrapEnvelopeClaimPaths().file)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-    },
-  );
-
-  it("retains the exact bootstrap request after failure and consumes it after a successful retry", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    const bootstrapIdentity = "b".repeat(64);
-    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-    const requestFile = MANAGED_BOOTSTRAP_REQUEST_FILE;
-    const completionFile = MANAGED_BOOTSTRAP_COMPLETION_FILE;
-    const filesystem = mockRootReplayFilesystem(
-      [],
-      new Map([
-        [
-          requestFile,
-          {
-            contents: serializeManagedBootstrapEnvelope({
-              bootstrapIdentity,
-              rootApplyRequest: createManagedStartupRootApplyRequest({
-                agent: profile.agent,
-                encodedProfile,
-              }),
-            }),
-            mode: 0o400,
-          },
-        ],
-      ]),
-    );
-    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
-      true,
-    );
-    coordinatorMock.coordinateManagedStartupApplication
-      .mockRejectedValueOnce(new Error("application failed"))
-      .mockResolvedValue({
-        adapterApplied: false,
-        application: {
-          status: "committed",
-          stateDirectory: "/var/lib/nemoclaw/managed-startup",
-          generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-          profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-          corporateCaPath: null,
-          fingerprint,
-          expectedAgent: "openclaw",
-          profile,
-        },
-      });
-
-    await expect(
-      applyManagedBootstrapEnvelope(
-        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
-        {},
-        requestFile,
-        completionFile,
-      ),
-    ).rejects.toThrow("application failed");
-    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-    expect(filesystem.hasFile(requestFile)).toBe(false);
-    expect(filesystem.hasFile(claim.file)).toBe(true);
-    fs.chmodSync(path.dirname(claim.directory), 0o777);
-    expect(() => recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toThrow(
-      "claim parent must be a protected root-owned directory",
-    );
-    fs.chmodSync(path.dirname(claim.directory), 0o755);
-    expect(
-      recoverManagedBootstrapEnvelopeClaim(
-        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
-        requestFile,
-      ),
-    ).toBe(true);
-    expect(filesystem.hasFile(completionFile)).toBe(false);
-
-    await expect(
-      applyManagedBootstrapEnvelope(
-        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
-        {},
-        requestFile,
-        completionFile,
-      ),
-    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
-    expect(filesystem.hasFile(requestFile)).toBe(false);
-    expect(filesystem.hasFile(claim.file)).toBe(false);
-    expect(
-      parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
-    ).toMatchObject({
-      agent: profile.agent,
-      bootstrapIdentity,
-      profileFingerprint: fingerprint,
-      transactionPending: true,
-    });
-    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    {
-      label: "default",
-      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
-      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
-      apply: (expected: ManagedBootstrapImageRuntimeExpected) =>
-        applyManagedBootstrapEnvelope(expected, {}),
-    },
-    {
-      label: "injected",
-      requestFile: "/run/nemoclaw/injected-managed-bootstrap-request.json",
-      completionFile: "/run/nemoclaw/injected-managed-bootstrap-completion.json",
-      apply: (expected: ManagedBootstrapImageRuntimeExpected) =>
-        applyManagedBootstrapEnvelope(
-          expected,
-          {},
-          "/run/nemoclaw/injected-managed-bootstrap-request.json",
-          "/run/nemoclaw/injected-managed-bootstrap-completion.json",
-        ),
-    },
-  ] satisfies ReadonlyArray<{
-    readonly label: string;
-    readonly requestFile: string;
-    readonly completionFile: string;
-    readonly apply: (expected: ManagedBootstrapImageRuntimeExpected) => Promise<unknown>;
-  }>)(
-    "preserves a newly staged $label request after claiming the exact attempt",
-    async ({ requestFile, completionFile, apply }) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const rootApplyRequest = createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      });
-      const replacement = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: "c".repeat(64),
-        rootApplyRequest,
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([
-          [
-            requestFile,
-            {
-              contents: serializeManagedBootstrapEnvelope({
-                bootstrapIdentity,
-                rootApplyRequest,
-              }),
-              mode: 0o400,
-            },
-          ],
-        ]),
-      );
-      vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
-        true,
-      );
-      coordinatorMock.coordinateManagedStartupApplication.mockImplementation(async () => {
-        filesystem.writeFile(requestFile, replacement, 0o400);
-        return {
-          adapterApplied: false,
-          application: {
-            status: "committed",
-            stateDirectory: "/var/lib/nemoclaw/managed-startup",
-            generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-            profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-            corporateCaPath: null,
-            fingerprint,
-            expectedAgent: "openclaw",
-            profile,
-          },
-        };
-      });
-
-      await expect(apply(expected)).resolves.toMatchObject({
-        fingerprint,
-        transactionPending: true,
-      });
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(
-        parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
-      ).toMatchObject({ bootstrapIdentity, profileFingerprint: fingerprint });
-      expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledOnce();
-    },
-  );
-
-  it.each([
-    {
-      label: "default",
-      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
-      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
-    },
-    {
-      label: "injected",
-      requestFile: "/run/nemoclaw/preclaim-managed-bootstrap-request.json",
-      completionFile: "/run/nemoclaw/preclaim-managed-bootstrap-completion.json",
-    },
-  ])(
-    "preserves a pre-claim $label replacement without publishing completion",
-    async ({ requestFile, completionFile }) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const rootApplyRequest = createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      });
-      const replacement = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: "c".repeat(64),
-        rootApplyRequest,
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([
-          [
-            requestFile,
-            {
-              contents: serializeManagedBootstrapEnvelope({
-                bootstrapIdentity,
-                rootApplyRequest,
-              }),
-              mode: 0o400,
-            },
-          ],
-        ]),
-      );
-      const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-      filesystem.beforeRename(
-        observeMatchingRename(requestFile, claim.file, () => {
-          filesystem.writeFile(requestFile, replacement, 0o400);
-        }),
-      );
-
-      await expect(
-        applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-      ).rejects.toThrow(/changed before its atomic claim/u);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(filesystem.hasFile(claim.file)).toBe(false);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-      expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(false);
-    },
-  );
-
-  it.each([
-    {
-      label: "default",
-      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
-      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
-    },
-    {
-      label: "injected",
-      requestFile: "/run/nemoclaw/post-rename-managed-bootstrap-request.json",
-      completionFile: "/run/nemoclaw/post-rename-managed-bootstrap-completion.json",
-    },
-  ])(
-    "restores a $label replacement after interruption immediately after claim rename",
-    async ({ requestFile, completionFile }) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const rootApplyRequest = createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      });
-      const replacement = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: "c".repeat(64),
-        rootApplyRequest,
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([
-          [
-            requestFile,
-            {
-              contents: serializeManagedBootstrapEnvelope({
-                bootstrapIdentity,
-                rootApplyRequest,
-              }),
-              mode: 0o400,
-            },
-          ],
-        ]),
-      );
-      const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-      filesystem.beforeRename(
-        observeMatchingRename(requestFile, claim.file, () => {
-          filesystem.writeFile(requestFile, replacement, 0o400);
-        }),
-      );
-      filesystem.afterRename(
-        observeMatchingRename(requestFile, claim.file, () => {
-          throw new Error("claim process interrupted");
-        }),
-      );
-
-      await expect(
-        applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-      ).rejects.toThrow(/could not atomically claim managed bootstrap envelope/u);
-      expect(filesystem.hasFile(requestFile)).toBe(false);
-      expect(filesystem.readFile(claim.file)).toBe(replacement);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-
-      filesystem.afterRename(null);
-      expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(true);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(filesystem.linkCount(requestFile)).toBe(1n);
-      expect(filesystem.hasFile(claim.file)).toBe(false);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    {
-      label: "default",
-      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
-      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
-    },
-    {
-      label: "injected",
-      requestFile: "/run/nemoclaw/interrupted-restore-managed-bootstrap-request.json",
-      completionFile: "/run/nemoclaw/interrupted-restore-managed-bootstrap-completion.json",
-    },
-  ])(
-    "reconciles an interrupted $label pre-claim replacement restoration",
-    async ({ requestFile, completionFile }) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const replacementIdentity = "c".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const replacementExpected = {
-        agent: profile.agent,
-        profileFingerprint: fingerprint,
-        bootstrapIdentity: replacementIdentity,
-      };
-      const rootApplyRequest = createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      });
-      const replacement = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: replacementIdentity,
-        rootApplyRequest,
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([
-          [
-            requestFile,
-            {
-              contents: serializeManagedBootstrapEnvelope({
-                bootstrapIdentity,
-                rootApplyRequest,
-              }),
-              mode: 0o400,
-            },
-          ],
-        ]),
-      );
-      const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-      let interruptRestoration = true;
-      filesystem.beforeRename(
-        observeMatchingRename(requestFile, claim.file, () => {
-          filesystem.writeFile(requestFile, replacement, 0o400);
-        }),
-      );
-      filesystem.beforeUnlink(
-        observeMatchingUnlink(
-          claim.file,
-          () => {
-            throw new Error("restoration cleanup interrupted");
-          },
-          () => interruptRestoration,
-        ),
-      );
-
-      await expect(
-        applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-      ).rejects.toThrow(/could not remove restored managed bootstrap envelope/u);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(filesystem.readFile(claim.file)).toBe(replacement);
-      expect(filesystem.linkCount(requestFile)).toBe(2n);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-
-      interruptRestoration = false;
-      expect(recoverManagedBootstrapEnvelopeClaim(replacementExpected, requestFile)).toBe(true);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(filesystem.linkCount(requestFile)).toBe(1n);
-      expect(filesystem.hasFile(claim.file)).toBe(false);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-    },
-  );
-
-  it("fails closed without clobbering a second replacement during claim restoration", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    const bootstrapIdentity = "b".repeat(64);
-    const displacedIdentity = "c".repeat(64);
-    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-    const displacedExpected = {
-      agent: profile.agent,
-      profileFingerprint: fingerprint,
-      bootstrapIdentity: displacedIdentity,
-    };
-    const rootApplyRequest = createManagedStartupRootApplyRequest({
-      agent: profile.agent,
-      encodedProfile,
-    });
-    const displaced = serializeManagedBootstrapEnvelope({
-      bootstrapIdentity: displacedIdentity,
-      rootApplyRequest,
-    });
-    const latest = serializeManagedBootstrapEnvelope({
-      bootstrapIdentity: "d".repeat(64),
-      rootApplyRequest,
-    });
-    const filesystem = mockRootReplayFilesystem(
-      [],
-      new Map([
-        [
-          MANAGED_BOOTSTRAP_REQUEST_FILE,
-          {
-            contents: serializeManagedBootstrapEnvelope({
-              bootstrapIdentity,
-              rootApplyRequest,
-            }),
-            mode: 0o400,
-          },
-        ],
-      ]),
-    );
-    const claim = managedBootstrapEnvelopeClaimPaths();
-    filesystem.beforeRename(
-      observeMatchingRename(MANAGED_BOOTSTRAP_REQUEST_FILE, claim.file, () => {
-        filesystem.writeFile(MANAGED_BOOTSTRAP_REQUEST_FILE, displaced, 0o400);
-      }),
-    );
-    filesystem.beforeLink(
-      observeMatchingLink(claim.file, MANAGED_BOOTSTRAP_REQUEST_FILE, () => {
-        filesystem.writeFile(MANAGED_BOOTSTRAP_REQUEST_FILE, latest, 0o400);
-      }),
-    );
-
-    await expect(applyManagedBootstrapEnvelope(expected, {})).rejects.toThrow(
-      /canonical managed bootstrap request was replaced again/u,
-    );
-    expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(latest);
-    expect(filesystem.readFile(claim.file)).toBe(displaced);
-    expect(filesystem.linkCount(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(1n);
-    expect(filesystem.linkCount(claim.file)).toBe(1n);
-    expect(filesystem.hasFile(MANAGED_BOOTSTRAP_COMPLETION_FILE)).toBe(false);
-    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-    expect(recoverManagedBootstrapEnvelopeClaim(displacedExpected)).toBe(true);
-    expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(latest);
-    expect(filesystem.readFile(claim.file)).toBe(displaced);
-  });
-
-  it.each([
-    {
-      label: "default",
-      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
-      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
-    },
-    {
-      label: "injected",
-      requestFile: "/run/nemoclaw/failure-managed-bootstrap-request.json",
-      completionFile: "/run/nemoclaw/failure-managed-bootstrap-completion.json",
-    },
-  ])(
-    "keeps the $label private claim across completion failure and a new canonical request",
-    async ({ requestFile, completionFile }) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-      const rootApplyRequest = createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      });
-      const original = serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest });
-      const replacement = serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: "c".repeat(64),
-        rootApplyRequest,
-      });
-      const filesystem = mockRootReplayFilesystem(
-        [],
-        new Map([[requestFile, { contents: original, mode: 0o400 }]]),
-      );
-      const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-      vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
-        true,
-      );
-      coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
-        adapterApplied: false,
-        application: {
-          status: "committed",
-          stateDirectory: "/var/lib/nemoclaw/managed-startup",
-          generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-          profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-          corporateCaPath: null,
-          fingerprint,
-          expectedAgent: "openclaw",
-          profile,
-        },
-      });
-      filesystem.beforeRename(
-        observeMatchingRenameTarget(completionFile, () => {
-          filesystem.writeFile(requestFile, replacement, 0o400);
-          throw new Error("completion publication interrupted");
-        }),
-      );
-
-      await expect(
-        applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-      ).rejects.toThrow("could not atomically write");
-      expect(filesystem.readFile(claim.file)).toBe(original);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(filesystem.hasFile(completionFile)).toBe(false);
-
-      filesystem.beforeRename(null);
-      vi.spyOn(
-        sharedStateTransaction,
-        "getManagedStartupSharedStateTransactionStatus",
-      ).mockReturnValue("pending");
-      await expect(
-        applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-      ).resolves.toMatchObject({ fingerprint, transactionPending: true });
-      expect(filesystem.hasFile(claim.file)).toBe(false);
-      expect(filesystem.readFile(requestFile)).toBe(replacement);
-      expect(
-        parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
-      ).toMatchObject({ bootstrapIdentity, profileFingerprint: fingerprint });
-    },
-  );
-
-  it("recovers an empty claim directory and a completion-published claim cleanup interruption", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    const bootstrapIdentity = "b".repeat(64);
-    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
-    const requestFile = "/run/nemoclaw/crash-managed-bootstrap-request.json";
-    const completionFile = "/run/nemoclaw/crash-managed-bootstrap-completion.json";
-    const original = serializeManagedBootstrapEnvelope({
-      bootstrapIdentity,
-      rootApplyRequest: createManagedStartupRootApplyRequest({
-        agent: profile.agent,
-        encodedProfile,
-      }),
-    });
-    const filesystem = mockRootReplayFilesystem(
-      [],
-      new Map([[requestFile, { contents: original, mode: 0o400 }]]),
-    );
-    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
-    let interruptClaim = true;
-    filesystem.beforeRename(
-      observeMatchingRename(
-        requestFile,
-        claim.file,
-        () => {
-          throw new Error("claim interrupted");
-        },
-        () => interruptClaim,
-      ),
-    );
-    await expect(
-      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-    ).rejects.toThrow("could not atomically claim");
-    expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(true);
-
-    interruptClaim = false;
-    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
-      true,
-    );
-    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
-      adapterApplied: false,
-      application: {
-        status: "committed",
-        stateDirectory: "/var/lib/nemoclaw/managed-startup",
-        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-        corporateCaPath: null,
-        fingerprint,
-        expectedAgent: "openclaw",
-        profile,
-      },
-    });
-    let interruptCleanup = true;
-    filesystem.beforeUnlink(
-      observeMatchingUnlink(
-        claim.file,
-        () => {
-          throw new Error("claim cleanup interrupted");
-        },
-        () => interruptCleanup,
-      ),
-    );
-    await expect(
-      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-    ).rejects.toThrow("could not consume managed bootstrap envelope claim");
-    expect(filesystem.hasFile(completionFile)).toBe(true);
-    expect(filesystem.hasFile(claim.file)).toBe(true);
-
-    interruptCleanup = false;
-    vi.spyOn(
-      sharedStateTransaction,
-      "getManagedStartupSharedStateTransactionStatus",
-    ).mockReturnValue("pending");
-    await expect(
-      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
-    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
-    expect(filesystem.hasFile(claim.file)).toBe(false);
-    expect(filesystem.hasFile(completionFile)).toBe(true);
-  });
-
-  it.each([
-    ["pending", true],
-    ["committed", false],
-  ] as const)(
-    "binds a completed profile replay to its %s bootstrap transaction",
-    async (status, transactionPending) => {
-      const profile = managedStartupE2eProfile("openclaw");
-      const encodedProfile = encodeManagedStartupProfile(profile);
-      const fingerprint = fingerprintManagedStartupProfile(profile);
-      const bootstrapIdentity = "b".repeat(64);
-      mockRootReplayFilesystem([]);
-      coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
-        adapterApplied: false,
-        application: {
-          status: "committed",
-          stateDirectory: "/var/lib/nemoclaw/managed-startup",
-          generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-          profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-          corporateCaPath: null,
-          fingerprint,
-          expectedAgent: "openclaw",
-          profile,
-        },
-      });
-      await applyManagedStartupImageProfile("openclaw", {
-        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-        [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
-      });
-      const statusProbe = vi
-        .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
-        .mockReturnValue(status);
-
-      const result = await applyManagedStartupRootRequest(
-        createManagedStartupRootApplyRequest({ agent: profile.agent, encodedProfile }),
-        {},
-        { bootstrapIdentity },
-      );
-
-      expect(result).toMatchObject({ fingerprint, transactionPending });
-      expect(statusProbe).toHaveBeenCalledWith({
-        agent: "openclaw",
-        profileFingerprint: fingerprint,
-        bootstrapIdentity,
-      });
-    },
-  );
-
-  it("rejects a completed profile that has no authority for the bootstrap attempt", async () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const fingerprint = fingerprintManagedStartupProfile(profile);
-    mockRootReplayFilesystem([]);
-    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
-      adapterApplied: false,
-      application: {
-        status: "committed",
-        stateDirectory: "/var/lib/nemoclaw/managed-startup",
-        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
-        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
-        corporateCaPath: null,
-        fingerprint,
-        expectedAgent: "openclaw",
-        profile,
-      },
-    });
-    await applyManagedStartupImageProfile("openclaw", {
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
-    });
-    vi.spyOn(
-      sharedStateTransaction,
-      "getManagedStartupSharedStateTransactionStatus",
-    ).mockReturnValue("none");
-
-    await expect(
-      applyManagedStartupRootRequest(
-        createManagedStartupRootApplyRequest({ agent: profile.agent, encodedProfile }),
-        {},
-        { bootstrapIdentity: "b".repeat(64) },
-      ),
-    ).rejects.toThrow(/no shared-state authority/u);
-    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(1);
   });
 });

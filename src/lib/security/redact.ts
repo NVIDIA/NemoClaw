@@ -21,11 +21,12 @@ import type { StdioOptions } from "node:child_process";
 
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { isCredentialField } from "./credential-filter";
-import { redactUrlTokenFull, redactUrlTokenPartial, URL_TOKEN_PATTERN } from "./redact-url";
+import { redactUrlTokenFull, redactUrlTokenPartial } from "./redact-url";
 import {
   CONTEXT_PATTERNS,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
+  replaceUrlTokens,
   STRUCTURED_TOKEN_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
 } from "./secret-patterns";
@@ -62,7 +63,7 @@ function redactMatch(match: string): string {
 
 export function redact(str: string): string {
   if (typeof str !== "string") return str;
-  let out = str.replace(URL_TOKEN_PATTERN, (value) =>
+  let out = replaceUrlTokens(str, (value) =>
     redactUrlTokenPartial(value, isSensitiveKey, redactStandaloneSecrets),
   );
   for (const pat of SECRET_PATTERNS) {
@@ -197,7 +198,7 @@ export function redactFull(text: string): string {
 
 /** Fully redact secret patterns and credentials embedded in URL tokens. */
 export function redactFullWithUrls(text: string): string {
-  const redactedUrls = text.replace(URL_TOKEN_PATTERN, (url) => redactUrl(url) ?? "<REDACTED>");
+  const redactedUrls = replaceUrlTokens(text, (url) => redactUrl(url) ?? "<REDACTED>");
   return redactFull(redactedUrls);
 }
 

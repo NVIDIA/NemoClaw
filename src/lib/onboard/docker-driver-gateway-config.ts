@@ -19,6 +19,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
+import { GatewayStateConflictError } from "./errors/gateway-state-conflict";
 import {
   ExternalComponentContractError,
   type ExternalComponentGatewayConfiguration,
@@ -36,7 +37,15 @@ import {
   resolveConfiguredRuntimeProvider,
   resolveRegisteredRuntimeProvider,
 } from "./runtime-provider/selection";
-import { noteOnboardResumeHintShown } from "./resume-hint";
+
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./gateway/process-environment";
+export {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./gateway/process-environment";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -49,7 +58,6 @@ const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
 export const NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV =
   "NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY";
 export const NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY = "none";
-export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 interface FileIdentity {
   dev: number;
@@ -192,9 +200,20 @@ function closeRegularFileProof(proof: RegularFileProof): void {
   proof.file.close();
 }
 
+function asGatewayStateConflict<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof GatewayStateConflictError) throw error;
+    throw new GatewayStateConflictError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function assertExistingConfigProof(proof: ExistingConfigProof): void {
-  assertStateDirectoryIdentity(proof.stateDir, proof.stateDirIdentity);
-  assertRegularFileProof(proof);
+  asGatewayStateConflict(() => {
+    assertStateDirectoryIdentity(proof.stateDir, proof.stateDirIdentity);
+    assertRegularFileProof(proof);
+  });
 }
 
 function closeLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
@@ -202,11 +221,13 @@ function closeLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
 }
 
 function assertLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
-  const currentDirectory = fs.lstatSync(proof.jwtDir);
-  if (!sameFileIdentity(fileIdentity(currentDirectory), proof.directoryIdentity)) {
-    throw new Error(`Legacy gateway JWT directory changed during validation: ${proof.jwtDir}`);
-  }
-  for (const file of proof.files) assertRegularFileProof(file);
+  asGatewayStateConflict(() => {
+    const currentDirectory = fs.lstatSync(proof.jwtDir);
+    if (!sameFileIdentity(fileIdentity(currentDirectory), proof.directoryIdentity)) {
+      throw new Error(`Legacy gateway JWT directory changed during validation: ${proof.jwtDir}`);
+    }
+    for (const file of proof.files) assertRegularFileProof(file);
+  });
 }
 
 function openOwnedLegacyJwtBundle(stateDir: string, ownerUid: number): LegacyJwtBundleProof {
@@ -346,7 +367,7 @@ function hasOwnedPreAuthGatewayDatabaseState(stateDir: string, state: fs.Stats):
 }
 
 function ambiguousGatewayConfig(configPath: string, detail: string): Error {
-  return new Error(
+  return new GatewayStateConflictError(
     `Refusing to rewrite ${configPath}: NemoClaw cannot prove its generated gateway identity (${detail})`,
   );
 }
@@ -363,15 +384,13 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
  * complaint, and so the suggested recovery does not just repeat the exact
  * command that failed.
  */
-class CrossDriverGatewayConflictError extends Error {}
-
 function crossDriverGatewayConflict(
   configPath: string,
   stateDir: string,
   requestedDriver: string,
   configuredDriver: string,
 ): Error {
-  return new CrossDriverGatewayConflictError(
+  return new GatewayStateConflictError(
     `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
       `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
       `share one gateway state directory between driver types. To switch drivers for NemoClaw-managed state, ` +
@@ -379,6 +398,7 @@ function crossDriverGatewayConflict(
       `or supervised state; resolve that state through its lifecycle authority instead. To run both drivers ` +
       `concurrently, select an unused port with NEMOCLAW_GATEWAY_PORT=<port> and a separate state ` +
       `directory with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>. State directory: ${stateDir}`,
+    { hasRecoveryGuidance: true },
   );
 }
 
@@ -424,13 +444,6 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
       fs.rmSync(path.join(dir, entry.name), { force: true });
     }
   }
-}
-
-export function gatewayIdForStateDir(stateDir: string): string {
-  const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
-  const scope = `${String(process.getuid?.() ?? "unknown")}\0${path.resolve(stateDir)}`;
-  const suffix = createHash("sha256").update(scope).digest("hex").slice(0, 12);
-  return `nemoclaw-${leaf || "gateway"}-${suffix}`;
 }
 
 function legacyGatewayIdForStateDir(stateDir: string): string {
@@ -751,7 +764,7 @@ function existingGatewayIdentityFromConfig(
         configProof,
         externalComponent,
         gatewayId: legacyGatewayId,
-        jwtProof: openOwnedLegacyJwtBundle(stateDir, state.uid),
+        jwtProof: asGatewayStateConflict(() => openOwnedLegacyJwtBundle(stateDir, state.uid)),
         kind: "legacy",
         sandboxNamespace: "default",
       };
@@ -1132,24 +1145,12 @@ export function prepareDockerDriverGatewayConfigEnv(
   } = {},
 ): Record<string, string> {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, options.gatewayRuntime);
-  let identity: DockerDriverGatewayIdentity;
-  try {
-    identity = resolveDockerDriverGatewayIdentity(
-      stateDir,
-      gatewayEnv,
-      runtime,
-      options.allowOpenShell0044PreAuthDatabase === true,
-    );
-  } catch (error) {
-    if (error instanceof CrossDriverGatewayConflictError) {
-      // The generic "onboard --resume" catch-all would repeat this exact
-      // command and hit the identical conflict again. Mark the latch only at
-      // the onboarding boundary that surfaces the tailored recovery error;
-      // ownership probes intentionally swallow config-classification errors.
-      noteOnboardResumeHintShown();
-    }
-    throw error;
-  }
+  const identity = resolveDockerDriverGatewayIdentity(
+    stateDir,
+    gatewayEnv,
+    runtime,
+    options.allowOpenShell0044PreAuthDatabase === true,
+  );
   const externalComponent =
     options.externalComponent === undefined
       ? identity.externalComponent

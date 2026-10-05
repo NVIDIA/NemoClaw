@@ -100,6 +100,18 @@ describe("CLI sandbox transfer", () => {
     });
   });
 
+  it("suppresses subprocess output for credential downloads", async () => {
+    const h = harness();
+    const pending = h.executor.run({ ...request, direction: "download", output: "suppress" });
+    h.events.emit("close", 0, null);
+    const result = await pending;
+    try {
+      expect(h.spawnChild.mock.calls[0]?.[2].stdio).toBe("ignore");
+    } finally {
+      result.release();
+    }
+  });
+
   it.each([
     { sandboxName: "--other" },
     { target: { kind: "named", gatewayName: "../other" } },

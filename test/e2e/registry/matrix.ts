@@ -29,41 +29,6 @@ export function ubuntuRepoManagedRuntimeLifecycle(
   return { ...ubuntuRepoManagedRuntime(onboarding), lifecycle };
 }
 
-export function gpuRepoDockerCdi(onboarding: string): TargetEnvironment {
-  return { platform: "gpu-runner", install: "repo-current", runtime: "gpu-docker-cdi", onboarding };
-}
-
-export function macosRepoDocker(onboarding: string): TargetEnvironment {
-  return {
-    platform: "macos-local",
-    install: "repo-current",
-    runtime: "macos-docker-optional",
-    onboarding,
-  };
-}
-
-export function wslRepoDocker(onboarding: string): TargetEnvironment {
-  return { platform: "wsl-local", install: "repo-current", runtime: "docker-running", onboarding };
-}
-
-export function brevLaunchableRemote(onboarding: string): TargetEnvironment {
-  return {
-    platform: "brev-launchable",
-    install: "launchable",
-    runtime: "docker-running",
-    onboarding,
-  };
-}
-
-export function ubuntuRepoNoDocker(onboarding: string): TargetEnvironment {
-  return {
-    platform: "ubuntu-local",
-    install: "repo-current",
-    runtime: "docker-missing",
-    onboarding,
-  };
-}
-
 /**
  * ubuntu-local + repo-current + docker-running + a lifecycle profile.
  * Use for targets whose runtime assertions depend on a post-onboard

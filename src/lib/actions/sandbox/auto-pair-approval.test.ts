@@ -402,7 +402,7 @@ _nemoclaw_test_subprocess.run = _nemoclaw_test_race_child
         },
       );
       const persistentRaceNeedle =
-        "    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)";
+        "    fd = os.open(entry_name, _file_flags(), dir_fd=directory_fd)";
       const persistentDevicesRaceScript = script.replace(
         persistentRaceNeedle,
         `    if (
@@ -416,12 +416,12 @@ ${persistentRaceNeedle}`,
       expect(persistentDevicesRaceScript.includes("NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE")).toBe(
         true,
       );
-      const transientPendingPublicationNeedle = `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+      const transientPendingPublicationNeedle = `    fd = os.open(entry_name, _file_flags(), dir_fd=directory_fd)
     try:
         validate_clone_json_descriptor(fd)`;
       const transientPendingPublicationScript = script.replace(
         transientPendingPublicationNeedle,
-        `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+        `    fd = os.open(entry_name, _file_flags(), dir_fd=directory_fd)
     try:
         serialized_pending = os.environ.pop('NEMOCLAW_TEST_TRANSIENT_PENDING_JSON', '')
         if serialized_pending and directory_name == 'devices' and entry_name == 'pending.json':

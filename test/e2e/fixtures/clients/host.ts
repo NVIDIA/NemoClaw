@@ -24,6 +24,11 @@ export interface HostClientOptions {
   openshellPath?: string;
 }
 
+export interface ForwardCleanupOptions extends ShellProbeRunOptions {
+  gatewayName?: string;
+  sandboxName?: string;
+}
+
 export interface ForwardListenerEvidence {
   valid: boolean;
   pid?: number;
@@ -359,10 +364,17 @@ export class HostCliClient {
     assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
   }
 
-  async cleanupForward(port: number, options: ShellProbeRunOptions = {}): Promise<void> {
-    const result = await this.command(this.openshellPath, ["forward", "stop", String(port)], {
-      ...options,
-      artifactName: options.artifactName ?? `cleanup-forward-${port}`,
+  async cleanupForward(port: number, options: ForwardCleanupOptions = {}): Promise<void> {
+    const { gatewayName, sandboxName, ...probeOptions } = options;
+    const scoped = gatewayName !== undefined || sandboxName !== undefined;
+    if (scoped && (!gatewayName?.trim() || !sandboxName?.trim())) {
+      throw new Error("Scoped forward cleanup requires a gateway name and sandbox name.");
+    }
+    const args = ["forward", "stop", String(port)];
+    if (scoped) args.push(sandboxName!.trim(), "--gateway", gatewayName!.trim());
+    const result = await this.command(this.openshellPath, args, {
+      ...probeOptions,
+      artifactName: probeOptions.artifactName ?? `cleanup-forward-${port}`,
     });
     if (result.exitCode === 0 || FORWARD_ALREADY_ABSENT.test(resultText(result))) return;
     assertExitZero(result, `cleanup forward ${port}`);

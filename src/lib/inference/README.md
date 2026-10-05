@@ -8,7 +8,7 @@
 Suggested homes:
 
 ```text
-config.ts                 inference config parsing and normalization
+config.ts                 inference configuration and normalization
 health.ts                 inference endpoint health checks
 local.ts                  local inference orchestration helpers
 provider-models.ts        provider model catalog support
@@ -25,7 +25,11 @@ onboard-probes.ts         onboarding-time inference validation probes
 
 Longer term, pure inference decisions should move under `src/lib/domain/inference/**`, and HTTP/process boundaries should move under `src/lib/adapters/**`.
 
-## Ollama configuration export
+## Ollama export observations
+
+V1alpha1 configuration export currently refuses attached Ollama before publication.
+The source observation checks below do not establish output compatibility.
+Successful export depends on #11928's named-service contract and #12012's exporter mapping.
 
 The native Linux Docker export slice composes the current proxy owner and nonsecret observer in
 `adapters/config/live-export-source.ts`. Each snapshot asks `ollama/proxy.ts` for a fresh probe of
@@ -44,19 +48,20 @@ flowchart LR
   host[Native host observation] --> observation[Nonsecret observation validation]
   owner --> observation
   observation --> export[Shared export snapshot and verifier]
-  export --> document[External daemon and managed proxy configuration]
+  export --> refusal[V1alpha1 compatibility refusal without publication]
 ```
 
 The proxy's authenticated `GET /_nemoclaw/proxy-config` reports its current PID, actual listener,
 and backend origin. It never forwards this request or returns backend userinfo, paths, queries, or
 credentials. `ollama/proxy-observation.ts` compares that response with retained intent and the selected
-model digest from both native model inventories. Older running proxies without this response cannot
-be exported; upgrading or restarting them remains an operator lifecycle action.
+model digest from both native model inventories. Older running proxies without this response fail
+source verification; upgrading or restarting them remains an operator lifecycle action.
 
-The public `serving.backend: ollama` branch records the daemon as external and the auth proxy as
+The `serving.backend: ollama` source model records the daemon as external and the auth proxy as
 NemoClaw-managed. It does not claim ownership of the daemon process, software installation, or model
-cache. The initial contract covers `qwen3.5:9b` on native Linux Docker with managed OpenClaw and no
-direct sandbox GPU. Hosted inference and managed vLLM retain their existing schema variants.
+cache. Source verification covers the selected model on native Linux Docker with managed OpenClaw
+and no direct sandbox GPU. Read-only secondary agents must share the primary agent's verified
+route, model, and tuning. These source constraints remain separate from v1alpha1 output support.
 
 The pinned OpenShell release can bind the Ollama route to its `openai` provider type without
 a provider profile. The binding can be global or use the provider's own workspace. Export records
@@ -65,7 +70,7 @@ Other read failures and bindings to a foreign workspace remain terminal.
 Both snapshots include the profile evidence, so adding or replacing a profile during export prevents
 publication. Present profiles still undergo the existing complete boundary validation.
 
-Ollama onboarding records no user credential. Export still requires the gateway provider to declare
+Ollama onboarding records no user credential. Source verification requires the gateway provider to declare
 exactly the internal `NEMOCLAW_OLLAMA_PROXY_TOKEN` credential used by the managed proxy. It accepts
 either an absent user-credential selection or that explicit internal credential name, verifies the
-live proxy, and omits the credential from the exported document.
+live proxy, and keeps the credential value inside the proxy owner.

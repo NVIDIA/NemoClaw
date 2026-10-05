@@ -310,7 +310,7 @@ describe("sandbox oclif command adapters", () => {
   });
 
   it("rejects real schema-5 logs and dashboard-token routes before their actions (#9203)", async () => {
-    const fetchToken = vi.fn(() => "test-token");
+    const fetchToken = vi.fn(async () => "test-token");
     const getSandbox = vi.fn(() => ({ agent: "openclaw", dashboardPort: 18789 }));
     const getAccessUrl = vi.fn(() => "http://127.0.0.1:18789");
     setDashboardUrlRuntimeBridgeFactoryForTest(() => ({

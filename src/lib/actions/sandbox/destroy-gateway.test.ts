@@ -113,8 +113,40 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
 
     expect(() => resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "podman")).toThrow(
-      "does not match gateway runtime provider 'docker'",
+      "gateway 'nemoclaw-8081': registered runtime provider 'podman' does not match recorded gateway runtime provider 'docker'",
     );
+  });
+
+  it("uses the selected provider before sandbox registration", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("podman");
+  });
+
+  it("uses recorded authority instead of a conflicting configured provider", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
+
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", undefined, {
+        configuredRuntimeProviderId: "podman",
+      }),
+    ).toBe("docker");
+  });
+
+  it("uses registered authority instead of a conflicting configured provider", () => {
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "podman", {
+        configuredRuntimeProviderId: "docker",
+      }),
+    ).toBe("podman");
+  });
+
+  it("preserves Portable precedence for a registry-absent configured fallback", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("docker");
   });
 
   it.each(["systemd-system", "systemd-user"] as const)(

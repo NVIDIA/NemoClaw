@@ -78,8 +78,13 @@ function harness(options: {
             forward: request.forward,
             effect: "none" as const,
             error: {
-              kind: "command" as const,
-              message: "The OpenShell forward command failed." as const,
+              kind: "transport" as const,
+              message: "The OpenShell forward transport failed." as const,
+            },
+            failure: {
+              stage: "startup" as const,
+              reason: "child_exited" as const,
+              exitStatus: 17,
             },
           };
       }
@@ -125,11 +130,8 @@ function harness(options: {
     retireLegacyForward,
     verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
   };
-  const runOpenshell = vi.fn(() => ({ status: 0 }));
   const helpers = createOnboardDashboardHelpers({
-    runOpenshell,
     runCaptureOpenshell: vi.fn(() => ""),
-    openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider) => provider,
@@ -145,7 +147,7 @@ function harness(options: {
     resolveForwardGatewayName: (sandbox) => sandbox?.gatewayName ?? "nemoclaw",
     forwardAdapterForAuthority: vi.fn(() => adapter),
   });
-  return { helpers, observeForwards, retireLegacyForward, runOpenshell, startForward, states };
+  return { helpers, observeForwards, retireLegacyForward, startForward, states };
 }
 
 afterEach(() => {
@@ -391,8 +393,8 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     },
   );
 
-  it("fails the agent forward when the adapter reports a command failure", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("reports a safe classification when the agent forward child fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const test = harness({
       listSandboxes: () => ({ sandboxes: [{ name: "reonboard-test" }] }),
       startFailurePort: 8_642,
@@ -402,6 +404,10 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
       test.helpers.ensureAgentFixedForward("reonboard-test", 8_642, "Hermes API"),
     ).resolves.toBe(false);
     expect(test.startForward).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      "! Hermes API forward on port 8642 did not start: The OpenShell forward transport failed. [forward-start startup/child_exited status=17]",
+    );
   });
 
   it("honors an explicit dashboard URL", async () => {

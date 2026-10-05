@@ -20,13 +20,19 @@ import {
 const execFileAsync = promisify(execFile);
 
 test.skipIf(process.platform !== "linux" || isWsl())(
-  "observes existing proxy state without migration or credential exposure (#11435)",
+  "observes the selected model without model or proxy mutation and credential exposure (#11857)",
   async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proxy-export-"));
     const state = path.join(directory, ".nemoclaw");
     const token = "export-credential-canary";
     const digest = "a".repeat(64);
-    const backend = await startBackend({ ok: true, models: [{ name: "qwen3.5:9b", digest }] });
+    const backend = await startBackend({
+      ok: true,
+      models: [
+        { name: "qwen2.5:0.5b", digest },
+        { name: "qwen3.5:9b", digest: "b".repeat(64) },
+      ],
+    });
     let proxy;
     try {
       const port = await freePort();
@@ -81,7 +87,7 @@ const unsupportedHost = rejection({model: "qwen3.5:9b", ...createOllamaExportPro
 delete process.env.WSL_DISTRO_NAME;
 const invalidMetadata = rejection({model: "qwen3.5:9b", ...createOllamaExportProbe(), proxyPort: "invalid"});
 const credentialReadsBeforeValid = credentialReads;
-const observed = observeOllamaProxy({model: "qwen3.5:9b", ...createOllamaExportProbe()});
+const observed = observeOllamaProxy({model: "qwen2.5:0.5b", ...createOllamaExportProbe()});
 process.stdout.write(JSON.stringify({observed, unsupportedHost, invalidMetadata, credentialReadsBeforeValid, credentialReads}));
 `;
       const { stdout, stderr } = await execFileAsync(process.execPath, ["-e", script], {
@@ -107,7 +113,7 @@ process.stdout.write(JSON.stringify({observed, unsupportedHost, invalidMetadata,
           serving: {
             daemon: { management: "external", hostPort: backend.port },
             proxy: { management: "nemoclaw", hostPort: port },
-            model: { digest: `sha256:${digest}` },
+            model: { servedName: "qwen2.5:0.5b", digest: `sha256:${digest}` },
           },
         },
         unsupportedHost: "Ollama export requires a native Linux host.",
@@ -124,7 +130,10 @@ process.stdout.write(JSON.stringify({observed, unsupportedHost, invalidMetadata,
             .map((name) => [name, fs.readFileSync(path.join(state, name), "utf8")]),
         ),
       ).toEqual(retained);
-      expect(backend.captured).toHaveLength(2);
+      expect(backend.captured.map(({ method, url }) => ({ method, url }))).toEqual([
+        { method: "GET", url: "/api/tags" },
+        { method: "GET", url: "/api/tags" },
+      ]);
       expect(backend.captured.every(({ headers }) => headers.authorization === undefined)).toBe(
         true,
       );

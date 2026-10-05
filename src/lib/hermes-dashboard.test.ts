@@ -51,5 +51,15 @@ describe("Hermes dashboard config", () => {
         NEMOCLAW_HERMES_DASHBOARD_PORT: "65536",
       }),
     ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_PORT/);
+    expect(() =>
+      readHermesDashboardConfig({
+        NEMOCLAW_HERMES_DASHBOARD_PORT: "09120",
+      }),
+    ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_PORT/);
+    expect(() =>
+      readHermesDashboardConfig({
+        NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "019120",
+      }),
+    ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT/);
   });
 });

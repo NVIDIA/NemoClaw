@@ -659,6 +659,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain('gateway.once("error"');
     expect(agent).toContain("writeFileSync(outcomePath");
     expect(agent).toContain('"gateway",\n    "health"');
+    expect(agent).toContain('reload: { mode: "off" }');
+    expect(agent).not.toContain("allowInsecureAuth");
+    expect(agent).not.toContain("dangerouslyDisableDeviceAuth");
     expect(agent).not.toContain('"--token"');
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });

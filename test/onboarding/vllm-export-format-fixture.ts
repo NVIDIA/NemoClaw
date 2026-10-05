@@ -16,6 +16,7 @@ import {
   loadServingCatalog,
 } from "../../src/lib/inference/serving/catalog-loader";
 import { isHostLocalInferenceServingRecipe } from "../../src/lib/inference/serving/adapter-registry";
+import { managedInferenceDigest } from "../../src/lib/inference/serving/catalog-integrity";
 import { servingProfileProvenance } from "../../src/lib/inference/serving/profile-provenance";
 import { materializeHostLocalVllmModel } from "../../src/lib/inference/serving/host-local-vllm-selection";
 import { buildVllmServeCommand } from "../../src/lib/inference/vllm-models";
@@ -29,6 +30,7 @@ export function vllmExportFormatFixture(directory: string) {
   );
   if (!recipe || !isHostLocalInferenceServingRecipe(recipe) || !recipe.spec.serve.directInstall)
     throw new Error("Fixture requires the fixed host-local recipe");
+  const runtimeRecipeDigest = managedInferenceDigest(recipe);
   const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "linux");
   const { runtime } = recipe.spec;
   const key = "e".repeat(64);
@@ -42,7 +44,7 @@ export function vllmExportFormatFixture(directory: string) {
     [lifecycle.HOST_LOCAL_VLLM_PRESET_LABEL]: provenance.preset.id,
     [lifecycle.HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: provenance.preset.digest,
     [lifecycle.HOST_LOCAL_VLLM_RECIPE_LABEL]: provenance.recipe.id,
-    [lifecycle.HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: provenance.recipe.digest,
+    [lifecycle.HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: runtimeRecipeDigest,
   };
   lifecycle.persistHostLocalVllmRuntimeReceipt(
     {
@@ -53,7 +55,7 @@ export function vllmExportFormatFixture(directory: string) {
         presetId: provenance.preset.id,
         presetDigest: provenance.preset.digest,
         recipeId: provenance.recipe.id,
-        recipeDigest: provenance.recipe.digest,
+        recipeDigest: runtimeRecipeDigest,
       },
     },
     directory,

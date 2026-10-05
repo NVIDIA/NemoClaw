@@ -174,7 +174,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell: () => null,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -193,7 +193,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -208,5 +208,46 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       { ignoreError: true },
     );
     expect(registryState.removeSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("selection drift confirmation", () => {
+  it("shows one native identity namespace and suppresses terminal controls", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      lines.push(String(line ?? ""));
+    });
+    const prompt = vi.fn(async () => "no");
+    const helpers = createSandboxLifecycleHelpers({
+      runCaptureOpenshell: () => null,
+      getGatewayName: () => "nemoclaw-18081",
+      fetchGatewayAuthTokenFromSandbox: async () => null,
+      agentProductName: () => "OpenClaw",
+      prompt,
+      isAffirmativeAnswer: () => false,
+    });
+
+    await helpers.confirmRecreateForSelectionDrift(
+      "alpha",
+      {
+        changed: true,
+        providerChanged: true,
+        modelChanged: true,
+        existingProvider: "inference\u001b]52;c;attack\u0007",
+        existingModel: "model-b",
+        requestedProvider: "inference",
+        requestedModel: "model-a",
+        unknown: false,
+      },
+      "inference",
+      "model-a",
+    );
+
+    const output = lines.join("\n");
+    expect(output).not.toContain("\u001b");
+    expect(output).toContain("Current:   provider=unknown  model=model-b");
+    expect(output).toContain("Requested: provider=inference  model=model-a");
+    expect(output).not.toContain("compatible-endpoint");
+    expect(prompt).toHaveBeenCalledExactlyOnceWith("  Recreate sandbox 'alpha' now? [y/N]: ");
   });
 });

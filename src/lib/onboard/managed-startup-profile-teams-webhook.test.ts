@@ -48,7 +48,6 @@ const BASE_OPENCLAW_PROFILE = {
     agentTimeoutSeconds: 900,
     heartbeatEvery: "30m",
     extraAgents: { agents: [], defaults: {}, main: {} },
-    deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
     minimalBootstrap: true,
   },
   inference: {
