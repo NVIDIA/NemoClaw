@@ -23,6 +23,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "model",
   "name",
   "nativeNvidiaProviderAttachment",
+  "nativeNvidiaProviderAuthority",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",
@@ -85,6 +86,12 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   if (
     entry.nativeNvidiaProviderAttachment !== undefined &&
     !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
+  ) {
+    return false;
+  }
+  if (
+    entry.nativeNvidiaProviderAuthority !== undefined &&
+    !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAuthority)
   ) {
     return false;
   }

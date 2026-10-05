@@ -6,6 +6,47 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
+it("admits native NVIDIA provider authority on a pending route reservation", async () => {
+  const { classifySandboxInferenceRouteReservation } = await import("./registry/route-reservation");
+  const selection = {
+    provider: "ollama-local",
+    model: "qwen3-vl:4b",
+    endpointUrl: "http://127.0.0.1:11434/v1",
+    endpointSource: null,
+    credentialEnv: null,
+    preferredInferenceApi: "openai-completions",
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: null,
+  } as const;
+  const authority = {
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    sessionId: "session-owner",
+    selection,
+  };
+  const disposition = classifySandboxInferenceRouteReservation(authority, {
+    name: authority.sandboxName,
+    gatewayName: authority.gatewayName,
+    reservationSessionId: authority.sessionId,
+    pendingRouteReservation: true,
+    provider: selection.provider,
+    model: selection.model,
+    endpointUrl: selection.endpointUrl,
+    endpointSource: selection.endpointSource,
+    credentialEnv: selection.credentialEnv,
+    preferredInferenceApi: selection.preferredInferenceApi,
+    nativeNvidiaProviderAuthority: {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "provider-id",
+    },
+  });
+
+  expect(disposition.kind).toBe("owned");
+});
+
 it("clears a stale native NVIDIA attachment when reserving a shared route", async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-attachment-"));
   vi.stubEnv("HOME", home);
