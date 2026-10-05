@@ -57,7 +57,9 @@ export function patchOpenClawWorkerProxy(dist: string): boolean {
   try {
     descriptor = fs.openSync(worker, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("Required OpenClaw 2026.9.5 worker is missing", { cause: error });
+    }
     throw error;
   }
   try {

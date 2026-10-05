@@ -274,42 +274,82 @@ it.runIf(process.platform === "linux")(
 );
 
 it.each([
-  { expectedPhase: "agent-install", union: "0" },
-  { expectedPhase: "managed-image-capability-union", union: "1" },
-])("selects only the $expectedPhase messaging install phase", ({ expectedPhase, union }) => {
-  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-phase-selection-"));
-  const trustedCache = path.join(tmp, "trusted-cache");
-  const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
+  { expectedPhase: "agent-install", union: "0", exitCode: 0 },
+  { expectedPhase: "managed-image-capability-union", union: "1", exitCode: 0 },
+  { expectedPhase: "agent-install", union: "0", exitCode: 9 },
+  { expectedPhase: "managed-image-capability-union", union: "1", exitCode: 9 },
+])(
+  "isolates and removes $expectedPhase caches after exit $exitCode",
+  ({ expectedPhase, union, exitCode }) => {
+    const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-phase-selection-"));
+    const trustedCache = path.join(tmp, "trusted-wechat-cache");
+    const messagingCache = path.join(tmp, "trusted-messaging-cache");
+    const cachePaths = path.join(tmp, "cache-paths");
+    const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
 
-  try {
-    fs.mkdirSync(trustedCache);
-    fs.writeFileSync(path.join(trustedCache, "fixture"), "fixture\n");
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "RUN --mount=from=openclaw-managed-messaging-npm-cache",
-      "# Copy the full candidate runtime payload after the stable offline plugin",
-    )
-      .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", trustedCache)
-      .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", trustedCache)
-      .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate);
-    const { calls, result } = runLoggedDockerShell(
-      command,
-      tmp,
-      ["find() { :; }", 'node() { printf "node %s\\n" "$*" >> "$call_log"; }'],
-      {
-        env: {
-          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
-          OPENCLAW_VERSION: "2026.9.5",
+    try {
+      fs.mkdirSync(trustedCache);
+      fs.mkdirSync(messagingCache);
+      fs.writeFileSync(path.join(trustedCache, "fixture"), "wechat-locked-graph\n");
+      fs.writeFileSync(path.join(messagingCache, "fixture"), "official-channel-graphs\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "RUN --mount=from=openclaw-managed-messaging-npm-cache",
+        "# Copy the full candidate runtime payload after the stable offline plugin",
+      )
+        .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", messagingCache)
+        .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", trustedCache)
+        .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate)
+        .replaceAll(
+          "/tmp/nemoclaw-messaging-npm-cache.XXXXXX",
+          path.join(tmp, "messaging-cache.XXXXXX"),
+        );
+      const { calls, result } = runLoggedDockerShell(
+        command,
+        tmp,
+        [
+          "find() { :; }",
+          `node() {
+          printf "node %s\\n" "$*" >> "$call_log"
+          cat "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE/fixture" >> "$call_log"
+          printf '%s\\n' "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE" > "$CACHE_PATHS"
+          if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then
+            test "$NPM_CONFIG_CACHE" != "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE" || return 8
+            cat "$NPM_CONFIG_CACHE/fixture" >> "$call_log"
+            printf '%s\\n' "$NPM_CONFIG_CACHE" >> "$CACHE_PATHS"
+          fi
+          return "$APPLIER_EXIT_CODE"
+        }`,
+        ],
+        {
+          env: {
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
+            OPENCLAW_VERSION: "2026.9.5",
+            CACHE_PATHS: cachePaths,
+            APPLIER_EXIT_CODE: String(exitCode),
+          },
         },
-      },
-    );
+      );
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(calls.trim().split("\n")).toEqual([
-      `node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
-    ]);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-});
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(calls.trim().split("\n")).toEqual([
+        `node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
+        "wechat-locked-graph",
+        ...(union === "1" ? ["official-channel-graphs"] : []),
+      ]);
+      const paths = fs.readFileSync(cachePaths, "utf8").trim().split("\n");
+      expect(paths.map((cache) => fs.existsSync(cache))).toEqual(
+        union === "1" ? [false, false] : [false],
+      );
+      expect(fs.readFileSync(path.join(trustedCache, "fixture"), "utf8")).toBe(
+        "wechat-locked-graph\n",
+      );
+      expect(fs.readFileSync(path.join(messagingCache, "fixture"), "utf8")).toBe(
+        "official-channel-graphs\n",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);

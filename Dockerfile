@@ -1834,27 +1834,30 @@ USER sandbox
 
 # Copy the immutable reviewed cache into sandbox-owned temporary storage because
 # npm needs writable cache tmp space. Remove it before committing the layer.
+# WeChat must resolve only its reviewed graph; the union cache contains newer
+# versions of shared dependencies for official channels.
 # The selected phase keeps exactly one messaging-applier invocation per build.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
-    else \
-        trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
-    fi; \
-    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
-    if [ -n "$unsafe_cache_entry" ]; then \
-        printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
-            "$unsafe_cache_entry" >&2; \
-        exit 1; \
-    fi; \
+    copy_trusted_cache() { \
+        unsafe_cache_entry="$(find -L "$1" \( ! -user root -o -perm /022 \) -print -quit)"; \
+        if [ -n "$unsafe_cache_entry" ]; then \
+            printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
+                "$unsafe_cache_entry" >&2; \
+            exit 1; \
+        fi; \
+        cp -R "$1"/. "$2"/; \
+        chmod -R u+rwX,go-w "$2"; \
+    }; \
     install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
-    trap 'rm -rf "$install_cache"' EXIT; \
-    cp -R "$trusted_cache"/. "$install_cache"/; \
-    chmod -R u+rwX,go-w "$install_cache"; \
+    messaging_install_cache=; \
+    trap 'rm -rf "$install_cache" ${messaging_install_cache:+"$messaging_install_cache"}' EXIT; \
+    copy_trusted_cache /usr/local/share/nemoclaw/wechat-npm-cache "$install_cache"; \
     messaging_phase=agent-install; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        export NPM_CONFIG_CACHE="$install_cache"; \
+        messaging_install_cache="$(mktemp -d /tmp/nemoclaw-messaging-npm-cache.XXXXXX)"; \
+        copy_trusted_cache /opt/nemoclaw-managed-messaging-npm-cache "$messaging_install_cache"; \
+        export NPM_CONFIG_CACHE="$messaging_install_cache"; \
         export NPM_CONFIG_OFFLINE=true; \
         export NPM_CONFIG_AUDIT=false; \
         export NPM_CONFIG_FUND=false; \
@@ -1864,9 +1867,10 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
         node /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent openclaw --phase "$messaging_phase"; \
-    rm -rf "$install_cache"; \
+    rm -rf "$install_cache" ${messaging_install_cache:+"$messaging_install_cache"}; \
     trap - EXIT; \
-    test ! -e "$install_cache"
+    test ! -e "$install_cache"; \
+    test -z "$messaging_install_cache" || test ! -e "$messaging_install_cache"
 
 USER root
 

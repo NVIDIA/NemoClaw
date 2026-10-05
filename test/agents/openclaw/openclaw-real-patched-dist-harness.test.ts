@@ -14,6 +14,7 @@ import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-opencl
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
+import { runRealOpenClawWorkerProxyProof } from "../../helpers/openclaw-real-worker-proxy-proof";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
@@ -951,6 +952,12 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
             tmp,
             version,
+          });
+          runRealOpenClawWorkerProxyProof({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            tmp,
           });
           const worker = path.join(dist, "worker", "worker.mjs");
           const workerSource = fs.readFileSync(worker, "utf8");

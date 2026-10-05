@@ -169,9 +169,11 @@ describe("OpenClaw worker patch file ownership", () => {
     expect(fs.readFileSync(target, "utf8")).toBe(SOURCE);
   });
 
-  it("leaves a missing worker absent", () => {
+  it("rejects a missing worker without creating an artifact", () => {
     fs.unlinkSync(worker);
-    expect(patchOpenClawWorkerProxy(dist)).toBe(false);
+    expect(() => patchOpenClawWorkerProxy(dist)).toThrow(
+      "Required OpenClaw 2026.9.5 worker is missing",
+    );
     expect(fs.existsSync(worker)).toBe(false);
   });
 

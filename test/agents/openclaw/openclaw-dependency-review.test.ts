@@ -7,6 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  parseAuditConfig,
+  selectReviewedLockedGraphIdentity,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -128,6 +132,29 @@ function runBaseImageBuildArgGuard(
 }
 
 describe("OpenClaw 2026.9.5 dependency review contract", () => {
+  it("audits only production-selected OpenClaw runtime and plugin archives", () => {
+    const audit = parseAuditConfig(
+      readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+    );
+    const graph = audit.lockedGraphs.find(({ id }) => id === "openclaw-runtime");
+    expect(graph).toBeDefined();
+    const selected = selectReviewedLockedGraphIdentity(
+      path.join(REPO_ROOT, graph!.directory, "package-lock.json"),
+      graph!,
+    );
+    const selectedVersion = selected.packageSpec.slice(selected.packageSpec.lastIndexOf("@") + 1);
+    const openClawArchives = audit.archivePackages.filter(
+      ({ packageSpec }) =>
+        packageSpec.startsWith("openclaw@") || packageSpec.startsWith("@openclaw/"),
+    );
+    expect(openClawArchives.length).toBeGreaterThan(0);
+    expect(
+      openClawArchives.map(({ packageSpec }) =>
+        packageSpec.slice(packageSpec.lastIndexOf("@") + 1),
+      ),
+    ).toEqual(openClawArchives.map(() => selectedVersion));
+  });
+
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",

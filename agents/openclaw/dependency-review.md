@@ -77,3 +77,16 @@ The lock records the exact version, registry URL, and integrity for every transi
   `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
+
+## OpenClaw 2026.9.5 runtime cutover
+
+The production runtime and official channel packages select OpenClaw 2026.9.5.
+The reviewed runtime lock is the primary audit identity; no replacement identity remains.
+The archive inventory includes only the selected runtime and official plugin versions.
+The completed cutover removes the superseded 2026.9.2 archive records introduced by the preceding trust stage.
+The dependency-review test compares the archive inventory with the production runtime lock.
+
+WeChat retains its separately reviewed 2.4.9 plugin and Zod 4.4.3 graph.
+Its offline install uses a disposable copy of the dedicated WeChat cache.
+Official channel installs use a separate copy of the messaging cache, which also contains Zod 4.5.4.
+Both copies are removed after success or failure; neither install can write to a trusted cache.
