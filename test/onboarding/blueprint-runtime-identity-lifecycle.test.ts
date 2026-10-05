@@ -8,11 +8,11 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createBlueprintOpenShellCli } from "../../nemoclaw/src/blueprint/openshell-cli.ts";
 import {
   attachRuntimeIdentity,
   mintRuntimeIdentityCredential,
   prepareRuntimeIdentity,
-  type RuntimeIdentityCommandOptions,
   type RuntimeIdentityCommandResult,
   type RuntimeIdentityDeps,
   type RuntimeIdentityReceipt,
@@ -193,31 +193,31 @@ describe("blueprint runtime identity lifecycle integration", () => {
       OKTA_CLIENT_SECRET: "integration-client-secret",
     };
     const persistedReceipts: RuntimeIdentityReceipt[] = [];
-    const run = async (
-      args: string[],
-      options?: RuntimeIdentityCommandOptions,
-    ): Promise<RuntimeIdentityCommandResult> => {
-      const result = await execa(fakeOpenShell, args.slice(1), {
-        env: {
-          PATH: process.env.PATH ?? "",
-          ...(options?.env ?? {}),
-        },
-        extendEnv: false,
-        reject: false,
-      });
-      return {
-        exitCode: result.exitCode ?? 1,
-        stdout: result.stdout,
-        stderr: result.stderr,
-      };
-    };
+    const client = createBlueprintOpenShellCli({
+      capture: async (args, options): Promise<RuntimeIdentityCommandResult> => {
+        const result = await execa(fakeOpenShell, args.slice(1), {
+          env: {
+            PATH: process.env.PATH ?? "",
+            ...(options?.env ?? {}),
+          },
+          extendEnv: false,
+          reject: false,
+        });
+        return {
+          exitCode: result.exitCode ?? 1,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      },
+    });
     const deps: RuntimeIdentityDeps = {
       blueprintPath: root,
+      client,
       env: environment,
       formatError: (output, secrets = []) =>
         secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), output),
+      gatewayName: "test-gateway",
       persistReceipt: (receipt) => persistedReceipts.push({ ...receipt }),
-      run,
       // This test intentionally bypasses DNS validation and uses a fake OpenShell to isolate lifecycle orchestration.
       // TC-INF-12 separately proves the successful path through a real
       // OpenShell gateway, OAuth refresh exchange, provider attachment,
