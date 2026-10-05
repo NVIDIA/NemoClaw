@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 
 import { proveRealPairingStateReadable } from "./openclaw-real-pairing-state-proof.ts";
+import { proveRealPostUpgradeChecks } from "./openclaw-real-post-upgrade-proof.ts";
 
 interface ProofOptions {
   dist: string;
@@ -1347,6 +1348,8 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
     },
   );
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
+  proveRealPairingStateReadable(stateDir);
+  proveRealPostUpgradeChecks(stateDir, options.dist, options.nodeExecutable);
   proveRealPairingStateReadable(stateDir);
 }
 

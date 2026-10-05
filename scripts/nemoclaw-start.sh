@@ -4744,7 +4744,7 @@ const { pathToFileURL } = require("node:url");
   const dist = path.join(packageRoot, "dist");
   const stateModules = fs
     .readdirSync(dist)
-    .filter((name) => /^openclaw-state-db-.*\.js$/.test(name))
+    .filter((name) => /^openclaw-state-db-.*\.m?js$/.test(name))
     .sort();
   let stateApi;
   for (const candidate of stateModules) {
@@ -4803,10 +4803,10 @@ const { pathToFileURL } = require("node:url");
       );
     }
 
-    const schemaModules = fs
-      .readdirSync(dist)
-      .filter((name) => /^openclaw-state-db-cache-.*\.js$/.test(name))
-      .sort();
+    // Older releases export the schema from the cache module; 2026.9.5
+    // exports it from the state database implementation. Inspect both through
+    // the reviewed state module family and reject ambiguous schema exports.
+    const schemaModules = stateModules;
     const auditStart = "CREATE TABLE IF NOT EXISTS audit_events (";
     const auditIdentityStart = "CREATE TABLE IF NOT EXISTS audit_identity_keys (";
     let canonicalSchema;
@@ -4939,7 +4939,7 @@ const { pathToFileURL } = require("node:url");
   const dist = path.join(packageRoot, "dist");
   const leaseModules = fs
     .readdirSync(dist)
-    .filter((name) => /^startup-migration-checkpoint-.*\.js$/.test(name))
+    .filter((name) => /^startup-migration-checkpoint-.*\.m?js$/.test(name))
     .sort();
   for (const candidate of leaseModules) {
     const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
