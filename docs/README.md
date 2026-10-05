@@ -77,9 +77,8 @@ The design decision defines current invariants; historical test results apply on
 | Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
-| Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
+| Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
-| Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
 | Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 
 ## Sources and Fixtures

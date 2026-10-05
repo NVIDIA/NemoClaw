@@ -7,7 +7,7 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
-Deployment planning currently requires a Unix client; see [engine connection limits](engine-assumptions.md#connections-and-identity).
+Deployment planning currently requires a Unix client; see [engine connection limits](design/execution-targets.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.

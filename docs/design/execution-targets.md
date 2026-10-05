@@ -4,7 +4,7 @@
 # Execution Target Design
 
 Placement determines where resources live; a connection determines how the client reaches them.
-The [accepted scope](scope.md) defines the requirements, and [engine assumptions](../engine-assumptions.md) lists implementation constraints.
+The [accepted scope](scope.md) defines the requirements; [implementation constraints](#implementation-constraints) map them to the code that enforces them.
 
 ## Connection, Identity, and Publication
 
@@ -50,7 +50,7 @@ Missing, incomplete, or mismatched observations must fail; there is no fallback 
 The fixed SSH collector verifies that its remote Docker context is local and reads Linux memory, GPU, and Docker-storage capacity.
 The provider reconstructs the collector from explicit placement; in-process client or observer injection does not cross the subprocess boundary.
 The collector requires existing host trust and tools, installs nothing, and accepts no shell hooks.
-See [host observation boundaries](../engine-assumptions.md#host-observations-and-supervision) for prerequisites and implementation owners.
+See [host observations and supervision](#host-observations-and-supervision) for prerequisites and implementation owners.
 
 Capacity observations do not reserve resources, and distinct daemons can share a GPU and memory pool.
 The runtime must therefore recheck its own host during startup and serving.
@@ -61,7 +61,7 @@ Docker-compatible transport alone cannot establish Podman lifecycle compatibilit
 The native OpenShell Podman driver uses Podman image volumes, secrets, and rootless networking.
 Podman 4.9.3's changing Docker-compatible `/info.ID` could not identify a durable target.
 Managed Podman gateways instead bind their retained owned network and signing identity; this is not a general inference-engine identity.
-See [engine identity constraints](../engine-assumptions.md#connections-and-identity).
+See [connections and identity](#connections-and-identity).
 
 OpenShell calls remain bounded without automatic mutation retries.
 Sandbox deletion has a longer deadline than reads to allow the native driver's graceful stop; a lost response retains state for explicit reconciliation.
@@ -76,3 +76,66 @@ The [SSH service fixtures](../contributing/integration-tests.md#ssh-service-fixt
 Separate-host capacity, WAN behavior, and other operating systems are unqualified; a separate-host GPU apply and agent response remain required before claiming that qualification.
 
 Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are unqualified.
+
+
+## Implementation Constraints
+
+“Client host” means the host running the SDK, CLI, provider, or collector; “engine host” means the daemon’s execution and storage namespace.
+A forwarded Unix socket does not establish that those hosts are the same, and a distinct daemon ID does not establish a distinct physical GPU or memory pool.
+Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`; provider and runtime paths are relative to their crate’s `src` directory.
+
+### Connections and Identity
+
+| Boundary and owner | Constraint |
+|---|---|
+| Provider `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets select local Docker or Podman API connections on Unix clients; SSH endpoints select Docker. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
+| Provider `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, validation, readiness, and export. |
+| Provider `provider.rs`, `services/registry.rs`, and `services/installers/ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. Compilation and provider execution must select the same daemon. |
+| SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
+| Provider `managed/storage.rs`, `managed/gateway_storage.rs`, and `managed/observation.rs` | Durable storage bindings combine daemon identity, volume identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Docker gateway, disposable service compute, and model-cache volumes use native Docker-provider IDs. Cache recovery does not require the original daemon ID or volume creation time. |
+| Provider `openshell/transport.rs`; SDK `state/` and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
+
+Both Unix-socket and SSH engine transports require a Unix client.
+Windows deployment planning is blocked by required image discovery, including with an external OpenShell gateway.
+Unavailable or mismatched identity stops the operation.
+Managed Podman gateway bindings combine the retained network UUID with container identity, volume creation time, and signing keys; they never derive identity from a socket path or hostname.
+
+### Storage and Network Placement
+
+| Boundary and owner | Constraint |
+|---|---|
+| SDK `managed/spec.rs` gateway launch | Host networking, socket binds, supervisor paths, signing files, and relay paths must exist in the gateway and sandbox daemon’s shared host namespace. Remote inference does not move this gateway topology. |
+| SDK `managed/spec.rs`; provider `managed/mutation.rs` and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
+| Provider `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
+| Docker provider; NemoClaw provider `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
+| SDK `config/` and `compile.rs`; provider `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. |
+| Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
+
+Podman gateway observation checks the native effective and bounding capability sets before normalizing the compatibility API representation of `CapDrop=ALL`; missing or nonempty sets fail observation.
+The gateway stores OpenShell’s extracted runtime binaries under its shared data volume, where both the gateway and Podman can read them.
+The runtime retains model storage on destroy; do not inspect a remote daemon’s mountpoint as a client-host path.
+
+### Host Observations and Supervision
+
+An engine API result and a host measurement need a common identity before the provider can use them together.
+The fixed SSH collector follows this path; local collection follows the same requirement:
+
+```mermaid
+flowchart TD
+    API[Selected Docker API] -->|daemon identity| Match{Identities match?}
+    SSH[SSH host collector] -->|memory, GPU, disk, and daemon identity| Match
+    Match -->|yes| Rules[Typed capacity rules]
+    Match -->|no or incomplete| Stop[Stop before resource allocation]
+    Rules -->|capacity accepted| Start[Continue deployment validation]
+```
+
+| Boundary and owner | Constraint |
+|---|---|
+| Provider `services/capacity.rs` and `hardware/` | Explicit capacity observations consume measurements associated with the selected daemon identity. Missing or mismatched observations fail. |
+| Runtime `hardware/linux.rs` and `hardware/nvidia.rs` | Local collection reads local memory, GPU, architecture, and filesystem capacity. These measurements cannot stand in for a remote engine. |
+| Provider `hardware/ssh.rs` | Explicit managed SSH placement selects the provider’s fixed read-only host collector. Plain SSH engine connections default to unavailable capacity until an observer is supplied. |
+| Runtime `hardware/` and `execution/supervisor.rs` | Container-side memory and GPU observations enforce immediate startup and watchdog limits. Another engine’s host, PID, and cgroup visibility requires qualification. |
+| SDK `process.rs` | Process groups and Linux process identity govern local helper cleanup, separately from remote runtime resources. |
+
+The SSH collector needs a POSIX shell with `uname`, `stat`, and `head`, Docker, and NVIDIA tooling on the engine host; it needs no interpreter and performs only reads.
+Credential reads and application readiness remain direct observations of the selected runtime, and refresh and export share typed observations from the owning APIs.
