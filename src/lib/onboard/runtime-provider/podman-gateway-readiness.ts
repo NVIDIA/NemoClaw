@@ -22,6 +22,7 @@ import {
   processEnvironmentUsesSelectedGatewayState,
   readGatewayProcessEnvironment,
 } from "../gateway/process-environment";
+import { readGatewayProcEntry } from "../gateway/process-proc-entry";
 import {
   canonicalGatewayTargetMatches,
   gatewayProcessCmdlineMatches,
@@ -74,22 +75,14 @@ function runHost(
 }
 
 function readProcessArguments(pid: number, environment: NodeJS.ProcessEnv): string | null {
-  try {
-    const value = fs.readFileSync(`/proc/${String(pid)}/cmdline`, "utf8").replaceAll("\0", " ");
-    if (value.trim()) return value.trim();
-  } catch {
-    // Fall through to the read-only process-table query.
-  }
+  const value = (readGatewayProcEntry(pid, "cmdline") ?? "").replaceAll("\0", " ").trim();
+  if (value) return value;
   const result = runHost("ps", ["-p", String(pid), "-o", "args="], environment);
   return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
 }
 
 function readProcessExecutable(pid: number): string | null {
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    return null;
-  }
+  return readGatewayProcEntry(pid, "exe");
 }
 
 const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {

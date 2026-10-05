@@ -5,6 +5,9 @@ import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readGatewayProcessEnvironment } from "./gateway/process-environment";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
+
 import { waitUntil } from "../core/wait";
 import {
   gatewayIdForStateDir,
@@ -159,11 +162,7 @@ function readPidFile(pidFile: string): number | null {
 }
 
 function readProcCmdline(pid: number): string {
-  try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ").trim();
-  } catch {
-    return "";
-  }
+  return (readGatewayProcEntry(pid, "cmdline") ?? "").replace(/\0/g, " ").trim();
 }
 
 function processArgs(pid: number, deps: HostGatewayProcessDeps): string {
@@ -274,18 +273,8 @@ export function processUsesStateScopedSandboxNamespace(
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
   let environment = deps.readProcessEnvironment?.(pid) ?? null;
   if (!environment) {
-    try {
-      environment = Object.fromEntries(
-        fs
-          .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
-          .split("\0")
-          .filter(Boolean)
-          .map((entry) => [
-            entry.slice(0, entry.indexOf("=")),
-            entry.slice(entry.indexOf("=") + 1),
-          ]),
-      );
-    } catch {
+    environment = readGatewayProcessEnvironment(pid);
+    if (!environment) {
       const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
         env: deps.env,
       });
@@ -301,11 +290,7 @@ export function processUsesStateScopedSandboxNamespace(
 
 function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
   if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    return null;
-  }
+  return readGatewayProcEntry(pid, "exe");
 }
 
 function normalizeProcessExecutable(value: string): string {
