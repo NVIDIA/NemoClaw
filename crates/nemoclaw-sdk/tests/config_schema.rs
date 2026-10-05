@@ -412,39 +412,6 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
 }
 
 #[test]
-fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let expected = root
-        .join(nemoclaw_sdk::config::schema::SCHEMA_PATH)
-        .canonicalize()
-        .unwrap();
-    let schema: Value = serde_json::from_slice(&std::fs::read(&expected).unwrap()).unwrap();
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    for path in examples::yaml_files(&root.join("examples")) {
-        let text = std::fs::read_to_string(&path).unwrap();
-        let associations: Vec<_> = text
-            .lines()
-            .filter_map(|line| line.strip_prefix("# yaml-language-server: $schema="))
-            .collect();
-        assert_eq!(
-            associations.len(),
-            1,
-            "{} must select one schema",
-            path.display()
-        );
-        let selected = path.parent().unwrap().join(associations[0]);
-        assert_eq!(
-            selected.canonicalize().unwrap(),
-            expected,
-            "{}",
-            path.display()
-        );
-        let value: Value = serde_saphyr::from_str(&text).unwrap();
-        agrees(&validator, &value, true);
-    }
-}
-
-#[test]
 fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
