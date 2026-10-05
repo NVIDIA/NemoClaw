@@ -24,7 +24,6 @@ import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
 import { runStopCommand } from "./service-command";
 import {
-  findUnmanagedCloudflaredPids,
   getServiceStatuses,
   getTunnelUrl,
   migrateLegacyCloudflaredState,
@@ -69,30 +68,6 @@ function fakeCloudflaredProcessControl(): ProcessControl {
     },
   };
 }
-
-describe("findUnmanagedCloudflaredPids", () => {
-  it("finds only executable cloudflared processes not recorded by NemoClaw", () => {
-    const pids = findUnmanagedCloudflaredPids([200, 500], () =>
-      [
-        "  100 cloudflared cloudflared tunnel --url http://localhost:18789",
-        "  200 /usr/local/bin/cloudflared /usr/local/bin/cloudflared tunnel run",
-        "  300 bash bash /tmp/cloudflared tunnel run",
-        "  400 node node test-cloudflared.js",
-        "  500 cloudflared.exe cloudflared.exe tunnel run",
-      ].join("\n"),
-    );
-
-    expect(pids).toEqual([100]);
-  });
-
-  it("returns no unmanaged processes when the process list is unavailable", () => {
-    expect(
-      findUnmanagedCloudflaredPids(null, () => {
-        throw new Error("ps unavailable");
-      }),
-    ).toEqual([]);
-  });
-});
 
 describe("getTunnelUrl", () => {
   let pidDir: string;

@@ -30,6 +30,7 @@ import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-pro
 import { listGatewayStateRoots, resolveHome } from "../state/gateway-registry";
 import { resolveNemoclawStateDir } from "../state/paths";
 import {
+  findSandboxAcrossGatewayRoots,
   listPendingSandboxNamesAcrossGatewayRoots,
   listPublishedSandboxNamesAcrossGatewayRoots,
   listSandboxNamesInGatewayRoot,
@@ -240,7 +241,7 @@ export function findUnmanagedCloudflaredPids(
   });
 }
 
-function nemoClawManagedCloudflaredPids(): number[] {
+function nemoClawManagedCloudflaredPids(): number[] | null {
   try {
     const home = resolveHome();
     const sandboxNames = new Set([
@@ -260,16 +261,26 @@ function nemoClawManagedCloudflaredPids(): number[] {
       return state.kind === "running" || state.kind === "unverified-pid-process" ? [state.pid] : [];
     });
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** Find current-user cloudflared processes only when NemoClaw ownership is readable. */
+export function findHostUnmanagedCloudflaredPids(
+  managedPid: number | null,
+  captureProcessList?: () => string,
+): number[] {
+  const ownedPids = nemoClawManagedCloudflaredPids();
+  if (ownedPids === null) return [];
+  return findUnmanagedCloudflaredPids(
+    [...(managedPid === null ? [] : [managedPid]), ...ownedPids],
+    captureProcessList,
+  );
 }
 
 function unmanagedCloudflaredPids(opts: ServiceOptions, managedPid: number | null): number[] {
   if (opts.unmanagedCloudflaredPids) return opts.unmanagedCloudflaredPids(managedPid);
-  return findUnmanagedCloudflaredPids([
-    ...(managedPid === null ? [] : [managedPid]),
-    ...nemoClawManagedCloudflaredPids(),
-  ]);
+  return findHostUnmanagedCloudflaredPids(managedPid);
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -829,6 +840,8 @@ export interface LegacyCloudflaredMigrationDeps {
   legacyPidDirs?: () => string[];
   readState?: (pidDir: string) => CloudflaredState;
   registeredSandboxNames?: () => readonly string[];
+  /** Selected destroy recovery authority when its registry row is already absent. */
+  recoverySandboxName?: string;
 }
 
 /**
@@ -849,10 +862,25 @@ export function migrateLegacyCloudflaredState(
     deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(gatewayPort));
   ensurePidDir(targetPidDir);
   const targetState = readState(targetPidDir);
+  const eligibleSandboxNames = new Set(registeredSandboxNames());
+  if (deps.recoverySandboxName) eligibleSandboxNames.add(deps.recoverySandboxName);
+  const ownsSelectedGateway = (sandboxName: string): boolean => {
+    if (deps.registeredSandboxNames) return true;
+    const hit = findSandboxAcrossGatewayRoots(sandboxName);
+    if (!hit) return sandboxName === deps.recoverySandboxName;
+    if (hit.registryGatewayPort === gatewayPort) return true;
+    if (sandboxName === deps.recoverySandboxName) {
+      throw new Error(
+        `Legacy cloudflared state for sandbox ${JSON.stringify(sandboxName)} belongs to gateway port ${String(hit.registryGatewayPort)}. ` +
+          `Retry destroy through that gateway before removing ${resolveSandboxServicePidDir({ sandboxName })}.`,
+      );
+    }
+    return false;
+  };
   const eligiblePidDirs = new Set(
-    registeredSandboxNames().map((name) =>
-      basename(resolveSandboxServicePidDir({ sandboxName: name })),
-    ),
+    [...eligibleSandboxNames]
+      .filter(ownsSelectedGateway)
+      .map((name) => basename(resolveSandboxServicePidDir({ sandboxName: name }))),
   );
 
   const candidates = (deps.legacyPidDirs ?? legacyTunnelPidDirs)().flatMap((pidDir) => {
@@ -982,7 +1010,9 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       : undefined;
 
   const pidDir =
-    rawSandboxName && !sandboxName && !opts.pidDir ? undefined : prepareTunnelPidDir(opts);
+    opts.stopCloudflared === false || (rawSandboxName && !sandboxName && !opts.pidDir)
+      ? undefined
+      : prepareTunnelPidDir(opts);
 
   if (sandboxName) {
     sandboxGatewayStop.stopSandboxChannels(sandboxName, {

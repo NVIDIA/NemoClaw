@@ -37,6 +37,21 @@ describe("legacy tunnel state migration (#11628)", () => {
     return pidDir;
   }
 
+  function writeRegistry(gatewayPort: number, sandboxName: string): void {
+    const root = path.join(home, ".nemoclaw", "gateways", String(gatewayPort));
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: null,
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          [sandboxName]: { name: sandboxName, gatewayPort },
+        },
+      }),
+    );
+  }
+
   it("adopts one live legacy record when process identity cannot be inspected", () => {
     const legacyPidDir = createLegacyState("legacy", 4242);
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -80,5 +95,71 @@ describe("legacy tunnel state migration (#11628)", () => {
 
     expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
     expect(fs.readFileSync(path.join(legacyPidDir, "cloudflared.pid"), "utf8")).toBe("4343");
+  });
+
+  it("fails closed when two gateway roots register the legacy sandbox name", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    writeRegistry(gatewayPort, "legacy");
+    writeRegistry(gatewayPort + 1, "legacy");
+
+    expect(() =>
+      migrateLegacyCloudflaredState(
+        { gatewayPort },
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          readState: (pidDir): CloudflaredState =>
+            pidDir === legacyPidDir
+              ? { kind: "unverified-pid-process", pid: 4242 }
+              : { kind: "stopped" },
+        },
+      ),
+    ).toThrow('sandbox "legacy" appears in multiple gateway registries');
+
+    expect(fs.existsSync(path.join(targetPidDir, "cloudflared.pid"))).toBe(false);
+    expect(fs.readFileSync(path.join(legacyPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
+  });
+
+  it("adopts the selected destroy recovery record after its registry row is absent", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(
+      migrateLegacyCloudflaredState(
+        { gatewayPort },
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          recoverySandboxName: "legacy",
+          readState: (pidDir): CloudflaredState =>
+            pidDir === legacyPidDir
+              ? { kind: "unverified-pid-process", pid: 4242 }
+              : { kind: "stopped" },
+        },
+      ),
+    ).toBe(true);
+
+    expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
+    expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("preserves the recovery record when another gateway owns its sandbox name", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    writeRegistry(gatewayPort + 1, "legacy");
+
+    expect(() =>
+      migrateLegacyCloudflaredState(
+        { gatewayPort },
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          recoverySandboxName: "legacy",
+          readState: (pidDir): CloudflaredState =>
+            pidDir === legacyPidDir
+              ? { kind: "unverified-pid-process", pid: 4242 }
+              : { kind: "stopped" },
+        },
+      ),
+    ).toThrow("belongs to gateway port 18081");
+
+    expect(fs.existsSync(path.join(targetPidDir, "cloudflared.pid"))).toBe(false);
+    expect(fs.readFileSync(path.join(legacyPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
   });
 });

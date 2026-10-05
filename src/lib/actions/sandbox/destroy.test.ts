@@ -106,10 +106,11 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
-    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith({
-      sandboxName: SANDBOX,
-      gatewayPort: 18_080,
-    });
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledTimes(1);
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith(
+      { sandboxName: SANDBOX, gatewayPort: 18_080 },
+      { recoverySandboxName: SANDBOX },
+    );
     expect(stopAll).toHaveBeenCalledWith(
       expect.objectContaining({
         channelStopTransport: "openshell",

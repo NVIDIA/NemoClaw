@@ -217,7 +217,10 @@ export type CleanupSandboxServicesDeps = {
     stopCloudflared?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
-  migrateLegacyCloudflaredState?: (opts: { sandboxName: string; gatewayPort?: number }) => boolean;
+  migrateLegacyCloudflaredState?: (
+    opts: { sandboxName: string; gatewayPort?: number },
+    deps?: { recoverySandboxName?: string },
+  ) => boolean;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -382,14 +385,17 @@ export async function cleanupSandboxServices(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const migrateLegacyCloudflaredState =
     deps.migrateLegacyCloudflaredState ??
-    ((opts: { sandboxName: string; gatewayPort?: number }) => {
+    ((
+      opts: { sandboxName: string; gatewayPort?: number },
+      migrationDeps?: { recoverySandboxName?: string },
+    ) => {
       const services = require("../../tunnel/services") as {
-        migrateLegacyCloudflaredState: (options: {
-          sandboxName: string;
-          gatewayPort?: number;
-        }) => boolean;
+        migrateLegacyCloudflaredState: (
+          options: { sandboxName: string; gatewayPort?: number },
+          deps?: { recoverySandboxName?: string },
+        ) => boolean;
       };
-      return services.migrateLegacyCloudflaredState(opts);
+      return services.migrateLegacyCloudflaredState(opts, migrationDeps);
     });
   const stopGooglechatWebhookTunnel =
     deps.stopGooglechatWebhookTunnel ??
@@ -414,7 +420,10 @@ export async function cleanupSandboxServices(
     });
 
   const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
-  migrateLegacyCloudflaredState({ sandboxName: validatedSandboxName, gatewayPort });
+  migrateLegacyCloudflaredState(
+    { sandboxName: validatedSandboxName, gatewayPort },
+    { recoverySandboxName: validatedSandboxName },
+  );
   try {
     stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {

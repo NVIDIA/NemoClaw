@@ -18,7 +18,7 @@ import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experiment
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
-  findUnmanagedCloudflaredPids,
+  findHostUnmanagedCloudflaredPids,
   migrateLegacyCloudflaredState,
   readCloudflaredState,
   resolveTunnelPidDir,
@@ -173,10 +173,11 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
 
 function legacyCloudflaredMigrationWarning(
   sandboxName: string,
+  gatewayPort: number,
   migrateState: typeof migrateLegacyCloudflaredState,
 ): DoctorCheck | null {
   try {
-    migrateState({ sandboxName });
+    migrateState({ sandboxName, gatewayPort });
     return null;
   } catch (error) {
     return {
@@ -191,21 +192,24 @@ function legacyCloudflaredMigrationWarning(
 
 export function cloudflaredDoctorCheck(
   sandboxName: string,
+  gatewayPort: number = GATEWAY_PORT,
   readState: typeof readCloudflaredState = readCloudflaredState,
   migrateState: typeof migrateLegacyCloudflaredState = migrateLegacyCloudflaredState,
 ): DoctorCheck {
   const usesProductionState = readState === readCloudflaredState;
   if (usesProductionState) {
-    const warning = legacyCloudflaredMigrationWarning(sandboxName, migrateState);
+    const warning = legacyCloudflaredMigrationWarning(sandboxName, gatewayPort, migrateState);
     if (warning) return warning;
   }
-  const state = readState(resolveTunnelPidDir());
+  const state = readState(resolveTunnelPidDir({ gatewayPort }));
   const managedPid =
     state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"
       ? state.pid
       : null;
   const unmanagedPids =
-    usesProductionState && state.kind !== "running" ? findUnmanagedCloudflaredPids(managedPid) : [];
+    usesProductionState && state.kind !== "running"
+      ? findHostUnmanagedCloudflaredPids(managedPid)
+      : [];
   if (unmanagedPids.length > 0) {
     return {
       group: "Local services",

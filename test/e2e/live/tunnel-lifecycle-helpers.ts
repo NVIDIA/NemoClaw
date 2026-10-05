@@ -467,14 +467,11 @@ export async function runTunnelLifecycleContract({
   expect(tunnelPid, "status must report the managed cloudflared PID before destroy").toBeTruthy();
 
   progress.phase("destroy the sandbox without stopping the host tunnel");
-  const destroy = await host.nemoclaw(
-    [SANDBOX_NAME, "destroy", "--force", "--no-cleanup-gateway"],
-    {
-      artifactName: "destroy-with-active-tunnel",
-      env: commandEnv(),
-      timeoutMs: 15 * 60_000,
-    },
-  );
+  const destroy = await host.nemoclaw([SANDBOX_NAME, "destroy", "--no-cleanup-gateway"], {
+    artifactName: "destroy-with-active-tunnel",
+    env: commandEnv(),
+    timeoutMs: 15 * 60_000,
+  });
   expect(destroy.exitCode, resultText(destroy)).toBe(0);
 
   const statusAfterDestroy = await host.nemoclaw(["tunnel", "status"], {
@@ -482,7 +479,12 @@ export async function runTunnelLifecycleContract({
     env: commandEnv(),
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
-  expect(extractTunnelPid(resultText(statusAfterDestroy))).toBe(tunnelPid);
+  const statusAfterDestroyText = resultText(statusAfterDestroy);
+  expect(
+    extractTunnelPid(statusAfterDestroyText) === tunnelPid &&
+      extractTunnelUrl(statusAfterDestroyText) === tunnelUrl,
+    "destroy must preserve the managed cloudflared PID and public URL",
+  ).toBe(true);
 
   progress.phase("stop the tunnel and confirm status removal");
   const stop = await host.nemoclaw(["tunnel", "stop"], {
