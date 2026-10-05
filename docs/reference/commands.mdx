@@ -2257,7 +2257,7 @@ Each active preset is annotated with display-time provenance:
 - `[user-added]` covers other live presets.
 - `[source unverified (gateway unreachable)]` appears only when OpenShell cannot be read; no local policy fallback is shown.
 
-Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label.
+Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label. For a LangChain Deep Agents Code sandbox, `observability-otlp-local` is labelled `[from dcode agent]`.
 
 ```bash
 $$nemoclaw my-assistant policy list
