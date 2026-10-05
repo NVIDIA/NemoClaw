@@ -7,6 +7,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 
+import { proveRealPairingStateReadable } from "./openclaw-real-pairing-state-proof.ts";
+
 interface ProofOptions {
   dist: string;
   nodeExecutable: string;
@@ -1250,8 +1252,10 @@ const nativeConnectAuth = runInNewContext(authFunctions.join(String.fromCharCode
 if (typeof pairing.h !== "function" || typeof pairing.c !== "function" || typeof approval.n !== "function" || typeof auth.l !== "function" || typeof auth.r !== "function") {
   throw new Error("reviewed SQLite device-pairing exports missing");
 }
-const publicKey = crypto.randomBytes(32).toString("base64url");
-const deviceId = crypto.createHash("sha256").update(Buffer.from(publicKey, "base64url")).digest("hex");
+const identityRuntime = await import(exactlyOne(/^device-identity-[^.]+[.]m?js$/, "device identity", "function loadOrCreateDeviceIdentity(options"));
+const canonicalIdentity = identityRuntime.r();
+const publicKey = identityRuntime.o(canonicalIdentity.publicKeyPem);
+const deviceId = canonicalIdentity.deviceId;
 const request = async (scopes) => (await pairing.h({
   deviceId,
   publicKey,
@@ -1343,6 +1347,7 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
     },
   );
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
+  proveRealPairingStateReadable(stateDir);
 }
 
 export function proveRealOpenClawAgentScopes(dist: string): void {

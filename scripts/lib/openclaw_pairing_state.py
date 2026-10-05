@@ -11,7 +11,9 @@ import urllib.parse
 
 
 ADAPTER_VERSION = 1
-OPENCLAW_STATE_SCHEMA_VERSION = 15
+# OpenClaw 2026.9.2 and 2026.9.5 retain the same canonical device tables.
+# Keep an explicit reviewed set; unknown schemas must still fail closed.
+OPENCLAW_STATE_SCHEMA_VERSIONS = (15, 17)
 MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 
 
@@ -351,7 +353,7 @@ def _paired_record(row):
     return record
 
 
-def _read_records(connection, *, local_device_only=False):
+def _read_records(connection, schema_version, *, local_device_only=False):
     identities = connection.execute(
         "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
         "created_at_ms, updated_at_ms "
@@ -408,7 +410,7 @@ def _read_records(connection, *, local_device_only=False):
         raise ValueError("canonical device state contains duplicate identities")
     return {
         "adapterVersion": ADAPTER_VERSION,
-        "schemaVersion": OPENCLAW_STATE_SCHEMA_VERSION,
+        "schemaVersion": schema_version,
         "identity": identity,
         "identityTimestamps": {
             "createdAtMs": identity_row["created_at_ms"],
@@ -502,9 +504,11 @@ def read_openclaw_pairing_state(
                 _require_sqlite_vfs_descriptor(
                     after_schema_read, descriptor_baseline, wal_descriptors[2], 1
                 )
-        if schema_version is None or schema_version[0] != OPENCLAW_STATE_SCHEMA_VERSION:
+        if schema_version is None or schema_version[0] not in OPENCLAW_STATE_SCHEMA_VERSIONS:
             raise ValueError("unsupported canonical device state schema")
-        records = _read_records(connection, local_device_only=local_device_only)
+        records = _read_records(
+            connection, schema_version[0], local_device_only=local_device_only
+        )
         if wal_descriptors is None:
             late_wal_descriptors = _open_wal_descriptors(
                 state_dir, state_fd, sqlite_state_fd
