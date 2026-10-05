@@ -20,6 +20,7 @@ test(native_state_json_preserves_module_and_instance_identity_without_refresh)
     | binary(=sandbox_readiness) | binary(=opentofu_openshell) | binary(=deployment)
     | binary(=export_observations) | binary(=fabric_deployment)
     | binary(=multiple_providers) | binary(=remote_service)
+    | binary(=discovery) | binary(=inference_discovery) | binary(=gateway_readiness)
 ))
 '''
 

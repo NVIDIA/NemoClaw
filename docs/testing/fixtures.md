@@ -264,23 +264,9 @@ Its Python process simulates model reconstruction and a credential; it does not 
 
 ## Fabric Discovery and Execution
 
-The fixture adapter and its descriptor live in Fabric's `tests/fixtures/discovery` package.
-Install it alongside the pinned Fabric runtime in an isolated Python environment; do not create a NemoClaw adapter manifest.
-Build the production provider and native bundle, then from the NemoClaw repository root run:
-
-```sh
-NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/absolute/fabric/tests/fixtures/discovery/future.fabric-adapter.json \
-NEMOCLAW_TEST_FABRIC_PYTHON=/absolute/fixture-environment/bin/python \
-NEMOCLAW_TEST_TOFU=/absolute/bundle/libexec/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test discovery \
-  fabric_owned_adapter_settings_reach_real_planning_without_consumer_manifests -- --ignored
-```
-
-The test reads real installed discovery output through the image packaging command, serves it through an isolated engine fixture, and runs the actual OpenTofu provider.
-It asserts supported valid settings, rejection of a missing conditional setting, and exact configuration delivery to Fabric's installed runner through the generic runtime host.
-It uses temporary directories and fixture responses; it does not access a live deployment or model service.
-An optional `NEMOCLAW_TEST_AUTHORED_YAML` points to the same fixture's saved onboarding document; the test verifies and consumes its settings without replacing them.
+The image `unit-tests` stage installs Fabric's `tests/fixtures/discovery` adapter beside the pinned Fabric runtime.
+Its tests package that adapter's installed discovery output and deliver its settings to Fabric's installed runner through the bridge host.
+The SDK's [planner tests](../../crates/nemoclaw-sdk/tests/fabric_planner.rs) plan the same unknown adapter's settings from an image catalog.
 
 ## Inference API Fixtures
 
