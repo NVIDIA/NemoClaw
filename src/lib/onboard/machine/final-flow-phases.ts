@@ -173,6 +173,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
@@ -214,6 +215,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
       deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
