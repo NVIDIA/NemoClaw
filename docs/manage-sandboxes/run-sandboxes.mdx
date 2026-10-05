@@ -174,7 +174,8 @@ $$nemoclaw tunnel start
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 `$$nemoclaw tunnel status` reads the same host tunnel state regardless of which sandbox is selected.
 After an upgrade, NemoClaw adopts one verified legacy tunnel record from sandbox-scoped state.
-If multiple tunnel records or an unowned `cloudflared` process are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+If multiple tunnel records are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+When no verified managed tunnel is already running, NemoClaw also reports an unowned `cloudflared` process as a conflict.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
 a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
@@ -197,7 +198,8 @@ $$nemoclaw tunnel start
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
 `$$nemoclaw tunnel status` reads the same host tunnel state regardless of which sandbox is selected.
 After an upgrade, NemoClaw adopts one verified legacy tunnel record from sandbox-scoped state.
-If multiple tunnel records or an unowned `cloudflared` process are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+If multiple tunnel records are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+When no verified managed tunnel is already running, NemoClaw also reports an unowned `cloudflared` process as a conflict.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 </AgentOnly>
 

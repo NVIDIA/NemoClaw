@@ -93,7 +93,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 
     await cleanupSandboxServices(
       SANDBOX,
-      { stopHostServices: true, channelStopTransport: "openshell" },
+      { stopHostServices: true, channelStopTransport: "openshell", gatewayPort: 18_080 },
       {
         stopAll,
         migrateLegacyCloudflaredState,
@@ -106,7 +106,10 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
-    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith({ sandboxName: SANDBOX });
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith({
+      sandboxName: SANDBOX,
+      gatewayPort: 18_080,
+    });
     expect(stopAll).toHaveBeenCalledWith(
       expect.objectContaining({
         channelStopTransport: "openshell",

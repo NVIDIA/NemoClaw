@@ -217,7 +217,7 @@ export type CleanupSandboxServicesDeps = {
     stopCloudflared?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
-  migrateLegacyCloudflaredState?: (opts: { sandboxName: string }) => boolean;
+  migrateLegacyCloudflaredState?: (opts: { sandboxName: string; gatewayPort?: number }) => boolean;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -289,9 +289,11 @@ export async function cleanupSandboxServices(
   {
     stopHostServices = false,
     channelStopTransport,
+    gatewayPort,
   }: {
     stopHostServices?: boolean;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
+    gatewayPort?: number;
   } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
@@ -380,9 +382,12 @@ export async function cleanupSandboxServices(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const migrateLegacyCloudflaredState =
     deps.migrateLegacyCloudflaredState ??
-    ((opts: { sandboxName: string }) => {
+    ((opts: { sandboxName: string; gatewayPort?: number }) => {
       const services = require("../../tunnel/services") as {
-        migrateLegacyCloudflaredState: (options: { sandboxName: string }) => boolean;
+        migrateLegacyCloudflaredState: (options: {
+          sandboxName: string;
+          gatewayPort?: number;
+        }) => boolean;
       };
       return services.migrateLegacyCloudflaredState(opts);
     });
@@ -409,7 +414,7 @@ export async function cleanupSandboxServices(
     });
 
   const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
-  migrateLegacyCloudflaredState({ sandboxName: validatedSandboxName });
+  migrateLegacyCloudflaredState({ sandboxName: validatedSandboxName, gatewayPort });
   try {
     stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {
@@ -1131,6 +1136,7 @@ async function destroySandboxUnlocked(
     await cleanupSandboxServices(
       sandboxName,
       {
+        gatewayPort: registryAuthority.gatewayPort,
         stopHostServices: shouldStopHostServices,
         ...(destroyChannelStopTransport
           ? { channelStopTransport: destroyChannelStopTransport }

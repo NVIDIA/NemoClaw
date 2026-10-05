@@ -55,6 +55,8 @@ export interface ServiceOptions {
   repoDir?: string;
   /** Override the cloudflared PID directory (default: one host-scoped directory). */
   pidDir?: string;
+  /** Gateway port whose host-scoped tunnel state is owned by this operation. */
+  gatewayPort?: number;
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
   /** Injectable current-user cloudflared discovery for tests. */
@@ -804,7 +806,7 @@ function validateSandboxName(name: string): string {
 
 function resolvePidDir(opts: ServiceOptions): string {
   if (opts.pidDir) return opts.pidDir;
-  return join(resolveNemoclawStateDir(), "tunnel");
+  return join(resolveNemoclawStateDir(undefined, opts.gatewayPort), "tunnel");
 }
 
 function legacyTunnelPidDirs(): string[] {
@@ -841,9 +843,10 @@ export function migrateLegacyCloudflaredState(
   if (opts.pidDir) return false;
 
   const targetPidDir = resolvePidDir(opts);
+  const gatewayPort = opts.gatewayPort ?? GATEWAY_PORT;
   const readState = deps.readState ?? readCloudflaredState;
   const registeredSandboxNames =
-    deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(GATEWAY_PORT));
+    deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(gatewayPort));
   ensurePidDir(targetPidDir);
   const targetState = readState(targetPidDir);
   const eligiblePidDirs = new Set(
@@ -855,12 +858,16 @@ export function migrateLegacyCloudflaredState(
   const candidates = (deps.legacyPidDirs ?? legacyTunnelPidDirs)().flatMap((pidDir) => {
     if (!eligiblePidDirs.has(basename(pidDir))) return [];
     const state = readState(pidDir);
-    return state.kind === "running" ? [{ pidDir, pid: state.pid }] : [];
+    return state.kind === "running" || state.kind === "unverified-pid-process"
+      ? [{ pidDir, pid: state.pid }]
+      : [];
   });
   if (candidates.length === 0) return false;
-  if (targetState.kind === "running" || candidates.length > 1) {
+  const targetHasLiveRecord =
+    targetState.kind === "running" || targetState.kind === "unverified-pid-process";
+  if (targetHasLiveRecord || candidates.length > 1) {
     const activeRecords = [
-      ...(targetState.kind === "running" ? [{ pidDir: targetPidDir, pid: targetState.pid }] : []),
+      ...(targetHasLiveRecord ? [{ pidDir: targetPidDir, pid: targetState.pid }] : []),
       ...candidates,
     ];
     const detail = activeRecords.map(({ pidDir, pid }) => `${pid} (${pidDir})`).join(", ");

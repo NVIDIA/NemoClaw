@@ -1540,8 +1540,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: {
       ...hostedInference,
       ...nonInteractive,
+      NEMOCLAW_GATEWAY_PORT: "18080",
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life",
-      OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_GATEWAY: "nemoclaw-18080",
     },
   }),
   runtimeAgnosticTarget("whatsapp-qr-compact", {

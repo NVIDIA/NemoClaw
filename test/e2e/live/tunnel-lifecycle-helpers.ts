@@ -26,6 +26,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const TEST_SANDBOX_PREFIX = "e2e-tunnel-life";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const LOCAL_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
+const TUNNEL_GATEWAY_PORT = "18080";
+const TUNNEL_GATEWAY_NAME = "nemoclaw-18080";
 const TEST_TIMEOUT_MS = testTimeout(
   Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
 );
@@ -63,7 +65,8 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_POLICY_TIER: "open",
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_PROVIDER: "cloud",
-    OPENSHELL_GATEWAY: "nemoclaw",
+    NEMOCLAW_GATEWAY_PORT: TUNNEL_GATEWAY_PORT,
+    OPENSHELL_GATEWAY: TUNNEL_GATEWAY_NAME,
     ...(process.env.NEMOCLAW_DASHBOARD_PORT
       ? { NEMOCLAW_DASHBOARD_PORT: process.env.NEMOCLAW_DASHBOARD_PORT }
       : {}),
@@ -206,6 +209,7 @@ export function registerTunnelLifecycleCleanup(
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     cleanup.trackSandbox(host, SANDBOX_NAME, {
       artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
+      env: commandEnv(),
       timeoutMs: 15 * 60_000,
     });
   }
@@ -240,6 +244,8 @@ export async function runTunnelLifecycleContract({
   await artifacts.writeJson("contract.json", {
     sandboxName: SANDBOX_NAME,
     localDashboardPort: LOCAL_DASHBOARD_PORT,
+    gatewayName: TUNNEL_GATEWAY_NAME,
+    gatewayPort: TUNNEL_GATEWAY_PORT,
     preservedBoundaries: [
       "real Docker/OpenShell OpenClaw sandbox onboarding",
       "host cloudflared binary and quick-tunnel registration",
@@ -276,6 +282,7 @@ export async function runTunnelLifecycleContract({
   progress.phase("onboard the OpenClaw tunnel sandbox");
   await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
     artifactName: "pre-cleanup-nemoclaw-destroy-tunnel-lifecycle",
+    env: commandEnv(),
     timeoutMs: 15 * 60_000,
   });
 
