@@ -30,6 +30,9 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       const scriptPath = path.join(tmpDir, "build-recreate.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+      const registryPath = JSON.stringify(
+        path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });
@@ -112,6 +115,22 @@ delete process.env.NEMOCLAW_PROVIDER_KEY;
 delete process.env.NEMOCLAW_PROVIDER;
 
 const { setupNim, setupInference } = require(${onboardPath});
+const registry = require(${registryPath});
+
+// Recreate preserves the registry receipt that proves this named native
+// provider belongs to the selected sandbox. Gateway metadata alone is not
+// ownership evidence because another sandbox can use the same provider name.
+registry.registerSandbox({
+  name: "rg-test-noninter",
+  provider: "nvidia-prod",
+  model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+  nativeNvidiaProviderAttachment: {
+    schemaVersion: 1,
+    profileId: "nemoclaw-nvidia-inference-v1",
+    providerName: "nemoclaw-nvidia-prod-v1",
+    providerId: "provider-id",
+  },
+});
 
 (async () => {
   const result = await setupNim(null, "rg-test-noninter", null);
