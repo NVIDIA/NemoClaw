@@ -25,7 +25,7 @@ import {
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
 import {
-  isDcodeOpenRouterModelsRoute404,
+  isSupportedOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
 } from "../inference-route-health";
 import {
@@ -309,13 +309,13 @@ export async function requireLaunchSemanticHealth(
     const strictRouteHealth =
       inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
     if (strictRouteHealth && agentName !== "langchain-deepagents-code") return;
-    const openRouterDcodeModelsRouteUnsupported =
+    const supportedOpenRouterModelsRouteUnsupported =
       inference.healthy &&
-      isDcodeOpenRouterModelsRoute404(
+      isSupportedOpenRouterModelsRoute404(
         { agentName, provider: entry.provider ?? null },
         inference.httpStatus,
       );
-    if (strictRouteHealth || openRouterDcodeModelsRouteUnsupported) {
+    if (strictRouteHealth || supportedOpenRouterModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);
       if (!provider || !model) {

@@ -218,31 +218,51 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.subprobes?.[0]).toMatchObject({ ok: true, okLabel: "reachable" });
   });
 
-  it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {
+  it.each(["openclaw", "hermes"])(
+    "accepts the %s OpenRouter 404 when the invocation succeeds (#12621)",
+    (agentName) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(404),
+        null,
+        { ok: true },
+        {
+          agentName,
+          provider: "openrouter-api",
+        },
+      );
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it.each(["openclaw", "hermes"])(
+    "fails closed for the %s OpenRouter 404 when no invocation was attempted (#12621)",
+    (agentName) => {
+      const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
+        agentName,
+        provider: "openrouter-api",
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.okLabel).toBeUndefined();
+      expect(result.failureLabel).toBe("unreachable");
+    },
+  );
+
+  it("does not extend the OpenRouter 404 tolerance to an unsupported agent", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
       {
-        agentName: "openclaw",
+        agentName: "future-agent",
         provider: "openrouter-api",
       },
     );
 
     expect(result.ok).toBe(false);
     expect(result.failureLabel).toBe("unreachable");
-    expect(result.detail).toContain("never validated against a model catalog");
-  });
-
-  it("fails closed for a non-DCode agent when the route 404s and invocation was never attempted", () => {
-    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
-      agentName: "openclaw",
-      provider: "openrouter-api",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.okLabel).toBeUndefined();
-    expect(result.failureLabel).toBe("unreachable");
+    expect(result.detail).toContain("do not have a supported catalog-less route");
   });
 
   it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
@@ -270,7 +290,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("still tolerates a 404 for Deep Agents Code on OpenRouter when invocation succeeds", () => {
+  it("accepts a Deep Agents Code OpenRouter 404 when the invocation succeeds", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
@@ -284,7 +304,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("normalizes the provider before matching the Deep Agents Code 404 exception", () => {
+  it("normalizes the provider before matching a supported OpenRouter 404", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
@@ -298,7 +318,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("does not extend the DCode 404 tolerance to a different provider", () => {
+  it("does not extend the supported-agent 404 tolerance to a different provider", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,

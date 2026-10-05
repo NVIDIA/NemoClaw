@@ -7,6 +7,7 @@ import { probeOnboardInferenceInvocation, verifyDeployment } from "./verify-depl
 
 const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 const DCODE_AGENT = "langchain-deepagents-code";
+const CATALOGLESS_OPENROUTER_AGENTS = ["openclaw", "hermes", DCODE_AGENT] as const;
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
@@ -107,44 +108,59 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(result.verification.inferenceRouteWorking).toBe(false);
   });
 
-  it("accepts the Deep Agents Code OpenRouter 404 when an inference request succeeds (#9834)", async () => {
-    const result = await verifyDeployment(
-      "my-sandbox",
-      buildChain(),
-      makeModelsRouteDeps("404", { probeInferenceInvocation: async () => ({ ok: true }) }),
-      {
-        ...NO_RETRY,
-        inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
-      },
-    );
+  it.each(CATALOGLESS_OPENROUTER_AGENTS)(
+    "accepts the %s OpenRouter 404 when an inference request succeeds (#12621)",
+    async (agentName) => {
+      const result = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeModelsRouteDeps("404", { probeInferenceInvocation: async () => ({ ok: true }) }),
+        {
+          ...NO_RETRY,
+          inferenceRouteContext: { agentName, provider: "openrouter-api" },
+        },
+      );
 
-    expect(result.verification.inferenceRouteWorking).toBe(true);
-  });
+      expect(result.verification.inferenceRouteWorking).toBe(true);
+      expect(result.healthy).toBe(true);
+    },
+  );
 
-  it("fails the Deep Agents Code OpenRouter 404 when the inference request fails (#10543)", async () => {
-    const result = await verifyDeployment(
-      "my-sandbox",
-      buildChain(),
-      makeModelsRouteDeps("404", {
-        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
-      }),
-      {
-        ...NO_RETRY,
-        inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
-      },
-    );
+  it.each(CATALOGLESS_OPENROUTER_AGENTS)(
+    "fails the %s OpenRouter 404 when the inference request fails (#12621)",
+    async (agentName) => {
+      const result = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeModelsRouteDeps("404", {
+          probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
+        }),
+        {
+          ...NO_RETRY,
+          inferenceRouteContext: { agentName, provider: "openrouter-api" },
+        },
+      );
 
-    expect(result.verification.inferenceRouteWorking).toBe(false);
-  });
+      expect(result.verification.inferenceRouteWorking).toBe(false);
+    },
+  );
 
-  it("fails the Deep Agents Code OpenRouter 404 when no invocation probe is wired (#10543)", async () => {
-    const result = await verifyDeployment("my-sandbox", buildChain(), makeModelsRouteDeps("404"), {
-      ...NO_RETRY,
-      inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
-    });
+  it.each(CATALOGLESS_OPENROUTER_AGENTS)(
+    "fails the %s OpenRouter 404 when no invocation probe is wired (#12621)",
+    async (agentName) => {
+      const result = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeModelsRouteDeps("404"),
+        {
+          ...NO_RETRY,
+          inferenceRouteContext: { agentName, provider: "openrouter-api" },
+        },
+      );
 
-    expect(result.verification.inferenceRouteWorking).toBe(false);
-  });
+      expect(result.verification.inferenceRouteWorking).toBe(false);
+    },
+  );
 
   it("points a failed by-design 404 at the inference request, not the model catalog (#10543)", async () => {
     const result = await verifyDeployment(
@@ -155,7 +171,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       }),
       {
         ...NO_RETRY,
-        inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
+        inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
       },
     );
 
@@ -167,7 +183,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it("tells a plain 404 to make the model catalog available (#10543)", async () => {
     const result = await verifyDeployment("my-sandbox", buildChain(), makeModelsRouteDeps("404"), {
       ...NO_RETRY,
-      inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
+      inferenceRouteContext: { agentName: "openclaw", provider: "compatible-endpoint" },
     });
 
     const inference = result.diagnostics.find((entry) => entry.link === "inference");
@@ -199,7 +215,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const result = await verifyDeployment("my-sandbox", buildChain(), deps, {
       retryDelaysMs: [1, 1, 1],
       sleep: async (_ms: number) => {},
-      inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
+      inferenceRouteContext: { agentName: "openclaw", provider: "compatible-endpoint" },
     });
 
     expect(modelsRouteCalls).toBe(4);
@@ -222,13 +238,13 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const result = await verifyDeployment("my-sandbox", buildChain(), deps, {
       retryDelaysMs: [1, 1, 1],
       sleep: async (_ms: number) => {},
-      inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
+      inferenceRouteContext: { agentName: "openclaw", provider: "compatible-endpoint" },
     });
 
     expect(result.verification.inferenceRouteWorking).toBe(true);
   });
 
-  it("spends no models-route retry budget on the expected Deep Agents Code 404 (#10543)", async () => {
+  it("spends no models-route retry budget on an expected OpenRouter 404 (#12621)", async () => {
     let modelsRouteCalls = 0;
     const deps = makeDeps({
       executeSandboxCommand: async (_name: string, script: string) => {
@@ -244,13 +260,13 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     await verifyDeployment("my-sandbox", buildChain(), deps, {
       retryDelaysMs: [1, 1, 1],
       sleep: async (_ms: number) => {},
-      inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
+      inferenceRouteContext: { agentName: "hermes", provider: "openrouter-api" },
     });
 
     expect(modelsRouteCalls).toBe(1);
   });
 
-  it("runs the invocation probe once for the Deep Agents Code 404 exception (#10543)", async () => {
+  it("runs the invocation probe once for an expected OpenRouter 404 (#12621)", async () => {
     let invocationCalls = 0;
     const deps = makeModelsRouteDeps("404", {
       probeInferenceInvocation: async () => {
@@ -262,7 +278,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     await verifyDeployment("my-sandbox", buildChain(), deps, {
       retryDelaysMs: [1, 1, 1],
       sleep: async (_ms: number) => {},
-      inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
+      inferenceRouteContext: { agentName: "openclaw", provider: "openrouter-api" },
     });
 
     expect(invocationCalls).toBe(1);
