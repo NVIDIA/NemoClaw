@@ -5,7 +5,7 @@ use nemoclaw_sdk::{
     config::ComputeDriver,
     discovery::{DiscoveryObservation, DiscoveryRequest, EngineObservation, ObservationStatus},
     discovery_session::{
-        DiscoveryObservations, DiscoveryQuery, DiscoverySource, RecordedDiscovery, discover,
+        DiscoveryObservations, DiscoveryQuery, DiscoverySource, RecordedDiscovery,
     },
     hardware_discovery::HardwareObservation,
 };
@@ -166,56 +166,4 @@ async fn a_recording_answers_what_it_holds_and_records_the_rest_as_unknown() {
             .map(|hardware| hardware.status),
         Some(ObservationStatus::Unknown)
     );
-}
-
-#[tokio::test]
-async fn discovery_asks_for_dependent_reads_only_after_their_prerequisite() {
-    let engine_query = DiscoveryQuery::Engine(docker());
-    let fabric = DiscoveryQuery::Fabric {
-        engine: docker().engine,
-        image: "image@sha256:abc".into(),
-    };
-    let mut source = RecordedDiscovery::new(DiscoveryObservations::new().with(
-        engine_query.clone(),
-        DiscoveryObservation::Engine(engine(ObservationStatus::Available)),
-    ));
-    let mut observations = DiscoveryObservations::new();
-    let mut asked: Vec<usize> = Vec::new();
-    discover(
-        &mut source,
-        &mut observations,
-        |observations| {
-            let mut queries = vec![engine_query.clone()];
-            if observations.engine(&docker()).is_some() {
-                queries.push(fabric.clone());
-            }
-            asked.push(queries.len());
-            queries
-        },
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    assert!(observations.contains(&fabric));
-    assert_eq!(asked, vec![1, 2, 2]);
-}
-
-#[tokio::test]
-async fn discovery_stops_when_the_queries_never_settle() {
-    let mut source = RecordedDiscovery::new(DiscoveryObservations::new());
-    let mut observations = DiscoveryObservations::new();
-    let mut round = 0;
-    let result = discover(
-        &mut source,
-        &mut observations,
-        |_| {
-            round += 1;
-            vec![DiscoveryQuery::Credential {
-                reference: format!("KEY_{round}"),
-            }]
-        },
-        &CancellationToken::new(),
-    )
-    .await;
-    assert!(result.is_err());
 }

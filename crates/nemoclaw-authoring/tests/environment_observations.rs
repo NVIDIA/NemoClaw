@@ -7,7 +7,7 @@
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument, environment_queries};
 use nemoclaw_sdk::{
     CancellationToken,
-    discovery_session::{DiscoveryObservations, RecordedDiscovery, discover},
+    discovery_session::{DiscoveryObservations, DiscoverySource, RecordedDiscovery},
 };
 use serde_json::{Value, json};
 
@@ -23,15 +23,10 @@ const NOTHING_RECORDED: &str = "[]";
 async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
     let mut source =
         RecordedDiscovery::new(serde_json::from_str::<DiscoveryObservations>(recorded).unwrap());
-    let mut observations = DiscoveryObservations::new();
-    discover(
-        &mut source,
-        &mut observations,
-        |_| environment_queries(),
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
+    let observations = source
+        .observe(&environment_queries(), &CancellationToken::new())
+        .await
+        .unwrap();
     let capabilities = Capabilities::available();
     let yaml =
         String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())

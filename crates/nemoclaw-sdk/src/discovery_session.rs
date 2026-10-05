@@ -26,9 +26,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{future::Future, path::Path};
 
-/// Rounds of observation after which [`discover`] concludes the queries never settle.
-const MAX_ROUNDS: usize = 8;
-
 /// A read of the target, identified by everything that determines its answer.
 /// The provider reads are independent, so OpenTofu may schedule them
 /// concurrently; the gateway and credential reads are made separately.
@@ -339,24 +336,6 @@ impl DiscoverySource for RecordedDiscovery {
         }
         Ok(observed)
     }
-}
-
-/// Observe whatever `queries` asks for until nothing it asks for is missing.
-/// `queries` sees the observations so that a read can depend on an earlier one.
-pub async fn discover<S: DiscoverySource>(
-    source: &mut S,
-    observations: &mut DiscoveryObservations,
-    mut queries: impl FnMut(&DiscoveryObservations) -> Vec<DiscoveryQuery>,
-    cancel: &CancellationToken,
-) -> Result<(), Error> {
-    for _ in 0..MAX_ROUNDS {
-        let missing = observations.missing(&queries(observations));
-        if missing.is_empty() {
-            return Ok(());
-        }
-        observations.merge(source.observe(&missing, cancel).await?);
-    }
-    Err(Error::State("discovery did not settle"))
 }
 
 pub struct DiscoverySession {

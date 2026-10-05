@@ -151,7 +151,6 @@ A `DiscoverySource` answers queries: `DiscoverySession` reads the real target th
 They are the SDK's `plan_queries`, the list a plan compiles into its discovery data sources, so onboarding and planning cannot ask different questions, plus the credential checks.
 Three exclusions are deliberate and tested: only the selected route's inference catalog is read, onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
 `environment_queries` returns the queries that need no answers, which are the local engines, so the first question can use them.
-`discover` repeats observe and merge until nothing asked for is missing, so a read can depend on an earlier one.
 Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman, through `RecordedDiscovery`.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
