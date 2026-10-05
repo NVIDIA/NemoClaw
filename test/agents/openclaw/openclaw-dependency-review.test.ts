@@ -148,6 +148,9 @@ describe("OpenClaw 2026.9.5 dependency review contract", () => {
         packageSpec.startsWith("openclaw@") || packageSpec.startsWith("@openclaw/"),
     );
     expect(openClawArchives.length).toBeGreaterThan(0);
+    expect(openClawArchives.map(({ packageSpec }) => packageSpec)).toContain(
+      `@openclaw/googlechat@${selectedVersion}`,
+    );
     expect(
       openClawArchives.map(({ packageSpec }) =>
         packageSpec.slice(packageSpec.lastIndexOf("@") + 1),

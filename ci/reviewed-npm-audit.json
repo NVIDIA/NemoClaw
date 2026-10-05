@@ -95,6 +95,12 @@
       "packageSpec": "openclaw@2026.9.5",
       "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz"
+    },
+    {
+      "label": "OpenClaw Google Chat plugin 2026.9.5",
+      "packageSpec": "@openclaw/googlechat@2026.9.5",
+      "integrity": "sha512-8yX3i7u6044gyq+W4tMbJH5CRXLBsJSbdDMzysAxJYDgPimYB5DS+fTNU924tt8zhzkruqRjUzz7FjTtMTn0jA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.5.tgz"
     }
   ],
   "lockedGraphs": [
