@@ -2355,6 +2355,7 @@ jobs:
           const packages = {
             "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
             brave: ["@openclaw/brave-plugin", "2026.9.2"],
+            tavily: ["@openclaw/tavily-plugin", "2026.9.2"],
             discord: ["@openclaw/discord", "2026.9.2"],
             "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
             slack: ["@openclaw/slack", "2026.9.2"],
@@ -2398,9 +2399,6 @@ jobs:
           }
           if (config.plugins?.entries?.telegram?.enabled !== false) {
             throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
-          }
-          if (config.plugins?.entries?.tavily !== undefined) {
-            throw new Error("uninstalled OpenClaw plugin tavily is present in managed configuration");
           }
           for (const id of [
             "telegram",
