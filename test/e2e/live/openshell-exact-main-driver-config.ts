@@ -231,7 +231,7 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   );
 
   const clientCa = requireString(tls.client_ca_path, "gateway TLS client_ca_path");
-  expect(requireString(docker.guest_tls_ca, "Docker guest_tls_ca")).toBe(clientCa);
+  expect(requireString(gateway.guest_tls_ca, "gateway guest_tls_ca")).toBe(clientCa);
   assertReadableRegularFile(
     requireString(tls.cert_path, "gateway TLS cert_path"),
     "gateway TLS cert_path",
@@ -242,16 +242,16 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   );
   assertReadableRegularFile(clientCa, "gateway TLS client_ca_path");
   assertReadableRegularFile(
-    requireString(docker.guest_tls_ca, "Docker guest_tls_ca"),
-    "Docker guest_tls_ca",
+    requireString(gateway.guest_tls_ca, "gateway guest_tls_ca"),
+    "gateway guest_tls_ca",
   );
   assertReadableRegularFile(
-    requireString(docker.guest_tls_cert, "Docker guest_tls_cert"),
-    "Docker guest_tls_cert",
+    requireString(gateway.guest_tls_cert, "gateway guest_tls_cert"),
+    "gateway guest_tls_cert",
   );
   assertRestrictedRegularFile(
-    requireString(docker.guest_tls_key, "Docker guest_tls_key"),
-    "Docker guest_tls_key",
+    requireString(gateway.guest_tls_key, "gateway guest_tls_key"),
+    "gateway guest_tls_key",
   );
 
   return {

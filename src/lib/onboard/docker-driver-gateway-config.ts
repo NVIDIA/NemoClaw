@@ -696,12 +696,18 @@ function existingGatewayIdentityFromConfig(
       ...(runtime.socketPath === null ? [] : ["socket_path"]),
       ...(legacyDriver ? ["network_name"] : []),
       "supervisor_image",
-      "guest_tls_ca",
-      "guest_tls_cert",
-      "guest_tls_key",
     ];
     if (!requiredDriverFields.every((field) => isNonEmptyString(driverConfig[field]))) {
       throw ambiguousGatewayConfig(configPath, "the driver config is incomplete");
+    }
+
+    const guestTlsOwner = schemaVersion === 1 ? driverConfig : gateway;
+    if (
+      !["guest_tls_ca", "guest_tls_cert", "guest_tls_key"].every((field) =>
+        isNonEmptyString(guestTlsOwner[field]),
+      )
+    ) {
+      throw ambiguousGatewayConfig(configPath, "the guest TLS config is incomplete");
     }
 
     const configuredGatewayId = gatewayJwt.gateway_id;
@@ -858,6 +864,13 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   const driver = runtime.openShellDriver;
   const legacyDriver = schemaVersion === 1 || driver === "podman";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
+  const guestTlsConfig = localTlsDir
+    ? [
+        `guest_tls_ca = ${tomlString(path.join(localTlsDir, "ca.crt"))}`,
+        `guest_tls_cert = ${tomlString(path.join(localTlsDir, "client", "tls.crt"))}`,
+        `guest_tls_key = ${tomlString(path.join(localTlsDir, "client", "tls.key"))}`,
+      ]
+    : [];
   const dockerEntries: [string, string | boolean | undefined][] = [
     // NemoClaw create plans use driver JSON for managed state, tmpfs and GPU selection.
     // Opt in on our gateway only; upstream resource admission and bind-mount gates remain.
@@ -889,9 +902,6 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       "supervisor_bin",
       runtime.gatewayConfig.includeSupervisorBin ? (sandboxBin ?? undefined) : undefined,
     ],
-    ["guest_tls_ca", localTlsDir ? path.join(localTlsDir, "ca.crt") : undefined],
-    ["guest_tls_cert", localTlsDir ? path.join(localTlsDir, "client", "tls.crt") : undefined],
-    ["guest_tls_key", localTlsDir ? path.join(localTlsDir, "client", "tls.key") : undefined],
   ];
   const dockerConfig = dockerEntries
     .filter(
@@ -913,6 +923,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       ? `compute_driver = ${tomlString(driver)}`
       : `compute_drivers = [${tomlString(driver)}]`,
     "disable_tls = false",
+    ...(schemaVersion === 2 ? guestTlsConfig : []),
     "",
   ];
   if (
@@ -982,6 +993,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
 
   sections.push(`[openshell.drivers.${driver}]`);
   if (dockerConfig) sections.push(dockerConfig);
+  if (schemaVersion === 1) sections.push(...guestTlsConfig);
   sections.push("");
 
   return sections.join("\n");

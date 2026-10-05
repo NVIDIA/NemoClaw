@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { parse as parseToml } from "smol-toml";
 import { runOnboardCommand } from "./command";
 import { GatewayStateConflictError } from "./errors/gateway-state-conflict";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
@@ -65,13 +66,20 @@ function podmanGatewayRuntime(env: Record<string, string>) {
 }
 
 function schemaOneGatewayConfig(toml: string, driver: "docker" | "podman"): string {
-  const legacy = toml
-    .replace("version = 2", "version = 1")
-    .replace(/^(gateway_id = .+)$/m, "$1\nttl_secs = 0")
-    .replace(/^allow_driver_config = true\n/m, "")
-    .replace('compute_driver = "' + driver + '"', 'compute_drivers = ["' + driver + '"]')
-    .replace(/^sandbox_label = /m, "sandbox_namespace = ")
-    .replace(/^(client_ca_path = .+)$/m, "$1\nrequire_client_auth = true");
+  const guestTls = toml.match(/^guest_tls_.+$/gm) ?? [];
+  const legacy =
+    toml
+      .replace(/^guest_tls_.+\n/gm, "")
+      .replace("version = 2", "version = 1")
+      .replace(/^(gateway_id = .+)$/m, "$1\nttl_secs = 0")
+      .replace(/^allow_driver_config = true\n/m, "")
+      .replace('compute_driver = "' + driver + '"', 'compute_drivers = ["' + driver + '"]')
+      .replace(/^sandbox_label = /m, "sandbox_namespace = ")
+      .replace(/^(client_ca_path = .+)$/m, "$1\nrequire_client_auth = true")
+      .trimEnd() +
+    "\n" +
+    guestTls.join("\n") +
+    "\n";
   return driver === "docker"
     ? legacy.replace(
         /^supervisor_image = /m,
@@ -123,23 +131,71 @@ function writePreScopedGatewayConfig(
 }
 
 describe("docker-driver-gateway config TOML", () => {
-  it("upgrades a scoped schema 1 config without changing its JWT or sandbox identity", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-schema-one-"));
-    try {
-      const env = writeGatewayConfig(stateDir);
-      const configPath = env.OPENSHELL_GATEWAY_CONFIG;
-      const before = fs.readFileSync(configPath, "utf-8");
-      const bundle = jwtBundlePaths(stateDir);
-      const keyBefore = fs.readFileSync(bundle.signingKeyPath, "utf-8");
-      fs.writeFileSync(configPath, schemaOneGatewayConfig(before, "docker"), { mode: 0o600 });
-      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(before);
-      expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(keyBefore);
-      expect(env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(gatewayIdForStateDir(stateDir));
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
+  it.each([
+    ["docker", "guest_tls_ca"],
+    ["docker", "guest_tls_cert"],
+    ["docker", "guest_tls_key"],
+    ["podman", "guest_tls_ca"],
+    ["podman", "guest_tls_cert"],
+    ["podman", "guest_tls_key"],
+  ] as const)(
+    "preserves schema 1 %s identity and rejects altered %s without mutation",
+    (driver, field) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-schema-one-"));
+      try {
+        const env: Record<string, string> = {
+          ...baseGatewayEnv(stateDir),
+          OPENSHELL_DRIVERS: driver,
+          OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+        };
+        const gatewayRuntime = driver === "podman" ? podmanGatewayRuntime(env) : undefined;
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime,
+        });
+        const configPath = env.OPENSHELL_GATEWAY_CONFIG;
+        const before = fs.readFileSync(configPath, "utf-8");
+        const bundle = jwtBundlePaths(stateDir);
+        const keyBefore = fs.readFileSync(bundle.signingKeyPath, "utf-8");
+        const parsed = parseToml(before) as {
+          openshell: {
+            gateway: Record<string, unknown>;
+            drivers: Record<string, Record<string, unknown>>;
+          };
+        };
+        expect(parsed.openshell.gateway).toMatchObject({
+          guest_tls_ca: path.join(stateDir, "tls", "ca.crt"),
+          guest_tls_cert: path.join(stateDir, "tls", "client", "tls.crt"),
+          guest_tls_key: path.join(stateDir, "tls", "client", "tls.key"),
+        });
+        expect(parsed.openshell.drivers[driver]).not.toHaveProperty("guest_tls_ca");
+        expect(parsed.openshell.drivers[driver]).not.toHaveProperty("guest_tls_cert");
+        expect(parsed.openshell.drivers[driver]).not.toHaveProperty("guest_tls_key");
+        fs.writeFileSync(configPath, schemaOneGatewayConfig(before, driver), { mode: 0o600 });
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime,
+        });
+        expect(fs.readFileSync(configPath, "utf-8")).toBe(before);
+        expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(keyBefore);
+        expect(env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(
+          driver === "docker" ? gatewayIdForStateDir(stateDir) : undefined,
+        );
+        const invalid = before.replace(
+          new RegExp("^" + field + " = .+$", "m"),
+          field + ' = "/unowned.pem"',
+        );
+        fs.writeFileSync(configPath, invalid, { mode: 0o600 });
+        expect(() =>
+          prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+            gatewayRuntime,
+          }),
+        ).toThrow(GatewayStateConflictError);
+        expect(fs.readFileSync(configPath, "utf-8")).toBe(invalid);
+        expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(keyBefore);
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
   it("renders only the fixed external component interceptor settings (#11340)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
     try {
