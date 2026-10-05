@@ -7,73 +7,6 @@ Keep the desired-state YAML, its matching bundle, and the entire deployment stat
 The CLI defaults to `.nemoclaw` in the working directory; use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
-## Provider-managed Service Compute
-
-Intent version 7 delegates model caches to Docker volumes, separates vLLM credentials from model data, and records Docker gateway, inference, and proxy compute through native Docker-provider resource IDs.
-Docker gateway storage binds both signing and encryption-key identity independently of the process.
-Containers and service-owned networks may be recreated during explicit apply while credentials retain their independent durable bindings.
-Missing model-cache volumes may be recreated; downloads and preparation run again, without replacing credentials.
-Unsupported intent versions are rejected without rewriting state or adopting resources.
-Current version-7 records also reject obsolete `planDigest` fields, unfinished OpenShell creations without per-resource evidence, and `runtimePending` without a managed runtime.
-These records remain untouched.
-Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
-Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
-
-## Managed Docker Gateway Configuration
-
-OpenShell v0.1.2 removed the Docker driver's `network_name` and `host_gateway_ip` settings.
-The corrected bundle uses a per-gateway `sandbox_label`; supervisors reach the published loopback port through host networking.
-The gateway bridge remains retained for gateway placement and local service publication.
-
-Gateway storage initialized by the earlier renderer retains incompatible `gateway.toml` bytes, even when the gateway never started.
-The corrected bundle refuses that configuration without rewriting it or regenerating credentials.
-A missing configuration file is reported separately from a configuration that differs from the bundle.
-
-Keep the original bundle, desired configuration, state directory, and retained resources for inspection.
-To create a replacement, use a fresh deployment UUID, a separate state directory, an unused loopback port, and an unused private `/24` subnet with the corrected bundle.
-This creates separate resources; it does not migrate sandbox files or repair the original deployment.
-Earlier bundles can also block destroy after an unfinished apply; see the current [bound-creation recovery conditions](usage.md#recover-an-interrupted-operation).
-Those conditions do not migrate incompatible gateway storage; do not edit state or regenerate keys to bypass it.
-
-## Imported Provider Profiles
-
-Profiles created by the fix for [issue #12458](https://github.com/NVIDIA/NemoClaw/issues/12458) store their ownership, generation, and inference definition in one canonical annotation.
-This avoids unstable provider revisions in the pinned OpenShell v0.1.2 gateway while preserving ownership and definition checks.
-
-The corrected bundle refuses profiles with the earlier separate annotations; it does not rewrite or adopt them.
-Keep their original bundle, configuration, state directory, and gateway storage for recovery or teardown.
-Use a fresh deployment UUID and state directory for the corrected format; for a managed gateway, also choose an unused loopback port and private `/24` subnet.
-This creates a separate deployment and does not migrate sandbox files or repair a failed first apply.
-
-## Named Sandbox Resources
-
-Intent version 3 introduced sandboxes and providers identified by name rather than their position in the document.
-Reordering sandboxes, providers, or model choices does not change their resource addresses or the intent digest.
-Sandbox-local providers receive identities derived from their sandbox and provider names; moving a definition between scopes can change its identity.
-The current format retains those named identities.
-Keep the original bundle for recovery or teardown, then use a fresh UUID and state directory with the new bundle.
-Do not edit the intent version to bypass this check.
-Existing agent files and conversations are not migrated.
-
-## One Agent per Sandbox
-
-Current configuration requires `spec.sandboxes[].agent`; the former `agents` list is rejected.
-Use one sandbox per agent and reuse inference or harness definitions across sandboxes as needed.
-This schema change does not split an existing sandbox or migrate its native gateway, conversations, or files.
-Keep the previous bundle and original state for export, recovery, or teardown of earlier deployments.
-Create the replacement with a fresh deployment UUID and state directory, and preserve the old deployment until the new one is verified.
-
-## Native Inference Migration
-
-The earlier intent version 2 introduced native provider endpoints and sandbox provider attachments.
-Intent version 1 is rejected before reconciliation; its files are retained unchanged.
-Keep the previous bundle and OpenShell gateway available for export, recovery, or teardown of the old deployment.
-Do not edit the intent version or remove route entries from OpenTofu state manually.
-Create the replacement against a separate gateway running the new pinned revision, with a fresh deployment UUID and state directory.
-Preserve the old gateway endpoint and state until the replacement is verified, then retire the original through its original bundle.
-Upgrading the old gateway first removes the upstream managed-route API and prevents that recovery path.
-Native agent data is not migrated by this procedure.
-
 ## Local Deployment Files
 
 These files are managed by the SDK and OpenTofu.
@@ -90,6 +23,7 @@ They are implementation details for identifying retained state, not a manual edi
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs) and [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs) define these files.
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
 The local lock does not exclude other clients of the same gateway.
+State records carry a format version; the SDK rejects a different version without rewriting the directory or adopting its resources.
 
 ## Native Agent Files
 

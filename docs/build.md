@@ -243,7 +243,6 @@ Model snapshots and prepared data belong to the deployment’s persistent volume
 The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
-The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.
 
 The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
 An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.

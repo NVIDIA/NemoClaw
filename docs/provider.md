@@ -199,7 +199,7 @@ Each API read is bounded to 30 seconds.
 
 The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zero means one bounded API read.
 A positive timeout retries only transport failures, not authentication failures, incomplete metadata, or incompatibility.
-For a managed gateway, the earlier runtime graph sets this timeout to 90 seconds and orders its capability read after gateway reconciliation.
+For a managed gateway, the runtime stage sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
 For managed Docker gateways, the runtime graph also passes `managed_spec` and `container_id` from the Docker provider's process resource.
@@ -269,7 +269,7 @@ The OpenShell graph uses the same data source for Ollama proxies, with a 30-seco
 A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
 Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
-The SDK no longer runs service readiness loops.
+The SDK runs no readiness loop of its own.
 
 The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.

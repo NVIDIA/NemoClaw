@@ -63,9 +63,6 @@ This profile requires one NVIDIA GB10 with observed compute capability at least 
 For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `hardware`.
 
-Older YAML that omitted both fields or used `profile: spark` is rejected; use `profile: dgx-spark` when preserving that configuration's hardware contract.
-Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
-
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.

@@ -60,7 +60,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 The selected Fabric adapter owns interface settings, authentication, and native process startup.
 NemoClaw preserves these settings and manages sandbox access through OpenShell.
 The [dashboard example](../examples/openclaw-dashboard.yaml) declares OpenClaw's native gateway configuration under `harness.settings.native_config.gateway`.
-Use the exact adapter identifier `nvidia.fabric.openclaw`; `harness.interfaces` is no longer a configuration field.
+Use the exact adapter identifier `nvidia.fabric.openclaw`.
 
 A native listener does not publish a host port automatically.
 Keep host forwarding bound to loopback and follow the adapter's authentication requirements.
@@ -80,7 +80,6 @@ Follow the [image prerequisites](inference.md#build-an-image-with-the-configurat
 Replace the dashboard example's image digest, deployment UID, endpoint, and model values, then use the [desired-state workflow](usage.md).
 Changes to public Fabric configuration reconcile through the owned agent-configuration resource and restart the runtime inside its existing sandbox.
 Image or sandbox policy changes retain the ordinary replacement protections.
-These operations do not migrate retained native data from older images.
 
 ## Connect through OpenShell
 
@@ -110,7 +109,7 @@ NemoClaw compares the retained public Fabric configuration with the runtime host
 Fabric owns native file validation and service diagnostics.
 Configuration failures name the sandbox and report a fixed stage, code, and runtime state; raw exception messages and details are omitted.
 For `pi_model_unknown`, check the selected route's [Pi model metadata](../examples/fabric-pi.yaml) or choose a model present in the native catalog.
-These codes require the matching bundle and an agent image rebuilt with the updated bridge and Fabric error-code patch; older images can report only a generic code.
+These codes require an agent image built from the bundle's source revision.
 A successful descriptor plan does not establish membership in Pi's runtime model catalog.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.
 Offline configuration tests do not qualify browser rendering or public dashboard access.

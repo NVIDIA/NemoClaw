@@ -88,8 +88,7 @@ The SDK records `supported: false`, `report: null`, and `reason_code: fabric_hea
 A reachable bridge or remembered runtime handle does not establish agent health.
 Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
 
-Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata or stdin input support leaves compatibility unknown.
-Such an image rejects configuration from this provider before changing its runtime.
+Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
@@ -179,11 +178,6 @@ Docker gateway and disposable service compute follow Docker-provider state and m
 Model caches use native Docker volume reconciliation, including its name-based reuse; they have no immutable creation-time binding.
 There is no migration or lost-state adoption workflow for credentials or gateway storage.
 
-The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.
-For a new deployment, omit those fields and use a fresh UID and state directory.
-Retained intent containing them is not migrated by editing input YAML; keep the original bundle and state for recovery or teardown of that deployment.
-Do not edit or delete its state to bypass this rejection.
-
 ## Editor Schema Assistance
 
 Add a schema comment for editor completion, descriptions, and diagnostics:
@@ -218,7 +212,6 @@ Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
 Ordinary apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
 Use separate deployments when you need independent teardown.
-Existing state needs the [named-resource transition](state.md#named-sandbox-resources).
 
 ### Choose the Change Path
 

@@ -9,12 +9,10 @@ Use a route-inline `provider` or select an enclosing `inferenceProviders` defini
 
 Use current images and verify your chosen harness and model; passing tests for one combination do not qualify another.
 
-OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
 For uncredentialed endpoints, a dummy client key satisfies SDKs that require a nonempty key; no provider credential is stored.
 The model ID is client configuration, not a proxy-enforced model restriction; the attached provider authorizes its configured API path.
-The YAML `routes` field currently names model configuration; it no longer creates an OpenShell route resource.
-See [state migration](state.md#native-inference-migration) before changing an existing deployment.
+The YAML `routes` field names model configuration; it creates no OpenShell route resource.
 
 ## Give an Agent Multiple Model Choices
 
@@ -77,7 +75,7 @@ Plan does not reserve shared GPU capacity or sum live startup demand; choose ser
 An existing GPU process alone does not reject startup when measured capacity is sufficient.
 The installer performs one bounded readiness check after installation. It does not add service start, stop, restart, recovery, or continuous-monitoring operations.
 Multiple sandboxes can share any selected provider.
-Managed vLLM resource identities include the service name; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
+Managed vLLM resource identities include the service name.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
@@ -162,7 +160,7 @@ Set their gateway and inference endpoints and model IDs for your services, and a
 Changing an existing sandbox's image, provider attachments, or security policy can require replacement.
 Ordinary apply rejects sandbox replacement rather than destroying it automatically.
 Model and native settings updates use the owned agent-configuration resource and restart the runtime without replacing its sandbox.
-Use a separate deployment when moving from an older image; changing YAML does not migrate native agent state.
+Use a separate deployment to change images; changing YAML does not migrate native agent state.
 For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
 See [deployment recovery](usage.md) for the operation workflow.
 
@@ -325,9 +323,6 @@ The proxy uses the host network and checks that the daemon has no listener on a 
 Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
 The service declaration manages only the proxy; its upstream daemon and model remain external.
 
-The former per-service `runtime` wrapper remains unsupported.
-Use [fresh state for the provider transition](state.md#provider-managed-service-compute); editing input YAML does not migrate an established deployment.
-
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.
 The key does not enter YAML, plans, container launch settings, or OpenTofu state, and the proxy never forwards it to Ollama.
@@ -369,9 +364,6 @@ The SDK does not infer native support from an adapter name or from accepting the
 
 Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
 Nested null values remain intact in opaque native settings.
-Fields formerly named `piModel`, `contextWindow`, `reasoning`, and `reasoningEffort` at the route override level are no longer accepted.
-Move their native intent into the schema accepted by the selected Fabric adapter before creating a new deployment.
-
 ## Authenticate Hermes through the Provider
 
 Declare an external HTTPS provider with a credential reference, then select it from the route and enable Hermes authentication:
@@ -407,10 +399,6 @@ Authentication derives its provider from the primary route, including when that 
 The selected provider must carry a credential.
 That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
-
-Omit the former `auth.providerRef` field; it is rejected.
-Retained Hermes intent containing that field is not migrated automatically; editing only the input YAML does not update saved intent.
-Use the matching previous bundle for export or teardown of that deployment.
 
 The gateway retains the provider credential until the owned provider is removed or updated.
 Destroy removes the owned provider registration; it does not revoke the upstream key.
@@ -473,7 +461,6 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
 An empty `changes` list on apply does not skip configuration or readiness checks.
-Operation results no longer contain `agentResponse`.
 After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](contributing/live-tests.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.

@@ -19,7 +19,6 @@ Model storage must use the [current manifest format](models.md#retained-model-fi
 The build loads the image locally without publishing it.
 Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
 All vLLM services use `kind: vllm`.
-Model-specific backend names and the built-in recipe registry have been removed.
 
 ## Declaration
 

@@ -43,7 +43,7 @@ The same checks apply to inline harnesses and `harnessRef`, separately for every
 Selected-image assessment checks the Fabric descriptor's required files, the adapter's image-owned `runtime_files`, and the runtime manifest's `required_paths`.
 The packaged image declares `/opt/fabric` and `/opt/nemoclaw`; a relocated image declares its own paths.
 A missing grant makes compatibility `unsupported` and fails plan; `observation_json.compatibility` names the path.
-Images without runtime metadata, including older images and direct Bake builds, fail planning; follow [image rebuilding and selection](build.md#build-agent-images).
+Images without runtime metadata, such as direct Bake builds, fail planning; follow [image rebuilding and selection](build.md#build-agent-images).
 Document parsing validates policy syntax without assuming an image layout.
 These checks do not establish every path a harness reads; verify additional harness paths against the selected image before applying.
 
@@ -89,10 +89,6 @@ OpenShell owns the workload's proxy environment and routes traffic through its p
 Configure an upstream corporate proxy through the external gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 NemoClaw does not expose this driver setting for managed gateways.
-
-The former per-sandbox `network.proxy` field is rejected because it replaced OpenShell's policy-proxy environment.
-Keep the original bundle, configuration, and state to recover or destroy a deployment that retains that field.
-Use a fresh deployment with the field omitted; do not edit state to bypass rejection.
 
 ## Verify and Change the Configuration
 
