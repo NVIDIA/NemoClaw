@@ -185,23 +185,29 @@ describe("createProviderReviewDeps", () => {
 describe("native NVIDIA onboarding", () => {
   it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
     const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
-    const getProvider = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        name: "nemoclaw-nvidia-prod-v1",
-        type: "nemoclaw-nvidia-inference-v1",
-        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-        configKeys: [],
-        revision: { id: "provider-id", resourceVersion: 4 },
-      },
-    }));
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "nemoclaw-nvidia-prod-v1",
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: "provider-id", resourceVersion: 4 },
+        },
+      });
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
       ok: true,
     }));
     const providerAdapter = {
       importProviderProfile,
       getProvider,
-      updateProvider,
+      createProvider,
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
     const updateSandbox = vi.fn(() => true);
@@ -256,10 +262,10 @@ describe("native NVIDIA onboarding", () => {
       target: { kind: "named", gatewayName: "onboarding-gateway" },
       providerName: "nemoclaw-nvidia-prod-v1",
     });
-    expect(updateProvider).toHaveBeenCalledWith(
+    expect(createProvider).toHaveBeenCalledWith(
       expect.objectContaining({
         target: { kind: "named", gatewayName: "onboarding-gateway" },
-        providerName: "nemoclaw-nvidia-prod-v1",
+        name: "nemoclaw-nvidia-prod-v1",
         credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-credential" }],
         config: [],
       }),

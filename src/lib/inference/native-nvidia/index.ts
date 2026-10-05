@@ -137,7 +137,12 @@ export async function ensureNativeNvidiaProvider(input: {
   const before = await inspectNativeProvider(adapter, target);
   if (before) {
     const receipt = attachmentFromMetadata(before);
-    if (input.expected && input.expected.providerId !== receipt.providerId) {
+    if (!input.expected) {
+      throw new NativeNvidiaProviderError(
+        `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+      );
+    }
+    if (input.expected.providerId !== receipt.providerId) {
       throw new NativeNvidiaProviderError(
         `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity. Recreate the sandbox before using native NVIDIA inference. No provider was changed.`,
       );
