@@ -52,11 +52,7 @@ fn engine_query(document: &Document) -> DiscoveryQuery {
 }
 
 fn fabric_query(document: &Document) -> DiscoveryQuery {
-    let key = crate::support::target(document);
-    DiscoveryQuery::Fabric {
-        engine: key.engine,
-        image: key.image,
-    }
+    crate::support::image_query(document)
 }
 
 /// What reading a document's target returned. The observations it produces are
@@ -175,7 +171,7 @@ fn changing_only_image_keeps_engine_observations_and_leaves_the_image_unobserved
     let document = document();
     let observations = observed_target(&document).observations(&document);
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].image.ref_ = "another-image".into();
+    changed.spec.sandboxes[0].image.ref_ = format!("another-image@sha256:{}", "0".repeat(64));
     let assessment = assess_target(&changed, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_says(&assessment, "Fabric capabilities have not been observed");

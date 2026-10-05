@@ -17,6 +17,7 @@ use crate::{
         DiscoveryRequest, EngineObservation, FabricObservation, GatewayObservation,
         ObservationStatus,
     },
+    fabric_capabilities::FabricRequirements,
     hardware_discovery::HardwareObservation,
     inference_discovery::{
         CredentialObservation, EndpointObservation, EndpointRequest, observe_credential,
@@ -36,9 +37,14 @@ pub enum DiscoveryQuery {
     Hardware {
         engine: String,
     },
+    /// An image read, judged against what its sandbox requires.
     Fabric {
         engine: String,
         image: String,
+        requirements: FabricRequirements,
+        /// The engine whose platform the image must run on: a managed
+        /// gateway's. An external gateway's image store does not establish it.
+        platform: Option<DiscoveryRequest>,
     },
     Inference(EndpointRequest),
     Gateway {
@@ -53,17 +59,40 @@ pub enum DiscoveryQuery {
 
 pub use crate::discovery::DiscoveryObservation;
 impl DiscoveryQuery {
-    pub(crate) fn data(&self) -> Result<(&'static str, Value), Error> {
+    /// The data source and inputs of this read. An image read with a platform
+    /// takes it from `engine_read`, the name of its engine's read in the same graph.
+    pub(crate) fn data(&self, engine_read: Option<&str>) -> Result<(&'static str, Value), Error> {
         Ok(match self {
             Self::Engine(request) => (
                 "engine_capabilities",
                 json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
             ),
             Self::Hardware { engine } => ("target_hardware", json!({"engine":literal(engine)})),
-            Self::Fabric { engine, image } => (
-                "fabric_capabilities",
-                json!({"engine":literal(engine),"image":literal(image)}),
-            ),
+            Self::Fabric {
+                engine,
+                image,
+                requirements,
+                platform,
+            } => {
+                let mut inputs = json!({
+                    "engine": literal(engine),
+                    "image": literal(image),
+                    "requirements_json": literal(
+                        &serde_json::to_string(requirements).expect("Fabric requirements")
+                    ),
+                });
+                if platform.is_some() {
+                    let engine_read = engine_read.ok_or(Error::State(
+                        "an image read needs the engine read of its platform",
+                    ))?;
+                    for field in ["architecture", "operating_system"] {
+                        inputs[field] = json!(format!(
+                            "${{jsondecode(data.nemoclaw_engine_capabilities.{engine_read}.observation_json).{field}}}"
+                        ));
+                    }
+                }
+                ("fabric_capabilities", inputs)
+            }
             Self::Inference(request) => {
                 request.validate()?;
                 (
@@ -137,7 +166,8 @@ pub(crate) fn gateway_drivers(document: &Document) -> std::collections::BTreeSet
 /// them: the gateway, each external inference endpoint, the hardware of every
 /// engine that services or a managed gateway use, a managed gateway's engine,
 /// and one image read per sandbox. The image reads are per sandbox, sorted by
-/// sandbox name, because each carries that sandbox's own requirements.
+/// sandbox name, because each carries that sandbox's own requirements, and a
+/// managed gateway's image reads run on its engine's platform.
 pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
     let mut queries = vec![DiscoveryQuery::Gateway {
         gateway: document.spec.gateway.clone(),
@@ -162,18 +192,25 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
         Gateway::Managed(gateway) => &gateway.engine,
         Gateway::External(gateway) => &gateway.engine,
     };
-    if document.spec.gateway.as_managed().is_some() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
+    let platform = document
+        .spec
+        .gateway
+        .as_managed()
+        .map(|_| DiscoveryRequest {
             engine: engine.clone(),
             compute_driver: document.spec.sandboxes[0].runtime.provider,
-        }));
-    }
+        });
+    queries.extend(platform.clone().map(DiscoveryQuery::Engine));
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
-    queries.extend(sandboxes.into_iter().map(|sandbox| DiscoveryQuery::Fabric {
-        engine: engine.clone(),
-        image: sandbox.image.ref_.clone(),
-    }));
+    for sandbox in sandboxes {
+        queries.push(DiscoveryQuery::Fabric {
+            engine: engine.clone(),
+            image: sandbox.image.ref_.clone(),
+            requirements: FabricRequirements::for_sandbox(document, sandbox)?,
+            platform: platform.clone(),
+        });
+    }
     Ok(queries)
 }
 
@@ -245,16 +282,6 @@ impl DiscoveryObservations {
     pub fn engine(&self, request: &DiscoveryRequest) -> Option<&EngineObservation> {
         match self.get(&DiscoveryQuery::Engine(request.clone())) {
             Some(DiscoveryObservation::Engine(observation)) => Some(observation),
-            _ => None,
-        }
-    }
-
-    pub fn fabric(&self, engine: &str, image: &str) -> Option<&FabricObservation> {
-        match self.get(&DiscoveryQuery::Fabric {
-            engine: engine.into(),
-            image: image.into(),
-        }) {
-            Some(DiscoveryObservation::Fabric(observation)) => Some(observation),
             _ => None,
         }
     }
@@ -374,19 +401,11 @@ impl DiscoverySession {
             return Err(Error::State("too many discovery queries"));
         }
         let mut graph = self.graph(json!({}));
-        let mut unique = std::collections::BTreeMap::new();
-        let mut names = Vec::new();
-        for query in queries {
-            let (kind, inputs) = query.data()?;
-            let key = format!("{kind}:{inputs}");
-            let next = format!("query_{}", unique.len());
-            let name = unique.entry(key).or_insert(next).clone();
-            let source = format!("nemoclaw_{kind}");
-            graph["data"][&source][&name] = inputs;
-            graph["output"]["observation"]["value"][&name] =
-                json!(format!("${{data.{source}.{name}.observation_json}}"));
-            names.push(name);
-        }
+        let mut reads = std::collections::BTreeMap::new();
+        let names = queries
+            .iter()
+            .map(|query| add_read(&mut graph, &mut reads, query))
+            .collect::<Result<Vec<_>, _>>()?;
         let plan = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             self.execute_graph(&graph, cancel),
@@ -541,6 +560,37 @@ impl DiscoverySource for DiscoverySession {
     }
 }
 
+/// Add `query`'s read to a round's `graph` once and return its name. An image
+/// read's platform comes from its engine's read in the same round, as in a plan.
+fn add_read(
+    graph: &mut Value,
+    reads: &mut std::collections::BTreeMap<String, String>,
+    query: &DiscoveryQuery,
+) -> Result<String, Error> {
+    let engine_read = match query {
+        DiscoveryQuery::Fabric {
+            platform: Some(request),
+            ..
+        } => Some(add_read(
+            graph,
+            reads,
+            &DiscoveryQuery::Engine(request.clone()),
+        )?),
+        _ => None,
+    };
+    let (kind, inputs) = query.data(engine_read.as_deref())?;
+    let next = format!("query_{}", reads.len());
+    let name = reads
+        .entry(format!("{kind}:{inputs}"))
+        .or_insert(next)
+        .clone();
+    let source = format!("nemoclaw_{kind}");
+    graph["data"][&source][&name] = inputs;
+    graph["output"]["observation"]["value"][&name] =
+        json!(format!("${{data.{source}.{name}.observation_json}}"));
+    Ok(name)
+}
+
 pub(crate) fn literal(value: &str) -> String {
     value.replace("${", "$${").replace("%{", "%%{")
 }
@@ -611,6 +661,69 @@ esac
             "init\nplan\nshow\n"
         );
         assert!(graph.get("resource").is_none());
+    }
+
+    /// Onboarding's image read is the plan's: the same requirements, and for a
+    /// managed gateway the platform of the engine read in the same round. Only
+    /// the plan's gating differs, so both receive the same verdict.
+    #[tokio::test]
+    async fn an_image_read_has_the_plans_inputs_and_reads_its_platform_in_the_same_round() {
+        let managed = Document::parse(
+            include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut external = managed.clone();
+        external.spec.gateway = serde_json::from_value(json!({
+            "management": "external",
+            "endpoint": "https://gateway.example:8080",
+            "engine": "ssh://images@example.com",
+        }))
+        .unwrap();
+        for (document, engine_reads) in [(managed, 1), (external, 0)] {
+            let (_bundle, mut session) = fixture();
+            let image = plan_queries(&document)
+                .unwrap()
+                .into_iter()
+                .find(|query| matches!(query, DiscoveryQuery::Fabric { .. }))
+                .unwrap();
+            // The recorded plan does not answer the image read; only its graph matters.
+            let _ = session.batch(&[image], &CancellationToken::new()).await;
+            let graph: Value = serde_json::from_slice(
+                &fs::read(session.directory.path().join("main.tf.json")).unwrap(),
+            )
+            .unwrap();
+            let engines = graph["data"]["nemoclaw_engine_capabilities"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            assert_eq!(engines.len(), engine_reads);
+            let mut read = graph["data"]["nemoclaw_fabric_capabilities"]
+                .as_object()
+                .unwrap()
+                .values()
+                .next()
+                .unwrap()
+                .to_string();
+            for name in engines.keys() {
+                read = read.replace(
+                    &format!("nemoclaw_engine_capabilities.{name}."),
+                    "nemoclaw_engine_capabilities.current.",
+                );
+            }
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "managed_gateway",
+                "inference_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let plan = crate::compile::compile(&document, &generations, "0.1.0").unwrap();
+            let mut planned = plan["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"].clone();
+            planned.as_object_mut().unwrap().remove("lifecycle");
+            assert_eq!(serde_json::from_str::<Value>(&read).unwrap(), planned);
+        }
     }
 
     #[tokio::test]

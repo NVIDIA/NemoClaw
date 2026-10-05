@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 
 /// Add `query`'s data source under `name` and report its observation as `key`.
 /// The inputs come from the query, as for an onboarding discovery session, and
-/// `extend` adds what only a plan needs.
+/// `extend` adds what only a plan needs. A plan's one engine read is `current`.
 fn read(
     graph: &mut Value,
     observations: &mut Map<String, Value>,
@@ -20,7 +20,7 @@ fn read(
     extend: impl FnOnce(&mut Value),
 ) -> Result<(), ConfigError> {
     let (kind, mut inputs) = query
-        .data()
+        .data(Some("current"))
         .map_err(|_| ConfigError::new("discovery inputs are invalid"))?;
     extend(&mut inputs);
     let source = format!("nemoclaw_{kind}");
@@ -34,7 +34,6 @@ fn read(
 
 pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), ConfigError> {
     let mut observations = Map::new();
-    let managed = document.spec.gateway.as_managed().is_some();
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
     let mut sandboxes = sandboxes.into_iter();
@@ -73,10 +72,8 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     },
                 )?;
             }
-            DiscoveryQuery::Fabric { .. } => {
+            DiscoveryQuery::Fabric { requirements, .. } => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
-                let requirements =
-                    crate::fabric_capabilities::FabricRequirements::for_sandbox(document, sandbox)?;
                 let name = format!("sandbox_{images}");
                 images += 1;
                 let adapter = requirements.configuration["harness"]["adapter_id"]
@@ -92,9 +89,6 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     serde_json::to_string(&context).expect("diagnostic context"),
                 );
                 read(graph, &mut observations, &query, &name, &name, |inputs| {
-                    inputs["requirements_json"] = json!(literal(
-                        &serde_json::to_string(&requirements).expect("Fabric requirements")
-                    ));
                     inputs["lifecycle"] = json!({ "postcondition": [{
                         "condition": "${self.compatibility_status != \"unsupported\"}",
                         "error_message": rejection
@@ -102,14 +96,6 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         "condition": "${self.runtime_json != \"\"}",
                         "error_message": format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
                     }] });
-                    if managed {
-                        inputs["architecture"] = json!(
-                            "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).architecture}"
-                        );
-                        inputs["operating_system"] = json!(
-                            "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).operating_system}"
-                        );
-                    }
                 })?;
             }
             DiscoveryQuery::Credential { .. } => {

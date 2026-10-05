@@ -169,24 +169,29 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
         observed.engine(&engine).map(|engine| engine.status),
         Some(ObservationStatus::Available)
     );
+    // Without a platform the image read adds no engine read, so the request
+    // count below stays the reads this test names.
+    let image_query = DiscoveryQuery::Fabric {
+        engine: fixture.endpoint.clone(),
+        image: "labeled:image".into(),
+        requirements: nemoclaw_sdk::fabric_capabilities::FabricRequirements {
+            configuration: serde_json::json!({"harness": {"adapter_id": "nvidia.fabric.openclaw"}}),
+            filesystem_read: None,
+        },
+        platform: None,
+    };
     let start = std::time::Instant::now();
     let observed = session
-        .observe(
-            &[DiscoveryQuery::Fabric {
-                engine: fixture.endpoint.clone(),
-                image: "labeled:image".into(),
-            }],
-            &cancel,
-        )
+        .observe(std::slice::from_ref(&image_query), &cancel)
         .await
         .unwrap();
     eprintln!("SDK discovery warm Fabric plan/show: {:?}", start.elapsed());
-    let image = observed
-        .fabric(&fixture.endpoint, "labeled:image")
-        .expect("the image read is observed");
+    use nemoclaw_sdk::discovery_session::DiscoveryObservation;
+    let Some(DiscoveryObservation::Fabric(image)) = observed.get(&image_query) else {
+        panic!("the image read is observed");
+    };
     assert_eq!(image.status, ObservationStatus::Available);
     assert_eq!(image.catalog, Some(catalog));
-    use nemoclaw_sdk::discovery_session::DiscoveryObservation;
     let query = DiscoveryQuery::Engine(DiscoveryRequest {
         engine: fixture.endpoint.clone(),
         compute_driver: ComputeDriver::Docker,
@@ -199,10 +204,7 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
                 DiscoveryQuery::Hardware {
                     engine: fixture.endpoint.clone(),
                 },
-                DiscoveryQuery::Fabric {
-                    engine: fixture.endpoint.clone(),
-                    image: "labeled:image".into(),
-                },
+                image_query,
                 query,
             ],
             &cancel,

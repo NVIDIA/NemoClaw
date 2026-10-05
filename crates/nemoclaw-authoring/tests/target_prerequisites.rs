@@ -65,7 +65,7 @@ fn required_target_compatibility_stays_unverified_without_current_observations()
 
     // Observations read for another image say nothing about this one.
     let mut other_image = document.clone();
-    other_image.spec.sandboxes[0].image.ref_ = "sha256:old-image".into();
+    other_image.spec.sandboxes[0].image.ref_ = format!("old-image@sha256:{}", "0".repeat(64));
     let stale = crate::support::target_observations(&other_image, Some(engine), Some(fabric));
     let unresolved = state
         .resolve_with_observations(&capabilities, &stale)
