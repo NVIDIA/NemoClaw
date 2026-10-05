@@ -22,6 +22,7 @@ import {
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
 
+const PS_THREAD_FLAG = process.platform === "linux" ? " -L" : "";
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 const tempRoots = new Set<string>();
 
@@ -70,7 +71,7 @@ function psResponses(
 ): [string, RunResponse][] {
   return [
     [
-      `ps -p ${pid} -o stat=`,
+      `ps -p ${pid} -o stat=${PS_THREAD_FLAG}`,
       () => (opts.exited.has(pid) ? notFound() : (opts.processStatus ?? ok("S\n"))),
     ],
     [`ps -p ${pid} -o uid=`, staticResponse(ok(`${String(process.getuid?.() ?? 501)}\n`))],
