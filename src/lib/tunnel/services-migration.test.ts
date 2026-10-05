@@ -119,6 +119,21 @@ describe("legacy tunnel state migration (#11628)", () => {
     expect(fs.readFileSync(path.join(legacyPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
   });
 
+  it("resolves tunnel state from the sandbox owning gateway", () => {
+    writeRegistry(gatewayPort, "legacy");
+
+    expect(resolveTunnelPidDir({ sandboxName: "legacy" })).toBe(targetPidDir);
+  });
+
+  it("fails closed when tunnel state lookup finds the sandbox in multiple gateway roots", () => {
+    writeRegistry(gatewayPort, "legacy");
+    writeRegistry(gatewayPort + 1, "legacy");
+
+    expect(() => resolveTunnelPidDir({ sandboxName: "legacy" })).toThrow(
+      'sandbox "legacy" appears in multiple gateway registries',
+    );
+  });
+
   it("adopts the selected destroy recovery record after its registry row is absent", () => {
     const legacyPidDir = createLegacyState("legacy", 4242);
     vi.spyOn(console, "log").mockImplementation(() => {});

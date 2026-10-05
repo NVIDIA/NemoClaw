@@ -1145,7 +1145,10 @@ async function destroySandboxUnlocked(
     await cleanupSandboxServices(
       sandboxName,
       {
-        gatewayPort: registryAuthority.gatewayPort,
+        gatewayPort:
+          registeredSandbox === null
+            ? (retainedRecoveryAuthority?.gatewayPort ?? registryAuthority.gatewayPort)
+            : registryAuthority.gatewayPort,
         stopHostServices: shouldStopHostServices,
         ...(destroyChannelStopTransport
           ? { channelStopTransport: destroyChannelStopTransport }

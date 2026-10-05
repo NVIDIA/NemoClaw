@@ -817,7 +817,13 @@ function validateSandboxName(name: string): string {
 
 function resolvePidDir(opts: ServiceOptions): string {
   if (opts.pidDir) return opts.pidDir;
-  return join(resolveNemoclawStateDir(undefined, opts.gatewayPort), "tunnel");
+  if (opts.gatewayPort !== undefined) {
+    return join(resolveNemoclawStateDir(undefined, opts.gatewayPort), "tunnel");
+  }
+  const sandboxGatewayPort = opts.sandboxName
+    ? (findSandboxAcrossGatewayRoots(opts.sandboxName)?.gatewayPort ?? undefined)
+    : undefined;
+  return join(resolveNemoclawStateDir(undefined, sandboxGatewayPort), "tunnel");
 }
 
 function legacyTunnelPidDirs(): string[] {
