@@ -921,7 +921,8 @@ function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boo
   );
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
-  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
+  const webSearch = exportWebSearchBinding(entry);
+  const expectedAdditionalProviders = webSearch ? [webSearch.name] : [];
   return (
     !(nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) &&
     isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) &&

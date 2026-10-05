@@ -559,18 +559,24 @@ export async function collectSandboxStatusSnapshot(
   const suppressInferenceProbe =
     (postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
     opts.suppressInferenceProbe === true;
+  const nativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb?.nativeNvidiaProviderAttachment,
+  );
+  const nativeNvidia = Boolean(nativeNvidiaAttachment);
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
     try {
       gatewayName = resolveSandboxGatewayName(sb);
-      const observer =
-        opts.deps?.inferenceRouteObserver ??
-        createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
-      liveResult = await observer.observeInferenceRoute({
-        target: { kind: "named", gatewayName },
-        timeoutMs: getStatusProbeTimeoutMs(),
-      });
+      if (!nativeNvidia) {
+        const observer =
+          opts.deps?.inferenceRouteObserver ??
+          createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
+        liveResult = await observer.observeInferenceRoute({
+          target: { kind: "named", gatewayName },
+          timeoutMs: getStatusProbeTimeoutMs(),
+        });
+      }
     } catch {
       // Invalid persisted gateway bindings and failed reads stay fail-closed:
       // never substitute the selected/default gateway's inference route.
@@ -608,12 +614,9 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
-  const nativeNvidia = Boolean(
-    normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
-  );
   let nativeNvidiaAttachmentFailure: string | null = null;
   if (!suppressInferenceProbe && lookup.state === "present" && nativeNvidia && sb) {
-    const expected = normalizeNativeNvidiaProviderAttachment(sb.nativeNvidiaProviderAttachment);
+    const expected = nativeNvidiaAttachment;
     if (!gatewayName || !expected) {
       nativeNvidiaAttachmentFailure =
         `Native NVIDIA provider attachment is unavailable for sandbox '${sandboxName}'. ` +

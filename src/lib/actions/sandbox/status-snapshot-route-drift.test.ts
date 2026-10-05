@@ -523,6 +523,52 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
   });
 
+  it("ignores a shared-route protocol mismatch for a native NVIDIA attachment", async () => {
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      preferredInferenceApi: "openai-completions",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const observeInferenceRoute = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          error: {
+            kind: "schema",
+            reason: "protocol_mismatch",
+            message: "The OpenShell CLI and gateway inference schemas do not match.",
+          },
+        }) as const,
+    );
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        inferenceRouteObserver: { observeInferenceRoute },
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => undefined,
+      },
+    } as never);
+
+    expect(observeInferenceRoute).not.toHaveBeenCalled();
+    expect(snapshot.rpcIssue).toBeNull();
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
+
   it("reports a missing native NVIDIA attachment before probing inference", async () => {
     liveGatewayInference("compatible-endpoint", "other/model");
     const sandbox = {
@@ -601,10 +647,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
     });
-    expect(report.liveRoute).toEqual({
-      provider: "compatible-endpoint",
-      model: "other/model",
-    });
+    expect(report.liveRoute).toBeNull();
     expect(report.routeDrift).toBeNull();
   });
 });
