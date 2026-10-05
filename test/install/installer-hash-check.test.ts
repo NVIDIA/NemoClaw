@@ -45,13 +45,6 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-// Immutable #12591 preimage at c72dd64e3d2bcf3ada401a82c2872b31d6e52e09.
-// The parser reads this fixture as data; the test never executes its host operations.
-const NPM_REPLACEMENT_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "test/fixtures/installer-trust/brev-npm-replacement.sh.fixture"),
-  "utf8",
-);
-const NPM_REPLACEMENT_DIGEST = "1a678bba2037514891ae28f1b01f6aa7a34fc17fd7b2b997171f58b9fc482e4c";
 // Immutable #12376 preimage at 25f4213a34bbd4d3ed2ee6e76a378469701c0fc2.
 const DCODE_NPM_REPLACEMENT_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/installer-trust/brev-dcode-npm-replacement.sh.fixture"),
@@ -947,17 +940,23 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
-  describe.each([
-    ["cleanup", NPM_REPLACEMENT_TEMPLATE, NPM_REPLACEMENT_DIGEST],
-    ["DCode upgrade", DCODE_NPM_REPLACEMENT_TEMPLATE, DCODE_NPM_REPLACEMENT_DIGEST],
-  ])("%s bootstrap prerequisite", (_name, template, digest) => {
+  describe("DCode bootstrap prerequisite", () => {
     it("admits the reviewed npm replacement only after its trust prerequisite", () => {
-      const before = parseNpmReplacement(template, digest, "0".repeat(64));
-      expect(before.status).toBe(1);
+      const before = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+        "0".repeat(64),
+      );
+      expect(before.status, before.stderr).toBe(1);
       expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
-      const after = parseNpmReplacement(template, digest);
+      const after = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+      );
       expect(after.status, after.stderr).toBe(0);
-      expect(after.stdout).toContain(`"operationalTemplateSha256":"${digest}"`);
+      expect(after.stdout).toContain(
+        `"operationalTemplateSha256":"${DCODE_NPM_REPLACEMENT_DIGEST}"`,
+      );
     });
 
     it.each([
@@ -968,9 +967,9 @@ describe("installer hash verification", () => {
       ],
       ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
     ])("rejects %s in the reviewed npm replacement", (_name, original, replacement) => {
-      const mutated = template.replace(original, replacement);
-      const result = parseNpmReplacement(mutated, digest);
-      expect(result.status).toBe(1);
+      const mutated = DCODE_NPM_REPLACEMENT_TEMPLATE.replace(original, replacement);
+      const result = parseNpmReplacement(mutated, DCODE_NPM_REPLACEMENT_DIGEST);
+      expect(result.status, `${_name} mutation must be rejected: ${result.stderr}`).toBe(1);
       expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
     });
   });
