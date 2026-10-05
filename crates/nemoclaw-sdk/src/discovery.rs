@@ -14,7 +14,9 @@ pub enum ObservationStatus {
     Unknown,
 }
 
-/// Typed facts shared by discovery sessions, authoring, and plan reports.
+/// What a target read reports, given only its query's inputs. Plan and
+/// onboarding share these facts; a read that needs a plan's own resources is a
+/// `PlanObservation` instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "observation", rename_all = "snake_case")]
 pub enum DiscoveryObservation {
@@ -22,11 +24,21 @@ pub enum DiscoveryObservation {
     Hardware(crate::hardware_discovery::HardwareObservation),
     Fabric(crate::discovery::FabricObservation),
     Inference(crate::inference_discovery::EndpointObservation),
-    RuntimeImage(RuntimeImageObservation),
     Gateway(GatewayObservation),
     Credential(crate::inference_discovery::CredentialObservation),
-    Service { ready: Option<bool>, source: String },
-    Unresolved { category: String },
+}
+
+impl DiscoveryObservation {
+    pub fn status(&self) -> ObservationStatus {
+        match self {
+            Self::Engine(value) => value.status,
+            Self::Hardware(value) => value.status,
+            Self::Fabric(value) => value.status,
+            Self::Inference(value) => value.status,
+            Self::Gateway(value) => value.status,
+            Self::Credential(value) => value.status,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

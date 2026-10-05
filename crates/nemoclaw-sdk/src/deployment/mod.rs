@@ -9,8 +9,8 @@ mod export;
 mod plan;
 mod reporting;
 pub use reporting::{
-    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, ResourceInventoryEntry,
-    ResourceSource,
+    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, PlanObservation,
+    ReportedObservation, ResourceInventoryEntry, ResourceSource,
 };
 mod runtime;
 mod timing;

@@ -55,6 +55,32 @@ impl OperationResult {
 }
 
 pub use crate::discovery::DiscoveryObservation;
+
+/// A read only a plan can make: its inputs or its meaning depend on resources
+/// in the same plan, so an onboarding discovery session never reports one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "observation", rename_all = "snake_case")]
+pub enum PlanObservation {
+    /// Checked against the image a resource in the same apply acquires.
+    RuntimeImage(crate::discovery::RuntimeImageObservation),
+    /// Readiness of a service the same apply installs.
+    Service { ready: Option<bool>, source: String },
+    /// A read whose value OpenTofu cannot compute until apply.
+    Unresolved { category: String },
+}
+
+/// One read in a plan's report. Both kinds keep their own `kind` tag.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a report holds a few reads; boxing would only add indirection to every match"
+)]
+pub enum ReportedObservation {
+    Discovery(DiscoveryObservation),
+    Plan(PlanObservation),
+}
+
 /// Safe, validated query inputs. This allowlist intentionally excludes specs,
 /// credentials, local credential file paths, and provider resource identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +116,7 @@ pub struct DiscoveryReport {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub targets: BTreeMap<String, DiscoveryTarget>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub observations: BTreeMap<String, DiscoveryObservation>,
+    pub observations: BTreeMap<String, ReportedObservation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credentials: Vec<crate::inference_discovery::CredentialObservation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -116,11 +142,11 @@ impl DiscoveryReport {
             .iter()
             .filter_map(|(name, observation)| {
                 use crate::discovery::ObservationStatus::Available;
+                use {DiscoveryObservation as Discovery, ReportedObservation as Reported};
                 let supplemental = match observation {
-                    DiscoveryObservation::Inference(_) | DiscoveryObservation::Service { .. } => {
-                        true
-                    }
-                    DiscoveryObservation::Unresolved { category } => {
+                    Reported::Discovery(Discovery::Inference(_))
+                    | Reported::Plan(PlanObservation::Service { .. }) => true,
+                    Reported::Plan(PlanObservation::Unresolved { category }) => {
                         matches!(category.as_str(), "inference" | "service")
                     }
                     _ => false,
@@ -129,23 +155,22 @@ impl DiscoveryReport {
                     return None;
                 }
                 let resolved = match observation {
-                    DiscoveryObservation::Engine(value) => value.status == Available,
-                    DiscoveryObservation::Hardware(value) => value.status == Available,
-                    DiscoveryObservation::Inference(value) => value.status == Available,
-                    DiscoveryObservation::RuntimeImage(value) => value.status == Available,
-                    DiscoveryObservation::Credential(value) => value.status == Available,
-                    DiscoveryObservation::Gateway(value) => {
+                    Reported::Discovery(Discovery::Gateway(value)) => {
                         value.status == Available && value.compatible == Some(true)
                     }
-                    DiscoveryObservation::Fabric(value) => {
+                    Reported::Discovery(Discovery::Fabric(value)) => {
                         value.status == Available
                             && value.compatibility.as_ref().is_some_and(|compatibility| {
                                 compatibility.status
                                     == crate::fabric_capabilities::Support::Supported
                             })
                     }
-                    DiscoveryObservation::Service { ready, .. } => *ready == Some(true),
-                    DiscoveryObservation::Unresolved { .. } => false,
+                    Reported::Discovery(value) => value.status() == Available,
+                    Reported::Plan(PlanObservation::RuntimeImage(value)) => {
+                        value.status == Available
+                    }
+                    Reported::Plan(PlanObservation::Service { ready, .. }) => *ready == Some(true),
+                    Reported::Plan(PlanObservation::Unresolved { .. }) => false,
                 };
                 (!resolved).then(|| unverified_message(name))
             })
@@ -299,36 +324,37 @@ impl Plan {
         }
         for (name, value) in self.discovery_values() {
             let observation = if category(&name) == "service" {
-                DiscoveryObservation::Service {
+                ReportedObservation::Plan(PlanObservation::Service {
                     ready: value["ready"].as_bool(),
                     source: "service_readiness".into(),
-                }
+                })
             } else if let Some(encoded) = value.as_str() {
                 let invalid = |_| Error::State("invalid typed provider discovery observation");
+                use {DiscoveryObservation as Discovery, ReportedObservation as Reported};
                 match category(&name) {
-                    "engine" => DiscoveryObservation::Engine(
+                    "engine" => Reported::Discovery(Discovery::Engine(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
-                    "gateway" => DiscoveryObservation::Gateway(
+                    )),
+                    "gateway" => Reported::Discovery(Discovery::Gateway(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
-                    "hardware" => DiscoveryObservation::Hardware(
+                    )),
+                    "hardware" => Reported::Discovery(Discovery::Hardware(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
-                    "runtime_image" => DiscoveryObservation::RuntimeImage(
+                    )),
+                    "runtime_image" => Reported::Plan(PlanObservation::RuntimeImage(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
-                    "inference" => DiscoveryObservation::Inference(
+                    )),
+                    "inference" => Reported::Discovery(Discovery::Inference(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
-                    _ => DiscoveryObservation::Fabric(
+                    )),
+                    _ => Reported::Discovery(Discovery::Fabric(
                         serde_json::from_str(encoded).map_err(invalid)?,
-                    ),
+                    )),
                 }
             } else {
-                DiscoveryObservation::Unresolved {
+                ReportedObservation::Plan(PlanObservation::Unresolved {
                     category: category(&name).into(),
-                }
+                })
             };
             report.observations.insert(name, observation);
         }
@@ -438,9 +464,9 @@ mod tests {
         assert_eq!(report.unverified().len(), 4);
         report.observations.insert(
             "gateway".into(),
-            DiscoveryObservation::Unresolved {
+            ReportedObservation::Plan(PlanObservation::Unresolved {
                 category: "gateway".into(),
-            },
+            }),
         );
         assert_eq!(report.deferred().len(), 1);
         assert!(report.deferred()[0].contains("Gateway"));
@@ -486,6 +512,25 @@ mod tests {
 }
 
 #[cfg(test)]
+mod encoding_tests {
+    use super::*;
+    use crate::discovery::EngineObservation;
+
+    /// The CLI prints this report, so each kind keeps its tag and shape.
+    #[test]
+    fn every_observation_kind_keeps_its_report_encoding() {
+        let expected = json!({"observations": {
+            "engine": {"kind": "engine", "observation": serde_json::to_value(EngineObservation::unknown("unreachable")).unwrap()},
+            "runtime_image_0": {"kind": "runtime_image", "observation": {"status": "available", "source": "engine_image_inspect", "required_version": "1"}},
+            "service_model": {"kind": "service", "observation": {"ready": null, "source": "service_readiness"}},
+            "gateway": {"kind": "unresolved", "observation": {"category": "gateway"}}
+        }});
+        let report: DiscoveryReport = serde_json::from_value(expected.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&report).unwrap(), expected);
+    }
+}
+
+#[cfg(test)]
 mod freshness_tests {
     use super::*;
     #[test]
@@ -493,21 +538,23 @@ mod freshness_tests {
         let mut earlier = DiscoveryReport::default();
         earlier.observations.insert(
             "gateway".into(),
-            DiscoveryObservation::Unresolved {
+            ReportedObservation::Plan(PlanObservation::Unresolved {
                 category: "gateway".into(),
-            },
+            }),
         );
         assert_eq!(earlier.deferred().len(), 1);
         let mut later = DiscoveryReport::default();
         later.observations.insert(
             "gateway".into(),
-            DiscoveryObservation::Gateway(crate::discovery::GatewayObservation {
-                status: crate::discovery::ObservationStatus::Available,
-                reason: None,
-                source: "openshell_gateway_info".into(),
-                capabilities: None,
-                compatible: Some(true),
-            }),
+            ReportedObservation::Discovery(DiscoveryObservation::Gateway(
+                crate::discovery::GatewayObservation {
+                    status: crate::discovery::ObservationStatus::Available,
+                    reason: None,
+                    source: "openshell_gateway_info".into(),
+                    capabilities: None,
+                    compatible: Some(true),
+                },
+            )),
         );
         earlier.extend(later);
         assert!(earlier.deferred().is_empty());

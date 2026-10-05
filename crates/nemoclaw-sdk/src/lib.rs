@@ -190,8 +190,8 @@ pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
     Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
-    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, Progress, ResourceInventoryEntry,
-    ResourceSource, StepOutcome,
+    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, PlanObservation, Progress,
+    ReportedObservation, ResourceInventoryEntry, ResourceSource, StepOutcome,
 };
 
 pub mod managed;
