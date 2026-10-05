@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SANITIZED_PRIVILEGED_ENV } from "./privileged-sandbox-environment";
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { dockerCapture } from "../../adapters/docker/run";
 import { resolvePortableDemoPrivilegedExecTarget } from "../experimental/portable-demo-lifecycle";
@@ -10,6 +11,8 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedNativeHomeCleanupInput,
+  RuntimeProviderStoppedSandboxStateCleanupInput,
 } from "./contract";
 import {
   DirectSandboxContainerNotFoundError,
@@ -19,34 +22,18 @@ import {
 import { selectDockerPrivilegedSandboxTarget } from "./docker-privileged-sandbox-identity";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
+  clearStoppedNativeHomeWithEngine,
   clearStoppedSandboxStateWithEngine,
+  sandboxNativeHomeResourceFromMounts,
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
+  type StoppedSandboxStateTarget,
 } from "./stopped-sandbox-state-cleanup";
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
-const SANITIZED_PRIVILEGED_ENV = [
-  "BASH_ENV=",
-  "ENV=",
-  "GCONV_PATH=",
-  "GLIBC_TUNABLES=",
-  "LD_AUDIT=",
-  "LD_LIBRARY_PATH=",
-  "LD_PRELOAD=",
-  "LOCPATH=",
-  "NODE_OPTIONS=",
-  "PERL5OPT=",
-  "PYTHONHOME=",
-  "PYTHONINSPECT=",
-  "PYTHONNOUSERSITE=1",
-  "PYTHONPATH=",
-  "PYTHONSTARTUP=",
-  "PYTHONUSERBASE=",
-  "RUBYOPT=",
-] as const;
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
@@ -85,6 +72,67 @@ function expectedDirectContainerPattern(sandboxName: string): string {
     `openshell-${sandboxName}, openshell-${sandboxName}-*, or ` +
     `openshell-default--${sandboxName}-*`
   );
+}
+
+function resolvePinnedDockerTarget(
+  input: Pick<
+    RuntimeProviderPrivilegedSandboxCommandInput,
+    "registeredSandboxNames" | "sandboxName"
+  >,
+  expectedResourceHandle: string,
+): string {
+  const refuse = (): never => {
+    throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+  };
+  if (!/^[a-f0-9]{64}$/u.test(expectedResourceHandle)) refuse();
+  let output: string;
+  try {
+    output = dockerCapture(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{.Id}}\t{{.Name}}\t{{.State.Running}}\t{{json .Config.Labels}}",
+        expectedResourceHandle,
+      ],
+      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+    );
+  } catch {
+    return refuse();
+  }
+  const [containerId, rawName, running, labelsJson, ...unexpected] = output.trim().split("\t");
+  let parsedLabels: unknown;
+  try {
+    parsedLabels = JSON.parse(labelsJson ?? "");
+  } catch {
+    return refuse();
+  }
+  if (!parsedLabels || typeof parsedLabels !== "object" || Array.isArray(parsedLabels)) {
+    return refuse();
+  }
+  const labels = parsedLabels as Record<string, unknown>;
+  const name = String(rawName ?? "").replace(/^\//u, "");
+  let selected: string | null;
+  try {
+    selected = selectDockerPrivilegedSandboxTarget(
+      input.sandboxName,
+      `${String(containerId ?? "")}\t${name}`,
+      input.registeredSandboxNames,
+    );
+  } catch {
+    return refuse();
+  }
+  if (
+    unexpected.length > 0 ||
+    selected !== expectedResourceHandle ||
+    running !== "true" ||
+    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    labels[OPENSHELL_SANDBOX_NAME_LABEL] !== input.sandboxName
+  ) {
+    return refuse();
+  }
+  return expectedResourceHandle;
 }
 
 function portableTarget(sandboxName: string, sandbox: SandboxEntry) {
@@ -149,7 +197,9 @@ function buildLegacyDockerArgv(
         portable.assertRuntimeAuthority();
         return portable.containerId;
       })()
-    : resolveDockerTarget(input).resourceHandle;
+    : input.expectedResourceHandle
+      ? resolvePinnedDockerTarget(input, input.expectedResourceHandle)
+      : resolveDockerTarget(input).resourceHandle;
   if (input.expectedResourceHandle !== undefined && input.expectedResourceHandle !== target) {
     throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
   }
@@ -171,9 +221,13 @@ function buildLegacyDockerArgv(
 
 function observeStoppedDockerTarget(
   engine: ReturnType<typeof createDockerOperationAuthority>["engine"],
-  input: Parameters<
-    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
-  >[0],
+  input:
+    | RuntimeProviderStoppedSandboxStateCleanupInput
+    | RuntimeProviderStoppedNativeHomeCleanupInput,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let lookup;
   try {
@@ -205,6 +259,13 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "runtime-ownership-invalid" };
   }
+  if (
+    "expectedResourceHandle" in input &&
+    input.expectedResourceHandle !== undefined &&
+    input.expectedResourceHandle !== resourceHandle
+  ) {
+    return { failure: "runtime-ownership-invalid" };
+  }
   if (!resourceHandle || /-nemoclaw-gpu-backup-\d+$/u.test(lookup.stdout)) {
     return { failure: "no-eligible-stopped-runtime" };
   }
@@ -228,7 +289,7 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "state-resource-unavailable" };
   }
-  const stateResource = sandboxStateResourceFromMounts(mounts, input.paths);
+  const stateResource = stateResourceFromMounts(mounts, resourceHandle);
   return stateResource
     ? { target: { resourceHandle, running: running === "true", stateResource } }
     : { failure: "state-resource-unavailable" };
@@ -242,7 +303,21 @@ function clearStoppedStateRoots(
   const engine = createDockerOperationAuthority("sandbox-lifecycle").engine;
   return clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
     capture: (args, timeoutMs = 30_000) => engine.capture(args, timeoutMs),
-    observe: () => observeStoppedDockerTarget(engine, input),
+    observe: () =>
+      observeStoppedDockerTarget(engine, input, (mounts) =>
+        sandboxStateResourceFromMounts(mounts, input.paths),
+      ),
+  });
+}
+
+function clearStoppedNativeHome(input: RuntimeProviderStoppedNativeHomeCleanupInput) {
+  const engine = createDockerOperationAuthority("sandbox-lifecycle").engine;
+  return clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
+    capture: (args, timeoutMs = 30_000) => engine.capture(args, timeoutMs),
+    observe: () =>
+      observeStoppedDockerTarget(engine, input, (mounts, resourceHandle) =>
+        sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
+      ),
   });
 }
 
@@ -251,6 +326,7 @@ export function createDockerPrivilegedSandboxControl(): RuntimeProviderPrivilege
     resolveTarget: resolveDockerTarget,
     execute: executeDockerCommand,
     clearStoppedStateRoots,
+    clearStoppedNativeHome,
     buildLegacyDockerArgv,
   });
 }

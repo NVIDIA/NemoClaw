@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
+import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { TextDecoder } from "node:util";
 import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
 
@@ -26,6 +27,8 @@ import {
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
 import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry/types";
+import { SANITIZED_PRIVILEGED_ENV } from "../runtime-provider/privileged-sandbox-environment";
+import { PinnedSandboxResourceIdentityChangedError } from "../runtime-provider/privileged-sandbox-control-errors";
 import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -55,6 +58,7 @@ import {
 } from "./hermes-portable-policy-state";
 import {
   publishHermesPortableSuccessorReceipt,
+  hasHermesPortableReceiptCandidate,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
   retireHermesPortableCreatePolicyState,
@@ -1073,8 +1077,8 @@ async function qualify(
   const container = currentnessTiming.measure("containerInspect", () =>
     assertCurrentHermesPortableContainer(receipt, containerDeps),
   );
-  if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
-    fail("container state or restart policy disagrees with active authority");
+  if (container.paused) {
+    fail("exact container is paused");
   }
   if (hasTransactionAuthority) operatingAuthority.assertTransactionCurrent();
   else operatingAuthority.assertCurrent();
@@ -1356,7 +1360,6 @@ function assertLifecycleTransactionCurrent(
   if (
     current.authority.running !== expectedRunning ||
     current.paused ||
-    current.authority.restartPolicy !== "unless-stopped" ||
     (expectedRunning ? current.status !== "running" : current.status !== "exited")
   ) {
     fail("container state changed during retained lifecycle authority");
@@ -2016,6 +2019,52 @@ export async function recoverHermesPortableSandboxLifecycle(
   }
 }
 
+/** Run the fixed gateway controller against the exact receipt-owned Podman container. */
+export async function executeHermesPortableGatewaySupervisorAction(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext | null,
+  request: {
+    readonly action: "restart" | "recover" | "probe";
+    readonly nonce: string;
+    readonly timeoutMs: number;
+    readonly expectedContainerId?: string;
+  },
+  deps: HermesPortableLifecycleDeps = {},
+): Promise<HermesPortablePodmanResult | null> {
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(deps.env ?? process.env);
+  if (!hasHermesPortableReceiptCandidate(sandboxName, stateDir)) return null;
+  if (!context) fail("gateway control requires a registered gateway owner");
+  if (request.action !== "recover" && request.action !== "probe") {
+    fail("gateway restart is not supported; use sandbox stop/start");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(request.nonce)) fail("gateway control nonce is invalid");
+  const qualified = await qualify(sandboxName, context, deps);
+  const containerId = qualified.receipt.container.containerId;
+  if (request.expectedContainerId !== undefined && request.expectedContainerId !== containerId) {
+    throw new PinnedSandboxResourceIdentityChangedError(sandboxName);
+  }
+  if (!qualified.container.authority.running) fail("exact container is not running");
+  qualified.assertOperatingAuthority();
+  const result = qualified.containerDeps.podman(
+    [
+      "container",
+      "exec",
+      ...SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value]),
+      "--user",
+      "root",
+      containerId,
+      "/usr/local/bin/nemoclaw-gateway-control",
+      request.action,
+      request.nonce,
+    ],
+    request.timeoutMs,
+  );
+  // A successful helper response cannot authorize a changed receipt, registry,
+  // socket, executable, policy, or container generation.
+  await qualify(sandboxName, context, deps, qualified.snapshot);
+  return result;
+}
+
 /** Requalify active Hermes authority without starting or changing the sandbox. */
 export async function assertHermesPortableSandboxLifecycleAuthority(
   sandboxName: string,
@@ -2227,7 +2276,12 @@ export async function prepareHermesPortableSandboxRemoval(
       "Error",
     ]);
     operatingAuthority.assertCurrent();
-    return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
+    return {
+      present: true,
+      qualified,
+      capture,
+      containerDeps: qualified.containerDeps,
+    };
   };
 
   const initial = await inspect();
@@ -2242,13 +2296,27 @@ export async function prepareHermesPortableSandboxRemoval(
     async removeAndVerify() {
       const current = await inspect();
       if (!current.present) return;
-      const removed = current.capture(
-        ["sandbox", "delete", "-g", receipt.gatewayName, receipt.sandboxName],
-        40_000,
-      );
+      const removed = await createCliOpenShellSandboxLifecycle({
+        environment: commandEnv,
+        capture: (args, options) => {
+          const captured = current.capture(args, options.timeout);
+          const stdout = String(captured.stdout ?? "");
+          const stderr = String(captured.stderr ?? "");
+          return {
+            ...captured,
+            stdout,
+            stderr,
+            output: `${stdout}\n${stderr}`.trim(),
+          };
+        },
+      }).deleteSandbox({
+        sandboxName: receipt.sandboxName,
+        target: { kind: "named", gatewayName: receipt.gatewayName },
+        timeoutMs: 40_000,
+      });
       const after = await inspect(true);
       if (after.present) {
-        if (removed.status !== 0 || removed.error) fail("exact sandbox deletion failed");
+        if (removed.kind === "failed") fail("exact sandbox deletion failed");
         fail("exact sandbox remained after deletion");
       }
     },

@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Shell-harness helpers shared by the gateway-health and gateway serving
-// watchdog suites. Both drive real functions lifted out of
-// scripts/nemoclaw-start.sh, so the extraction primitives live here rather
-// than being duplicated once the watchdog suite was split into its own file
-// to stay inside ci/test-file-size-budget.json.
+// Shell-harness helpers shared by gateway process and log tests. They drive
+// real functions lifted out of the production scripts.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -13,12 +10,12 @@ import * as path from "node:path";
 import { expect } from "vitest";
 
 export const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
-export const GATEWAY_SUPERVISOR = path.join(
+export const SANDBOX_INIT = path.join(
   import.meta.dirname,
   "..",
   "scripts",
   "lib",
-  "gateway-supervisor.sh",
+  "sandbox-init.sh",
 );
 
 // Read a file that may legitimately be absent without a check-then-read
@@ -59,16 +56,16 @@ export function safeTmpHelpers(src: string): string {
 }
 
 export function pidIdentityFunctions(src: string): string {
-  const supervisor = fs.readFileSync(GATEWAY_SUPERVISOR, "utf-8");
+  const sandboxInit = fs.readFileSync(SANDBOX_INIT, "utf-8");
   return [
     extractShellFunction(src, "openclaw_load_pid_identity"),
     extractShellFunction(src, "openclaw_pid_start_identity"),
     extractShellFunction(src, "capture_openclaw_pid_start_identity"),
     extractShellFunction(src, "openclaw_supervised_pid_is_live"),
-    extractShellFunction(supervisor, "gateway_control_proc_root"),
-    extractShellFunction(supervisor, "gateway_control_proc_root_is_explicit"),
-    extractShellFunction(supervisor, "gateway_control_pid_state"),
-    extractShellFunction(supervisor, "gateway_control_pid_is_live"),
+    extractShellFunction(sandboxInit, "gateway_control_proc_root"),
+    extractShellFunction(sandboxInit, "gateway_control_proc_root_is_explicit"),
+    extractShellFunction(sandboxInit, "gateway_control_pid_state"),
+    extractShellFunction(sandboxInit, "gateway_control_pid_is_live"),
   ].join("\n");
 }
 

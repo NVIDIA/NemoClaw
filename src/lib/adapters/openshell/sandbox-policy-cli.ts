@@ -28,6 +28,7 @@ import {
 } from "./command-argv";
 import { captureSanitizedResolvedOpenshellAsync } from "./sanitized-capture";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
+import { OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS } from "./timeouts";
 import {
   classifyCliOpenShellCommandError,
   type CapturedOpenShellCommandResult,
@@ -307,7 +308,10 @@ export function createCliOpenShellSandboxPolicyWriter(
         submission = parsePolicySet(
           await deps.capture(
             policySetArgs(request, policyPath),
-            captureOptions(request, deps.defaultTimeoutMs),
+            captureOptions(
+              request,
+              deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
+            ),
           ),
         );
       } catch (error) {

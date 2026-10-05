@@ -410,7 +410,11 @@ repair_repository() {
     printf 'Next: Run git config --show-origin --get core.hooksPath, then remove it in that scope with your approval.\n' >&2
     return 1
   fi
-  run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts || return 1
+  run_setup_step "Prepare the required OpenShell SDK" \
+    node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" prepare || return 1
+  run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com || return 1
+  run_setup_step "Verify the required OpenShell SDK" \
+    node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check || return 1
   run_setup_step "Install plugin dependencies" \
     npm --prefix nemoclaw install --include=dev --ignore-scripts || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1
@@ -631,6 +635,11 @@ run_doctor() {
   check_command "GitHub CLI" gh "Install GitHub CLI."
   check_command "hadolint" hadolint "Install hadolint (macOS: brew install hadolint)."
 
+  if node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check >/dev/null 2>&1; then
+    pass "OpenShell SDK"
+  else
+    fail "OpenShell SDK: missing, incompatible, or cannot load" "Run: npm run dev:setup"
+  fi
   root_tsc="${REPO_ROOT}/node_modules/.bin/tsc"
   plugin_tsc="${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc"
   check_executable "Root TypeScript dependencies" "${root_tsc}" \

@@ -88,6 +88,24 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("rejects an endpoint override before selected-target observation (#11832)", async () => {
+    const capture = vi.fn();
+    const observer = createCliOpenShellSandboxObserver({
+      capture,
+      environment: {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://user:fixture-secret@example.test",
+      },
+    });
+
+    await expect(
+      observer.listSandboxes({ target: selectedOpenShellGateway() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "transport", reason: "endpoint_override" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("contains table and ANSI compatibility inside the CLI implementation (#9803)", () => {
     expect(
       parseCliOpenShellSandboxInventory(
@@ -140,6 +158,21 @@ describe("CLI OpenShell sandbox observer", () => {
       ok: true,
       value: {
         sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+      },
+    });
+  });
+
+  it("does not turn a zero-exit OpenShell error into an empty inventory", async () => {
+    const observer = createCliOpenShellSandboxObserver({
+      capture: () => captured(0, "Error: gateway observation failed"),
+    });
+
+    await expect(observer.listSandboxes({ target: selectedOpenShellGateway() })).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "The OpenShell sandbox observation failed.",
       },
     });
   });
@@ -199,7 +232,8 @@ describe("CLI OpenShell sandbox observer", () => {
       .fn()
       .mockResolvedValueOnce(captured(1, "", diagnostic))
       .mockResolvedValueOnce(captured(0, sandboxListJson()));
-    const lookup = createCliOpenShellSandboxLookup({ capture });
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(1_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
 
     await expect(
       lookup({
@@ -224,9 +258,37 @@ describe("CLI OpenShell sandbox observer", () => {
         ignoreError: true,
         includeStderr: true,
         includeStreams: true,
-        timeout: 1_234,
+        timeout: 1_000,
       },
     );
+  });
+
+  it("does not start legacy inventory fallback after the lookup deadline", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(
+        captured(1, "", 'status: Internal, message: "sandbox has no spec", details: []'),
+      );
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(2_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
+
+    await expect(
+      lookup({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw"),
+        timeoutMs: 1_234,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "timeout",
+          message: "OpenShell sandbox observation timed out.",
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 
   it("does not report deletion when legacy inventory lacks the sandbox", async () => {
@@ -280,6 +342,29 @@ describe("CLI OpenShell sandbox observer", () => {
         error: {
           kind: "authentication",
           message: "OpenShell could not authenticate the sandbox observation.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
+  it("does not treat missing-looking output from an interrupted lookup as absence (#11941)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => ({
+        ...captured(1, "", "Error: sandbox alpha not found"),
+        signal: "SIGTERM",
+      }),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: namedOpenShellGateway("nemoclaw") }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The OpenShell sandbox observation failed.",
         },
       },
       displayOutput: "",
@@ -346,6 +431,7 @@ describe("CLI OpenShell sandbox observer", () => {
       ignoreError: true,
       killProcessTreeOnTimeout: true,
       killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 9_000,
     });

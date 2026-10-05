@@ -22,7 +22,7 @@ def current_instantiation_epoch():
     return "epoch"
 
 def drain_requested(*, home: Optional[Path] = None) -> bool:
-    """True iff a begin-drain marker for THIS instantiation is present.
+    """True iff an active (present, same-epoch, unexpired) begin-drain marker exists.
     """
     return True
 
@@ -31,31 +31,23 @@ def drain_notification_suppressed(*, home: Optional[Path] = None) -> bool:
     return False
 `;
 
-const RUN_SOURCE = `class GatewayAuthorizationMixin:
-    pass
+const RUN_SOURCE = `from gateway.run_shutdown import GatewayShutdownMixin
 
-class GatewayKanbanWatchersMixin:
-    pass
-
-class GatewaySlashCommandsMixin:
-    pass
-
-class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
+class GatewayRunner(
+    GatewayShutdownMixin):
     def __init__(self):
-        # External (NAS-driven) drain state — distinct from the shutdown
-        # \`\`_draining\`\` flag above. Set by \`\`_drain_control_watcher\`\` when the
-        # \`\`.drain_request.json\`\` marker is present: the gateway flips
-        # \`\`gateway_state -> draining\`\` and refuses NEW turns, but the process
-        # does NOT exit (the whole point — quiesce-without-restart, D4a). It is
-        # fully reversible: removing the marker reverts to \`\`running\`\` and
-        # re-accepts turns. \`\`_draining\`\` (shutdown) is one-way and ends in
-        # process exit; this one is a steady state NAS polls during its
-        # request -> poll -> proceed loop.
+        self._init_lifecycle_state()
+
+    def _init_lifecycle_state(self):
+        # External (NAS-driven) drain, distinct from one-way \`\`_draining\`\`: set while \`\`.drain_request.json\`\`
+        # exists — NEW turns refused, process stays up, removing the marker reverts to \`\`running\`\`.
         self._external_drain_active = False
 
     def _update_runtime_status(self, status):
         self.runtime_status = status
+`;
 
+const SHUTDOWN_SOURCE = `class GatewayShutdownMixin:
     def _enter_external_drain(self):
         if self._external_drain_active:
             return
@@ -76,6 +68,7 @@ def get_due_jobs() -> List[Dict[str, Any]]:
 interface Fixture {
   drainControl: string;
   gatewayRun: string;
+  gatewayShutdown: string;
   cronJobs: string;
   root: string;
 }
@@ -84,11 +77,13 @@ function createFixture(): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-drain-patch-"));
   const drainControl = path.join(root, "drain_control.py");
   const gatewayRun = path.join(root, "run.py");
+  const gatewayShutdown = path.join(root, "run_shutdown.py");
   const cronJobs = path.join(root, "jobs.py");
   fs.writeFileSync(drainControl, DRAIN_SOURCE);
   fs.writeFileSync(gatewayRun, RUN_SOURCE);
+  fs.writeFileSync(gatewayShutdown, SHUTDOWN_SOURCE);
   fs.writeFileSync(cronJobs, JOBS_SOURCE);
-  return { drainControl, gatewayRun, cronJobs, root };
+  return { drainControl, gatewayRun, gatewayShutdown, cronJobs, root };
 }
 
 function runPatcher(fixture: Fixture) {
@@ -101,6 +96,8 @@ function runPatcher(fixture: Fixture) {
       fixture.drainControl,
       "--gateway-run",
       fixture.gatewayRun,
+      "--gateway-shutdown",
+      fixture.gatewayShutdown,
       "--cron-jobs",
       fixture.cronJobs,
     ],
@@ -150,6 +147,8 @@ try:
     absent = drain.drain_requested()
     os.stat = lambda *_args, **_kwargs: types.SimpleNamespace()
     present = drain.drain_requested()
+    shutdown_module = load("gateway.run_shutdown", sys.argv[3])
+    gateway.run_shutdown = shutdown_module
     runner_module = load("patched_gateway_run", sys.argv[2])
     runner = runner_module.GatewayRunner()
     runner._enter_external_drain()
@@ -165,7 +164,7 @@ print(json.dumps({
 `;
       const result = spawnSync(
         process.env.PYTHON || "python3",
-        ["-I", "-c", probe, fixture.drainControl, fixture.gatewayRun],
+        ["-I", "-c", probe, fixture.drainControl, fixture.gatewayRun, fixture.gatewayShutdown],
         { encoding: "utf8" },
       );
       expect(result.status, result.stderr).toBe(0);

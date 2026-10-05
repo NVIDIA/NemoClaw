@@ -3,6 +3,10 @@
 
 import path from "node:path";
 
+import {
+  resolveSandboxGatewayName,
+  type SandboxGatewayBinding,
+} from "../../onboard/gateway-binding";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import * as openshellRuntime from "./runtime";
 import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
@@ -24,7 +28,18 @@ type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer" | 
     | Readonly<{ openshellBinary: string; env: NodeJS.ProcessEnv }>
   );
 
-/** Capture a bounded OpenShell read with a credential-minimizing environment. */
+export function buildGatewayScopedSandboxCommand(
+  sandbox: SandboxGatewayBinding & { readonly name: string },
+  subcommand: string,
+): { readonly args: string[]; readonly gatewayName: string } {
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  return {
+    args: ["sandbox", subcommand, "-g", gatewayName, sandbox.name],
+    gatewayName,
+  };
+}
+
+/** Capture a bounded OpenShell command with a credential-minimizing environment. */
 function resolveCapture(args: string[]) {
   const env = buildOpenShellSubprocessEnv();
   for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {

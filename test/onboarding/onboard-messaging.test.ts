@@ -762,7 +762,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -921,7 +920,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -1092,7 +1090,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {

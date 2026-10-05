@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { OpenShellDockerSandboxRuntimeSnapshotQuery } from "../openshell-docker-sandbox-containers";
 import type {
@@ -15,6 +16,7 @@ import {
   createRuntimeProviderSnapshotSurface,
   observeDockerRuntimeSnapshot,
   observeOpenShellRuntimeSnapshot,
+  resolveDockerSnapshotRecreateGpuDevice,
   type RuntimeProviderSnapshotObservation,
 } from "./snapshot";
 
@@ -449,6 +451,10 @@ describe("OpenShell snapshot observation", () => {
         acceleration: liveAcceleration,
       },
     });
+    expect(capture).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      expect.anything(),
+    );
     expect(observeAcceleration).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha" }),
       "openshell-alpha-id",
@@ -618,6 +624,22 @@ function dockerGpuSnapshot(deviceIds: readonly string[] | null, driver = "") {
   });
 }
 
+function capturedDockerGpuRuntime(devices: readonly string[]): SandboxRuntimeSnapshot {
+  return {
+    schemaVersion: 1,
+    providerId: "docker",
+    providerHandle: "provider-handle",
+    lifecycleState: "running",
+    lifecycleGeneration: "generation-1",
+    runtime: {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "gpu", vendor: "nvidia", devices: [...devices] },
+    },
+  };
+}
+
 function dockerSnapshotSurface(
   snapshot: ReturnType<typeof dockerSnapshot>,
   captureHostCommand = dockerRestoreCapture(),
@@ -631,20 +653,92 @@ function dockerSnapshotSurface(
 }
 
 describe("Docker provider snapshot evidence", () => {
+  it.each(["openclaw", "langchain-deepagents-code"])(
+    "restores stopped %s state into a running replacement without rewriting source evidence (#11165)",
+    (agent) => {
+      const target = sandbox({ agent, openshellDriver: "docker" });
+      const sourceSurface = dockerSnapshotSurface(
+        dockerSnapshot(),
+        dockerLifecycleCapture(undefined, { status: "exited" }),
+      );
+      const captured = sourceSurface.preflight("backup", target);
+      const source = snapshotSource(captured, sourceSurface.capture(target, captured));
+      const original = structuredClone(source);
+      const targetSurface = dockerSnapshotSurface(dockerSnapshot());
+      const receipt = targetSurface.restore(
+        target,
+        targetSurface.preflight("restore", target),
+        source,
+        { ...managedProfile, agent },
+      );
+      expect(receipt.lifecycleState).toBe("running");
+      expect(source).toEqual(original);
+      expect(source.lifecycleState).toBe("stopped");
+    },
+  );
+
+  it.each(["hermes"])("retains lifecycle mismatch refusal for %s", (agent) => {
+    const target = sandbox({ agent, openshellDriver: "docker" });
+    const sourceSurface = dockerSnapshotSurface(
+      dockerSnapshot(),
+      dockerLifecycleCapture(undefined, { status: "exited" }),
+    );
+    const captured = sourceSurface.preflight("backup", target);
+    const source = snapshotSource(captured, sourceSurface.capture(target, captured));
+    const targetSurface = dockerSnapshotSurface(dockerSnapshot());
+    expect(() =>
+      targetSurface.restore(target, targetSurface.preflight("restore", target), source, {
+        ...managedProfile,
+        agent,
+      }),
+    ).toThrow("cannot represent the snapshot lifecycle state");
+  });
+
+  it.each([
+    ["exact CDI", ["nvidia.com/gpu=0"], "nvidia.com/gpu=0"],
+    ["all-GPU", ["nvidia.com/gpu=all"], "nvidia.com/gpu=all"],
+    [
+      "exact CDI with device paths",
+      [
+        "docker-device-path:/dev/dri/renderD128=>/dev/dri/renderD128:rwm",
+        "nvidia.com/gpu=GPU-live-0",
+      ],
+      "nvidia.com/gpu=GPU-live-0",
+    ],
+  ] as const)(
+    "resolves %s snapshot authority for rebuild recreation",
+    (_label, devices, expected) => {
+      expect(resolveDockerSnapshotRecreateGpuDevice(capturedDockerGpuRuntime(devices))).toBe(
+        expected,
+      );
+    },
+  );
+
+  it("refuses a captured multi-selector GPU authority that one create selector cannot replay", () => {
+    expect(() =>
+      resolveDockerSnapshotRecreateGpuDevice(
+        capturedDockerGpuRuntime(["nvidia.com/gpu=0", "nvidia.com/gpu=1"]),
+      ),
+    ).toThrow(/cannot be replayed by one sandbox GPU selector/u);
+  });
+
   it("normalizes Docker's explicit paused status", () => {
+    const queryRuntimeSnapshot = vi.fn(() => dockerSnapshot());
     const observed = observeDockerRuntimeSnapshot(
       sandbox({ openshellDriver: "docker" }),
       "docker",
       {
         captureHostCommand: dockerLifecycleCapture(undefined, { status: "paused", paused: true }),
-        queryRuntimeSnapshot: () => dockerSnapshot(),
+        queryRuntimeSnapshot,
       },
     );
 
     expect(observed.lifecycleState).toBe("paused");
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha");
   });
 
   it("captures exact live container, lifecycle, and device selectors", () => {
+    const captureHostCommand = dockerLifecycleCapture();
     const queryRuntimeSnapshot = vi.fn(() =>
       dockerSnapshot({
         deviceRequests: [
@@ -669,7 +763,8 @@ describe("Docker provider snapshot evidence", () => {
         sandboxGpuDevice: null,
       }),
       "docker",
-      { captureHostCommand: dockerLifecycleCapture(), queryRuntimeSnapshot },
+      { captureHostCommand, queryRuntimeSnapshot },
+      4_321,
     );
 
     expect(observed).toMatchObject({
@@ -685,6 +780,38 @@ describe("Docker provider snapshot evidence", () => {
         },
       },
     });
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", 4_321);
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      expect.any(Array),
+      expect.any(Number),
+    );
+  });
+
+  it("does not inspect lifecycle after runtime identity exhausts the shared deadline", () => {
+    const timeoutMs = 4_321;
+    let nowMs = 10_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const captureHostCommand = vi.fn();
+    const queryRuntimeSnapshot = vi.fn(() => {
+      nowMs += timeoutMs;
+      return dockerSnapshot();
+    });
+
+    try {
+      expect(() =>
+        observeDockerRuntimeSnapshot(
+          sandbox({ openshellDriver: "docker" }),
+          "docker",
+          { captureHostCommand, queryRuntimeSnapshot },
+          timeoutMs,
+        ),
+      ).toThrow(/runtime snapshot deadline expired/u);
+      expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", timeoutMs);
+      expect(captureHostCommand).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it.each([

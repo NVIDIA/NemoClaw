@@ -418,6 +418,7 @@ const trustAlternateRelease = (source: string): string => {
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
     ],
     formula: {
       asset: "openshell.rb",
@@ -429,6 +430,7 @@ const trustAlternateRelease = (source: string): string => {
       "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
       "c7f505deccf25ac8fe1be632502c52938fb85916ef3f16b41df131cdff5540ad",
       "34d51fefd0bd5a4e5f678b3e26596113cc8d9dc70f6be08f56abbb73081f10b2",
+      "d68e81d84f1becd60322c660d6c844e819fd8e37380e36559037b72939f9c3a5",
     ],
     manifests: [
 ${manifests}

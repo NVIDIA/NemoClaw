@@ -18,13 +18,7 @@ import {
 
 type RegisteredAgentSource = { agent?: string | null } | null | undefined;
 
-export {
-  type AgentRecoveryScript,
-  buildRecoveryScript,
-  getTerminalCommand,
-  isTerminalAgentRecoveryScript,
-  TERMINAL_AGENT_RECOVERY_SCRIPT,
-} from "./gateway-restart-scripts";
+export { getTerminalCommand } from "./gateway-restart-scripts";
 
 /**
  * Resolve the agent for a sandbox. Checks the per-sandbox registry first
@@ -50,6 +44,20 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
 export type SessionAgentDefinitionResolution =
   | { agent: AgentDefinition; requestedName: string; resolved: true }
   | { agent: null; requestedName: string; resolved: false };
+
+/** Resolve a registry-recorded name against the trusted agent manifest inventory. */
+export function resolveRegisteredAgentDefinition(
+  source: RegisteredAgentSource,
+): AgentDefinition | null {
+  const name = source?.agent;
+  if (!name) return null;
+  try {
+    if (!listAgents().includes(name)) return null;
+    return loadAgent(name);
+  } catch {
+    return null;
+  }
+}
 
 /** Resolve OpenClaw's legacy null without hiding an invalid registered agent. */
 export function resolveSessionAgentDefinition(
@@ -78,12 +86,29 @@ export function resolveSessionAgentDefinition(
 export function getRegisteredAgent(source: RegisteredAgentSource): AgentDefinition | null {
   const name = source?.agent;
   if (!name || name === "openclaw") return null;
-  try {
-    if (!listAgents().includes(name)) return null;
-    return loadAgent(name);
-  } catch {
-    return null;
+  return resolveRegisteredAgentDefinition(source);
+}
+
+/**
+ * Resolve the agent persisted by the registry root that owns a sandbox.
+ * The selected onboarding session remains the fast path, but it cannot
+ * override a different agent recorded in a sibling gateway registry.
+ */
+export function resolveRegisteredSandboxAgent(
+  sandboxName: string,
+  selectedAgent: AgentDefinition | null,
+): AgentDefinition | null {
+  const sandbox =
+    registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
+  if (!sandbox) return selectedAgent;
+  const persistedAgent = sandbox.agent ?? "openclaw";
+  if (
+    selectedAgent?.name === persistedAgent ||
+    (selectedAgent === null && persistedAgent === "openclaw")
+  ) {
+    return selectedAgent;
   }
+  return getRegisteredAgent(sandbox);
 }
 
 /**

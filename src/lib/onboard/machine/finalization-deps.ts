@@ -13,6 +13,8 @@ import type {
   SandboxScopeWarmupResult,
 } from "../../actions/sandbox/auto-pair-warmup";
 import { WATCHER_STATUS_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
+import { sanitizeWedgeLogLine } from "../../actions/sandbox/gateway-wedge-diagnostics";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -25,7 +27,13 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+  | "checkAndRecoverSandboxProcesses"
+  | "waitForRecreatedSandboxOpenShellReady"
+  | "waitForStartedNativeGatewayProcess"
+>;
+type GatewayRestartDeps = Pick<
+  typeof import("../../actions/sandbox/process-recovery"),
+  "restartSandboxGateway"
 >;
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
@@ -93,6 +101,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
 export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+  loadGatewayRestart: () => require("../../actions/sandbox/process-recovery") as GatewayRestartDeps,
   loadRegistryPersistence: () =>
     require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
   loadLaunchReadiness: () =>
@@ -106,6 +115,22 @@ export const finalizationHandlerRuntime = {
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
 };
+
+export async function restartNativeGatewayForInitialSetup(
+  sandboxName: string,
+  gatewayName = process.env.OPENSHELL_GATEWAY || "nemoclaw",
+): ReturnType<GatewayRestartDeps["restartSandboxGateway"]> {
+  return await finalizationHandlerRuntime.loadGatewayRestart().restartSandboxGateway(sandboxName, {
+    quiet: true,
+    runtimeSelection: {
+      gatewayName,
+      workspace: process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE,
+      ...(process.env.OPENSHELL_LOCAL_TLS_DIR
+        ? { localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR }
+        : {}),
+    },
+  });
+}
 
 function samePairingTarget(
   left: OpenClawPairingSettlementTarget,
@@ -354,18 +379,77 @@ export const finalizationHandlerDeps = {
   async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime
       .loadProcessRecovery()
-      .waitForRecreatedSandboxOpenShellReady(name);
+      .waitForRecreatedSandboxOpenShellReady(name, {
+        onFailure: (result) =>
+          console.error(
+            `  OpenShell readiness for '${name}' failed (${result.failure}): ${sanitizeWedgeLogLine(result.openshellError ?? "no OpenShell diagnostic returned").slice(0, 1000)}`,
+          ),
+      });
+  },
+  async waitForStartedOpenclawGatewayProcess(
+    name: string,
+    gatewayName: string,
+  ): Promise<boolean | null> {
+    return await finalizationHandlerRuntime
+      .loadProcessRecovery()
+      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
+  },
+  async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
+    const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
+    if (pairing.kind === "settled") return true;
+    console.error(`  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason)}`);
+    return false;
   },
   async checkAndRecoverSandboxProcesses(
     name: string,
     options: { quiet: boolean },
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, options);
-    return (
+    const target = finalizationHandlerRuntime
+      .loadLaunchReadiness()
+      .resolveOrdinaryOpenClawPairingTarget(name);
+    if (target) {
+      const startup = await processRecovery.waitForStartedNativeGatewayProcess(
+        name,
+        "openclaw",
+        target.gatewayName,
+      );
+      if (startup === false) {
+        console.error(
+          `  OpenClaw startup did not settle for '${name}' on gateway '${target.gatewayName}'.`,
+        );
+        return false;
+      }
+    }
+    const recover = () =>
+      processRecovery.checkAndRecoverSandboxProcesses(name, {
+        ...options,
+        ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+      });
+    let result = await recover();
+    if (result.checked !== true) {
+      const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
+      if (controlPlaneReady) result = await recover();
+    }
+    const healthy =
       result.checked === true &&
-      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
-    );
+      (result.wasRunning !== false || result.recovered === true) &&
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true);
+    if (!healthy) {
+      const detail =
+        "secretBoundaryReason" in result && result.secretBoundaryReason
+          ? result.secretBoundaryReason
+          : "recoveryFailureDetail" in result && result.recoveryFailureDetail
+            ? result.recoveryFailureDetail
+            : result.checked !== true
+              ? "process inspection incomplete"
+              : "gateway recovery failed";
+      console.error(
+        `  Sandbox recovery for '${name}' failed: ${sanitizeWedgeLogLine(String(detail)).slice(0, 1000)}`,
+      );
+    }
+    return healthy;
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

@@ -3,6 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 
+import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../../src/lib/core/ports.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { NemoClawInstance } from "../phases/onboarding.ts";
 import { pollUntil } from "../polling.ts";
@@ -25,10 +26,10 @@ import type { SandboxClient } from "./sandbox.ts";
  * src/lib/actions/sandbox/connect.ts:NEMOCLAW_GATEWAY_NAME) on top of the
  * framework's allowlisted env.
  */
-function probeEnv(): NodeJS.ProcessEnv {
+function probeEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
-    ...buildAvailabilityProbeEnv(),
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    ...buildAvailabilityProbeEnv(base),
+    OPENSHELL_GATEWAY: base.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
 }
 
@@ -71,6 +72,11 @@ export interface ExpectPidStableOptions extends ShellProbeRunOptions {
   durationSeconds: number;
   /** Polling interval in seconds. Defaults to 3. */
   pollIntervalSeconds?: number;
+}
+
+export interface ExpectGatewayRemovedOptions extends ShellProbeRunOptions {
+  /** Expected host listener port. Defaults to NEMOCLAW_GATEWAY_PORT or 8080. */
+  gatewayPort?: number;
 }
 
 export interface WaitForMissingManagedSupervisorOptions {
@@ -138,7 +144,8 @@ export class GatewayClient {
     return result;
   }
 
-  async resolveHostRuntime(): Promise<HostGatewayRuntime | null> {
+  async resolveHostRuntime(options: ShellProbeRunOptions = {}): Promise<HostGatewayRuntime | null> {
+    const env = probeEnv(options.env);
     const pid = await this.host.command(
       "sh",
       [
@@ -150,8 +157,9 @@ export class GatewayClient {
           `fi; exit 1`,
       ],
       {
+        ...options,
         artifactName: "gateway-runtime-pid-probe",
-        env: probeEnv(),
+        env,
         timeoutMs: 15_000,
       },
     );
@@ -162,8 +170,9 @@ export class GatewayClient {
     const container = await this.runtimeProvider.command(
       ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"],
       {
+        ...options,
         artifactName: "gateway-runtime-container-probe",
-        env: probeEnv(),
+        env,
         timeoutMs: 15_000,
       },
     );
@@ -179,7 +188,7 @@ export class GatewayClient {
   }
 
   async expectHostRuntimeStopped(options: ShellProbeRunOptions = {}): Promise<void> {
-    const runtime = await this.resolveHostRuntime();
+    const runtime = await this.resolveHostRuntime(options);
     if (runtime) {
       throw new Error(
         `gateway runtime still appears to be running after stop: ${runtime.kind}:${runtime.id}`,
@@ -188,7 +197,7 @@ export class GatewayClient {
     if (options.artifactName) {
       await this.host.command("true", [], {
         artifactName: options.artifactName,
-        env: probeEnv(),
+        env: probeEnv(options.env),
         timeoutMs: 5_000,
       });
     }
@@ -210,6 +219,56 @@ export class GatewayClient {
       throw new Error(`openshell status did not report connected gateway '${gatewayName}'.`);
     }
     return result;
+  }
+
+  async expectRemoved(
+    gatewayName = "nemoclaw",
+    options: ExpectGatewayRemovedOptions = {},
+  ): Promise<void> {
+    const { gatewayPort, ...probeOptions } = options;
+    const port =
+      gatewayPort ?? parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, options.env);
+    const env = { ...probeEnv(), ...options.env, OPENSHELL_GATEWAY: gatewayName };
+    const status = await this.host.command(this.host.openshellCommandPath, ["status"], {
+      ...probeOptions,
+      artifactName: `${options.artifactName ?? "gateway-removed"}-status`,
+      env,
+      timeoutMs: options.timeoutMs ?? 30_000,
+    });
+    const statusText = `${status.stdout}\n${status.stderr}`;
+    if (
+      status.timedOut ||
+      status.signal !== null ||
+      !/disconnected|no (?:active )?gateway|connection refused|does not exist|not found/iu.test(
+        statusText,
+      )
+    ) {
+      throw new Error(`openshell status did not prove gateway '${gatewayName}' disconnected.`);
+    }
+
+    const listener = await this.host.command("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"], {
+      ...probeOptions,
+      artifactName: `${options.artifactName ?? "gateway-removed"}-listener`,
+      env,
+      timeoutMs: options.timeoutMs ?? 15_000,
+    });
+    if (
+      listener.exitCode !== 1 ||
+      listener.timedOut ||
+      listener.signal !== null ||
+      listener.stdout.trim() !== "" ||
+      listener.stderr.trim() !== ""
+    ) {
+      throw new Error(
+        `gateway listener still exists or could not be disproved on port ${String(port)}.`,
+      );
+    }
+
+    await this.expectHostRuntimeStopped({
+      ...probeOptions,
+      artifactName: `${options.artifactName ?? "gateway-removed"}-runtime`,
+      env,
+    });
   }
 
   /**

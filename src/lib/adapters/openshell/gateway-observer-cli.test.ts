@@ -78,6 +78,16 @@ describe("CLI gateway observation", () => {
       "Gateway 'nemoclaw-8090' is not configured.",
     ],
     [
+      "No gateway configured",
+      "Error:   × Unknown gateway 'nemoclaw-8090'.\n  │ Register it first",
+      1,
+      1,
+      "missing_named",
+      true,
+      null,
+      "Gateway 'nemoclaw-8090' is not configured.",
+    ],
+    [
       connected,
       "gateway info is not supported by this gateway version",
       0,
@@ -208,12 +218,16 @@ describe("CLI gateway observation", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 
-  it("rejects endpoint overrides before executing a probe", async () => {
+  it("rejects an endpoint override without executing a host-side probe (#11414)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
-    const capture = captureFor(connected, info);
-    expect(
-      (await createCliOpenShellGatewayObserver(capture).observeGateway(request)).recoveryBlocked,
-    ).toBe(true);
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "plain HTTP responder" });
+    await expect(
+      createCliOpenShellGatewayObserver(capture).observeGateway(request),
+    ).resolves.toMatchObject({
+      state: "observation_failed",
+      recoveryBlocked: true,
+      error: { kind: "transport", reason: "endpoint_override" },
+    });
     expect(capture).not.toHaveBeenCalled();
   });
 

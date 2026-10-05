@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInventory, renderSandboxInventoryText } from "../lib/inventory";
+import { getSandboxInventory, listSandboxesCommand } from "../lib/inventory";
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 import { withStdoutRedirectedToStderr } from "../lib/cli/stdout-guard";
 import { buildListCommandDeps } from "../lib/list-command-deps";
@@ -21,14 +21,9 @@ export default class ListCommand extends NemoClawCommand {
     await this.parse(ListCommand);
     const deps = buildListCommandDeps();
     const json = this.jsonEnabled();
-    const inventory = json
-      ? await withStdoutRedirectedToStderr(() => getSandboxInventory(deps))
-      : await getSandboxInventory(deps);
     if (json) {
-      return inventory;
+      return withStdoutRedirectedToStderr(() => getSandboxInventory(deps));
     }
-
-    const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
-    renderSandboxInventoryText(inventory, this.log.bind(this), liveInference);
+    await listSandboxesCommand({ ...deps, log: this.log.bind(this) });
   }
 }

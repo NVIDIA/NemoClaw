@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
-import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
 import * as crossPortRegistry from "../../state/registry/cross-port";
@@ -19,7 +18,7 @@ import {
 
 describe("getReconciledSandboxGatewayState observe mode", () => {
   beforeEach(() => {
-    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
+    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockResolvedValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
     });
@@ -113,7 +112,6 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
   });
 
   it("does not restore a missing sandbox in observe mode (#11025)", async () => {
-    const recover = vi.spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox");
     const getState = vi.fn().mockResolvedValue({ state: "missing", output: "not found" });
 
     const result = await getReconciledSandboxGatewayState("beta", {
@@ -121,7 +119,6 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
       gatewayRecovery: "observe",
     });
 
-    expect(recover).not.toHaveBeenCalled();
     expect(result).toMatchObject({ state: "missing", output: "not found" });
   });
 

@@ -17,6 +17,7 @@ import {
   validClient,
   validPaired,
   validPending,
+  writeCurrentGatewayCallFixtureDist,
   writeFixtureDist,
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
@@ -78,6 +79,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const patchedCli = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      expect(patchedCli).toContain(
+        "nemoclaw: exit after devices approve so leftover gateway handles cannot hang",
+      );
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
       expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(6);
@@ -200,6 +205,56 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       expect(() => runtime.resolveDeviceIdentityForGatewayCall()).toThrow(
         "forced pairing expected device identity is unavailable",
       );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("loads a current-layout forced identity without relying on an ambient fs binding", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-current-identity-fd-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      const apply = runPatch(dist);
+      expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "call-current-fixture.js"), "utf8");
+      expect(source).toContain('const nemoclawFs = process.getBuiltinModule("node:fs");');
+      expect(source).not.toMatch(/\bfs\.(?:fstatSync|readSync)\b/u);
+      const runtime = runFixture<{
+        getCreatedIdentityCount(): number;
+        identityDescriptorReads(): Array<{ fd: number; position: number }>;
+        resolveDeviceIdentityForGatewayCall(sharedStateMode: string): {
+          deviceId: string;
+          privateKeyPem: string;
+          publicKeyPem: string;
+        };
+        setForceDevicePairing(value: boolean): void;
+        setForcedIdentityDescriptor(value: unknown): void;
+      }>(
+        source,
+        "({ getCreatedIdentityCount, identityDescriptorReads, resolveDeviceIdentityForGatewayCall, setForceDevicePairing, setForcedIdentityDescriptor })",
+      );
+      runtime.setForceDevicePairing(true);
+      expect(runtime.resolveDeviceIdentityForGatewayCall("read-only")).toEqual({
+        deviceId: "ordinary-device",
+      });
+      expect(runtime.getCreatedIdentityCount()).toBe(1);
+
+      runtime.setForcedIdentityDescriptor({
+        deviceId: "a".repeat(64),
+        privateKeyPem: "clone-private-key",
+        publicKeyPem: "clone-public-key",
+        version: 1,
+      });
+
+      expect(runtime.resolveDeviceIdentityForGatewayCall("read-only")).toEqual({
+        deviceId: "a".repeat(64),
+        privateKeyPem: "clone-private-key",
+        publicKeyPem: "clone-public-key",
+      });
+      expect(runtime.identityDescriptorReads()).toEqual([{ fd: 43, position: 0 }]);
+      expect(runtime.getCreatedIdentityCount()).toBe(1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -351,7 +406,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
   it.each([
     { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
     { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
-    { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
     {
       client: { id: "cli", mode: "cli" },
       role: "operator",
@@ -377,6 +431,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         await expect(
           connect(
             { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            scopeMismatch,
+          ),
+        ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
             scopeMismatch,
           ),
         ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
@@ -800,7 +860,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("passes authenticated identity for a pre-convergence write request to the canonical approver", async () => {
+  it.each([
+    ["legacy token", { token: "token-before" }],
+    ["explicit device token", { deviceToken: "token-before" }],
+    ["explicit token priority", { token: "other-token", deviceToken: "token-before" }],
+    ["empty explicit token", { token: "token-before", deviceToken: " " }],
+  ])("passes authenticated identity using %s to the canonical approver", async (_label, auth) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-handler-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -818,7 +883,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const broadcasts: unknown[] = [];
       await runtime.deviceHandlers["device.pair.approve"]({
         params: { requestId: "request-1" },
-        client: validClient(),
+        client: validClient({ connect: { ...validClient().connect, auth } }),
         respond: (...args: unknown[]) => responses.push(args),
         context: {
           logGateway: { warn() {}, info() {} },
@@ -850,6 +915,13 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
   it.each([
     ["shared auth", validClient({ isDeviceTokenAuth: false })],
+    [
+      "shared auth with explicit device token",
+      validClient({
+        isDeviceTokenAuth: false,
+        connect: { ...validClient().connect, auth: { deviceToken: "token-before" } },
+      }),
+    ],
     [
       "missing caller identity",
       validClient({

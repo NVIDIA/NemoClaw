@@ -83,6 +83,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import {
   advanceSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
+  createRegisteredSandboxIdentityRevalidation,
   fingerprintSandboxRecreateValue,
   ownSandboxRecreateTransaction,
   type ReplacedSandboxSourceEntry,
@@ -113,9 +114,11 @@ import {
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
+  hasMessagingChannelConfigDrift,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
+  reserveSandboxResumeRoute,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -202,7 +205,6 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
-  rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
@@ -268,7 +270,10 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
-    getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
+    getSandboxRecreateObservation(
+      sandboxName: string | null,
+      gatewayName?: string,
+    ): SandboxRecreateObservation;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -377,6 +382,7 @@ export interface SandboxStateOptions<
       runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
+    reserveSandboxInferenceRoute: typeof import("../../../state/registry").reserveSandboxInferenceRoute;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -409,6 +415,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  revalidateSandboxIdentity?: (operation: string) => void;
   stateResult: OnboardStateResult;
 }
 
@@ -813,9 +820,10 @@ class SandboxStateFlow<
       hermesPortableLifecyclePending:
         this.options.hermesPortableLifecycle === true &&
         registryEntry?.pendingRouteReservation === true,
-      messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
+      messagingChannelConfigChanged: hasMessagingChannelConfigDrift(
         effectiveMessagingConfig,
         storedMessagingConfig,
+        this.deps.messagingChannelConfigsEqual,
       ),
       messagingCredentialChanged,
       hermesToolGatewayConfigChanged: !this.deps.stringSetsEqual(
@@ -1116,7 +1124,7 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): void {
+  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1178,6 +1186,25 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
   }
 
+  private reserveCreateRouteForSession(sandboxName: string): void {
+    reserveSandboxResumeRoute(
+      sandboxName,
+      this.deps.getSandboxRegistryEntry(sandboxName),
+      {
+        provider: this.options.provider,
+        model: this.options.model,
+        endpointUrl: this.options.endpointUrl,
+        endpointSource: this.options.endpointSource ?? null,
+        credentialEnv: this.options.credentialEnv,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        gatewayName: this.options.gatewayName,
+        reservationSessionId: this.options.session?.sessionId,
+      },
+      this.deps.reserveSandboxInferenceRoute,
+      this.deps.cliName(),
+    );
+  }
+
   private finalizeInferenceRouteReservation(
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
@@ -1185,6 +1212,9 @@ class SandboxStateFlow<
     const entry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
+    if (sessionId && entry.reservationSessionId !== sessionId) {
+      this.reserveCreateRouteForSession(sandboxName);
+    }
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
       `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,
@@ -1809,9 +1839,6 @@ class SandboxStateFlow<
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
       ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilIdentityVerification),
-      ...(this.options.rebuildPreservedEnv
-        ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint:
         this.options.recreateJournalTargetIntentFingerprint ?? undefined,
       ...(this.options.rebuildPolicySourcePath
@@ -2192,6 +2219,7 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
+        this.reserveCreateRouteForSession(requestedSandboxName);
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
@@ -2518,6 +2546,13 @@ class SandboxStateFlow<
       sandboxName: state.sandboxName,
       agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
     };
+    const revalidateSandboxIdentity = createRegisteredSandboxIdentityRevalidation(
+      this.deps.getSandboxRegistryEntry(state.sandboxName),
+      {
+        readRegistration: this.deps.getSandboxRegistryEntry,
+        observe: this.deps.getSandboxRecreateObservation,
+      },
+    );
     return {
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
@@ -2526,6 +2561,7 @@ class SandboxStateFlow<
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,
+      revalidateSandboxIdentity,
       stateResult:
         this.options.apfInterceptorRequested === true && !this.options.externalComponentRegistered
           ? completeOnboardMachine({}, metadata)

@@ -17,6 +17,7 @@ export type TempSshConfigRunResult<T> = Readonly<{
 }>;
 
 type TempSshConfigOperationFailure = Readonly<{ error: unknown }> | undefined;
+type TempSshConfigSource = TempSshConfig | (() => TempSshConfig | null);
 
 export class TempSshConfigCleanupError extends Error {
   readonly dir: string;
@@ -47,18 +48,21 @@ export class TempSshConfigOperationCleanupError extends AggregateError {
 }
 
 function finishTempSshConfigRun<T>(
-  tempSshConfig: TempSshConfig,
+  source: TempSshConfigSource,
   result: T,
   operationFailure: TempSshConfigOperationFailure,
 ): TempSshConfigRunResult<T> {
+  const tempSshConfig = typeof source === "function" ? source() : source;
   let cleanupError: TempSshConfigCleanupError | undefined;
-  try {
-    tempSshConfig.cleanup();
-  } catch (error) {
-    cleanupError =
-      error instanceof TempSshConfigCleanupError
-        ? error
-        : new TempSshConfigCleanupError(tempSshConfig.dir, error);
+  if (tempSshConfig) {
+    try {
+      tempSshConfig.cleanup();
+    } catch (error) {
+      cleanupError =
+        error instanceof TempSshConfigCleanupError
+          ? error
+          : new TempSshConfigCleanupError(tempSshConfig.dir, error);
+    }
   }
 
   if (operationFailure && cleanupError) {
@@ -69,7 +73,7 @@ function finishTempSshConfigRun<T>(
 }
 
 export function runWithTempSshConfigCleanup<T>(
-  tempSshConfig: TempSshConfig,
+  tempSshConfig: TempSshConfigSource,
   operation: () => T,
 ): TempSshConfigRunResult<T> {
   let result!: T;
@@ -83,7 +87,7 @@ export function runWithTempSshConfigCleanup<T>(
 }
 
 export async function runWithTempSshConfigCleanupAsync<T>(
-  tempSshConfig: TempSshConfig,
+  tempSshConfig: TempSshConfigSource,
   operation: () => Promise<T>,
 ): Promise<TempSshConfigRunResult<T>> {
   let result!: T;

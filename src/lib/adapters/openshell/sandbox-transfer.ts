@@ -9,6 +9,8 @@ export type OpenShellSandboxTransferRequest = Readonly<{
   target: OpenShellGatewayTarget;
   source: string;
   destination: string;
+  /** Preserve inherited transfer output by default; credential reads can suppress it. */
+  output?: "inherit" | "suppress";
 }>;
 
 export type OpenShellSandboxTransferOutcome =

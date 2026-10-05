@@ -44,8 +44,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Verify Ubuntu 26.04 userspace
         shell: bash
@@ -109,8 +112,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -191,8 +197,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install dependencies
         env:
@@ -330,17 +339,9 @@ jobs:
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
-          $script = @'
-          set -euo pipefail
-          service docker stop >/dev/null 2>&1 || true
-          if docker info >/dev/null 2>&1; then
-            echo "Docker must remain unavailable during the non-live Vitest suite." >&2
-            exit 1
-          fi
-          '@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+          Stop-WslContainerRuntime -Distro $env:WSL_DISTRO
 
-      - name: Install Node.js 22 in WSL
+      - name: Install reviewed Node.js and npm in WSL
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -385,6 +386,7 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $runtimeCheck = Get-WslContainerRuntimeUnavailableScript
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser
@@ -392,6 +394,7 @@ jobs:
           export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
+          $runtimeCheck
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
@@ -414,16 +417,9 @@ jobs:
           if ! id -u sandbox >/dev/null 2>&1; then
             useradd --system --gid sandbox --home-dir /sandbox --shell /bin/bash sandbox
           fi
-          install -d -o root -g root -m 0755 /usr/local/lib/nemoclaw
-          install -o root -g root -m 0644 \
-            scripts/lib/normalize_mutable_config_perms.py \
-            /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
           npx vitest run --project integration \
             test/agents/hermes/hermes-restart-config-seal-recovery.test.ts \
             -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
-          npx vitest run --project integration \
-            test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts \
-            -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 
@@ -436,12 +432,11 @@ jobs:
           $script = @"
           set -euo pipefail
           usermod -aG docker $testUser
-          service docker start
-          docker info
           podman --version
           ip -Version
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+          Start-WslContainerRuntime -Distro $env:WSL_DISTRO
 
       - id: wsl_docker
         name: Detect Docker availability in WSL

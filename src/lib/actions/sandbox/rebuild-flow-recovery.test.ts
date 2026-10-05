@@ -11,15 +11,201 @@ import {
   installRebuildFlowTestHooks,
   policies,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import {
+  mcpBridgeSource,
+  openClawLifecycle,
+  snapshotBackup,
+  pairingSettlement,
+} from "../../../../test/helpers/rebuild-flow-harness";
+import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
+import { textContainsHighConfidenceCredential } from "../../security/credential-filter";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "./rebuild-flow-test-fixtures";
+import {
+  configureDcodeSession,
+  makeDcodeSandboxEntry,
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
+
+  it("retains prepared recovery when baseline write pairing is still pending", async () => {
+    const manifest = makePreparedRecoveryManifest();
+    const harness = createRebuildFlowHarness();
+    vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+      kind: "incomplete",
+      reason: "scope-upgrade-not-approved",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest,
+      }),
+    ).rejects.toThrow("OpenClaw pairing remained incomplete after rebuild.");
+
+    expect(fs.existsSync(path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("rebuild completed");
+  });
+
+  function stoppedRecoveryHarness(
+    agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
+  ) {
+    const nativeDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"),
+    );
+    const directory = path.join(
+      nativeDirectory,
+      agentName === "openclaw" ? ".openclaw" : ".deepagents",
+    );
+    fs.mkdirSync(directory);
+    fs.writeFileSync(
+      path.join(directory, agentName === "openclaw" ? "openclaw.json" : ".mcp.json"),
+      "{}",
+    );
+    const captured = {
+      sandboxName: "alpha",
+      agentName,
+      nativeDirectory,
+      directory,
+      cleanupDirectory: nativeDirectory,
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(() => fs.rmSync(nativeDirectory, { recursive: true, force: true })),
+    };
+    const harness = createRebuildFlowHarness({
+      ...(agentName === "langchain-deepagents-code"
+        ? {
+            agentName,
+            sandboxEntry: makeDcodeSandboxEntry(),
+            // A terminal source has no live inference route. Any attempted
+            // probe would consume this failure and abort the rebuild.
+            dcodeRouteResults: [{ ok: false, detail: "stopped source has no live route" }],
+          }
+        : {}),
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
+    });
+    const configureSession: typeof configureDcodeSession =
+      agentName === "langchain-deepagents-code" ? configureDcodeSession : () => undefined;
+    configureSession(harness);
+    vi.spyOn(snapshotBackup, "prepareStoppedAgentState").mockResolvedValue(captured);
+    return { captured, harness };
+  }
+
+  it("rebuilds a terminal sandbox from captured state without executing in the source", async () => {
+    const { captured, harness } = stoppedRecoveryHarness();
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: captured.nativeDirectory,
+            assertCurrent: captured.assertCurrent,
+          },
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
+      expect(harness.onboardSpy).toHaveBeenCalled();
+      expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+      expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds a terminal Deep Agents sandbox from one captured native source (#11767)", async () => {
+    const { captured, harness } = stoppedRecoveryHarness("langchain-deepagents-code");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: captured.nativeDirectory,
+            assertCurrent: captured.assertCurrent,
+          },
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(([args]) => (args as string[]).includes("start")),
+      ).toBe(false);
+      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+      expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a changed stopped source instead of deleting it", async () => {
+    const { captured, harness } = stoppedRecoveryHarness();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    captured.dispose.mockImplementation(() => {
+      throw new Error("cleanup refused");
+    });
+    captured.assertCurrent.mockImplementation(() => {
+      throw new Error("stopped source changed");
+    });
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("stopped source changed");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(captured.dispose).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(JSON.stringify(captured.cleanupDirectory)),
+      );
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects credentials from the prepared stopped source before deleting the sandbox", async () => {
+    const { captured, harness } = stoppedRecoveryHarness();
+    const credentialPath = path.join(captured.nativeDirectory, "unknown-agent-state.txt");
+    fs.writeFileSync(credentialPath, `ghp_${"0123456789abcdef"}`);
+    harness.backupSandboxStateSpy.mockImplementation((_sandboxName, options) => {
+      expect(options?.nativeStateSource?.directory).toBe(captured.nativeDirectory);
+      expect(textContainsHighConfidenceCredential(fs.readFileSync(credentialPath, "utf8"))).toBe(
+        true,
+      );
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: "Native state archive contains credential-bearing content",
+      };
+    });
+
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to back up sandbox state");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
 
   function makePreparedRecoveryPolicy(policy: string) {
     const manifest = makePreparedRecoveryManifest();
@@ -85,42 +271,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
-    const customDockerfile = path.join(process.cwd(), "Dockerfile");
-    const recoveryManifest = {
-      ...makePreparedRecoveryManifest(),
-      reconcileOpenClawImagePluginProvenance: true,
-      openclawImagePluginInstalls: [],
-    };
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        fromDockerfile: customDockerfile,
-        nemoclawVersion: null,
-        openclawImagePluginInstalls: undefined,
-      },
-      preDeleteLatestManifest: recoveryManifest,
-      managedImageEvidence: false,
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      recoveryManifest.backupPath,
-      { targetAgentType: "openclaw", allowCustomImageWholeStateFileRestore: true },
-    );
-  });
-
   it("keeps an explicit default choice made while the replacement was in flight (#7734)", async () => {
     let harness!: ReturnType<typeof createRebuildFlowHarness>;
     harness = createRebuildFlowHarness({
@@ -165,7 +315,9 @@ describe("rebuildSandbox flow: recovery", () => {
     });
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
+        throwOnError: true,
+      }),
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
@@ -217,7 +369,12 @@ describe("rebuildSandbox flow: recovery", () => {
       captureOpenshell: (argv) =>
         argv[0] === "sandbox" && argv[1] === "get"
           ? { status: 0, output: probe, stdout: probe, stderr: "" }
-          : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" },
+          : {
+              status: 1,
+              output: "",
+              stdout: "",
+              stderr: "Error: sandbox alpha not found",
+            },
     });
     restarted.session.checkpoint = checkpoint;
     // Both harnesses share one spy per mocked module function, so the
@@ -470,7 +627,10 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
-    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
       sandboxEntry: { toolDisclosure: "progressive" },
@@ -496,12 +656,201 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }), {}],
+      [
+        expect.objectContaining({
+          name: "alpha",
+          toolDisclosure: "progressive",
+        }),
+        {},
+      ],
     ]);
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("rebuild --yes --tool-disclosure direct"),
     );
   });
+
+  it("records an empty observation for a live prepared recovery before deletion", async () => {
+    const recoveryManifest = makePreparedRecoveryManifest();
+    delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps live prepared recovery fail-closed when source observation is unavailable", async () => {
+    const recoveryManifest = makePreparedRecoveryManifest();
+    delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+    });
+    vi.mocked(mcpBridgeSource.inspectAgentMcpSources).mockRejectedValueOnce(
+      new Error("source observation unavailable"),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("source observation unavailable");
+
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(LIVE_SOURCE_PHASES)(
+    "recaptures MCP state before deleting from a '%s' recovery journal without its handoff (#10394)",
+    async (phase) => {
+      const mcpEntry = {
+        server: "github",
+        providerName: "nemoclaw-mcp-alpha-github",
+      };
+      const interrupted = createRebuildFlowHarness({
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      interrupted.prepareMcpBridgesForRebuildSpy.mockRejectedValueOnce(
+        new Error("interrupted before MCP preparation"),
+      );
+
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to preserve MCP bridges before rebuild");
+
+      const recoveryManifest = JSON.parse(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ) as ReturnType<typeof makePreparedRecoveryManifest>;
+      expect(recoveryManifest).not.toHaveProperty("rebuildMcpHandoff");
+      const checkpoint = interrupted.session.checkpoint as {
+        sandboxRecreate?: { phase?: string };
+      };
+      const recreateCheckpoint = checkpoint.sandboxRecreate as {
+        phase?: string;
+      };
+      expect(recreateCheckpoint).toBeDefined();
+      expect(recreateCheckpoint.phase).toBe("planned");
+      recreateCheckpoint.phase = phase;
+      expect(recreateCheckpoint.phase).toBe(phase);
+
+      const restarted = createRebuildFlowHarness({
+        preDeleteLatestManifest: recoveryManifest,
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      restarted.session.checkpoint = checkpoint;
+
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(restarted.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+        "alpha",
+        { gatewayName: "nemoclaw", workspace: "default" },
+        [expect.objectContaining(mcpEntry)],
+      );
+      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      const deleteCall = restarted.runOpenshellSpy.mock.calls.findIndex(
+        ([argv]) => argv[0] === "sandbox" && argv[1] === "delete",
+      );
+      expect(deleteCall).toBeGreaterThanOrEqual(0);
+      expect(restarted.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        restarted.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
+      );
+      expect(restarted.onboardSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
+        restarted.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
+      );
+    },
+  );
+
+  it.each(LIVE_SOURCE_PHASES)(
+    "refuses foreign MCP state after preflight from a '%s' recovery journal without its handoff (#10394)",
+    async (phase) => {
+      const mcpEntry = {
+        server: "github",
+        providerName: "nemoclaw-mcp-alpha-github",
+      };
+      const interrupted = createRebuildFlowHarness({
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      interrupted.prepareMcpBridgesForRebuildSpy.mockRejectedValueOnce(
+        new Error("interrupted before MCP preparation"),
+      );
+
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to preserve MCP bridges before rebuild");
+
+      const recoveryManifest = JSON.parse(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ) as ReturnType<typeof makePreparedRecoveryManifest>;
+      expect(recoveryManifest).not.toHaveProperty("rebuildMcpHandoff");
+      const checkpoint = interrupted.session.checkpoint as {
+        sandboxRecreate?: { phase?: string };
+      };
+      const recreateCheckpoint = checkpoint.sandboxRecreate as {
+        phase?: string;
+      };
+      expect(recreateCheckpoint).toBeDefined();
+      expect(recreateCheckpoint.phase).toBe("planned");
+      recreateCheckpoint.phase = phase;
+      expect(recreateCheckpoint.phase).toBe(phase);
+
+      const restarted = createRebuildFlowHarness({
+        preDeleteLatestManifest: recoveryManifest,
+        captureOpenshell: sandboxGetProbes([FOREIGN_PROBE]),
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      restarted.session.checkpoint = checkpoint;
+      const inspectMcp = vi.mocked(mcpBridgeSource.inspectAgentMcpSources);
+      inspectMcp.mockClear();
+
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest,
+        }),
+      ).rejects.toThrow(/not the (recorded|journaled) source/);
+
+      expect(inspectMcp).not.toHaveBeenCalled();
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps the requested disclosure mode in a zero-MCP prepared-recovery retry", async () => {
     const harness = createRebuildFlowHarness({
@@ -533,7 +882,10 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("blocks installer recovery when MCP post-restore verification is incomplete", async () => {
-    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
     const harness = createRebuildFlowHarness({
       mcpPreparation: {
         entries: [mcpEntry],
@@ -575,6 +927,7 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("reattaches exactly the MCP providers detached when sandbox deletion fails", async () => {
+    vi.useFakeTimers();
     const attached = {
       server: "attached",
       providerName: "nemoclaw-mcp-alpha-attached",
@@ -589,30 +942,42 @@ describe("rebuildSandbox flow: recovery", () => {
         detachedProviderEntries: [attached],
       },
       runOpenshell: (args) => {
-        const deleteFailure = { status: 7, output: "delete failed", stderr: "delete failed" };
-        const readySource = {
-          status: 0,
-          output: "Phase: Ready",
-          stdout: "Phase: Ready",
-          stderr: "",
+        const deleteFailure = {
+          status: 7,
+          output: "delete failed",
+          stderr: "delete failed",
         };
-        const responses: Record<string, typeof deleteFailure | typeof readySource> = {
-          "sandbox delete -g nemoclaw alpha": deleteFailure,
-          "sandbox get -g nemoclaw alpha": readySource,
-        };
-        return responses[args.join(" ")];
+        return args.join(" ") === "sandbox delete -g nemoclaw alpha" ? deleteFailure : undefined;
+      },
+      captureOpenshell: (args) => {
+        vi.setSystemTime(Date.now() + 20_000);
+        return args[0] === "sandbox" && args[1] === "get"
+          ? {
+              status: 0,
+              output: SOURCE_PROBE,
+              stdout: SOURCE_PROBE,
+              stderr: "",
+            }
+          : MISSING_SOURCE;
       },
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Failed to delete sandbox");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to delete sandbox");
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [attached],
       undefined,
-      { gatewayName: "nemoclaw", workspace: "default" },
+      {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -667,12 +1032,6 @@ describe("rebuildSandbox flow: recovery", () => {
   it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
-      executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["cannot stat mutable config"],
-      }),
       restoreSandboxState: () => ({
         success: false,
         restoredDirs: ["workspace"],
@@ -689,8 +1048,6 @@ describe("rebuildSandbox flow: recovery", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain("State restore was incomplete");
-    expect(output).toContain("Mutable config permissions were not verified");
-    expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });

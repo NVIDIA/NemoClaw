@@ -53,6 +53,15 @@ export type RecorderOverrides = {
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
+  setupOpenclaw?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["setupOpenclaw"];
+  waitForStartedOpenclawGatewayProcess?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["waitForStartedOpenclawGatewayProcess"];
+  settleStartedOpenclawGatewayForConfiguration?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["settleStartedOpenclawGatewayForConfiguration"];
   mergePolicyMessagingChannels?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
@@ -68,7 +77,7 @@ export type RecorderOverrides = {
     provider: string,
     nimContainer: string | null,
     agent: Agent | null,
-  ) => void;
+  ) => Promise<void>;
   reportDeploymentReadiness?: (healthy: boolean) => void;
   getActiveSandbox?: PoliciesStateOptions<
     Agent | null,
@@ -208,20 +217,27 @@ export function createPhases(
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
       }),
-      agentSetupContext: () => ({}),
+      agentSetupContext: () => ({ gatewayName: "nemoclaw-19090" }),
       ensureAgentDashboardForward: vi.fn(() => {
         order.push("agent-forward");
         return 45123;
       }),
       persistDashboardPort: vi.fn(),
       recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
-      isOpenclawReady: () => false,
+      isOpenclawReady: async () => false,
+      waitForSandboxControlPlaneReady: async () => true,
+      waitForStartedOpenclawGatewayProcess:
+        recorders.waitForStartedOpenclawGatewayProcess ?? (async () => true),
+      settleStartedOpenclawGatewayForConfiguration:
+        recorders.settleStartedOpenclawGatewayForConfiguration ?? (async () => true),
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
-      setupOpenclaw: vi.fn(async () => {
-        order.push("openclaw");
-      }),
+      setupOpenclaw:
+        recorders.setupOpenclaw ??
+        vi.fn(async () => {
+          order.push("openclaw");
+        }),
       configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
@@ -236,6 +252,7 @@ export function createPhases(
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
       detectUnconfiguredMessagingChannels: () => [],
+      inspectGatewayCredential: () => ({ kind: "missing" }),
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
@@ -322,7 +339,7 @@ export function createPhases(
         }),
       formatVerificationDiagnostics: () => [],
       verifyWebSearchInsideSandbox: vi.fn(),
-      printDashboard: recorders.printDashboard ?? vi.fn(),
+      printDashboard: recorders.printDashboard ?? vi.fn(async () => undefined),
       error: vi.fn(),
       log: vi.fn(),
       ...recorders.finalizationDeps,

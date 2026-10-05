@@ -48,17 +48,9 @@ function acceptedReadiness(harness: ReturnType<typeof changedEpochHermesHarness>
 }
 
 function configureHealthyForward(harness: ReturnType<typeof changedEpochHermesHarness>): void {
-  const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
-  harness.spawnSyncSpy.mockReturnValue({ status: 0, signal: null } as never);
-  harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
-    const argv = Array.isArray(args) ? args.map(String) : [];
-    return argv[0] === "forward" && argv[1] === "list"
-      ? {
-          status: 0,
-          output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
-        }
-      : captureResolved(args, options);
-  }) as never);
+  harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+    forwards.map((forward: object) => ({ state: "owned" as const, forward })),
+  );
 }
 
 describe("Hermes changed launch-readiness epoch", () => {
@@ -98,7 +90,8 @@ describe("Hermes changed launch-readiness epoch", () => {
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledTimes(2);
     expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).toHaveBeenCalledTimes(2);
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(2);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledOnce();
+    expect(harness.forwardAdapterObserveSpy).toHaveBeenCalledTimes(2);
     const exactOptions = {
       env: {
         HOME: "/home/test",
@@ -109,7 +102,6 @@ describe("Hermes changed launch-readiness epoch", () => {
       replaceEnv: true,
     };
     expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[1]).toMatchObject(exactOptions);
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[1]?.[1]).toMatchObject(exactOptions);
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Probe complete: launch readiness is healthy for 'alpha'.",

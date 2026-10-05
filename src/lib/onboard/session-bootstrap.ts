@@ -8,8 +8,12 @@ import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 export {
+  isTrustedOnboardError,
+  redactOnboardError,
+  redactOnboardErrorText,
   redactOnboardDiagnosticText,
   redactOnboardCommandDiagnosticText,
+  sanitizeOnboardFailure,
 } from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
@@ -229,11 +233,27 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
   };
 }
 
+/** Reject conflicting fresh provider intent without changing the caller environment. */
+export function assertPortableOnboardProviderIntent(
+  env: NodeJS.ProcessEnv,
+  activation: PortableInferenceActivation | null,
+  options: { readonly resume?: boolean } = {},
+): void {
+  const requestedProvider = env.NEMOCLAW_PROVIDER?.trim();
+  if (!options.resume && !activation && requestedProvider && requestedProvider !== "ollama") {
+    throw new Error(
+      "Portable onboarding uses Ollama. Set NEMOCLAW_PROVIDER=ollama and choose an Ollama model, or remove --experimental-profile portable to use another provider.",
+    );
+  }
+}
+
+/** Scope Portable environment changes while preserving activation and checkpoint authority. */
 export function createPortableOnboardEnvironmentScope(
   env: NodeJS.ProcessEnv,
   activation: PortableInferenceActivation | null,
   options: { readonly resume?: boolean } = {},
 ): PortableOnboardEnvironmentScope {
+  assertPortableOnboardProviderIntent(env, activation, options);
   const previous = new Map<string, PreviousEnvironmentValue>();
   for (const key of PORTABLE_OWNED_ENV_KEYS) {
     previous.set(key, {
@@ -328,6 +348,7 @@ export interface OnboardSessionBootstrapInput {
   fresh: boolean;
   recreateSandboxRequested?: boolean;
   requestedFromDockerfile: string | null;
+  requestedFromImage?: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
   nonInteractive: boolean;
@@ -357,6 +378,7 @@ export interface OnboardSessionBootstrapDeps {
     opts: {
       nonInteractive?: boolean;
       fromDockerfile?: string | null;
+      fromImage?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
@@ -380,6 +402,7 @@ export interface OnboardSessionBootstrapDeps {
 export interface OnboardSessionBootstrapResult {
   session: Session | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
 }
 
 export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
@@ -514,6 +537,22 @@ function reportResumeConflict(
     }
     return;
   }
+  if (conflict.field === "fromImage") {
+    if (!conflict.recorded) {
+      deps.error(
+        "  Session was started without --from-image; resume without that flag or start a fresh onboarding session.",
+      );
+    } else if (!conflict.requested) {
+      deps.error(
+        `  Session was started with --from-image '${conflict.recorded}'; rerun with that reference to resume it.`,
+      );
+    } else {
+      deps.error(
+        `  Session was started with --from-image '${conflict.recorded}', not '${conflict.requested}'.`,
+      );
+    }
+    return;
+  }
   deps.error(
     `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
   );
@@ -591,9 +630,11 @@ async function prepareResumeSession(
     : sessionFrom
       ? deps.resolvePath(sessionFrom)
       : null;
+  const fromImage = input.requestedFromImage || session.metadata?.fromImage || null;
   const resumeConflicts = deps.getResumeConfigConflicts(session, {
     nonInteractive: input.nonInteractive,
     fromDockerfile: input.requestedFromDockerfile,
+    fromImage: input.requestedFromImage,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
@@ -618,7 +659,7 @@ async function prepareResumeSession(
   });
   session = deps.loadSession();
   assertRecoverableResumeSandboxName(session, input, deps);
-  return { session, fromDockerfile };
+  return { session, fromDockerfile, ...(fromImage ? { fromImage } : {}) };
 }
 
 function prepareFreshSession(
@@ -639,6 +680,7 @@ function prepareFreshSession(
   const fromDockerfile = input.requestedFromDockerfile
     ? deps.resolvePath(input.requestedFromDockerfile)
     : null;
+  const fromImage = input.requestedFromImage || null;
   const session = deps.createSession({
     mode: mode(input.nonInteractive),
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
@@ -651,6 +693,7 @@ function prepareFreshSession(
     metadata: {
       gatewayName: "nemoclaw",
       fromDockerfile: fromDockerfile || null,
+      fromImage,
       ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
         ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
         : {}),
@@ -661,7 +704,7 @@ function prepareFreshSession(
     runtimeAuthority: input.portableRuntimeAuthority ?? null,
   });
   const savedSession = deps.saveSession(session);
-  return { session: savedSession, fromDockerfile };
+  return { session: savedSession, fromDockerfile, ...(fromImage ? { fromImage } : {}) };
 }
 
 export async function prepareOnboardSession(

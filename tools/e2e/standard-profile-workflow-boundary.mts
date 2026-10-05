@@ -9,6 +9,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -75,31 +79,7 @@ const PROFILE_JOBS = {
     githubToken: true,
     maxParallel: undefined,
   },
-  "brave-nvidia-inference": {
-    job: "catalogue-brave-nvidia-inference",
-    matrix: "catalogue_brave_nvidia_inference_matrix",
-    credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
-    githubToken: false,
-    maxParallel: 2,
-  },
 } as const;
-
-const SDK_INSTALL_SCRIPT = [
-  "set -euo pipefail",
-  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print | sort)",
-  'test "${#archives[@]}" -ge 1',
-  'test "${#archives[@]}" -le 2',
-  'for archive in "${archives[@]}"; do',
-  "  env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '    npm cache add "$archive" --offline --ignore-scripts',
-  "done",
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  "  npm ci --ignore-scripts --prefer-offline --no-audit --no-fund",
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
-  "",
-].join("\n");
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -291,14 +271,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
-    "BRAVE_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its five optional profile secrets");
+    errors.push("standard E2E profile must accept only its four optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -356,16 +335,17 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
     "Install reviewed cloudflared",
-    "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
     "Install OpenShell CLI",
     "Install OpenShell CLI without workflow credentials",
+    "Prepare GPU launch-readiness runtime directory",
     "Run catalogue E2E target",
     "Finalize runner comparison telemetry",
     "Write E2E evidence manifest",
     "Upload skill-agent artifacts",
     "Upload E2E artifacts",
     "Restore Docker CLI after native Podman E2E",
+    "Restore GPU launch-readiness runtime directory",
     "Clean up Docker auth",
   ];
   if (
@@ -518,18 +498,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
-  const sdkInstall = requireStep(
-    errors,
-    workflowSteps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
-  if (
-    !isDeepStrictEqual(sdkInstall, {
-      name: "Install reviewed OpenShell SDK archive without package credentials",
-      shell: "bash",
-      run: SDK_INSTALL_SCRIPT,
-    })
-  ) {
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
@@ -568,7 +538,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(stoppedStateHelper.env), {
       CLEANUP_IMAGE:
-        "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
       RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
     }) ||
     !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||
@@ -598,43 +568,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
-  }
-  const rebuildSwap = requireStep(errors, workflowSteps, "Add swap for Hermes image rebuild");
-  const rebuildSwapRun = String(rebuildSwap?.run ?? "");
-  const rebuildSwapFragments = [
-    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]',
-    '[[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]',
-    '[[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]',
-    '[[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted"',
-    'fail "refusing unexpected pre-existing rebuild swap path"',
-    "required_disk_bytes=$((swap_file_bytes + reserve_bytes))",
-    "trap cleanup_partial_swap EXIT",
-    '/usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"',
-    '/usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" || true',
-    'fail "rebuild swap did not become active"',
-  ];
-  if (
-    rebuildSwap?.if !== "${{ inputs.host_preparation == 'rebuild-swap' }}" ||
-    rebuildSwap.shell !== EXECUTION_PLAN_SHELL ||
-    !isDeepStrictEqual(record(rebuildSwap.env), {
-      BASH_ENV: "/dev/null",
-      CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-      DISPATCH_SHA: "${{ github.sha }}",
-      ENV: "/dev/null",
-      EVENT_NAME: "${{ github.event_name }}",
-      EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-      LC_ALL: "C",
-      REF: "${{ github.ref }}",
-      REPOSITORY: "${{ github.repository }}",
-      RUNNER_ARCH_KIND: "${{ runner.arch }}",
-      RUNNER_ENVIRONMENT_KIND: "${{ runner.environment }}",
-      RUNNER_OS_KIND: "${{ runner.os }}",
-      WORKFLOW_SHA: "${{ github.workflow_sha }}",
-    }) ||
-    rebuildSwapFragments.some((fragment) => !rebuildSwapRun.includes(fragment)) ||
-    workflowSteps.indexOf(rebuildSwap ?? {}) !== workflowSteps.indexOf(cloudflared ?? {}) + 1
-  ) {
-    errors.push("standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore");
   }
   const comparisonInitialize = requireStep(
     errors,
@@ -675,6 +608,50 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     );
   }
 
+  const gpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare GPU launch-readiness runtime directory",
+  );
+  const gpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    'unit="user@${uid}.service"',
+    'prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"',
+    'if [[ "$prior_state" != "active" ]]; then',
+    '  [[ "$prior_state" == "inactive" ]]',
+    "  printf 'started=true\\n' >> \"$GITHUB_OUTPUT\"",
+    '  /usr/bin/sudo -n /usr/bin/systemctl start "$unit"',
+    "fi",
+    '/usr/bin/systemctl is-active --quiet "$unit"',
+    'runtime_directory="/run/user/$uid"',
+    '[[ -d "$runtime_directory" && ! -L "$runtime_directory" ]]',
+    '[[ "$(/usr/bin/stat -c \'%u:%a\' "$runtime_directory")" == "${uid}:700" ]]',
+  ].join("\n");
+  const restoreGpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Restore GPU launch-readiness runtime directory",
+  );
+  const restoreGpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    '/usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"',
+  ].join("\n");
+  if (
+    gpuRuntime?.id !== "gpu_runtime_directory" ||
+    gpuRuntime.if !==
+      "${{ inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' }}" ||
+    gpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(gpuRuntime.run).trim() !== gpuRuntimeScript ||
+    restoreGpuRuntime?.if !==
+      "${{ always() && inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' && steps.gpu_runtime_directory.outputs.started == 'true' }}" ||
+    restoreGpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(restoreGpuRuntime.run).trim() !== restoreGpuRuntimeScript
+  ) {
+    errors.push("GPU E2E must prepare and restore only its OS-managed user runtime directory");
+  }
+
   const execute = requireStep(errors, workflowSteps, "Run catalogue E2E target");
   const executeEnv = record(execute?.env);
   if (
@@ -692,7 +669,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

@@ -17,20 +17,6 @@ const cloudOpenclawReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
-const cloudOpenclawCustomPoliciesReady: ExpectedState = {
-  ...cloudOpenclawReady,
-  id: "cloud-openclaw-custom-policies-ready",
-};
-
-const cloudHermesReady: ExpectedState = {
-  id: "cloud-hermes-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  sandbox: { expected: "present", status: "running", agent: "hermes" },
-  inference: { expected: "available", provider: "nvidia" },
-  credentials: { expected: "present" },
-};
-
 // Deep Agents Code is a terminal-agent runtime, not an OpenClaw dashboard
 // runtime. The P0-E parity target is sandbox policy/egress behavior, so the
 // live typed target must not require a host dashboard forward on 18789 before
@@ -44,6 +30,8 @@ const cloudDeepAgentsCodeReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
+// These states remain as deterministic fixture contracts even though no
+// executable registry target currently selects them.
 const localOllamaOpenclawReady: ExpectedState = {
   id: "local-ollama-openclaw-ready",
   cli: { installed: true },
@@ -69,60 +57,19 @@ const preflightFailureNoSandbox: ExpectedState = {
   sandbox: { expected: "absent" },
 };
 
-const onboardingFailureInvalidNvidiaKey: ExpectedState = {
-  id: "onboarding-failure-invalid-nvidia-key",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
-const onboardingFailureGatewayPortConflict: ExpectedState = {
-  id: "onboarding-failure-gateway-port-conflict",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   id: "onboarding-failure-policy-presets-required",
   cli: { installed: true },
-};
-
-// Post-reboot recovery contract. After the lifecycle phase restarts
-// the OpenShell gateway through the required user service, then
-// runs `nemoclaw <sandbox> status`, this target locks down:
-//
-//   * `cli` still installed.
-//   * `localRegistry` entry preserved: this is the user-visible
-//     regression target. The destructive `missing` branch wipes the
-//     entry; preservation here proves #4578's mitigation and the
-//     Docker-corroboration path hold together.
-//   * `dockerSandboxContainer` still present: any recovery path must
-//     not delete the labeled container or its `*-nemoclaw-gpu-backup-*`
-//     sibling as a side effect.
-//
-//   * `gateway` healthy: the user-service path must restore the
-//     named OpenShell gateway without `nemoclaw onboard --resume`.
-const postRebootRecoveryReady: ExpectedState = {
-  id: "post-reboot-recovery-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  localRegistry: { expected: "present" },
-  dockerSandboxContainer: { expected: "present" },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
 };
 
 const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
-  cloudOpenclawCustomPoliciesReady,
-  cloudHermesReady,
   cloudDeepAgentsCodeReady,
   localOllamaOpenclawReady,
   macosCliReadyDockerOptional,
   preflightFailureNoSandbox,
-  onboardingFailureInvalidNvidiaKey,
-  onboardingFailureGatewayPortConflict,
   onboardingFailurePolicyPresetsRequired,
-  postRebootRecoveryReady,
 ];
 
 const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(

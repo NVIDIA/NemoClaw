@@ -411,6 +411,51 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
   });
 
+  it("rejects endpoint-override recovery before credential provider side effects", async () => {
+    const endpointOverride = {
+      state: "observation_failed",
+      activeGateway: null,
+      recoveryBlocked: true,
+      unavailable: true,
+      diagnostic: "redacted",
+      error: {
+        kind: "transport",
+        reason: "endpoint_override",
+        message: "redacted",
+      },
+    };
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      before: endpointOverride,
+      after: endpointOverride,
+    });
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: [],
+      configPairs: [],
+      fromExisting: true,
+    });
+    const list = await runCredentialsListAction("nemoclaw");
+    const reset = await runCredentialsResetAction({
+      provider: "custom-provider",
+      confirmed: true,
+    });
+
+    expect(add.exitCode).toBe(1);
+    expect(add.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(list.exitCode).toBe(1);
+    expect(list.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(reset.exitCode).toBe(1);
+    expect(reset.failureLines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.forgetExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
+  });
+
   it("releases a provider reservation when credential registration fails (#9388)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
     mocks.recordExtraProvider.mockReturnValueOnce(true);

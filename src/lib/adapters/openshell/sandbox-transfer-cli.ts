@@ -104,7 +104,10 @@ export function createCliOpenShellSandboxTransferExecutor(
           spawnChild(binary, args, {
             cwd: REPOSITORY_ROOT,
             env: buildOpenShellCommandEnv(),
-            stdio: redirectInheritedChildStdoutToStderr("inherit"),
+            stdio:
+              request.output === "suppress"
+                ? "ignore"
+                : redirectInheritedChildStdoutToStderr("inherit"),
           }),
         trackedSignals,
       );

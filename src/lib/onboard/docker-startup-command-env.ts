@@ -131,7 +131,6 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
       input.hermesApiPort ??
       resolveOnboardHermesApiPort(input.sandboxName, {
         env,
-        warn: console.warn,
         allowRegisteredOverride: input.allowHermesApiPortOverride,
       });
     envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));

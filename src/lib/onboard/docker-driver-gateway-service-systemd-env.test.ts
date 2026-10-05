@@ -2,14 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { spawnResult, nonSymlinkStat, systemdSpawn } from "./__test-helpers__/gateway-service";
+import {
+  spawnResult,
+  nonSymlinkStat,
+  systemdSpawn,
+  trustedShowOutput,
+} from "./__test-helpers__/gateway-service";
 import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
   type SpawnSyncLike,
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget,
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 
 describe("systemd user service environment", () => {
+  it("binds a trusted active systemd identity to its stop command (#11720)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const gatewayBin = `${home}/.local/bin/openshell-gateway`;
+
+    expect(
+      getTrustedActiveOpenShellGatewayUserServiceStopTarget({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: nonSymlinkStat,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: () =>
+          spawnResult(
+            0,
+            "",
+            [trustedShowOutput(servicePath, gatewayBin), "ActiveState=active", "MainPID=4242"].join(
+              "\n",
+            ),
+          ),
+      }),
+    ).toEqual({
+      executablePath: gatewayBin,
+      pid: 4242,
+      stopCommand: "systemctl --user stop nemoclaw-openshell-gateway",
+    });
+  });
+
   it.each([
     [undefined, undefined, "/run/user/1234", "unix:path=/run/user/1234/bus"],
     ["", "", "/run/user/1234", "unix:path=/run/user/1234/bus"],

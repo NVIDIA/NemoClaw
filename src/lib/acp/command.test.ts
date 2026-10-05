@@ -35,7 +35,7 @@ function registryEntry(
     entry: {
       name,
       agent: "hermes",
-      agentVersion: "0.20.6",
+      agentVersion: HERMES_LIFECYCLE_DEFINITION.agentVersion,
       fromDockerfile: null,
       gatewayName,
       gatewayPort,

@@ -51,7 +51,7 @@ describe("connectSandbox wedge diagnostic failures", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("preserves the automatic-recovery failure exit when wedge diagnostics reject", async () => {
+  it("preserves the native-lifecycle failure exit when wedge diagnostics reject", async () => {
     const harness = createConnectHarness({
       processCheck: {
         checked: true,
@@ -67,11 +67,17 @@ describe("connectSandbox wedge diagnostic failures", () => {
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain(
-      "Probe failed: OpenClaw gateway is not running in 'alpha' and automatic recovery failed.",
+      "Probe failed: OpenClaw gateway is not running in 'alpha'. Restart it through the native agent or restart the sandbox through OpenShell.",
     );
     expect(errorOutput).toContain("Check /tmp/gateway.log inside the sandbox for details.");
     expect(errorOutput).not.toContain("untrusted diagnostic failure");
     expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledTimes(2);
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

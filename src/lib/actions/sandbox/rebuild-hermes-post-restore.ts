@@ -7,7 +7,6 @@ import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privilege
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
-  executeGatewaySupervisorAction,
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
@@ -72,7 +71,12 @@ export type HermesCronRestoreRecoveryOutcome =
   | "not-required"
   | "unsupported";
 
-export type HermesCronRestorePreparationOutcome = "gate-prepared" | "not-required" | "unsupported";
+export type HermesCronRestorePreparationOutcome =
+  | {
+      disposition: "gate-prepared" | "not-required";
+      gatewayRecoveryRequested: boolean;
+    }
+  | "unsupported";
 
 export class HermesCronRestoreIncompleteError extends Error {
   constructor() {
@@ -90,6 +94,7 @@ export type HermesPostRestoreGatewayState =
 export type HermesPostRestoreGatewayRestartState =
   | "not-applicable"
   | "restarted"
+  | "restart-health-timeout"
   | "restart-failed";
 
 type GatewayRecoveryObservation = {
@@ -105,7 +110,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: {
       quiet: boolean;
-      requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
       runtimeSelection?: OpenShellRuntimeSelection;
     },
   ) => Promise<GatewayRecoveryObservation>;
@@ -113,7 +117,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: {
       quiet: boolean;
-      deps?: { requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction };
       runtimeSelection?: OpenShellRuntimeSelection;
     },
   ) => Promise<GatewayRestartResult>;
@@ -121,7 +124,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
-  frozenTargetGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -156,13 +158,17 @@ export async function restartHermesGatewayAfterStateRestore(
 ): Promise<HermesPostRestoreGatewayRestartState> {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
-  const requestGatewaySupervisorAction = deps.frozenTargetGatewaySupervisorAction;
   const result = await restart(sandboxName, {
     quiet: true,
-    ...(requestGatewaySupervisorAction ? { deps: { requestGatewaySupervisorAction } } : {}),
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
+  // A health timeout is emitted only after the native restart command was
+  // accepted. The final post-restore check can therefore still prove the new
+  // process if it crosses the readiness boundary just after the restart
+  // helper's bounded wait. Other failures provide no replacement evidence and
+  // must remain fail-closed when the old process merely stayed healthy.
+  if (result.failureLayer === "health timeout") return "restart-health-timeout";
   return "restart-failed";
 }
 
@@ -208,7 +214,7 @@ async function verifyHermesGatewayAfterStateRestoreImpl(
   originalIdentity?: HermesCronRestoreIdentity,
 ): Promise<HermesPostRestoreGatewayVerification> {
   if (agentName !== "hermes") return { state: "not-applicable" };
-  const restarted = restartState === "restarted";
+  const restarted = restartState === "restarted" || restartState === "restart-health-timeout";
   const checkAndRecover = deps.checkAndRecoverSandboxProcesses ?? checkAndRecoverSandboxProcesses;
   const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
   const maxAttempts = originalIdentity
@@ -227,9 +233,6 @@ async function verifyHermesGatewayAfterStateRestoreImpl(
     }
     const observation: GatewayRecoveryObservation = await checkAndRecover(sandboxName, {
       quiet: true,
-      ...(deps.frozenTargetGatewaySupervisorAction
-        ? { requestGatewaySupervisorAction: deps.frozenTargetGatewaySupervisorAction }
-        : {}),
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
     if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {
@@ -450,12 +453,22 @@ function parseCronRestorePreparationReceipt(stdout: string): HermesCronRestorePr
   if (
     receipt.version !== 1 ||
     receipt.action !== "prepare-recover" ||
+    typeof receipt.gateway_recovery_requested !== "boolean" ||
     !validDisposition ||
-    !hasExactReceiptFields(receipt, ["version", "action", "drain_acquired", "disposition"])
+    !hasExactReceiptFields(receipt, [
+      "version",
+      "action",
+      "drain_acquired",
+      "gateway_recovery_requested",
+      "disposition",
+    ])
   ) {
     throw new Error("Hermes cron prepare-recover receipt failed validation");
   }
-  return receipt.disposition as "gate-prepared" | "not-required";
+  return {
+    disposition: receipt.disposition as "gate-prepared" | "not-required",
+    gatewayRecoveryRequested: receipt.gateway_recovery_requested,
+  };
 }
 
 function parseCronRestoreControlError(stderr: string): { code: string; message: string } | null {
@@ -485,10 +498,12 @@ function parseCronRestoreControlError(stderr: string): { code: string; message: 
 
 class HermesCronRestoreControlFailure extends Error {
   readonly action: HermesCronRestoreAction;
+  readonly status: number;
+  readonly stdout: string;
   readonly stderr: string;
   readonly controlCode?: string;
 
-  constructor(action: HermesCronRestoreAction, stderr: string) {
+  constructor(action: HermesCronRestoreAction, status: number, stdout: string, stderr: string) {
     const controlError = parseCronRestoreControlError(stderr);
     const detail =
       controlError?.message ??
@@ -500,6 +515,8 @@ class HermesCronRestoreControlFailure extends Error {
     super(`Hermes cron ${action} failed${detail ? `: ${detail}` : ""}`);
     this.name = "HermesCronRestoreControlFailure";
     this.action = action;
+    this.status = status;
+    this.stdout = stdout;
     this.stderr = stderr;
     this.controlCode = controlError?.code;
   }
@@ -553,7 +570,7 @@ function executeCronRestoreControl(
     throw new Error(`Hermes cron ${action} transport was unavailable`);
   }
   if (result.status !== 0) {
-    throw new HermesCronRestoreControlFailure(action, result.stderr);
+    throw new HermesCronRestoreControlFailure(action, result.status, result.stdout, result.stderr);
   }
   return result.stdout;
 }
@@ -663,6 +680,16 @@ function isLegacyCronRestoreControl(
   );
 }
 
+function isAmbiguousPrepareRecoveryTransportFailure(error: unknown): boolean {
+  return (
+    error instanceof HermesCronRestoreControlFailure &&
+    error.action === "prepare-recover" &&
+    error.status === 1 &&
+    error.stdout === "" &&
+    error.stderr === ""
+  );
+}
+
 export function prepareHermesCronRestoreRecovery(
   sandboxName: string,
 ): HermesCronRestorePreparationOutcome {
@@ -671,7 +698,14 @@ export function prepareHermesCronRestoreRecovery(
     stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   } catch (error) {
     if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
-    throw error;
+    if (!isAmbiguousPrepareRecoveryTransportFailure(error)) throw error;
+
+    // The controller publishes its recovery request before it exits. Under
+    // Docker exec, the supervisor can consume that request and replace the
+    // gateway before the buffered status and receipt reach the host. Reconcile
+    // that ambiguous post-commit result once through prepare-recover's
+    // idempotent contract, then require an ordinary validated receipt.
+    stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   }
   return parseCronRestorePreparationReceipt(stdout);
 }
