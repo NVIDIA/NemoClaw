@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
       - name: Test documentation generation and publication guards
-        run: cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::
+        run: "cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::"
       - name: Check generated reference, local links, and Fern routes
         run: cargo run --locked -p nemoclaw-build -- fern check
 
