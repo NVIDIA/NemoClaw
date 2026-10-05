@@ -522,9 +522,12 @@ describe("trusted npm audit workflow (#5896)", () => {
     }
   });
 
-  it("keeps the WeChat archive and reviewed locked graph distinct", () => {
+  it("reviews Google Chat and keeps the WeChat archive and locked graph distinct", () => {
     const config = parseAuditConfig(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
+    );
+    expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
+      "@openclaw/googlechat@2026.9.5",
     );
     expect(
       config.archivePackages.some(

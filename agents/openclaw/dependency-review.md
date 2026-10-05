@@ -82,8 +82,10 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 [PR #12380](https://github.com/NVIDIA/NemoClaw/pull/12380) prepares trusted audit policy for
 [PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which updates the runtime.
-The PR audit loads policy from the base commit and dependency inputs from the candidate.
-The trust stage must therefore authorize the replacement before the runtime stage can consume it.
+The CI and managed-image PR audits load their action, policy, and dependency inputs from the
+candidate checkout. A passing audit checks that candidate's declared policy; independent review
+of the package identities and policy changes remains necessary.
+The two stages separate that review from the production runtime cutover.
 
 During the trust stage, production manifests, locks, lifecycle approvals, and image archives remain
 on OpenClaw 2026.9.2. The existing locked graph remains the primary audit identity.
@@ -95,7 +97,9 @@ provenance and npm identity requests.
 
 The runtime stage completes the transition by moving all production version owners to 2026.9.5,
 promoting its lock identity to primary, and removing the replacement and superseded archive records.
-Both stages require their own green CI and managed-image checks. The runtime stage additionally
-requires the actual-package patch proofs, PR Advisor clearance, and full E2E qualification.
+For these two PRs, the maintainer requested green CI and managed-image checks, PR Advisor clearance,
+and full E2E qualification. These are acceptance criteria for this upgrade; full E2E is manually
+dispatched and is not an automatically enforced PR check. The runtime CI also executes the
+actual-package patch harness.
 Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
 still selects them; remove this transition section when the runtime cutover is complete.
