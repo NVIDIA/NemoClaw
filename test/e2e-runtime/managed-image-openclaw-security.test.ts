@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
-import { shellQuote } from "../../src/lib/core/shell-quote.ts";
-import { buildStateFileRestoreCommand } from "../../src/lib/state/state-file-restore.ts";
 import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
 import { expect, test } from "../e2e/fixtures/e2e-test.ts";
 
@@ -82,7 +80,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         "test -x /usr/sbin/iptables",
         "test -x /usr/bin/chattr",
         "test -x /usr/local/bin/openclaw",
-        `node --input-type=module -e 'await import("/opt/nemoclaw/dist/blueprint/runner.js"); await import("/opt/nemoclaw/dist/blueprint/snapshot.js");'`,
+        `node --input-type=module -e 'await import("/opt/nemoclaw/dist/blueprint/runner.js");'`,
         `HOME=/sandbox openclaw config get agents.defaults.compaction --json | node -e 'const assert=require("node:assert/strict"); let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => assert.deepStrictEqual(JSON.parse(input), {mode:"safeguard",timeoutSeconds:120,recentTurnsPreserve:1,qualityGuard:{enabled:true,maxRetries:0},notifyUser:true}));'`,
         `python3 -c 'import json; assert "update" not in json.load(open("/sandbox/.openclaw/openclaw.json"))'`,
         'printf "%s:%s:%s\\n" "$gateway_uid" "$sandbox_uid" "$sandbox_gid"',
@@ -134,21 +132,16 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       ].join("\n"),
       "managed-image-openclaw-native-config-isolation",
     );
-    const restoreCommand = buildStateFileRestoreCommand("/sandbox/.openclaw", {
-      path: "openclaw.json",
-      strategy: "copy",
-      missingTargetMode: "runtime-parent",
-    });
     await runContainer(
       host,
       image,
       [
         "rm -f /sandbox/.openclaw/openclaw.json",
-        `printf '%s\\n' '{"gateway":{"mode":"local"}}' | /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c ${shellQuote(restoreCommand)}`,
+        "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox openclaw config set gateway.mode local",
         "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '600 sandbox:sandbox'",
         "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf \"\\n\" >>/sandbox/.openclaw/openclaw.json'",
       ].join("\n"),
-      "managed-image-openclaw-missing-config-restore",
+      "managed-image-openclaw-native-config-create",
     );
 
     progress.phase("record managed-image security evidence");

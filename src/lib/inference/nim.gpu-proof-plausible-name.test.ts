@@ -495,6 +495,33 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     });
   });
 
+  it.each([
+    ["a Podman proof", "podman", "NVIDIA GB300"],
+    ["a Docker proof without a GB300 row", "docker", "NVIDIA GB3000"],
+  ])(
+    "keeps a Station GB300 product compute-constrained with %s (#12470)",
+    (_scenario, providerId, secondName) => {
+      const prover = passingProver(
+        { totalMemoryMB: 281170, availableMemoryMB: 250000 },
+        providerId,
+        [
+          { name: PLAUSIBLE_NAME, totalMemoryMB: 24467, availableMemoryMB: 10000 },
+          { name: secondName, totalMemoryMB: 256703, availableMemoryMB: 240000 },
+        ],
+      );
+      onWsl2Arm64WithoutKernelInterface(() => {
+        const gpu = detectGpu({
+          proveArm64ContainerGpu: prover,
+          runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 24467, 1\n${secondName}, 256703, 2\n`),
+          isWsl: true,
+          stationGb300WslProduct: true,
+        });
+        expect(gpu).toMatchObject({ computeConstrained: true });
+        expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+      });
+    },
+  );
+
   it("preserves duplicate device counts and verified zero free memory (#12073)", () => {
     const prover = passingProver({ totalMemoryMB: 16384, availableMemoryMB: 0 }, "docker", [
       { name: PLAUSIBLE_NAME, totalMemoryMB: 8192, availableMemoryMB: 0 },

@@ -6,8 +6,33 @@ import { describe, expect, it, vi } from "vitest";
 import { setupHermesProviderInference } from "./hermes";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
+  const runOpenshell = vi.fn((_args: string[], _options?: { ignoreError?: boolean }) => ({
+    status: 0,
+    stdout: "",
+    stderr: "",
+  }));
   return {
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    runOpenshell,
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator: {
+      setInferenceRoute: vi.fn(async (request) => {
+        runOpenshell(
+          [
+            "inference",
+            "set",
+            "-g",
+            request.target.gatewayName,
+            "--no-verify",
+            "--provider",
+            request.route.provider,
+            "--model",
+            request.route.model,
+          ],
+          { ignoreError: true },
+        );
+        return { ok: true as const };
+      }),
+    },
     upsertProvider: vi.fn(),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
@@ -66,6 +91,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe("setupHermesProviderInference route mutation", () => {
+  it("stops after an ambiguous mutation without verifying or persisting success", async () => {
+    const deps = makeDeps({
+      inferenceRouteMutator: {
+        setInferenceRoute: vi.fn(async () => ({
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "timeout" as const,
+            message: "OpenShell inference route update ended without a confirmed result.",
+          },
+        })),
+      },
+    });
+
+    await expect(setupHermesProviderInference(makeArgs(null), deps as never)).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
+    expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
+    );
+  });
+});
 
 describe("setupHermesProviderInference smoke verification", () => {
   it("waits for the smoke check before persisting or logging success (#3771)", async () => {
@@ -293,7 +348,7 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
 
     expect(lookup).not.toHaveBeenCalled();
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["inference", "set", "--no-verify", "--provider", "p", "--model", "m"],
+      ["inference", "set", "-g", "nemoclaw", "--no-verify", "--provider", "p", "--model", "m"],
       { ignoreError: true },
     );
     expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(

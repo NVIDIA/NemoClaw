@@ -490,9 +490,45 @@
     "ground_truth": "The shared contract decides that a current conflict permits base integration. The invoking contributor lifecycle owns conflict resolution, validation, commit, and publication, then restarts evaluation for the new candidate.",
     "expected_behavior": [
       "Uses the shared contract only to confirm that the current conflict permits base integration.",
+      "Uses a merge or GitHub's Update branch operation and does not request separate approval for mechanical, in-scope conflict resolution.",
       "Keeps mechanical conflict resolution, validation, commit creation, and guarded publication in `nemoclaw-contributor-create-pr` and its implementation handoff.",
       "Does not assign repair or publication authority to the shared follow-up contract.",
       "Treats the integrated result as a new candidate and restarts complete automated evaluation after one exact conditional ref update."
+    ]
+  },
+  {
+    "id": "positive-workflow-change-does-not-require-approval",
+    "question": "My authorized PR changes a GitHub Actions workflow. Publish the draft after its deterministic checks pass.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A workflow file is a sensitive publication path, but changing it does not create a separate approval requirement.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and applies the sensitive-path publication controls.",
+      "Does not request approval only because the diff changes a workflow file.",
+      "Publishes the draft after required deterministic validation and normal publication gates pass."
+    ]
+  },
+  {
+    "id": "positive-live-e2e-change-without-dispatch",
+    "question": "My authorized PR changes a live E2E test, but the accepted scope does not require a manual live run. Publish the draft after local validation.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Changing live E2E evidence does not authorize a live dispatch and does not block draft publication when accepted scope does not require that result.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and requires the live-contract implementation handoff.",
+      "Runs deterministic local E2E-support checks and does not dispatch a live target without authority.",
+      "Does not request approval only because live E2E files changed or live dispatch is not authorized.",
+      "Publishes the draft after the required non-live gates pass."
+    ]
+  },
+  {
+    "id": "positive-remove-out-of-scope-review-behavior",
+    "question": "Review found that my PR added a retry excluded by the issue. There is one validated in-scope sequencing repair. Fix the PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The implementation workflow removes candidate-owned behavior outside the accepted boundary and applies the one supported in-scope repair without asking the user to choose scope expansion.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and routes the classified repair to `nemoclaw-contributor-implement-issue`.",
+      "Removes the excluded retry and applies the validated in-scope sequencing repair.",
+      "Does not request approval to preserve or expand the excluded behavior.",
+      "Returns the repaired candidate to validation, publication, and automated review follow-up."
     ]
   },
   {

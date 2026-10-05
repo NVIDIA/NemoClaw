@@ -19,7 +19,12 @@ The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
 For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, you can select no authentication on the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`.
-Port `11435` supports no authentication only when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port.
+Port `11435` is reserved for the proxy and is unavailable for new no-authentication endpoints.
+Recovery can retain an existing no-authentication route on `11435` only when the proxy has moved and no other protected service owns that port.
+NemoClaw rejects no-authentication endpoints on configured or recorded gateway, dashboard, agent API, Model Router, and credential-adapter ports.
+The shared protected proxy stays pinned to its existing backend; reuse that endpoint.
+Moving or removing a sandbox does not release the host-global binding.
+To select a different no-authentication backend, back up the sandboxes and remove the final NemoClaw gateway with the uninstaller before reinstalling.
 For non-interactive onboarding of that OpenAI-compatible endpoint, set `NEMOCLAW_COMPATIBLE_AUTH_MODE=none`.
 Use `COMPATIBLE_ANTHROPIC_API_KEY` for a custom Anthropic-compatible endpoint.
 Anthropic-compatible onboarding requires a non-empty value even when the upstream server does not authenticate requests.
@@ -121,13 +126,10 @@ The first command records the source-subnet policy for the running adapter.
 NemoClaw retries revocation during the second command.
 When no other sandbox references the route, a completed switch without a revocation warning confirms that the adapter removed it.
 
-<Warning title="Create Snapshots Before Cleanup">
-NemoClaw attempts to wipe manifest-defined agent state before it deletes a sandbox.
-OpenShell can retain the per-name persistent volume after sandbox deletion.
-If the wipe cannot complete, onboarding with the same name can make old files available again.
-Do not rely on a retained volume as a backup.
-Before you destroy a remaining sandbox, create a snapshot of any state that you must keep.
-Refer to [Create and Restore Snapshots](../../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for instructions.
+<Warning title="Download State Before Cleanup">
+Sandbox deletion is an OpenShell lifecycle operation and removes the sandbox's native storage.
+Before you destroy a remaining sandbox, download any state that you must keep to an independently managed location.
+Refer to [Transfer State Manually](../../manage-sandboxes/state-and-backups/transfer-state-manually) for instructions.
 </Warning>
 
 If the affected sandbox was destroyed or revocation continues to fail, destroy all remaining sandboxes before adapter cleanup.

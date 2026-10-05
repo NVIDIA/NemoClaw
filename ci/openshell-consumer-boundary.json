@@ -185,11 +185,6 @@
             "sandbox provider detach",
             "settings get"
           ]
-        },
-        {
-          "path": "nemoclaw/src/blueprint/snapshot.ts",
-          "kinds": ["direct-executable"],
-          "operations": ["sandbox cp", "sandbox exec"]
         }
       ]
     },
@@ -204,16 +199,16 @@
       "removalCondition": "Delete each allowance as its consumer moves behind a typed adapter or is retired; do not convert a deferral into an exception without an explicit decision.",
       "sites": [
         {"path":"src/lib/actions/inference-get.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
-        {"path":"src/lib/actions/inference-set.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","inference set"]},
+        {"path":"src/lib/actions/inference-set.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/auto-pair-approval.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox exec"]},
         {"path":"src/lib/actions/sandbox/connect.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
+        {"path":"src/lib/actions/sandbox/destroy-execution.ts","kinds":["direct-argv"],"operations":["sandbox exec"]},
         {"path":"src/lib/actions/sandbox/destroy-gateway-cleanup.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox list"]},
         {"path":"src/lib/actions/sandbox/destroy-gateway.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/destroy-preflight.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox list"]},
         {"path":"src/lib/actions/sandbox/destroy.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/doctor.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/download.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
-        {"path":"src/lib/actions/sandbox/exec-policy-hint-emission.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/gateway-select.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/gateway-state.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox get","sandbox list"]},
         {"path":"src/lib/actions/sandbox/launch-readiness/health.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
@@ -227,17 +222,14 @@
         {"path":"src/lib/actions/sandbox/sessions/export.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox exec"]},
         {"path":"src/lib/actions/sandbox/sessions/gateway-rpc.ts","kinds":["direct-argv","raw-runtime-import"],"operations":["arbitrary argv","sandbox exec"]},
         {"path":"src/lib/actions/sandbox/skill-install.ts","kinds":["direct-argv","raw-runtime-import"],"operations":["arbitrary argv","sandbox upload"]},
-        {"path":"src/lib/actions/sandbox/snapshot.ts","kinds":["direct-argv","raw-runtime-import"],"operations":["arbitrary argv","sandbox exec","sandbox get","sandbox list"]},
         {"path":"src/lib/actions/sandbox/status-snapshot.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/actions/sandbox/vm-dns-monkeypatch.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv","sandbox get"]},
-        {"path":"src/lib/actions/sandbox/wipe-state.ts","kinds":["direct-argv","raw-runtime-import"],"operations":["arbitrary argv","sandbox exec"]},
         {"path":"src/lib/actions/uninstall/run-plan.ts","kinds":["direct-executable"],"operations":["arbitrary argv"]},
         {"path":"src/lib/adapters/uninstall/commands.ts","kinds":["direct-executable"],"operations":["arbitrary argv"]},
         {"path":"src/lib/gateway-runtime-action.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/list-command-deps.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/messaging/applier/agent-config.ts","kinds":["direct-argv"],"operations":["sandbox exec"]},
         {"path":"src/lib/onboard/agent-web-auth-token.ts","kinds":["direct-argv"],"operations":["sandbox exec"]},
-        {"path":"src/lib/onboard/bedrock-runtime.ts","kinds":["direct-argv"],"operations":["inference set"]},
         {"path":"src/lib/onboard/docker-gpu-patch.ts","kinds":["direct-argv"],"operations":["sandbox get","sandbox list"]},
         {"path":"src/lib/onboard/docker-gpu-sandbox-create.ts","kinds":["direct-argv"],"operations":["sandbox list","sandbox start","sandbox stop"]},
         {"path":"src/lib/onboard/docker-gpu-supervisor-reconnect.ts","kinds":["direct-argv"],"operations":["sandbox list"]},
@@ -247,11 +239,8 @@
         {"path":"src/lib/onboard/gateway-reuse.ts","kinds":["direct-argv"],"operations":["--version"]},
         {"path":"src/lib/onboard/gateway/docker-driver-start.ts","kinds":["direct-argv"],"operations":["--version"]},
         {"path":"src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.ts","kinds":["direct-argv"],"operations":["provider get"]},
-        {"path":"src/lib/onboard/inference-providers/hermes.ts","kinds":["direct-argv"],"operations":["inference set"]},
-        {"path":"src/lib/onboard/inference-providers/routed.ts","kinds":["direct-argv"],"operations":["inference set"]},
         {"path":"src/lib/onboard/machine/resume-provider-shim.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/onboard/messaging-bridge-provider.ts","kinds":["direct-argv"],"operations":["provider profile export"]},
-        {"path":"src/lib/onboard/openrouter-runtime.ts","kinds":["direct-argv"],"operations":["inference set"]},
         {"path":"src/lib/onboard/openshell-cli.ts","kinds":["raw-helper-definition"],"operations":["arbitrary argv"]},
         {"path":"src/lib/onboard/runtime-provider/snapshot.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},
         {"path":"src/lib/onboard/sandbox-create-launch.ts","kinds":["direct-argv"],"operations":["sandbox create"]},
@@ -279,7 +268,6 @@
       "reason": "These host-local consumers may need the installed executable itself, but this ledger does not approve that exception.",
       "removalCondition": "Record an explicit executable-level exception with protecting tests, or migrate the consumer and delete its allowance.",
       "sites": [
-        {"path":"src/lib/diagnostics/debug.ts","kinds":["direct-executable"],"operations":["gateway info","logs","sandbox get","sandbox list","status"]},
         {"path":"src/lib/onboard/openshell-install.ts","kinds":["direct-argv"],"operations":["--version"]},
         {"path":"src/lib/resources-cmd.ts","kinds":["direct-executable"],"operations":["sandbox create"]}
       ]

@@ -19,10 +19,6 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import {
-  mergeHermesPreservedEnvIntoMessagingPlan,
-  type PreservedEnvFile,
-} from "../state/preserved-env/index";
-import {
   DEFAULT_TOOL_DISCLOSURE,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -191,7 +187,6 @@ export interface PatchStagedDockerfileOptions {
   upstreamEndpointUrl?: string | null;
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
@@ -270,17 +265,9 @@ export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean }
 
 export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
 
-function patchMessagingPlanDockerArg(
-  dockerfile: string,
-  plan: SandboxMessagingPlan,
-  preservedEnv: readonly PreservedEnvFile[] | undefined,
-): string {
-  const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
+function patchMessagingPlanDockerArg(dockerfile: string, plan: SandboxMessagingPlan): string {
+  const imageMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
     parseSandboxMessagingPlan(plan) ?? plan,
-  );
-  const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
-    baseMessagingPlan,
-    preservedEnv,
   );
   const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
   if (!messagingPlanArgPattern.test(dockerfile)) {
@@ -292,16 +279,6 @@ function patchMessagingPlanDockerArg(
     messagingPlanArgPattern,
     `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(imageMessagingPlan))}`,
   );
-}
-
-export function patchStagedDockerfileMessagingPlan(
-  dockerfilePath: string,
-  plan: SandboxMessagingPlan,
-  preservedEnv: readonly PreservedEnvFile[],
-): void {
-  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
-  const dockerfile = patchMessagingPlanDockerArg(patchSnapshot.content, plan, preservedEnv);
-  replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }
 
 export function patchStagedDockerfile(
@@ -609,11 +586,7 @@ export function patchStagedDockerfile(
   dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
-    dockerfile = patchMessagingPlanDockerArg(
-      dockerfile,
-      messagingPlan,
-      options.rebuildPreservedEnv,
-    );
+    dockerfile = patchMessagingPlanDockerArg(dockerfile, messagingPlan);
   }
   if (hermesToolGateways.length > 0) {
     dockerfile = dockerfile.replace(
