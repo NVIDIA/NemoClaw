@@ -249,21 +249,24 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     },
   );
 
-  it("does not extend the OpenRouter 404 tolerance to an unsupported agent", () => {
-    const result = buildSandboxInferenceRouteHealth(
-      gateway(404),
-      null,
-      { ok: true },
-      {
-        agentName: "future-agent",
-        provider: "openrouter-api",
-      },
-    );
+  it.each(["pi", "future-agent"])(
+    "does not extend the OpenRouter 404 tolerance to unsupported agent %s",
+    (agentName) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(404),
+        null,
+        { ok: true },
+        {
+          agentName,
+          provider: "openrouter-api",
+        },
+      );
 
-    expect(result.ok).toBe(false);
-    expect(result.failureLabel).toBe("unreachable");
-    expect(result.detail).toContain("do not have a supported catalog-less route");
-  });
+      expect(result.ok).toBe(false);
+      expect(result.failureLabel).toBe("unreachable");
+      expect(result.detail).toContain("do not have a supported catalog-less route");
+    },
+  );
 
   it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
     const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
