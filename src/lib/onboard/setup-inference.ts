@@ -236,6 +236,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   withOllamaModelOwnershipTransaction?: typeof withOllamaModelOwnershipTransaction;
@@ -983,6 +985,7 @@ export function createSetupInference(
             }
             const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
               gatewayName,
+              gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
               recordedAttachment,
               sandboxes: deps.listSandboxes?.().sandboxes ?? [],
             });
@@ -993,6 +996,7 @@ export function createSetupInference(
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
             });
+            deps.setNativeNvidiaProviderAuthority?.(gatewayName, nativeNvidiaProviderAttachment);
             return null;
           }
 

@@ -129,7 +129,36 @@ describe("credential actions use typed OpenShell provider results", () => {
       recordExtraProvider,
       forgetExtraProvider: () => true,
     });
-    const adapter = providerAdapter();
+    let providerPresent = false;
+    const providerId = "11111111-2222-4333-8444-555555555555";
+    const adapter = providerAdapter({
+      getProvider: vi.fn(async (request) =>
+        providerPresent
+          ? {
+              ok: true as const,
+              value: {
+                name: request.providerName,
+                type: "nemoclaw-nvidia-inference-v1",
+                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+                configKeys: [],
+                revision: { id: providerId, resourceVersion: 1 },
+              },
+            }
+          : {
+              ok: false as const,
+              error: {
+                kind: "command" as const,
+                reason: "not_found" as const,
+                message: "provider not found",
+              },
+            },
+      ),
+      createProvider: vi.fn(async () => {
+        providerPresent = true;
+        return { ok: true as const };
+      }),
+    });
+    const setNativeNvidiaProviderAuthority = vi.fn();
 
     const result = await runCredentialsAddAction(
       {
@@ -139,14 +168,17 @@ describe("credential actions use typed OpenShell provider results", () => {
         configPairs: [],
         fromExisting: false,
       },
-      { providerAdapter: adapter },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority,
+      },
     );
 
     expect(result.exitCode).toBe(0);
     expect(adapter.importProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       profilePath: expect.stringMatching(/provider-profiles\/nemoclaw-nvidia-inference-v1\.yaml$/u),
-      timeoutMs: 30_000,
     });
     expect(adapter.createProvider).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
@@ -155,10 +187,57 @@ describe("credential actions use typed OpenShell provider results", () => {
       credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-value" }],
       config: [],
       fromExisting: false,
-      timeoutMs: 30_000,
+    });
+    expect(setNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw", {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId,
     });
     expect(recordExtraProvider).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
+  it("rejects a substituted native NVIDIA provider before replacing its credential", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const adapter = providerAdapter({
+      getProvider: vi.fn(async (request) => ({
+        ok: true as const,
+        value: {
+          name: request.providerName,
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: "replacement-provider-id", resourceVersion: 2 },
+        },
+      })),
+    });
+    const setNativeNvidiaProviderAuthority = vi.fn();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => ({
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        }),
+        setNativeNvidiaProviderAuthority,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain("changed identity");
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
   });
 
   it("lists the native NVIDIA provider only by its logical credential name", async () => {
@@ -900,6 +979,21 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(result.failureLines.join("\n")).not.toContain("openshell sandbox provider detach");
     },
   );
+
+  it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const adapter = providerAdapter({
+      deleteProvider: vi.fn(async () => ({ ok: true as const })),
+    });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      { providerAdapter: adapter, clearNativeNvidiaProviderAuthority },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+  });
 
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {
     const deleteProvider = vi

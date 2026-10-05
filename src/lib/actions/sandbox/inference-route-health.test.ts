@@ -11,6 +11,7 @@ import {
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
+  probeSandboxNativeNvidiaModelsHealth,
   runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
@@ -115,6 +116,29 @@ describe("sandbox inference route health", () => {
       endpoint: "https://inference.local/v1/models",
       detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
     });
+  });
+
+  it("probes native NVIDIA models through the attached provider placeholder", async () => {
+    const commandExecutor = makeExecutor("OK 200");
+
+    const result = await probeSandboxNativeNvidiaModelsHealth("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+      commandExecutor,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+    });
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: ["sh", "-c", expect.stringContaining("nemoclaw-openshell-provider")],
+      }),
+    );
   });
 });
 

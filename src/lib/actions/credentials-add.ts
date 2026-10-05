@@ -14,6 +14,9 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
 import {
+  ensureNativeNvidiaProvider,
+  NativeNvidiaProviderError,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
@@ -34,6 +37,10 @@ import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
+import {
+  getNativeNvidiaProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} from "../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider, recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
@@ -53,6 +60,8 @@ export type CredentialsAddResult = {
 
 export type CredentialsAddDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  getNativeNvidiaProviderAuthority?: typeof getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority?: typeof setNativeNvidiaProviderAuthority;
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
@@ -385,6 +394,50 @@ export async function runCredentialsAddAction(
   });
   if (!target) {
     return fail(recoveryFailureLines);
+  }
+
+  if (
+    nativeNvidiaCredentialAlias &&
+    !fromExisting &&
+    (credentials.length !== 1 || credentials[0] !== NVIDIA_HOSTED_CREDENTIAL_ENV)
+  ) {
+    return fail([
+      `  Native NVIDIA inference requires exactly --credential ${NVIDIA_HOSTED_CREDENTIAL_ENV}.`,
+    ]);
+  }
+
+  if (nativeNvidiaCredentialAlias) {
+    return withMcpCredentialOwnershipLock(async () => {
+      try {
+        const expected = (
+          deps.getNativeNvidiaProviderAuthority ?? getNativeNvidiaProviderAuthority
+        )(target.gatewayName);
+        const receipt = await ensureNativeNvidiaProvider({
+          adapter: providerAdapter,
+          target,
+          credentialValue: fromExisting
+            ? null
+            : (process.env[NVIDIA_HOSTED_CREDENTIAL_ENV] ?? null),
+          reuseExistingCredential: fromExisting,
+          ...(expected ? { expected } : {}),
+        });
+        (deps.setNativeNvidiaProviderAuthority ?? setNativeNvidiaProviderAuthority)(
+          target.gatewayName,
+          receipt,
+        );
+        return ok([
+          `  Registered provider '${provider}' with the OpenShell gateway.`,
+          `  Verify with '${CLI_NAME} credentials list'.`,
+          `  Select it with '${CLI_NAME} inference set --provider ${provider} --model <model>'.`,
+        ]);
+      } catch (error) {
+        const detail =
+          error instanceof NativeNvidiaProviderError || error instanceof Error
+            ? error.message
+            : String(error);
+        return fail([`  Could not register provider '${provider}'.`, `  ${detail}`]);
+      }
+    });
   }
 
   const profile = bundledProviderProfile(effectiveType);

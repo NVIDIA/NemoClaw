@@ -68,6 +68,63 @@ describe("runInferenceSet OpenClaw routing", () => {
     );
   });
 
+  it("selects a native NVIDIA provider registered before any sandbox used it", async () => {
+    const gatewayAuthority = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    let attached = false;
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: "nemoclaw-nvidia-prod-v1",
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: gatewayAuthority.providerId, resourceVersion: 1 },
+        },
+      })),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? ["nemoclaw-nvidia-prod-v1"] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+      getNativeNvidiaProviderAuthority: () => gatewayAuthority,
+      providerAdapter,
+      resolveCredentialValue: () => "",
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeNvidiaProviderAttachment: gatewayAuthority,
+        nativeNvidiaProviderAuthority: gatewayAuthority,
+      }),
+    );
+  });
+
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
     let attached = true;
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {

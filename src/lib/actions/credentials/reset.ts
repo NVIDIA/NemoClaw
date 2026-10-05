@@ -24,6 +24,7 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
+import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -39,6 +40,7 @@ export type CredentialsResetResult = {
 
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -153,6 +155,11 @@ export async function runCredentialsResetAction(
   if (!outcome.ok) return fail(outcome.lines);
 
   forgetExtraProvider(publicKey);
+  if (nativeNvidiaProvider) {
+    (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+      target.gatewayName,
+    );
+  }
   return ok(outcome.lines);
 }
 

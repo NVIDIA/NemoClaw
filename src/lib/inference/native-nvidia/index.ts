@@ -51,6 +51,7 @@ export function isNativeNvidiaProvider(provider: string | null | undefined): boo
 
 export function resolveGatewayNativeNvidiaProviderAuthority(input: {
   gatewayName: string;
+  gatewayAuthority?: NativeNvidiaProviderAttachment | null;
   recordedAttachment?: NativeNvidiaProviderAttachment | null;
   recordedAuthority?: NativeNvidiaProviderAttachment | null;
   sandboxes: ReadonlyArray<{
@@ -60,18 +61,14 @@ export function resolveGatewayNativeNvidiaProviderAuthority(input: {
     nativeNvidiaProviderAuthority?: unknown;
   }>;
 }): NativeNvidiaProviderAttachment | undefined {
-  if (input.recordedAttachment && input.recordedAuthority) {
-    if (input.recordedAttachment.providerId !== input.recordedAuthority.providerId) {
-      throw new NativeNvidiaProviderError(
-        `Gateway '${input.gatewayName}' has conflicting native NVIDIA provider ownership receipts. No provider was changed.`,
-      );
-    }
-    return input.recordedAttachment;
-  }
-  if (input.recordedAttachment) return input.recordedAttachment;
-  if (input.recordedAuthority) return input.recordedAuthority;
-
   const authorities = new Map<string, NativeNvidiaProviderAttachment>();
+  for (const receipt of [
+    input.gatewayAuthority,
+    input.recordedAttachment,
+    input.recordedAuthority,
+  ]) {
+    if (receipt) authorities.set(receipt.providerId, receipt);
+  }
   for (const sandbox of input.sandboxes) {
     if (sandbox.gatewayName !== input.gatewayName) continue;
     const authority = normalizeNativeNvidiaProviderAttachment(

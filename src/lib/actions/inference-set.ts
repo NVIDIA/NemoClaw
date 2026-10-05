@@ -178,6 +178,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     sandboxes: SandboxEntry[];
     defaultSandbox: string | null;
   };
+  getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -310,6 +311,7 @@ function defaultDeps(): InferenceSetDeps {
     getDefaultSandbox: registry.getDefault,
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
+    getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -1528,6 +1530,7 @@ async function runInferenceSetWithoutHostLock(
   const nativeNvidiaProviderAuthority = selectingNativeNvidia
     ? resolveGatewayNativeNvidiaProviderAuthority({
         gatewayName: preparedRoute.gatewayName,
+        gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(preparedRoute.gatewayName),
         recordedAttachment: previousNativeNvidiaAttachment,
         recordedAuthority: previousNativeNvidiaAuthority,
         sandboxes: routeSandboxes,
