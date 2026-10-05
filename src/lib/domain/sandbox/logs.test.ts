@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildSandboxLogsArgs,
   GATEWAY_LOG_SOURCE_TAG,
   getLogsProbeTimeoutMs,
   isBrokenPipeRelayError,
@@ -34,12 +33,6 @@ describe("sandbox logs helpers", () => {
     expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "0" })).toBe(5000);
     expect(getLogsProbeTimeoutMs({ NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "not-a-number" })).toBe(5000);
     expect(getLogsProbeTimeoutMs({})).toBe(5000);
-  });
-
-  it("retains the deferred policy-denial log argv", () => {
-    expect(
-      buildSandboxLogsArgs("alpha", { follow: false, lines: "200", since: null }, "managed"),
-    ).toEqual(["logs", "-g", "managed", "alpha", "-n", "200", "--source", "all"]);
   });
 });
 

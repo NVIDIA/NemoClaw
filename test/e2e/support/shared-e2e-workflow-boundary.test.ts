@@ -144,9 +144,9 @@ const stagingReferenceVariants = [
 ];
 
 const actionMutations: Array<[string, (source: string) => string]> = [
-  ["artifact-id", (source) => source.replace('artifact-ids: "10385514729"', 'artifact-ids: "1"')],
+  ["artifact-id", (source) => source.replace('artifact-ids: "11204862350"', 'artifact-ids: "1"')],
   ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
-  ["source-run", (source) => source.replace('run-id: "33211526093"', 'run-id: "1"')],
+  ["source-run", (source) => source.replace('run-id: "36952890255"', 'run-id: "1"')],
   [
     "verification-order",
     (source) => {
@@ -304,6 +304,31 @@ describe("shared E2E workflow boundary", () => {
       mutate(steps, index);
     });
     expect(errors.some((error) => error.includes("native Podman staging"))).toBe(true);
+  });
+
+  // source-shape-contract: security -- Explicit Portable Hermes selection must stage the reviewed native helper artifact before candidate execution
+  it("requires Portable Hermes selection to stage its native helper artifact", () => {
+    const workflow = readWorkflow() as Workflow;
+    const generate = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    expect((workflow.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
+      "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+    );
+    expect((generate.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
+      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+    );
+
+    const errors = validateMutatedWorkflow((workflow) => {
+      const staging = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Stage immutable native Podman E2E toolchains",
+      )!;
+      staging.with!.enabled =
+        "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}";
+    });
+    expect(errors).toContain(
+      "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+    );
   });
 
   it.each(stagingReferenceVariants)("rejects renamed staging action alias %s", (uses) => {

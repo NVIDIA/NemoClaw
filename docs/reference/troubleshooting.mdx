@@ -698,19 +698,27 @@ Unknown service query errors remain fatal. The installer also stops for malforme
 
 ### Sandbox build fails during OpenClaw plugin install
 
-During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package. The neutral managed image does not declare `plugins.entries.tavily`; onboarding adds that entry only when you select Tavily Search.
+Managed OpenClaw images preinstall the reviewed Brave and Tavily plugins from pinned archives.
+The image build verifies archive integrity before installing each plugin offline.
+Both search plugins remain disabled in the neutral image; onboarding enables only the selected provider and supplies its OpenShell credential reference.
 
-Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
+An `integrity mismatch` or `has no committed npm integrity pin` error stops the build before the affected plugin is installed.
+If `openclaw plugins install` fails, the build stops before running `openclaw doctor` for that provider.
+Preserve the complete error, plugin name, and NemoClaw revision, then report the failed archive verification or native installation to a maintainer.
+Do not change the package pins or bypass verification to continue.
+Widening sandbox network policy or disabling web search does not repair these offline build failures.
 
-```bash
-NEMOCLAW_WEB_SEARCH_PROVIDER=none $$nemoclaw onboard --resume
-```
+Archive downloads occur before the offline installation step.
+For a failed download, check the host network or proxy that fetches the archive; sandbox egress policy does not control that download.
 
-If you want the feature, fix the network or policy path first, then resume onboarding:
+After the reviewed build inputs or native installation failure are corrected, rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
 
 ```bash
 $$nemoclaw onboard --resume
 ```
+
+Confirm that archive verification and plugin installation complete without errors.
 
 </AgentOnly>
 
@@ -759,7 +767,7 @@ The output should include a `web` mapping with `backend: tavily`. If it does not
 
 <AgentOnly variant="openclaw,hermes">
 
-Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs. NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation. If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
+Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs. NemoClaw validates the replacement key before it removes the existing sandbox, then transfers the complete native home/workspace during recreation. Credential-bearing or uninspectable native content stops recreation before replacement instead of being stripped from the transfer. Move credentials to supported OpenShell storage or bindings and retry. If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
 
 </AgentOnly>
 
@@ -979,7 +987,7 @@ Inspect the process separately with `ps -p <PID> -o user=,args=`. Stop it only w
 
 ### Sandbox Keeps Using the Previous Messaging Credential
 
-Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential. When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry. When you provide a replacement credential, NemoClaw runs the channel's configured checks before it backs up supported workspace and manifest-declared state, destroys the sandbox, recreates it, and restores the backup. Files outside those state paths are not preserved. If an available pre-recreation check fails, onboarding stops before it backs up supported workspace and manifest-declared state or destroys the existing sandbox. Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds. If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state. If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation. If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
+Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential. When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry. When you provide a replacement credential, NemoClaw runs the channel's configured checks before it transfers the complete native home/workspace, destroys the sandbox, recreates it, and restores the transfer. If an available pre-recreation check fails, onboarding stops before the transfer or deletion. Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds. If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state. If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation. If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
 
 If you suspect a sandbox is still using a stale messaging credential, follow [Rotate a Messaging Credential](../security/credential-rotation#rotate-a-messaging-credential) to export the replacement without putting it in shell history. Then rerun onboarding so the credential check runs:
 
@@ -1248,8 +1256,6 @@ This is only useful if the original failure was transient, for example a network
 $$nemoclaw onboard --resume
 ```
 
-```
-
 <AgentOnly variant="openclaw">
 
 OpenClaw resume does not repeat completed non-secret sandbox, web search, messaging, or resource choices. Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their successful OpenShell registration and OpenShell still reports the exact expected name, type, and credential keys. If the session lacks that registration receipt, the provider is missing, or its binding does not match, interactive resume requests the credential again; non-interactive resume preserves the completed choice, reports the required environment variable, and exits so you can export it before retrying `$$nemoclaw onboard --resume`.
@@ -1446,7 +1452,7 @@ After a host reboot, the container runtime, OpenShell gateway, and sandbox may n
 
 <Warning title="If the sandbox does not recover">
 
-If the sandbox remains missing after restarting the gateway, its authoritative OpenShell policy and live workspace are unavailable, so `rebuild --yes` cannot recreate it from NemoClaw registry metadata. Run `$$nemoclaw <name> destroy --yes` to remove the stale local entry, then run `$$nemoclaw onboard`. The missing sandbox's state cannot be recovered unless you already have a separate snapshot; restore that snapshot explicitly after onboarding. For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+If the sandbox remains missing after restarting the gateway, its authoritative OpenShell policy and live workspace are unavailable, so `rebuild --yes` cannot recreate it from NemoClaw registry metadata. Run `$$nemoclaw <name> destroy --yes` to remove the stale local entry, then run `$$nemoclaw onboard`. The missing sandbox's state cannot be recovered unless you already have an independently maintained backup; transfer that state explicitly after onboarding. For details, refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually).
 
 </Warning>
 
@@ -1538,7 +1544,6 @@ credential projection, but must not add the retired NemoClaw gateway controller.
 
 <AgentOnly variant="hermes">
 
-
 ### Hermes config reports a mutation already in progress
 
 Hermes host config writes and lifecycle seals use the same root-only mutation lock.
@@ -1552,23 +1557,21 @@ This refusal means a root-owned config transaction stopped without a safely reco
 NemoClaw does not treat a leftover lock file as permission to continue or adopt partially written config.
 Do not delete `/run/nemoclaw/hermes-config-mutation.lock`, the restart state, or the persistent transaction marker manually.
 An ordinary in-place `rebuild` can stop when it cannot create a trustworthy backup of the interrupted config state.
-If you already have a trusted host-side snapshot, record its selector, destroy the sandbox, re-onboard the same sandbox name from trusted host configuration, and then restore that snapshot:
+If you already have a trusted independent host copy, destroy the sandbox, re-onboard the same sandbox name from trusted host configuration, and manually restore the reviewed agent-owned files:
 
 ```bash
-$$nemoclaw <name> snapshot list
 $$nemoclaw <name> destroy
 $$nemoclaw onboard --name <name> --agent hermes
-$$nemoclaw <name> snapshot restore <selector>
 ```
 
-Destroying the sealed sandbox permanently discards any state newer than the selected snapshot, so verify that the host-side snapshot exists before confirming destruction. Without a trusted pre-incident snapshot, automatic state-preserving recovery is not available. Recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
+Destroying the sealed sandbox permanently discards its OpenShell storage, so verify the host-side copy before confirming destruction. Without a trusted pre-incident copy, automatic state-preserving recovery is not available. Recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
 
 ### Hermes startup reports `HERMES_RESTART_SEAL_ORPHANED`
 
 This refusal means a container recreation discarded the root-only restart metadata under `/run` while the persistent `/sandbox` tree still carries the temporary restart transaction marker, or a non-root entrypoint found a root transaction it cannot safely restore.
 NemoClaw cannot safely infer the pre-transaction ownership, modes, or inode flags, so startup fails closed even when `config.yaml` and `.env` still look readable.
 Do not repair the paths with manual `chown`, `chmod`, or hash regeneration.
-Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
+Restore a trusted host copy into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
 
 ### Hermes startup refuses an unsafe state directory
 
@@ -1581,8 +1584,8 @@ Startup also stops when `/sandbox/.hermes/.hermes_history` is a symbolic link, a
 When a host-side control command fails, its output can include matching startup diagnostics as `NEMOCLAW_START_LOG=...`.
 If the diagnostic reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment and retry startup.
 For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not run `chown`, `chmod`, or another in-place repair on the reported path.
-For those unsafe-path failures, follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side snapshot into a recreated sandbox.
-If no trusted snapshot exists for an unsafe-path failure, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
+For those unsafe-path failures, follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side copy into a recreated sandbox.
+If no trusted copy exists for an unsafe-path failure, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
 
 </AgentOnly>
 
@@ -1596,48 +1599,7 @@ To upgrade the sandbox while preserving workspace state, run:
 $$nemoclaw <name> rebuild
 ```
 
-The rebuild command backs up state, destroys the old sandbox, recreates it with the current image, and restores state. Create a snapshot before rebuilding if you want an additional safety net:
-
-```bash
-$$nemoclaw <name> snapshot create
-$$nemoclaw <name> rebuild
-```
-
-### Snapshot Sanitization Requires a Verified Python Interpreter
-
-The CLI operations listed below stop when NemoClaw cannot resolve a verified interpreter. The error begins with this text:
-
-```text
-python3 is required for snapshot sanitization; install python3 and rerun
-```
-
-NemoClaw removes credentials from copied state with an isolated `python3` helper. The operation fails closed when that helper cannot run. These operations can report the error:
-
-- `$$nemoclaw <name> snapshot create`
-- `$$nemoclaw <name> rebuild`, including rebuilds started by `$$nemoclaw upgrade-sandboxes`
-- `$$nemoclaw backup-all`, including the installer's pre-upgrade backup and an eligible stopped Docker-driver sandbox
-
-A host that already has `python3` can still report this message. NemoClaw does not search `PATH` for this credential-bearing helper. NemoClaw accepts `python3` only at these locations:
-
-- `/usr/bin/python3`
-- `/usr/local/bin/python3`
-- `/opt/homebrew/bin/python3`
-- `/opt/local/bin/python3`
-- A `python3` executable beside the canonical Node.js executable
-
-NemoClaw rejects a candidate that fails its ownership, permission, or executable checks. For more information about the interpreter requirement, refer to [Prerequisites](../get-started/prerequisites).
-
-If NemoClaw reports that it removed the incomplete snapshot, install or repair `python3` at an accepted location. Then rerun the complete command.
-
-If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
-
-<Warning title="Retained Incomplete Snapshot">
-  A retained incomplete snapshot can contain unsanitized credentials. The
-  directory must remain owner-only. You must not restore, copy, or share the
-  directory. You must remove the directory only by the exact path that NemoClaw
-  reports. You must confirm that the exact path no longer exists before you
-  rerun the complete command.
-</Warning>
+The rebuild command transfers the complete native home and workspace, destroys the old sandbox, recreates it with the current image, and restores that state. Keep an independent host copy if you need an additional safety net.
 
 ### Sandbox shows as stopped
 
@@ -1689,7 +1651,7 @@ Deep Agents Code does not provide the `recover` command. Use `$$nemoclaw <name> 
 
 ### Sandbox is registered locally but missing from the gateway
 
-After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists. `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically. First restore the gateway and retry status in case the sandbox returns. If it remains absent, run `$$nemoclaw <name> destroy --yes` to remove the stale entry, then run `$$nemoclaw onboard`. Rebuild cannot recreate the missing sandbox because no authoritative OpenShell policy remains. State is recoverable only from a separate snapshot restored after onboarding.
+After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists. `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically. First restore the gateway and retry status in case the sandbox returns. If it remains absent, run `$$nemoclaw <name> destroy --yes` to remove the stale entry, then run `$$nemoclaw onboard`. Rebuild cannot recreate the missing sandbox because no authoritative OpenShell policy remains. State is recoverable only from an independent host copy restored after onboarding.
 
 ### A command reports that the registry file is not valid JSON
 
@@ -2084,7 +2046,6 @@ $$nemoclaw onboard
 
 The variable accepts seconds and applies to the readiness wait only. When the ordinary create deadline expires, NemoClaw preserves the partially created sandbox because OpenShell deletion targets its mutable name. Same-name onboarding remains blocked while that sandbox exists. Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery. Do not delete the sandbox by mutable name.
 
-
 The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait. NemoClaw pins the exact OpenShell sandbox ID before recreation. Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution. It retries only OpenShell's exact `sandbox is not ready` response. If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container. If restoration fails, NemoClaw reports that the sandbox and container state is uncertain. NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name. It leaves the sandbox in place for inspection and recovery.
 
 If readiness still fails after the extended budget, inspect the gateway and sandbox status:
@@ -2233,14 +2194,7 @@ When the file is empty, OpenClaw commands may report that the config is empty in
 NemoClaw treats `openclaw.json` as ordinary OpenClaw-owned state.
 It does not maintain a hash, seal, last-good copy, recovery anchor, baseline, or config guard that can replace or reject the file during startup.
 
-Restore a trusted snapshot that predates the failed write:
-
-```bash
-$$nemoclaw <name> snapshot list
-$$nemoclaw <name> snapshot restore <selector>
-```
-
-If no trusted snapshot exists, back up other required state manually, recreate the sandbox through onboarding, and restore only the trusted files.
+The retired selective snapshot commands cannot recover this file. Preserve other required state with `$$nemoclaw <name> download` or another independent host backup, destroy the damaged sandbox, and recreate it through onboarding. Restore only reviewed agent-owned files from a trusted copy that predates the damage; do not upload the empty config or credential-bearing state. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) for the supported download and upload procedure.
 
 </AgentOnly>
 
@@ -2290,15 +2244,15 @@ openclaw config unset <dotpath>
 ```
 
 Restart and reconnect preserve the current native configuration.
-Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
-Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.
+Rebuild transfers the complete native configuration captured immediately before replacement.
+The retired selective snapshot restore flow is not available; roll back by explicitly reapplying reviewed files from an independent trusted backup.
 The host command `$$nemoclaw <sandbox> config set` returns guidance to use the native OpenClaw command.
 
 Native OpenClaw commands do not create OpenShell credential bindings or widen network policy.
 Use NemoClaw credential, inference, and policy commands when a change needs matching host-side state.
-Keep provider credentials in OpenShell because values stored directly in `openclaw.json` are readable inside the sandbox and can be removed by snapshot sanitization.
-Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
-Reconcile those resources after restore when the native configuration expects different values, then restart the gateway when OpenClaw requires it.
+Keep provider credentials in OpenShell because values stored directly in `openclaw.json` are readable inside the sandbox and block rebuild before replacement rather than being stripped from a published transfer.
+Rebuild and manual file recovery do not change OpenShell policy, credential bindings, or the host-side inference route.
+Reconcile those resources when the native configuration expects different values, then restart the gateway when OpenClaw requires it.
 
 ### `openclaw doctor --fix` cannot reconcile managed Discord host resources
 
@@ -2313,7 +2267,10 @@ If the inspection fails, times out or cannot prove a trusted official installati
 A missing verified package in the offline build cache also stops installation.
 These are build failures; the post-rebuild startup warnings apply only after the image builds successfully.
 
-Report the failure diagnostic, plugin name and NemoClaw version to a maintainer.
+If the diagnostic says `Original Undici bundle restored after interruption; retry the operation`, rerun the original onboarding or rebuild command.
+The build remains failed until the dependency patch and verification complete successfully.
+
+For other failures, report the diagnostic, plugin name and NemoClaw version to a maintainer.
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
 After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
 
@@ -2809,7 +2766,6 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 The route depends on the host environment and the operator control. Identify the matching path before applying the recovery guidance.
 
-
 | Symptom                                                                                                                                                                 | Route or stage                  | Recovery                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt   | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation.                                                                                                                                                                         |
@@ -3088,7 +3044,7 @@ During a restart-rate cooldown, wait for the supervisor to relaunch the gateway 
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 
-An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
+An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted host copy into a recreated sandbox or recreate from host-side onboarding configuration.
 
 If an integrity mismatch is reported or the sandbox still cannot start, rebuild it from registered configuration:
 

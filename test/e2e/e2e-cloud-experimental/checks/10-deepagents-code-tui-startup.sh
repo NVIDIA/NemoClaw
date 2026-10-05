@@ -86,20 +86,6 @@ sandbox_quickjs_memfd_probe() {
   sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
 }
 
-sandbox_is_ready() {
-  openshell sandbox list 2>&1 \
-    | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }'
-}
-
-wait_for_sandbox_ready() {
-  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  while :; do
-    sandbox_is_ready && return 0
-    [ "$SECONDS" -ge "$deadline" ] && return 1
-    sleep 1
-  done
-}
-
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }

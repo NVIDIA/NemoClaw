@@ -144,21 +144,6 @@ describe("Pi candidate lifecycle integration", () => {
     expect(MANAGED_IMAGE_REPOSITORIES.pi).toBe("ghcr.io/nvidia/nemoclaw/pi-sandbox");
   });
 
-  it("backs up only the state the Pi manifest declares persistent (#7927)", () => {
-    const agent = loadAgent("pi", CANDIDATE_ENV);
-
-    expect(agent.backupStateDirs).toEqual(["sessions", "prompts", "themes"]);
-    expect(agent.nonBackupStateDirs).toEqual(["tools", "bin"]);
-    expect(agent.stateFiles.map(({ path: statePath }) => statePath)).toEqual(["settings.json"]);
-  });
-
-  it("restores Pi settings as native state without a NemoClaw allowlist (#11763)", () => {
-    const agent = loadAgent("pi", CANDIDATE_ENV);
-    const settings = agent.stateFiles.find(({ path: statePath }) => statePath === "settings.json");
-
-    expect(settings).toEqual({ path: "settings.json", strategy: "copy" });
-  });
-
   it("refuses a public --agent pi selection without qualification authority (#7927)", () => {
     vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "");
     vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");

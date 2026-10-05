@@ -139,82 +139,86 @@ describe("onboard child Ollama execution proof runner", () => {
     }
   });
 
-  it("rejects the obsolete sudo-first fallback and accepts timeout-first recovery (#12281)", () => {
-    const fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proof-runner-order-"));
-    vi.stubEnv("HOME", fixtureHome);
-    try {
-      const runner = loadExecutionProofRuntime().createSuccessfulOllamaServiceExecutionProofRunner(
-        undefined,
-        true,
-      );
-      const executablePath = path.join(fixtureHome, "ollama-service-exec-fixture");
-      const systemdResult = runner(
-        [
-          "/usr/bin/sudo",
-          "-n",
-          "/usr/bin/env",
-          "LC_ALL=C",
-          "/usr/bin/systemd-run",
-          "--wait",
-          "--pipe",
-          "--collect",
-          "--service-type=exec",
-          "--uid=ollama",
-          "--property=KillMode=control-group",
-          "--property=RuntimeMaxSec=15s",
-          "--property=TimeoutStopSec=250ms",
-          "--property=SendSIGKILL=yes",
-          executablePath,
-          "--version",
-        ],
-        { timeout: 17_000 },
-      );
-      const directResult = runner(
-        [
-          "/usr/bin/timeout",
-          "--signal=TERM",
-          "--kill-after=0.25s",
-          "15s",
-          "/usr/bin/sudo",
-          "-n",
-          "-u",
-          "ollama",
-          "--",
-          "/usr/bin/env",
-          "LC_ALL=C",
-          "/bin/sh",
-          "-c",
-          '"$1" --version\nstatus=$?\ncase "$status" in\n  124|137) exit 1 ;;\n  *) exit "$status" ;;\nesac',
-          "nemoclaw-direct-service-user-proof",
-          executablePath,
-        ],
-        { timeout: 17_000 },
-      );
-      const obsoleteResult = runner(
-        [
-          "/usr/bin/sudo",
-          "-n",
-          "-u",
-          "ollama",
-          "--",
-          "/usr/bin/env",
-          "LC_ALL=C",
-          "/usr/bin/timeout",
-          "--signal=TERM",
-          "--kill-after=0.25s",
-          "15s",
-          executablePath,
-          "--version",
-        ],
-        { timeout: 17_000 },
-      );
+  it.each(["/usr/bin/timeout", "/usr/bin/gnutimeout"])(
+    "rejects the obsolete sudo-first fallback and accepts %s recovery (#12281)",
+    (timeoutExecutable) => {
+      const fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proof-runner-order-"));
+      vi.stubEnv("HOME", fixtureHome);
+      try {
+        const runner =
+          loadExecutionProofRuntime().createSuccessfulOllamaServiceExecutionProofRunner(
+            () => ({ stdout: "", stderr: "unmatched proof", exitCode: 1, timedOut: false }),
+            true,
+          );
+        const executablePath = path.join(fixtureHome, "ollama-service-exec-fixture");
+        const systemdResult = runner(
+          [
+            "/usr/bin/sudo",
+            "-n",
+            "/usr/bin/env",
+            "LC_ALL=C",
+            "/usr/bin/systemd-run",
+            "--wait",
+            "--pipe",
+            "--collect",
+            "--service-type=exec",
+            "--uid=ollama",
+            "--property=KillMode=control-group",
+            "--property=RuntimeMaxSec=15s",
+            "--property=TimeoutStopSec=250ms",
+            "--property=SendSIGKILL=yes",
+            executablePath,
+            "--version",
+          ],
+          { timeout: 17_000 },
+        );
+        const directResult = runner(
+          [
+            timeoutExecutable,
+            "--signal=TERM",
+            "--kill-after=0.25s",
+            "15s",
+            "/usr/bin/sudo",
+            "-n",
+            "-u",
+            "ollama",
+            "--",
+            "/usr/bin/env",
+            "LC_ALL=C",
+            "/bin/sh",
+            "-c",
+            '"$1" --version\nstatus=$?\ncase "$status" in\n  124|137) exit 1 ;;\n  *) exit "$status" ;;\nesac',
+            "nemoclaw-direct-service-user-proof",
+            executablePath,
+          ],
+          { timeout: 17_000 },
+        );
+        const obsoleteResult = runner(
+          [
+            "/usr/bin/sudo",
+            "-n",
+            "-u",
+            "ollama",
+            "--",
+            "/usr/bin/env",
+            "LC_ALL=C",
+            "/usr/bin/timeout",
+            "--signal=TERM",
+            "--kill-after=0.25s",
+            "15s",
+            executablePath,
+            "--version",
+          ],
+          { timeout: 17_000 },
+        );
 
-      assert.equal(systemdResult.timedOut, true);
-      assert.equal(directResult.exitCode, 0);
-      assert.equal(obsoleteResult.exitCode, 1);
-    } finally {
-      vi.unstubAllEnvs();
-      fs.rmSync(fixtureHome, { force: true, recursive: true });
-    }
-  });
+        assert.equal(systemdResult.timedOut, true);
+        assert.equal(directResult.exitCode, 0);
+        assert.equal(obsoleteResult.exitCode, 1);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(fixtureHome, { force: true, recursive: true });
+      }
+    },
+  );
 });

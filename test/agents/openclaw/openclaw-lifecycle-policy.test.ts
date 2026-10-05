@@ -94,7 +94,7 @@ console.log(JSON.stringify({
     runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
     base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
     optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"'),
+      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"'),
     messagingPlugin: [
       '"--force",',
       '"--accept-capabilities",',
@@ -175,7 +175,7 @@ describe("reviewed npm lifecycle policy", () => {
 
     const messagingPackageSpecs = Object.keys(
       reviewedOpenClawPluginIntegrityByPackageSpec({
-        OPENCLAW_VERSION: "2026.9.1",
+        OPENCLAW_VERSION: "2026.9.2",
       }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {

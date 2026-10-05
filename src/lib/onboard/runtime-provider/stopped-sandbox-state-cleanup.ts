@@ -15,6 +15,7 @@ const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
 const CLEANUP_IMAGE =
   "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+const CLEANUP_IMAGE_PULL_TIMEOUT_MS = 120_000;
 const CLEANUP_LABEL = "com.nvidia.nemoclaw.channel-cleanup";
 const CLEANUP_OWNER_LABEL = `${CLEANUP_LABEL}.owner`;
 const CLEANUP_VOLUME_LABEL = `${CLEANUP_LABEL}.volume`;
@@ -35,7 +36,7 @@ export interface StoppedSandboxStateTarget {
   readonly resourceHandle: string;
   readonly running: boolean;
   readonly stateResource: {
-    readonly type: "bind" | "volume";
+    readonly type: "bind" | "container" | "volume";
     readonly source: string;
     readonly target: string;
   };
@@ -88,6 +89,56 @@ for (const target of targets) {
 
 const CLEANUP_SCRIPT = buildStoppedSandboxChannelCleanupScript();
 
+export function buildStoppedSandboxNativeHomeCleanupScript(): string {
+  return String.raw`
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[1];
+const protectedPaths = JSON.parse(process.argv[2]);
+function lstat(candidate) {
+  try { return fs.lstatSync(candidate); }
+  catch (error) { if (error && error.code === "ENOENT") return null; throw error; }
+}
+if (typeof root !== "string" || !path.posix.isAbsolute(root) || path.posix.normalize(root) !== root) process.exit(40);
+if (!Array.isArray(protectedPaths) || new Set(protectedPaths).size !== protectedPaths.length) process.exit(41);
+for (const target of protectedPaths) {
+  if (typeof target !== "string" || !target.startsWith(root + "/") || path.posix.normalize(target) !== target) process.exit(42);
+}
+const rootMetadata = lstat(root);
+if (!rootMetadata || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) process.exit(43);
+function isProtected(candidate) { return protectedPaths.includes(candidate); }
+function isProtectedParent(candidate) { return protectedPaths.some((target) => target.startsWith(candidate + "/")); }
+function clean(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const entry = path.posix.join(directory, name);
+    if (isProtected(entry)) continue;
+    if (isProtectedParent(entry)) {
+      const metadata = lstat(entry);
+      if (!metadata || metadata.isSymbolicLink() || !metadata.isDirectory()) process.exit(44);
+      clean(entry);
+    } else {
+      fs.rmSync(entry, { force: false, maxRetries: 0, recursive: true });
+    }
+  }
+}
+function verify(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const entry = path.posix.join(directory, name);
+    if (isProtected(entry)) continue;
+    if (!isProtectedParent(entry)) return false;
+    const metadata = lstat(entry);
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isDirectory() || !verify(entry)) return false;
+  }
+  return true;
+}
+clean(root);
+if (!verify(root)) process.exit(45);
+`;
+}
+
+const NATIVE_HOME_CLEANUP_SCRIPT = buildStoppedSandboxNativeHomeCleanupScript();
+
 function failure(
   code: RuntimeProviderStoppedSandboxStateCleanupFailure,
   cleanupHelperName?: string,
@@ -111,6 +162,53 @@ export function sandboxStateResourceFromMounts(
   paths: readonly string[],
 ): StoppedSandboxStateTarget["stateResource"] | null {
   if (!Array.isArray(value) || !validateStoppedSandboxStatePaths(paths)) return null;
+  return stateResourceFromMounts(value, (target) =>
+    paths.every((statePath) => statePath.startsWith(`${target}/`)),
+  );
+}
+
+export function validateStoppedNativeHomeCleanup(
+  root: string,
+  protectedPaths: readonly string[],
+): boolean {
+  return (
+    /^\/sandbox(?:\/\.(?:hermes|openclaw))?$/u.test(root) &&
+    new Set(protectedPaths).size === protectedPaths.length &&
+    protectedPaths.every(
+      (candidate) =>
+        path.posix.isAbsolute(candidate) &&
+        path.posix.normalize(candidate) === candidate &&
+        candidate.startsWith(`${root}/`),
+    )
+  );
+}
+
+export function sandboxNativeHomeResourceFromMounts(
+  value: unknown,
+  root: string,
+  containerResourceHandle?: string,
+): StoppedSandboxStateTarget["stateResource"] | null {
+  if (!Array.isArray(value) || !validateStoppedNativeHomeCleanup(root, [])) return null;
+  const mountedResource = stateResourceFromMounts(
+    value,
+    (target) => root === target || root.startsWith(`${target}/`),
+  );
+  if (mountedResource) return mountedResource;
+  const hasUnresolvedContainingMount = value.some((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const target = (entry as Record<string, unknown>).Destination;
+    return typeof target === "string" && (root === target || root.startsWith(`${target}/`));
+  });
+  if (hasUnresolvedContainingMount) return null;
+  return containerResourceHandle && FULL_CONTAINER_ID_RE.test(containerResourceHandle)
+    ? { type: "container", source: containerResourceHandle, target: root }
+    : null;
+}
+
+function stateResourceFromMounts(
+  value: readonly unknown[],
+  acceptsTarget: (target: string) => boolean,
+): StoppedSandboxStateTarget["stateResource"] | null {
   const mounts = value
     .filter((entry): entry is Record<string, unknown> => {
       if (typeof entry !== "object" || entry === null) return false;
@@ -121,7 +219,7 @@ export function sandboxStateResourceFromMounts(
         path.posix.isAbsolute(target) &&
         path.posix.normalize(target) === target &&
         (target === "/sandbox" || /^\/sandbox\/\.(?:openclaw|hermes)$/u.test(target)) &&
-        paths.every((statePath) => statePath.startsWith(`${target}/`))
+        acceptsTarget(target)
       );
     })
     .sort((left, right) => String(right.Destination).length - String(left.Destination).length);
@@ -157,6 +255,9 @@ function sameStateResource(
 }
 
 function stateResourceMount(resource: StoppedSandboxStateTarget["stateResource"]): string {
+  if (resource.type === "container") {
+    throw new Error("Container writable layers cannot be mounted as cleanup resources.");
+  }
   return resource.type === "volume"
     ? `type=volume,src=${resource.source},dst=${resource.target},volume-nocopy`
     : `type=bind,src=${resource.source},dst=${resource.target}`;
@@ -234,22 +335,36 @@ function classifyStartFailure(result: ContainerEngineCommandResult | null) {
   return "cleanup-helper-failed" as const;
 }
 
-export function clearStoppedSandboxStateWithEngine(
-  sandboxName: string,
-  paths: readonly string[],
-  engine: StoppedSandboxStateCleanupEngine,
-): RuntimeProviderStoppedSandboxStateCleanupResult {
-  if (!validateStoppedSandboxStatePaths(paths)) return failure("state-paths-invalid");
-  const observed = engine.observe();
-  if ("failure" in observed) return failure(observed.failure);
-  const target = observed.target;
-  if (target.running) return failure("runtime-not-stopped");
-  const image = engine.capture(["image", "inspect", "--format", "{{.Id}}", CLEANUP_IMAGE]);
+function cleanupImageAvailable(engine: StoppedSandboxStateCleanupEngine): boolean {
+  const inspect = () => engine.capture(["image", "inspect", "--format", "{{.Id}}", CLEANUP_IMAGE]);
+  let image = inspect();
   if (
     image.status !== 0 ||
     image.error ||
     !/^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
   ) {
+    const pulled = engine.capture(
+      ["pull", "--quiet", CLEANUP_IMAGE],
+      CLEANUP_IMAGE_PULL_TIMEOUT_MS,
+    );
+    if (pulled.status !== 0 || pulled.error) return false;
+    image = inspect();
+  }
+  return (
+    image.status === 0 && !image.error && /^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
+  );
+}
+
+function clearStoppedSandboxResourceWithEngine(
+  sandboxName: string,
+  engine: StoppedSandboxStateCleanupEngine,
+  helperArguments: (target: StoppedSandboxStateTarget) => readonly string[],
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  const observed = engine.observe();
+  if ("failure" in observed) return failure(observed.failure);
+  const target = observed.target;
+  if (target.running) return failure("runtime-not-stopped");
+  if (!cleanupImageAvailable(engine)) {
     return failure("cleanup-helper-image-unavailable");
   }
   const name = helperName(sandboxName);
@@ -300,10 +415,7 @@ export function clearStoppedSandboxStateWithEngine(
     "--entrypoint",
     "/usr/local/bin/node",
     CLEANUP_IMAGE,
-    "-e",
-    CLEANUP_SCRIPT,
-    JSON.stringify(paths),
-    target.stateResource.target,
+    ...helperArguments(target),
   ]);
   const helperId = created.stdout.trim();
   if (created.status !== 0 || created.error || !FULL_CONTAINER_ID_RE.test(helperId)) {
@@ -324,4 +436,53 @@ export function clearStoppedSandboxStateWithEngine(
     return failure("runtime-revalidation-failed");
   }
   return { cleared: true };
+}
+
+export function clearStoppedSandboxStateWithEngine(
+  sandboxName: string,
+  paths: readonly string[],
+  engine: StoppedSandboxStateCleanupEngine,
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedSandboxStatePaths(paths)) return failure("state-paths-invalid");
+  return clearStoppedSandboxResourceWithEngine(sandboxName, engine, (target) => [
+    "-e",
+    CLEANUP_SCRIPT,
+    JSON.stringify(paths),
+    target.stateResource.target,
+  ]);
+}
+
+export function clearStoppedNativeHomeWithEngine(
+  sandboxName: string,
+  root: string,
+  protectedPaths: readonly string[],
+  engine: StoppedSandboxStateCleanupEngine,
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedNativeHomeCleanup(root, protectedPaths)) {
+    return failure("state-paths-invalid");
+  }
+  const observed = engine.observe();
+  if ("failure" in observed) return failure(observed.failure);
+  const target = observed.target;
+  if (target.running) return failure("runtime-not-stopped");
+  if (target.stateResource.type === "container") {
+    const revalidated = engine.observe();
+    if (
+      "failure" in revalidated ||
+      revalidated.target.resourceHandle !== target.resourceHandle ||
+      revalidated.target.running ||
+      !sameStateResource(revalidated.target.stateResource, target.stateResource)
+    ) {
+      return failure("runtime-revalidation-failed");
+    }
+    // A writable layer has no independently durable native-home resource to scrub.
+    // The caller's exact provider deletion is authoritative; mounted child paths remain external.
+    return { cleared: true };
+  }
+  return clearStoppedSandboxResourceWithEngine(sandboxName, engine, () => [
+    "-e",
+    NATIVE_HOME_CLEANUP_SCRIPT,
+    root,
+    JSON.stringify(protectedPaths),
+  ]);
 }

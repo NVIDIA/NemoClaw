@@ -342,6 +342,15 @@ describe("abandoned inference route reservation (#11051)", () => {
       step: vi.fn(),
       getGatewayName: () => GATEWAY,
       runOpenshell: () => ({ status: 0 }),
+      inferenceRouteMutator: {
+        setInferenceRoute: async () => ({ ok: true as const }),
+      },
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => ({
+          ok: true as const,
+          value: { state: "unconfigured" as const },
+        }),
+      },
       updateSandbox: registry.reserveSandboxInferenceRoute,
       upsertProvider: () => ({ ok: true }),
       verifyInferenceRoute: vi.fn(),
@@ -383,6 +392,8 @@ describe("abandoned inference route reservation (#11051)", () => {
       ),
     ).resolves.toEqual({ ok: true });
     expect(registry.getSandbox(SANDBOX)).toMatchObject({
+      ...route,
+      endpointSource: "onboard",
       createdAt: previous.createdAt,
       agent: "openclaw",
       dashboardPort: 18790,
