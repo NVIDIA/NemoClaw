@@ -3340,7 +3340,7 @@ By default, NemoClaw starts a Cloudflare quick tunnel and prints the generated `
 
 For a named tunnel, NemoClaw verifies that the reported ingress route targets the selected dashboard port before treating startup as successful. If it cannot confirm that route, it stops the newly started tunnel and returns an error. If shutdown cannot be confirmed, it retains the process and dashboard-port records so cleanup can be retried safely.
 
-On Windows, a quick tunnel started by an older NemoClaw release may not have a recorded dashboard port. When its verified `cloudflared.exe` process and quick-tunnel URL are still available, `tunnel start` safely stops that legacy process and starts a replacement for the selected dashboard port. If NemoClaw cannot confirm the process identity or stop it, the command fails closed; verify the command line identifies `cloudflared.exe`, stop it manually, and run `tunnel start` again.
+On Windows, a quick tunnel started by an older NemoClaw release may not have a recorded dashboard port. `tunnel start` can safely replace it when NemoClaw verifies the running `cloudflared.exe` process and determines that its quick-tunnel target does not match the selected dashboard port. If NemoClaw cannot confirm the process identity, determine its target, or stop it, the command fails closed; verify the command line identifies `cloudflared.exe`, stop it manually, and run `tunnel start` again.
 
 ```bash
 export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
