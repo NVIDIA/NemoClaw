@@ -5,7 +5,9 @@ use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{Document, Gateway},
     discovery::ObservationStatus,
-    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries},
+    discovery_session::{
+        DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries,
+    },
     fabric_capabilities::Support,
 };
 
@@ -62,7 +64,9 @@ pub fn assess_target(
     // engine, and the image judged against the sandbox's requirements.
     let mut engine = None;
     let mut fabric = None;
-    for query in plan_queries(document).map_err(|error| diagnostic("discovery", &error.to_string()))? {
+    for query in
+        plan_queries(document).map_err(|error| diagnostic("discovery", &error.to_string()))?
+    {
         match (&query, observations.get(&query)) {
             (DiscoveryQuery::Engine(_), Some(DiscoveryObservation::Engine(observed))) => {
                 engine = Some(observed);

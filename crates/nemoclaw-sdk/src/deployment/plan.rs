@@ -373,7 +373,11 @@ pub(super) mod discovery_tests {
     /// The deferrals a plan reports, as `plan` and `apply` compute them.
     pub(in crate::deployment) fn deferred(plan: &Plan) -> Vec<String> {
         let report = plan
-            .discovery_report(DiscoveryScope::Deployment, &BTreeMap::new(), &BTreeSet::new())
+            .discovery_report(
+                DiscoveryScope::Deployment,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+            )
             .unwrap();
         plan.discovery_deferred(&report)
     }

@@ -4,7 +4,9 @@
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
     discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries},
+    discovery_session::{
+        DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries,
+    },
     fabric_capabilities::{ImageMetadata, assess_image},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
 };
