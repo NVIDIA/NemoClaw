@@ -82,6 +82,39 @@ describe("export config builder", () => {
     },
   );
 
+  it.each([true, false])(
+    "omits the gateway credential marker %s without changing authored controls or source policy (#12146)",
+    (marker) => {
+      const endpoint = {
+        host: "api.example.com",
+        port: 443,
+        allow_uninspected_credentials: true,
+      };
+      const observedPolicy = {
+        ...policy,
+        network_policies: {
+          api: {
+            ...policy.network_policies.api,
+            endpoints: [{ ...endpoint, provider_credentialed: marker }],
+          },
+          public: { endpoints: [{ host: "public.example.com", port: 443 }] },
+          disabled: {},
+        },
+      };
+      const before = structuredClone(observedPolicy);
+      const result = buildExportConfig(
+        { ...source, policy: observedPolicy as unknown as VerifiedExportSource["policy"] },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+
+      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+        ...observedPolicy.network_policies,
+        api: { ...observedPolicy.network_policies.api, endpoints: [endpoint] },
+      });
+      expect(observedPolicy).toEqual(before);
+    },
+  );
+
   it.each([
     { compatibility: "strict", expected: "hard_requirement" },
     { compatibility: "best_effort", expected: "best_effort" },

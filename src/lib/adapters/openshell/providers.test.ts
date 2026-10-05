@@ -83,7 +83,7 @@ function nativeNvidiaFixture() {
     provider: {
       ...provider().provider,
       type: "nvidia",
-      profileWorkspace: "",
+      profileWorkspace: "default",
       config: {},
     },
   });
@@ -507,29 +507,36 @@ describe("OpenShell provider evidence", () => {
     ).rejects.toMatchObject({ kind: "schema" });
   });
 
-  it("verifies the native NVIDIA endpoint through the named gateway profile", async () => {
-    const { connect, raw } = nativeNvidiaFixture();
-    const input = request();
-    const result = await createProviders(connect).get(input);
-    expect(result).toMatchObject({
-      type: "nvidia",
-      configKeys: [],
-      config: {},
-      builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
-    });
-    expect(raw.getProviderProfile).toHaveBeenCalledWith(
-      { id: "nvidia", workspace: "default" },
-      { signal: input.signal },
-    );
-    expect(connect).toHaveBeenCalledExactlyOnceWith(target);
-    expect(JSON.stringify(result)).not.toContain(canary);
-  });
+  it.each(["", "default"])(
+    "verifies the native NVIDIA endpoint at binding %j",
+    async (profileWorkspace) => {
+      const { connect, raw } = nativeNvidiaFixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, type: "nvidia", profileWorkspace, config: {} },
+      });
+      const input = request();
+      const result = await createProviders(connect).get(input);
+      expect(result).toMatchObject({
+        type: "nvidia",
+        configKeys: [],
+        config: {},
+        builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
+      });
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: "nvidia", workspace: profileWorkspace },
+        { signal: input.signal },
+      );
+      expect(connect).toHaveBeenCalledExactlyOnceWith(target);
+      expect(JSON.stringify(result)).not.toContain(canary);
+    },
+  );
 
   it.each([
     { label: "wrong identity", change: { id: "openai" } },
     { label: "custom source", change: { source: "user" } },
     { label: "interceptor source", change: { source: "interceptor/custom" } },
     { label: "workspace scope", change: { scope: "workspace" } },
+    { label: "platform scope", change: { scope: "platform" } },
     { label: "custom revision", change: { resourceVersion: 1n } },
     { label: "missing revision", change: { resourceVersion: undefined } },
     { label: "disabled inference", change: { inferenceCapable: false } },
@@ -558,10 +565,11 @@ describe("OpenShell provider evidence", () => {
   });
 
   it.each([
-    { profileWorkspace: "default", config: {} },
+    { profileWorkspace: "foreign", config: {} },
     { profileWorkspace: undefined, config: {} },
     { profileWorkspace: "", config: { NVIDIA_BASE_URL: "https://different.example/v1" } },
     { profileWorkspace: "", config: { UNUSED: canary } },
+    { profileWorkspace: "default", config: { UNUSED: canary } },
   ])("does not infer a builtin endpoint for NVIDIA overrides %#", async (change) => {
     const { connect, raw } = nativeNvidiaFixture();
     raw.getProvider.mockResolvedValue({
