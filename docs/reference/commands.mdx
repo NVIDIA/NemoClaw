@@ -4346,6 +4346,10 @@ Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that 
 Choose a non-host-local inference provider instead.
 </Warning>
 
+When NemoCUA uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
+NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
+If that request fails, the expected catalog response does not make the route ready.
+
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
