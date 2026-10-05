@@ -31,12 +31,12 @@ function resolveTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
     "registeredSandboxNames" | "sandbox" | "sandboxName"
-  >,
+  > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   if (input.sandbox.name !== input.sandboxName) {
     throw new Error("Podman privileged control requires the registered sandbox identity.");
   }
-  const container = observePodmanManagedContainer(engine, input.sandboxName);
+  const container = observePodmanManagedContainer(engine, input.sandboxName, input.timeoutMs);
   if (!container) {
     throw new DirectSandboxContainerNotFoundError(
       `No Podman runtime resource found for sandbox '${input.sandboxName}'.`,
@@ -141,7 +141,7 @@ export function createPodmanPrivilegedSandboxControl(
       input: Pick<
         RuntimeProviderPrivilegedSandboxCommandInput,
         "registeredSandboxNames" | "sandbox" | "sandboxName"
-      >,
+      > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
     ...(cleanupEngine
