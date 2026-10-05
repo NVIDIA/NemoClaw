@@ -2,23 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    Capabilities, CompatibilityStatus, DiscoveryAssessment, DiscoveryQuery, JourneyDefinition,
-    PartialDocument, assess_target, discovery_key_for_document, inference_request_for_document,
+    Capabilities, CompatibilityStatus, DiscoveryAssessment, JourneyDefinition, PartialDocument,
+    assess_target, discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway, InferenceApi, InferenceProviderKind},
     discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
+    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
-    facts::{Fact, FactQuery, FactSheet},
 };
 
 fn document() -> Document {
     Document::parse(&include_bytes!("../../../examples/onboarding/openclaw.yaml")[..]).unwrap()
 }
 
-/// What reading a document's target returned. The sheet it produces holds the
+/// The queries that read a document's engine and its sandbox image.
+fn engine_query(document: &Document) -> DiscoveryQuery {
+    let key = discovery_key_for_document(document).unwrap();
+    DiscoveryQuery::Engine(DiscoveryRequest {
+        engine: key.engine,
+        compute_driver: key.compute_driver,
+    })
+}
+
+fn fabric_query(document: &Document) -> DiscoveryQuery {
+    let key = discovery_key_for_document(document).unwrap();
+    DiscoveryQuery::Fabric {
+        engine: key.engine,
+        image: key.image,
+    }
+}
+
+/// What reading a document's target returned. The observations it produces hold the
 /// observations under that document's own engine, driver, and image, as a
-/// journey's sheet does after reading it.
+/// a journey's observations do after reading it.
 #[derive(Clone)]
 struct Observed {
     engine: Option<EngineObservation>,
@@ -26,36 +43,36 @@ struct Observed {
 }
 
 impl Observed {
-    fn sheet(&self, document: &Document) -> FactSheet {
+    fn observations(&self, document: &Document) -> DiscoveryObservations {
         let key = discovery_key_for_document(document).unwrap();
-        let mut sheet = FactSheet::new();
+        let mut observations = DiscoveryObservations::new();
         if let Some(engine) = &self.engine {
-            sheet.record(
-                FactQuery::Engine(DiscoveryRequest {
+            observations.record(
+                DiscoveryQuery::Engine(DiscoveryRequest {
                     engine: key.engine.clone(),
                     compute_driver: key.compute_driver,
                 }),
-                Some(Fact::Engine(engine.clone())),
+                DiscoveryObservation::Engine(engine.clone()),
             );
         }
         if let Some(fabric) = &self.fabric {
-            sheet.record(
-                FactQuery::Fabric {
+            observations.record(
+                DiscoveryQuery::Fabric {
                     engine: key.engine,
                     image: key.image,
                 },
-                Some(Fact::Fabric(fabric.clone())),
+                DiscoveryObservation::Fabric(fabric.clone()),
             );
         }
-        sheet
+        observations
     }
 
     fn assess(&self, document: &Document) -> DiscoveryAssessment {
-        assess_target(document, &self.sheet(document)).unwrap()
+        assess_target(document, &self.observations(document)).unwrap()
     }
 }
 
-fn evidence(document: &Document) -> Observed {
+fn observed_target(document: &Document) -> Observed {
     let mut catalog = FabricCatalog::bundled();
     catalog.bridge = Some(BridgeCapabilities {
         interface_version: 1,
@@ -105,7 +122,7 @@ fn evidence(document: &Document) -> Observed {
 fn available_engine_and_owner_valid_configuration_establish_compatibility() {
     let document = document();
     let before = document.yaml().unwrap();
-    let assessment = evidence(&document).assess(&document);
+    let assessment = observed_target(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Compatible);
     assert!(assessment.pending.is_empty());
     assert_eq!(document.yaml().unwrap(), before);
@@ -114,7 +131,7 @@ fn available_engine_and_owner_valid_configuration_establish_compatibility() {
 #[test]
 fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_are_unverified() {
     let document = document();
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     observed
         .fabric
         .as_mut()
@@ -148,25 +165,13 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
 }
 
 #[test]
-fn a_read_that_observed_nothing_is_unverified_and_not_asked_again() {
+fn a_read_that_failed_is_unknown_so_unverified_and_not_asked_again() {
     let document = document();
-    let key = discovery_key_for_document(&document).unwrap();
-    let sheet = FactSheet::new()
-        .with(
-            FactQuery::Engine(DiscoveryRequest {
-                engine: key.engine.clone(),
-                compute_driver: key.compute_driver,
-            }),
-            None,
-        )
-        .with(
-            FactQuery::Fabric {
-                engine: key.engine,
-                image: key.image,
-            },
-            None,
-        );
-    let assessment = assess_target(&document, &sheet).unwrap();
+    let (engine, fabric) = (engine_query(&document), fabric_query(&document));
+    let observations = DiscoveryObservations::new()
+        .with(engine.clone(), engine.unknown("engine unreachable"))
+        .with(fabric.clone(), fabric.unknown("image unreadable"));
+    let assessment = assess_target(&document, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert!(assessment.pending.is_empty());
 }
@@ -174,39 +179,39 @@ fn a_read_that_observed_nothing_is_unverified_and_not_asked_again() {
 #[test]
 fn changing_the_target_leaves_old_facts_behind_and_queries_engine_before_fabric() {
     let document = document();
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
         observed.assess(&document).status,
         CompatibilityStatus::Conflict
     );
-    let sheet = observed.sheet(&document);
+    let observations = observed.observations(&document);
     let mut moved = document.clone();
     let Gateway::Managed(gateway) = &mut moved.spec.gateway else {
         panic!("the example uses a managed gateway")
     };
     gateway.engine = "unix:///another-target.sock".into();
-    let assessment = assess_target(&moved, &sheet).unwrap();
+    let assessment = assess_target(&moved, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_eq!(assessment.pending, vec![DiscoveryQuery::Engine]);
+    assert_eq!(assessment.pending, vec![engine_query(&moved)]);
 }
 
 #[test]
 fn changing_only_image_keeps_engine_facts_and_queries_fabric() {
     let document = document();
-    let sheet = evidence(&document).sheet(&document);
+    let observations = observed_target(&document).observations(&document);
     let mut changed = document.clone();
     changed.spec.sandboxes[0].image.ref_ = "another-image".into();
-    let assessment = assess_target(&changed, &sheet).unwrap();
+    let assessment = assess_target(&changed, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_eq!(assessment.pending, vec![DiscoveryQuery::Fabric]);
+    assert_eq!(assessment.pending, vec![fabric_query(&changed)]);
 }
 
 #[test]
 fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
     let capabilities = Capabilities::available();
     let original = document();
-    let sheet = evidence(&original).sheet(&original);
+    let observations = observed_target(&original).observations(&original);
     let base = PartialDocument::from_yaml(original.yaml().unwrap().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("rename", base)
         .ask(["/metadata/name"])
@@ -227,21 +232,23 @@ fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
         .unwrap()
         .clone();
     assert_eq!(
-        assess_target(&renamed, &sheet).unwrap().status,
+        assess_target(&renamed, &observations).unwrap().status,
         CompatibilityStatus::Compatible
     );
     let mut changed_driver = renamed.clone();
     changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     assert_eq!(
-        assess_target(&changed_driver, &sheet).unwrap().pending,
-        vec![DiscoveryQuery::Engine]
+        assess_target(&changed_driver, &observations)
+            .unwrap()
+            .pending,
+        vec![engine_query(&changed_driver)]
     );
 }
 
 #[test]
 fn a_catalog_without_the_adapter_conflicts_without_reading_the_image_again() {
     let document = document();
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     observed
         .fabric
         .as_mut()
@@ -260,7 +267,7 @@ fn a_catalog_without_the_adapter_conflicts_without_reading_the_image_again() {
 fn native_configuration_is_checked_by_the_fabric_planner() {
     let valid = document();
     assert_eq!(
-        evidence(&valid).assess(&valid).status,
+        observed_target(&valid).assess(&valid).status,
         CompatibilityStatus::Compatible
     );
     let mut document = valid.clone();
@@ -270,7 +277,7 @@ fn native_configuration_is_checked_by_the_fabric_planner() {
         .unwrap()
         .settings =
         Some(serde_json::from_value(serde_json::json!({"not_in_the_owner_schema": true})).unwrap());
-    let assessment = evidence(&document).assess(&document);
+    let assessment = observed_target(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(
         assessment
@@ -283,7 +290,7 @@ fn native_configuration_is_checked_by_the_fabric_planner() {
 #[test]
 fn image_platform_conflict_blocks_while_missing_platform_stays_unverified() {
     let document = document();
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     observed.fabric.as_mut().unwrap().image.architecture = Some("amd64".into());
     assert_eq!(
         observed.assess(&document).status,
@@ -299,7 +306,7 @@ fn image_platform_conflict_blocks_while_missing_platform_stays_unverified() {
 #[test]
 fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
     let document = document();
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     let image = observed.fabric.as_mut().unwrap();
     image.status = ObservationStatus::Unknown;
     image.catalog = None;
@@ -354,11 +361,11 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         discovery_key_for_document(&document).unwrap().engine,
         "ssh://images@example.com"
     );
-    let assessment = assess_target(&document, &FactSheet::new()).unwrap();
-    assert_eq!(assessment.pending, vec![DiscoveryQuery::Fabric]);
+    let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
+    assert_eq!(assessment.pending, vec![fabric_query(&document)]);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
 
-    let mut observed = evidence(&document);
+    let mut observed = observed_target(&document);
     // A managed-gateway probe against the image store cannot disqualify an
     // external gateway, or supply its execution platform.
     let engine = observed.engine.as_mut().unwrap();
@@ -371,17 +378,17 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
 
     let changed = external_document("ssh://different-images@example.com");
     assert_eq!(
-        assess_target(&changed, &observed.sheet(&document))
+        assess_target(&changed, &observed.observations(&document))
             .unwrap()
             .pending,
-        vec![DiscoveryQuery::Fabric]
+        vec![fabric_query(&changed)]
     );
 }
 
 #[test]
 fn external_gateway_without_an_image_engine_stays_unverified_without_a_query() {
     let document = external_document("");
-    let assessment = assess_target(&document, &FactSheet::new()).unwrap();
+    let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert!(assessment.pending.is_empty());
     assert!(
@@ -403,15 +410,15 @@ fn switching_to_a_managed_gateway_requires_an_engine_observation() {
     }))
     .unwrap();
     let external = document;
-    // An external gateway's engine is never probed, so its sheet holds only the image.
+    // An external gateway's engine is never probed, so its observations hold only the image.
     let observed = Observed {
         engine: None,
-        ..evidence(&external)
+        ..observed_target(&external)
     };
     assert_eq!(
-        assess_target(&managed, &observed.sheet(&external))
+        assess_target(&managed, &observed.observations(&external))
             .unwrap()
             .pending,
-        vec![DiscoveryQuery::Engine]
+        vec![engine_query(&managed)]
     );
 }

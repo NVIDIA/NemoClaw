@@ -105,7 +105,7 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
         bundle::{Manifest, hash_file, required_files},
         config::ComputeDriver,
         discovery::{DiscoveryRequest, ObservationStatus},
-        discovery_session::DiscoverySession,
+        discovery_session::{DiscoveryQuery, DiscoverySession, DiscoverySource},
     };
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -154,31 +154,41 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
     }).await;
     let mut session = DiscoverySession::new(bundle.path()).unwrap();
     let cancel = CancellationToken::new();
+    let engine = DiscoveryRequest {
+        engine: fixture.endpoint.clone(),
+        compute_driver: ComputeDriver::Docker,
+    };
     let start = std::time::Instant::now();
     let observed = session
-        .engine(
-            &DiscoveryRequest {
-                engine: fixture.endpoint.clone(),
-                compute_driver: ComputeDriver::Docker,
-            },
-            &cancel,
-        )
+        .observe(&[DiscoveryQuery::Engine(engine.clone())], &cancel)
         .await
         .unwrap();
     eprintln!(
         "SDK discovery cold initialization + engine plan/show: {:?}",
         start.elapsed()
     );
-    assert_eq!(observed.status, ObservationStatus::Available);
+    assert_eq!(
+        observed.engine(&engine).map(|engine| engine.status),
+        Some(ObservationStatus::Available)
+    );
     let start = std::time::Instant::now();
     let observed = session
-        .fabric(&fixture.endpoint, "labeled:image", &cancel)
+        .observe(
+            &[DiscoveryQuery::Fabric {
+                engine: fixture.endpoint.clone(),
+                image: "labeled:image".into(),
+            }],
+            &cancel,
+        )
         .await
         .unwrap();
     eprintln!("SDK discovery warm Fabric plan/show: {:?}", start.elapsed());
-    assert_eq!(observed.status, ObservationStatus::Available);
-    assert_eq!(observed.catalog, Some(catalog));
-    use nemoclaw_sdk::discovery_session::{DiscoveryObservation, DiscoveryQuery};
+    let image = observed
+        .fabric(&fixture.endpoint, "labeled:image")
+        .expect("the image read is observed");
+    assert_eq!(image.status, ObservationStatus::Available);
+    assert_eq!(image.catalog, Some(catalog));
+    use nemoclaw_sdk::discovery_session::DiscoveryObservation;
     let query = DiscoveryQuery::Engine(DiscoveryRequest {
         engine: fixture.endpoint.clone(),
         compute_driver: ComputeDriver::Docker,

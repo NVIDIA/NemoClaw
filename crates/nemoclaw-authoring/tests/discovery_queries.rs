@@ -3,9 +3,9 @@
 //! Onboarding reads the environment through the same inputs that planning
 //! compiles for the same document. The SDK's plan is the reference; each
 //! difference below is deliberate and named.
-use nemoclaw_authoring::fact_needs;
+use nemoclaw_authoring::discovery_queries;
 use nemoclaw_sdk::{
-    compile, config::Document, discovery::DiscoveryRequest, facts::FactQuery,
+    compile, config::Document, discovery::DiscoveryRequest, discovery_session::DiscoveryQuery,
     inference_discovery::EndpointRequest,
 };
 use serde_json::Value;
@@ -70,18 +70,18 @@ fn onboarding_reads(document: &Document) -> PlanReads {
         fabric: Vec::new(),
         gateway_drivers: Value::Null,
     };
-    for query in fact_needs(document, None).unwrap() {
+    for query in discovery_queries(document, None).unwrap() {
         match query {
-            FactQuery::Endpoint(request) => reads.endpoints.push(request),
-            FactQuery::Engine(request) => reads.engine = Some(request),
-            FactQuery::Hardware { engine } => {
+            DiscoveryQuery::Inference(request) => reads.endpoints.push(request),
+            DiscoveryQuery::Engine(request) => reads.engine = Some(request),
+            DiscoveryQuery::Hardware { engine } => {
                 reads.hardware.insert(engine);
             }
-            FactQuery::Fabric { engine, image } => reads.fabric.push((engine, image)),
-            FactQuery::Gateway {
+            DiscoveryQuery::Fabric { engine, image } => reads.fabric.push((engine, image)),
+            DiscoveryQuery::Gateway {
                 compute_drivers, ..
             } => reads.gateway_drivers = serde_json::to_value(compute_drivers).unwrap(),
-            FactQuery::Credential { .. } => {}
+            DiscoveryQuery::Credential { .. } => {}
         }
     }
     reads

@@ -5,8 +5,9 @@
       "engine": "unix:///var/run/docker.sock",
       "compute_driver": "docker"
     },
-    "fact": {
-      "engine": {
+    "observation": {
+      "kind": "engine",
+      "observation": {
         "status": "available",
         "reason": null,
         "source": "fixture",
@@ -24,6 +25,18 @@
       "engine": "unix:///run/user/1000/podman/podman.sock",
       "compute_driver": "podman"
     },
-    "fact": null
+    "observation": {
+      "kind": "engine",
+      "observation": {
+        "status": "unavailable",
+        "reason": "the engine socket does not exist",
+        "source": "fixture",
+        "server_version": null,
+        "architecture": null,
+        "operating_system": null,
+        "memory_bytes": null,
+        "cpus": null
+      }
+    }
   }
 ]

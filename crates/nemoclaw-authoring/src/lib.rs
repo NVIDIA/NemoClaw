@@ -13,22 +13,20 @@
 mod capabilities;
 mod deployment;
 mod diagnostics;
-mod evidence;
-mod facts;
+mod discovery_queries;
 mod identity;
 mod journey_definition;
 mod journey_state;
 mod journey_tree;
 mod partial_document;
 mod provider_presets;
+mod target_assessment;
 
 pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
-pub use evidence::{
-    CompatibilityStatus, DiscoveryAssessment, DiscoveryKey, DiscoveryQuery, assess_target,
-    discovery_key_for_document,
+pub use discovery_queries::{
+    discovery_queries, environment_queries, inference_request_for_document,
 };
-pub use facts::{environment_needs, fact_needs, inference_request_for_document};
 pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
@@ -39,6 +37,10 @@ pub use journey_state::{
 };
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;
+pub use target_assessment::{
+    CompatibilityStatus, DiscoveryAssessment, DiscoveryKey, assess_target,
+    discovery_key_for_document,
+};
 
 mod fingerprint;
 mod sdk_schema;

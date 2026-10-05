@@ -5,7 +5,7 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::observe_facts,
+    terminal::observe_queries,
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
@@ -16,7 +16,7 @@ use nemoclaw_sdk::{
     CancellationToken,
     config::Document,
     discovery::DiscoveryRequest,
-    facts::{Fact, FactQuery},
+    discovery_session::{DiscoveryObservation, DiscoveryQuery},
 };
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
@@ -498,13 +498,13 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         .document()
         .unwrap()
         .clone();
-    wizard.facts.record(
-        FactQuery::Endpoint(
+    wizard.observations.record(
+        DiscoveryQuery::Inference(
             inference_request_for_document(&document, wizard.state.current_route())
                 .unwrap()
                 .unwrap(),
         ),
-        Some(Fact::Endpoint(EndpointObservation {
+        DiscoveryObservation::Inference(EndpointObservation {
             status: ObservationStatus::Available,
             reason: None,
             source: "fixture".into(),
@@ -512,7 +512,7 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             authentication: AuthenticationStatus::Accepted,
             models: vec!["vendor/discovered".into()],
             api_verified: false,
-        })),
+        }),
     );
     let question = wizard.question().unwrap().unwrap();
     assert!(
@@ -568,8 +568,8 @@ fn enter_accepts_the_runtime_this_machine_can_run() {
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     // Only Podman answered when this machine was read, but the template says Docker.
-    wizard.facts = serde_json::from_str(include_str!(
-        "../../../../crates/nemoclaw-authoring/tests/fixtures/facts/podman-only.json"
+    wizard.observations = serde_json::from_str(include_str!(
+        "../../../../crates/nemoclaw-authoring/tests/fixtures/observations/podman-only.json"
     ))
     .unwrap();
     for _ in 0..5 {
@@ -616,12 +616,12 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
     let key = discovery_key_for_document(&document).unwrap();
-    wizard.facts.record(
-        FactQuery::Engine(DiscoveryRequest {
+    wizard.observations.record(
+        DiscoveryQuery::Engine(DiscoveryRequest {
             engine: key.engine,
             compute_driver: key.compute_driver,
         }),
-        Some(Fact::Engine(nemoclaw_sdk::discovery::EngineObservation {
+        DiscoveryObservation::Engine(nemoclaw_sdk::discovery::EngineObservation {
             status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
             reason: Some("target rejected engine".into()),
             source: "fixture".into(),
@@ -630,7 +630,7 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
             operating_system: None,
             memory_bytes: None,
             cpus: None,
-        })),
+        }),
     );
     wizard.started = true;
     wizard.advance();
@@ -659,12 +659,19 @@ async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
         .unwrap()
         .unwrap();
     let missing = std::path::Path::new("/definitely/missing/nemoclaw-bundle");
-    let observed = observe_facts(
+    let observed = observe_queries(
         missing,
-        vec![FactQuery::Endpoint(request)],
+        vec![DiscoveryQuery::Inference(request.clone())],
         &CancellationToken::new(),
     )
     .await
     .unwrap();
-    assert!(observed.is_none());
+    // With no provider session the model catalog is unknown, never absent.
+    let catalog = observed
+        .inference(&request)
+        .expect("the attempt is recorded");
+    assert_eq!(
+        catalog.status,
+        nemoclaw_sdk::discovery::ObservationStatus::Unknown
+    );
 }

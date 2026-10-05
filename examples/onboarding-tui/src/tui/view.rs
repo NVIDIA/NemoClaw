@@ -212,7 +212,7 @@ impl JourneyWizard {
         ];
         match self
             .state
-            .resolve_with_facts(&self.capabilities, &self.facts)
+            .resolve_with_observations(&self.capabilities, &self.observations)
         {
             Ok(resolution) => {
                 if let Some(document) = resolution.materialized_document() {

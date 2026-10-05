@@ -5,7 +5,7 @@ use crate::Diagnostics;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document},
     discovery::{DiscoveryRequest, ObservationStatus},
-    facts::{FactQuery, FactSheet},
+    discovery_session::{DiscoveryObservations, DiscoveryQuery},
     inference_discovery::EndpointRequest,
 };
 
@@ -38,7 +38,7 @@ pub fn inference_request_for_document(
         .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))
 }
 
-/// Every read the journey needs about the target for an SDK-valid document.
+/// Every query the journey asks about the target for an SDK-valid document.
 ///
 /// The inputs come from the document the way planning derives them: the
 /// endpoint request is the SDK's, and the engine, image, and gateway are the
@@ -46,47 +46,44 @@ pub fn inference_request_for_document(
 /// so it is read for image metadata and is never probed as the gateway's
 /// engine or hardware. Planning also reads the hardware of each managed
 /// service's engine; onboarding does not until a decision consumes it.
-pub fn fact_needs(
+pub fn discovery_queries(
     document: &Document,
     route_name: Option<&str>,
-) -> Result<Vec<FactQuery>, Diagnostics> {
+) -> Result<Vec<DiscoveryQuery>, Diagnostics> {
     let key = crate::discovery_key_for_document(document)?;
-    let mut needs = Vec::new();
+    let mut queries = Vec::new();
     if key.managed_gateway && !key.engine.is_empty() {
-        needs.push(FactQuery::Engine(DiscoveryRequest {
+        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
             engine: key.engine.clone(),
             compute_driver: key.compute_driver,
         }));
     }
     if !key.engine.is_empty() {
-        needs.push(FactQuery::Fabric {
+        queries.push(DiscoveryQuery::Fabric {
             engine: key.engine.clone(),
             image: key.image.clone(),
         });
     }
     if key.managed_gateway && !key.engine.is_empty() {
-        needs.push(FactQuery::Hardware {
+        queries.push(DiscoveryQuery::Hardware {
             engine: key.engine.clone(),
         });
     }
     if let Some(request) = inference_request_for_document(document, route_name)?
         .filter(|request| request.validate().is_ok())
     {
-        needs.push(FactQuery::Endpoint(request));
+        queries.push(DiscoveryQuery::Inference(request));
     }
-    needs.push(FactQuery::Gateway {
+    queries.push(DiscoveryQuery::Gateway {
         gateway: document.spec.gateway.clone(),
         compute_drivers: vec![key.compute_driver],
     });
-    needs.extend(
-        document
-            .credential_names()
-            .into_iter()
-            .map(|reference| FactQuery::Credential {
-                reference: reference.into(),
-            }),
-    );
-    Ok(needs)
+    queries.extend(document.credential_names().into_iter().map(|reference| {
+        DiscoveryQuery::Credential {
+            reference: reference.into(),
+        }
+    }));
+    Ok(queries)
 }
 
 /// The local engine socket for each runtime a journey can offer.
@@ -111,13 +108,13 @@ pub(crate) fn local_engine(runtime: &str) -> Option<&'static str> {
         .map(|(.., engine)| *engine)
 }
 
-/// Reads that need no answers: which local engines can run sandboxes. They
+/// Queries that need no answers: which local engines can run sandboxes. They
 /// are asked once, before the first question, so early choices can use them.
-pub fn environment_needs() -> Vec<FactQuery> {
+pub fn environment_queries() -> Vec<DiscoveryQuery> {
     LOCAL_ENGINES
         .iter()
         .map(|(_, compute_driver, engine)| {
-            FactQuery::Engine(DiscoveryRequest {
+            DiscoveryQuery::Engine(DiscoveryRequest {
                 engine: (*engine).into(),
                 compute_driver: *compute_driver,
             })
@@ -125,12 +122,12 @@ pub fn environment_needs() -> Vec<FactQuery> {
         .collect()
 }
 
-/// The runtimes whose local engine the sheet shows as available.
-pub(crate) fn reachable_runtimes(facts: &FactSheet) -> Vec<&'static str> {
+/// The runtimes whose local engine the observations show as available.
+pub(crate) fn reachable_runtimes(observations: &DiscoveryObservations) -> Vec<&'static str> {
     LOCAL_ENGINES
         .iter()
         .filter(|(_, compute_driver, engine)| {
-            facts
+            observations
                 .engine(&DiscoveryRequest {
                     engine: (*engine).into(),
                     compute_driver: *compute_driver,

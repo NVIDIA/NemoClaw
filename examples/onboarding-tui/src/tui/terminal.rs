@@ -4,14 +4,14 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    Capabilities, JourneyQuestionKind, JourneyState, environment_needs, fact_needs,
+    Capabilities, JourneyQuestionKind, JourneyState, discovery_queries, environment_queries,
     inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
     config::Document,
     discovery_session::DiscoverySession,
-    facts::{FactQuery, FactSheet, FactSource},
+    discovery_session::{DiscoveryObservations, DiscoveryQuery, DiscoverySource},
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{collections::VecDeque, io, time::Duration};
@@ -76,12 +76,12 @@ pub(crate) async fn run(
         // Learn what this machine can run before the first question, so early
         // choices can use it. Each read is attempted once, even when it fails.
         if let Some(bundle) = bundle {
-            let needs = wizard.facts.missing(&environment_needs());
-            if !needs.is_empty() {
+            let queries = wizard.observations.missing(&environment_queries());
+            if !queries.is_empty() {
                 terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
                 let discovery_cancel = cancel.child_token();
                 let Some(observed) = wait_for_discovery(
-                    observe_facts(bundle, needs.clone(), &discovery_cancel),
+                    observe_queries(bundle, queries, &discovery_cancel),
                     cancel,
                     &discovery_cancel,
                     &mut queued_events,
@@ -91,12 +91,7 @@ pub(crate) async fn run(
                 else {
                     return Ok(None);
                 };
-                match observed {
-                    Some(facts) => wizard.facts.merge(facts),
-                    None => needs
-                        .into_iter()
-                        .for_each(|query| wizard.facts.record(query, None)),
-                }
+                wizard.observations.merge(observed);
                 needs_render = true;
             }
         }
@@ -112,13 +107,13 @@ pub(crate) async fn run(
             && let Ok(Some(request)) =
                 inference_request_for_document(document, wizard.state.current_route())
             && !wizard
-                .facts
-                .attempted(&FactQuery::Endpoint(request.clone()))
+                .observations
+                .contains(&DiscoveryQuery::Inference(request.clone()))
         {
-            let query = FactQuery::Endpoint(request);
+            let query = DiscoveryQuery::Inference(request);
             let discovery_cancel = cancel.child_token();
             let Some(observed) = wait_for_discovery(
-                observe_facts(bundle, vec![query.clone()], &discovery_cancel),
+                observe_queries(bundle, vec![query.clone()], &discovery_cancel),
                 cancel,
                 &discovery_cancel,
                 &mut queued_events,
@@ -128,11 +123,7 @@ pub(crate) async fn run(
             else {
                 return Ok(None);
             };
-            match observed {
-                Some(facts) => wizard.facts.merge(facts),
-                // Record the attempt so an unavailable session is not retried on every pass.
-                None => wizard.facts.record(query, None),
-            }
+            wizard.observations.merge(observed);
             needs_render = true;
         }
         if needs_render {
@@ -198,11 +189,11 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some(facts))) => {
-                            wizard.facts.merge(facts);
+                        Ok(Some(observations)) => {
+                            wizard.observations.merge(observations);
                             match wizard
                                 .state
-                                .delegate_remaining(&wizard.capabilities, &wizard.facts)
+                                .delegate_remaining(&wizard.capabilities, &wizard.observations)
                             {
                                 Ok(delegated) => {
                                     wizard.history.push(wizard.state.clone());
@@ -211,12 +202,6 @@ pub(crate) async fn run(
                                 }
                                 Err(error) => wizard.error = Some(error.to_string()),
                             }
-                        }
-                        Ok(Some(None)) => {
-                            wizard.error = Some(
-                                "Target discovery is unavailable. Continue answering individually."
-                                    .into(),
-                            )
                         }
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
@@ -260,8 +245,7 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some(facts))) => wizard.facts.merge(facts),
-                        Ok(Some(None)) => {}
+                        Ok(Some(observations)) => wizard.observations.merge(observations),
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
                         Err(error) => {
@@ -345,21 +329,28 @@ async fn wait_for_discovery<T>(
     }
 }
 
-/// Read the given facts from the target in one provider round. `None` means
-/// there is no provider session or the round failed as a whole, so the caller
-/// continues without target facts rather than treating the target as absent.
-pub(super) async fn observe_facts(
+/// Ask the target the given queries in one provider round. With no provider
+/// session, or when the round fails as a whole, every query is recorded as
+/// unknown rather than absent, so it is not asked again on every pass.
+pub(super) async fn observe_queries(
     bundle: &std::path::Path,
-    queries: Vec<FactQuery>,
+    queries: Vec<DiscoveryQuery>,
     cancel: &CancellationToken,
-) -> Result<Option<FactSheet>, Error> {
+) -> Result<DiscoveryObservations, Error> {
+    let unknown = |reason: &str| {
+        let mut observations = DiscoveryObservations::new();
+        for query in &queries {
+            observations.record(query.clone(), query.unknown(reason));
+        }
+        observations
+    };
     let Ok(mut session) = DiscoverySession::new(bundle) else {
-        return Ok(None);
+        return Ok(unknown("no provider session"));
     };
     match session.observe(&queries, cancel).await {
-        Ok(facts) => Ok(Some(facts)),
+        Ok(observations) => Ok(observations),
         Err(Error::Cancelled) => Err(Error::Cancelled),
-        Err(_) => Ok(None),
+        Err(_) => Ok(unknown("provider discovery failed")),
     }
 }
 
@@ -369,10 +360,10 @@ async fn observe_target(
     document: &Document,
     route: Option<&str>,
     cancel: &CancellationToken,
-) -> Result<Option<FactSheet>, Error> {
-    let queries =
-        fact_needs(document, route).map_err(|_| Error::State("invalid discovery selection"))?;
-    observe_facts(bundle, queries, cancel).await
+) -> Result<DiscoveryObservations, Error> {
+    let queries = discovery_queries(document, route)
+        .map_err(|_| Error::State("invalid discovery selection"))?;
+    observe_queries(bundle, queries, cancel).await
 }
 
 #[cfg(test)]

@@ -4,18 +4,18 @@
 use super::*;
 
 impl JourneyState {
-    /// Resolve questions and readiness against the facts gathered so far.
-    /// Endpoint models remain suggestions, while target facts can block
+    /// Resolve questions and readiness against the observations gathered so far.
+    /// Endpoint models remain suggestions, while target observations can block
     /// readiness. An empty sheet leaves the resolution as it was.
-    pub fn resolve_with_facts(
+    pub fn resolve_with_observations(
         &self,
         capabilities: &Capabilities,
-        facts: &FactSheet,
+        observations: &DiscoveryObservations,
     ) -> Result<JourneyResolution, Diagnostics> {
         let mut resolution = self.resolve(capabilities)?;
         // A host that can run only one local runtime makes it the suggestion,
         // even over a supplied value; the user still decides.
-        if let [only] = crate::facts::reachable_runtimes(facts).as_slice()
+        if let [only] = crate::discovery_queries::reachable_runtimes(observations).as_slice()
             && let Some(question) = resolution
                 .questions
                 .iter_mut()
@@ -23,10 +23,10 @@ impl JourneyState {
         {
             question.suggestion = Some(Value::String((*only).into()));
         }
-        if !facts.is_empty()
+        if !observations.is_empty()
             && let Some(document) = resolution.assessment.document()
         {
-            resolution.target_assessment = Some(crate::assess_target(document, facts)?);
+            resolution.target_assessment = Some(crate::assess_target(document, observations)?);
         }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
@@ -37,8 +37,8 @@ impl JourneyState {
         else {
             return Ok(resolution);
         };
-        let Some(observed) = facts
-            .endpoint(&request)
+        let Some(observed) = observations
+            .inference(&request)
             .filter(|observed| observed.status == ObservationStatus::Available)
         else {
             return Ok(resolution);
@@ -71,15 +71,15 @@ impl JourneyState {
     pub fn delegate_remaining(
         &self,
         capabilities: &Capabilities,
-        facts: &FactSheet,
+        observations: &DiscoveryObservations,
     ) -> Result<Self, Diagnostics> {
-        self.check_delegation(capabilities, facts)?;
+        self.check_delegation(capabilities, observations)?;
         let mut candidate = self.clone();
         for _ in 0..256 {
-            let resolution = candidate.resolve_with_facts(capabilities, facts)?;
+            let resolution = candidate.resolve_with_observations(capabilities, observations)?;
             let Some(question) = resolution.next_question() else {
                 if resolution.materialized_document().is_some() {
-                    candidate.check_delegation(capabilities, facts)?;
+                    candidate.check_delegation(capabilities, observations)?;
                     return Ok(candidate);
                 }
                 return Err(diagnostic(
@@ -111,7 +111,7 @@ impl JourneyState {
     pub(super) fn check_delegation(
         &self,
         capabilities: &Capabilities,
-        facts: &FactSheet,
+        observations: &DiscoveryObservations,
     ) -> Result<(), Diagnostics> {
         if !self.decisions.accepted.contains(HARNESS) {
             return Err(diagnostic(
@@ -124,7 +124,7 @@ impl JourneyState {
             .assessment()
             .document()
             .ok_or_else(|| diagnostic("delegation", "The desired state is not SDK-valid yet."))?;
-        let target = crate::assess_target(document, facts)?;
+        let target = crate::assess_target(document, observations)?;
         if !target.pending.is_empty() {
             return Err(diagnostic(
                 "delegation",
@@ -144,8 +144,8 @@ impl JourneyState {
                     "The selected route has no external model catalog to verify.",
                 )
             })?;
-        let endpoint = facts
-            .endpoint(&request)
+        let endpoint = observations
+            .inference(&request)
             .ok_or_else(|| diagnostic("delegation", "Model discovery is missing or stale."))?;
         if endpoint.status != ObservationStatus::Available
             || endpoint.reachable != Some(true)
@@ -173,7 +173,7 @@ impl JourneyState {
             ));
         }
         if document.credential_names().iter().any(|reference| {
-            facts
+            observations
                 .credential(reference)
                 .is_none_or(|credential| credential.status != ObservationStatus::Available)
         }) {

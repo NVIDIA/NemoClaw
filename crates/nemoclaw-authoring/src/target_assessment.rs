@@ -5,11 +5,11 @@ use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway, HarnessKind},
     discovery::{DiscoveryRequest, ObservationStatus},
+    discovery_session::{DiscoveryObservations, DiscoveryQuery},
     fabric_capabilities::{FabricRequirements, Support, assess_image},
-    facts::{FactQuery, FactSheet},
 };
 
-/// Inputs determining which target facts can constrain the current document.
+/// Inputs determining which target observations can constrain the current document.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveryKey {
     /// Explicit engine for image inspection; never inferred for an external gateway.
@@ -28,12 +28,6 @@ pub enum CompatibilityStatus {
     Conflict,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiscoveryQuery {
-    Engine,
-    Fabric,
-}
-
 /// Compatibility applies to the packaged adapter and, for managed gateways,
 /// the selected execution engine. External image stores do not establish the
 /// gateway's platform, deployment readiness, or successful inference.
@@ -41,6 +35,7 @@ pub enum DiscoveryQuery {
 pub struct DiscoveryAssessment {
     pub status: CompatibilityStatus,
     pub reasons: Vec<String>,
+    /// The dependency-ready queries not yet asked.
     pub pending: Vec<DiscoveryQuery>,
 }
 
@@ -69,28 +64,23 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
     })
 }
 
-/// Evaluate target facts without rewriting desired state or the global menu.
-/// Pending contains only dependency-ready reads that were never attempted. A
-/// read that was attempted without an observation, or observed as unknown,
-/// remains unverified until the caller refreshes it.
+/// Evaluate target observations without rewriting desired state or the global menu.
+/// Pending contains only dependency-ready queries that were never asked. A read
+/// that failed is an unknown observation and remains unverified until the
+/// caller refreshes it.
 pub fn assess_target(
     document: &Document,
-    facts: &FactSheet,
+    observations: &DiscoveryObservations,
 ) -> Result<DiscoveryAssessment, Diagnostics> {
     let key = discovery_key_for_document(document)?;
     let engine_request = DiscoveryRequest {
         engine: key.engine.clone(),
         compute_driver: key.compute_driver,
     };
-    let engine = facts
+    let engine = observations
         .engine(&engine_request)
         .filter(|_| key.managed_gateway);
-    let engine_attempted = facts.attempted(&FactQuery::Engine(engine_request));
-    let fabric = facts.fabric(&key.engine, &key.image);
-    let fabric_attempted = facts.attempted(&FactQuery::Fabric {
-        engine: key.engine.clone(),
-        image: key.image.clone(),
-    });
+    let fabric = observations.fabric(&key.engine, &key.image);
     let mut reasons = Vec::new();
     let mut pending = Vec::new();
     let mut conflict = false;
@@ -117,12 +107,8 @@ pub fn assess_target(
                 reasons.push("The selected engine remains unverified.".into());
                 false
             }
-            None if engine_attempted => {
-                reasons.push("The selected engine remains unverified.".into());
-                false
-            }
             None => {
-                pending.push(DiscoveryQuery::Engine);
+                pending.push(DiscoveryQuery::Engine(engine_request));
                 reasons.push("The selected engine has not been observed.".into());
                 false
             }
@@ -169,13 +155,12 @@ pub fn assess_target(
             );
             false
         }
-        None if fabric_attempted => {
-            reasons.push("The selected image's Fabric capabilities remain unverified.".into());
-            false
-        }
         None => {
             if engine_available {
-                pending.push(DiscoveryQuery::Fabric);
+                pending.push(DiscoveryQuery::Fabric {
+                    engine: key.engine.clone(),
+                    image: key.image.clone(),
+                });
             }
             reasons.push("The selected image's Fabric capabilities have not been observed.".into());
             false

@@ -3,7 +3,7 @@
 
 use super::labels::display_value;
 use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
-use nemoclaw_sdk::{config::Document, facts::FactSheet};
+use nemoclaw_sdk::{config::Document, discovery_session::DiscoveryObservations};
 use serde_json::Value;
 
 pub(crate) struct JourneyWizard {
@@ -13,7 +13,7 @@ pub(crate) struct JourneyWizard {
     pub(super) selected: usize,
     pub(super) selection_changed: bool,
     pub(super) custom_answer: bool,
-    pub(super) facts: FactSheet,
+    pub(super) observations: DiscoveryObservations,
     pub(super) input: String,
     pub(super) error: Option<String>,
     pub(super) started: bool,
@@ -30,7 +30,7 @@ impl JourneyWizard {
             selected: 0,
             selection_changed: false,
             custom_answer: false,
-            facts: FactSheet::new(),
+            observations: DiscoveryObservations::new(),
             input: String::new(),
             error: None,
             started: false,
@@ -47,7 +47,7 @@ impl JourneyWizard {
     pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
         Ok(self
             .state
-            .resolve_with_facts(&self.capabilities, &self.facts)?
+            .resolve_with_observations(&self.capabilities, &self.observations)?
             .next_question()
             .cloned())
     }
@@ -184,7 +184,7 @@ impl JourneyWizard {
         }
         let resolution = match self
             .state
-            .resolve_with_facts(&self.capabilities, &self.facts)
+            .resolve_with_observations(&self.capabilities, &self.observations)
         {
             Ok(resolution) => resolution,
             Err(error) => {
@@ -233,7 +233,7 @@ impl JourneyWizard {
 
     pub(super) fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
         self.state
-            .resolve_with_facts(&self.capabilities, &self.facts)?
+            .resolve_with_observations(&self.capabilities, &self.observations)?
             .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())

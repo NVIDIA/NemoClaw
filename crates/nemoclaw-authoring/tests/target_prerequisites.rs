@@ -8,9 +8,9 @@ use nemoclaw_authoring::{
 use nemoclaw_sdk::{
     config::Document,
     discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
+    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
     fabric_capabilities::ImageMetadata,
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
-    facts::{Fact, FactQuery, FactSheet},
     inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
 use serde_json::json;
@@ -37,30 +37,30 @@ fn installed_catalog() -> FabricCatalog {
     catalog
 }
 
-/// The target facts a journey would hold after reading `document`'s engine and image.
+/// The target observations a journey would hold after reading `document`'s engine and image.
 fn target_facts(
     document: &Document,
     engine: Option<EngineObservation>,
     fabric: Option<FabricObservation>,
-) -> FactSheet {
+) -> DiscoveryObservations {
     let key = discovery_key_for_document(document).unwrap();
-    let mut sheet = FactSheet::new();
+    let mut sheet = DiscoveryObservations::new();
     if let Some(engine) = engine {
         sheet.record(
-            FactQuery::Engine(DiscoveryRequest {
+            DiscoveryQuery::Engine(DiscoveryRequest {
                 engine: key.engine.clone(),
                 compute_driver: key.compute_driver,
             }),
-            Some(Fact::Engine(engine)),
+            DiscoveryObservation::Engine(engine),
         );
     }
     if let Some(fabric) = fabric {
         sheet.record(
-            FactQuery::Fabric {
+            DiscoveryQuery::Fabric {
                 engine: key.engine,
                 image: key.image,
             },
-            Some(Fact::Fabric(fabric)),
+            DiscoveryObservation::Fabric(fabric),
         );
     }
     sheet
@@ -131,7 +131,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     };
     let compatible = target_facts(document, Some(engine.clone()), Some(fabric.clone()));
     let verified = state
-        .resolve_with_facts(&capabilities, &compatible)
+        .resolve_with_observations(&capabilities, &compatible)
         .unwrap();
     assert_eq!(
         verified.target_assessment().unwrap().status,
@@ -139,11 +139,13 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     );
     assert!(verified.ready_document().is_some());
 
-    // Facts read for another image say nothing about this one.
+    // Observations read for another image say nothing about this one.
     let mut other_image = document.clone();
     other_image.spec.sandboxes[0].image.ref_ = "sha256:old-image".into();
     let stale = target_facts(&other_image, Some(engine), Some(fabric));
-    let unresolved = state.resolve_with_facts(&capabilities, &stale).unwrap();
+    let unresolved = state
+        .resolve_with_observations(&capabilities, &stale)
+        .unwrap();
     assert_eq!(
         unresolved.target_assessment().unwrap().status,
         CompatibilityStatus::Unverified
@@ -172,7 +174,9 @@ fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisi
         }),
         None,
     );
-    let resolved = state.resolve_with_facts(&capabilities, &conflict).unwrap();
+    let resolved = state
+        .resolve_with_observations(&capabilities, &conflict)
+        .unwrap();
     assert_eq!(
         resolved.target_assessment().unwrap().status,
         CompatibilityStatus::Conflict
@@ -190,7 +194,7 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         .unwrap();
     let base = state.resolve(&capabilities).unwrap();
     let document = base.assessment().document().unwrap();
-    let mut facts = target_facts(
+    let mut observations = target_facts(
         document,
         Some(EngineObservation {
             status: ObservationStatus::Unavailable,
@@ -204,13 +208,13 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         }),
         None,
     );
-    facts.record(
-        FactQuery::Endpoint(
+    observations.record(
+        DiscoveryQuery::Inference(
             inference_request_for_document(document, state.current_route())
                 .unwrap()
                 .unwrap(),
         ),
-        Some(Fact::Endpoint(EndpointObservation {
+        DiscoveryObservation::Inference(EndpointObservation {
             status: ObservationStatus::Available,
             reason: None,
             source: "fixture".into(),
@@ -218,9 +222,11 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
             authentication: AuthenticationStatus::Accepted,
             models: vec!["vendor/discovered-model".into()],
             api_verified: false,
-        })),
+        }),
     );
-    let resolved = state.resolve_with_facts(&capabilities, &facts).unwrap();
+    let resolved = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     assert!(
         resolved

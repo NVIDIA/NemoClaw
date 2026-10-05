@@ -108,8 +108,9 @@ The [onboarding prototype](onboarding-journeys.md) records supported question co
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
 It does not create deployment state.
-Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
-Onboarding reads target observations for the current document and ignores observations whose engine, compute driver, image, or inference endpoint request no longer match it.
+Discovery observations are keyed by the query that produced them: an engine and compute driver, a hardware engine, an engine and image, an inference endpoint request, a gateway, or a credential reference.
+Onboarding looks up the current document's queries, so an observation made for a different engine, compute driver, image, or inference endpoint request is never found.
+A read that could not be made is an unknown observation with its reason, never absence, so it is not asked again until the caller refreshes it.
 Changing only the harness re-evaluates the existing image catalog against the new requirement.
 Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
 Known engine incompatibility or conflicting image/adapter requirements block review and saving.
