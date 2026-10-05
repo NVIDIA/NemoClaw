@@ -37,6 +37,7 @@ prost.workspace = true
 tower.workspace = true
 http.workspace = true
 tokio-stream.workspace = true
+tar.workspace = true
 
 [dev-dependencies]
 serde-saphyr.workspace = true
@@ -45,6 +46,11 @@ getrandom.workspace = true
 [[bin]]
 name = "terraform-provider-nemoclaw-fixture"
 path = "src/bin/provider.rs"
+
+# Installed as `ssh` on PATH by the remote-service tests.
+[[bin]]
+name = "nemoclaw-e2e-ssh-fixture"
+path = "src/bin/ssh_fixture.rs"
 
 [lints]
 workspace = true
