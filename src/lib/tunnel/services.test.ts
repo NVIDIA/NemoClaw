@@ -988,10 +988,10 @@ describe("stopAll", () => {
           throw new Error("cloudflared test process has no PID");
         })();
       writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
-
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const unmanagedCloudflaredPids = (): number[] => [];
       try {
-        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+        stopAll({ pidDir, unloadOllamaModels: () => undefined, unmanagedCloudflaredPids });
         const deadline = Date.now() + 1000;
         let processStopped = false;
         while (!processStopped && Date.now() < deadline) {
