@@ -28,8 +28,8 @@ NEMOCLAW_UPGRADE_CONFIG=/absolute/path/to/owned-deployment.yaml \
 NEMOCLAW_UPGRADE_STATE=/absolute/path/to/new-state \
 NEMOCLAW_UPGRADE_INPUT=/absolute/path/to/adapter-input.json \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
-  cargo test --workspace --test fabric_live \
-    dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
+  cargo test -p nemoclaw-e2e --test integration \
+    fabric_live::dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
 ```
 
 The test waits for the real apply CLI to exit, then explicitly invokes the hosted Fabric runtime through OpenShell.

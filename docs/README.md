@@ -66,7 +66,7 @@ TBD is not a support claim or a delivery commitment.
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-The design decision defines current invariants; historical test results apply only to their recorded revisions and environments.
+The design decision defines current invariants.
 
 | Topic | Owner |
 |---|---|

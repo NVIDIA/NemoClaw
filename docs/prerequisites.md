@@ -73,6 +73,6 @@ The example deployment UUIDs, endpoints, and local image digests must be replace
 | Linux AMD64 Fabric deployment | **TBD** — the native Deep Agents and OpenClaw image builds and tests do not establish gateway provisioning or an end-to-end agent response |
 | AMD64 Nemotron image and GPU inference | **TBD** — configuration and build-platform tests do not establish a successful image build, model load, or agent response on the target host |
 | Windows/WSL or macOS local GPU deployment | **TBD** — native client test results do not establish runtime support |
-| Separate physical SSH model host | **TBD** — the retained two-daemon live result used one DGX Spark |
+| Separate physical SSH model host | **TBD** — requires qualification with the model service on a separate physical host |
 | Distributed inference across two Sparks or Stations | **TBD** — SSH placement alone does not implement distributed inference |
 | Every harness/provider/model combination | **TBD** — requires test results for the specific combination |

@@ -24,7 +24,7 @@ On Unix, they also run the production provider against a local Docker API fixtur
 They create no Docker, OpenShell, or inference resources.
 The fixture provider is not a production bundle component.
 
-On Unix with `python3` on `PATH`, run from the repository root to test combined service capacity through the production provider and an isolated SSH simulator:
+On Unix, run from the repository root to test combined service capacity through the production provider and an isolated SSH simulator:
 
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
@@ -46,7 +46,7 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 ```
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
-The separate `gateway_readiness` test binary uses the same explicit OpenTofu/provider paths and local engine and OpenShell fixtures.
+The `gateway_readiness::` tests use the same explicit OpenTofu/provider paths with local engine and OpenShell fixtures.
 It checks prompt managed-gateway exit diagnostics, bootstrap state retained after failure, corrected retry, unchanged-apply rechecks, and teardown with the readiness data source omitted.
 Its bootstrap identity is a built-in OpenTofu resource; it creates no live container.
 Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
@@ -99,7 +99,7 @@ On failure, inspect the OpenTofu diagnostic and verify that the selected provide
 
 ## Standalone Service Readiness
 
-On Unix with `python3` on `PATH`, build the production provider as above and run from the repository root:
+On Unix, build the production provider as above and run from the repository root:
 
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
@@ -296,7 +296,7 @@ Fabric owns native tool configuration and enforcement tests.
 
 ## OpenClaw Interface Lifecycle
 
-Run `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary with the verified bundle environment above.
+Run `deployment::openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` with the verified bundle environment above.
 It checks retained authored intent and deployment observation failures.
 Native listener and authentication tests belong to Fabric's OpenClaw adapter.
 
@@ -315,7 +315,7 @@ Fabric owns native service startup, authentication, configuration and protocol c
 
 ### Hermes Interface Modes
 
-Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with the verified bundle environment above.
+Run `deployment::hermes_interfaces_sdk_export_reapply_and_drift` with the verified bundle environment above.
 It checks retained public configuration and deployment observation failures; it does not establish native service health.
 
 ## Hermes Relay Tracing Fixture
