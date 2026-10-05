@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   normalizeNativeHostedProviderAttachment,
   type NativeHostedProviderAttachment,
@@ -7,8 +10,6 @@ import {
   retainNativeHostedProviderAuthority,
 } from "../../inference/native-hosted/authority";
 import { isValidNativeProviderGateway as isValidName } from "./native-nvidia-provider-authority-state";
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
 
 import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import {
@@ -16,6 +17,7 @@ import {
   readNativeNvidiaProviderAuthority,
   removeNativeNvidiaProviderAuthority as applyRemoveNativeNvidiaProviderAuthority,
 } from "./native-nvidia-provider-authority-state";
+import type { SandboxRegistry } from "./types";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
 
@@ -43,7 +45,20 @@ export function setNativeNvidiaProviderAuthority(
 export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
   withLock(() => {
     const data = load();
-    if (!applyRemoveNativeNvidiaProviderAuthority(data, gatewayName)) return;
+    let changed = applyRemoveNativeNvidiaProviderAuthority(data, gatewayName);
+    for (const [sandboxName, sandbox] of Object.entries(data.sandboxes)) {
+      if (
+        sandbox.gatewayName !== gatewayName ||
+        sandbox.nativeNvidiaProviderAuthority === undefined
+      ) {
+        continue;
+      }
+      const { nativeNvidiaProviderAuthority: _removedAuthority, ...retained } = sandbox;
+      data.sandboxes[sandboxName] = retained;
+      changed = true;
+    }
+    changed = removeHostedAuthority(data, gatewayName, "nemoclaw-nvidia-inference-v1") || changed;
+    if (!changed) return;
     save(data);
   });
 }
@@ -82,14 +97,38 @@ export function clearNativeHostedProviderAuthority(gatewayName: string, profileI
   if (!isValidName(gatewayName)) return;
   withLock(() => {
     const data = load();
-    const previous = data.gatewayNativeHostedProviderAuthorities?.[gatewayName];
-    if (!previous?.some((receipt) => receipt.profileId === profileId)) return;
+    if (removeHostedAuthority(data, gatewayName, profileId)) save(data);
+  });
+}
+
+function removeHostedAuthority(
+  data: SandboxRegistry,
+  gatewayName: string,
+  profileId: string,
+): boolean {
+  let changed = false;
+  const previous = data.gatewayNativeHostedProviderAuthorities?.[gatewayName];
+  if (previous?.some((receipt) => receipt.profileId === profileId)) {
     const next = { ...data.gatewayNativeHostedProviderAuthorities };
     const retained = previous.filter((receipt) => receipt.profileId !== profileId);
     if (retained.length) next[gatewayName] = retained;
     else delete next[gatewayName];
     if (Object.keys(next).length) data.gatewayNativeHostedProviderAuthorities = next;
     else delete data.gatewayNativeHostedProviderAuthorities;
-    save(data);
-  });
+    changed = true;
+  }
+  for (const sandbox of Object.values(data.sandboxes)) {
+    if (
+      sandbox.gatewayName !== gatewayName ||
+      !sandbox.nativeHostedProviderAuthorities?.some((receipt) => receipt.profileId === profileId)
+    )
+      continue;
+    const retained = sandbox.nativeHostedProviderAuthorities.filter(
+      (receipt) => receipt.profileId !== profileId,
+    );
+    if (retained.length) sandbox.nativeHostedProviderAuthorities = retained;
+    else delete sandbox.nativeHostedProviderAuthorities;
+    changed = true;
+  }
+  return changed;
 }

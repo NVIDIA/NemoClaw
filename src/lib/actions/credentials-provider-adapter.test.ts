@@ -1070,10 +1070,51 @@ describe("credential actions use typed OpenShell provider results", () => {
     },
   );
 
+  it.each(NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"))(
+    "clears $label ownership when reset confirms the provider is already absent",
+    async (profile) => {
+      const clear = vi.fn();
+      const adapter = providerAdapter({
+        deleteProvider: vi.fn(async () => ({
+          ok: false as const,
+          error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
+        })),
+      });
+      const result = await runCredentialsResetAction(
+        { provider: profile.logicalProvider, confirmed: true },
+        { providerAdapter: adapter, clearNativeHostedProviderAuthority: clear },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(clear).toHaveBeenCalledExactlyOnceWith("nemoclaw", profile.profileId);
+    },
+  );
+
   it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
     const clearNativeNvidiaProviderAuthority = vi.fn();
     const adapter = providerAdapter({
       deleteProvider: vi.fn(async () => ({ ok: true as const })),
+    });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      { providerAdapter: adapter, clearNativeNvidiaProviderAuthority },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+  });
+
+  it("clears native NVIDIA authority when the provider is already absent", async () => {
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const adapter = providerAdapter({
+      deleteProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "not_found" as const,
+          message: "provider not found",
+        },
+      })),
     });
 
     const result = await runCredentialsResetAction(

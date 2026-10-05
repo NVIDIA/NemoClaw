@@ -1003,7 +1003,7 @@ describe("CLI OpenShell provider adapter", () => {
     ...[
       { path_template: "/credential/{api_key}" },
       { token_grant: { token_endpoint: "https://other.example.com/token" } },
-    ].map((boundary) => [
+    ].map<[string, unknown]>((boundary) => [
       Object.keys(boundary).join(),
       {
         ...TAVILY_PROFILE,

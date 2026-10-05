@@ -64,7 +64,21 @@ describe("sandbox registry normalization", () => {
       registry.setNativeHostedProviderAuthority("first", { ...openai, providerId: "foreign" }),
     ).toThrow("Conflicting native provider ownership receipts");
     expect(registry.getNativeHostedProviderAuthority("first", openai.profileId)).toEqual(openai);
+    registry.registerSandbox({
+      name: "retired",
+      gatewayName: "first",
+      provider: "ollama-local",
+      nativeHostedProviderAuthorities: [openai, anthropic],
+    });
+    registry.registerSandbox({
+      name: "other",
+      gatewayName: "second",
+      provider: "ollama-local",
+      nativeHostedProviderAuthorities: [openai],
+    });
     registry.clearNativeHostedProviderAuthority("first", openai.profileId);
+    expect(registry.getSandbox("retired")?.nativeHostedProviderAuthorities).toEqual([anthropic]);
+    expect(registry.getSandbox("other")?.nativeHostedProviderAuthorities).toEqual([openai]);
     expect(registry.getNativeHostedProviderAuthority("first", openai.profileId)).toBeUndefined();
     expect(registry.getNativeHostedProviderAuthority("first", anthropic.profileId)).toEqual(
       anthropic,
@@ -143,7 +157,30 @@ describe("sandbox registry normalization", () => {
     };
     const { registry } = await loadRegistryDocument({
       defaultSandbox: null,
-      sandboxes: {},
+      sandboxes: {
+        alpha: {
+          name: "alpha",
+          gatewayName: "nemoclaw-19080",
+          provider: "openai-api",
+          nativeNvidiaProviderAuthority: receipt,
+        },
+        beta: {
+          name: "beta",
+          gatewayName: "nemoclaw-19080",
+          provider: "nvidia-prod",
+          nativeNvidiaProviderAttachment: receipt,
+          nativeNvidiaProviderAuthority: receipt,
+        },
+        gamma: {
+          name: "gamma",
+          gatewayName: "nemoclaw-19081",
+          provider: "openai-api",
+          nativeNvidiaProviderAuthority: {
+            ...receipt,
+            providerId: "22222222-3333-4444-8555-666666666666",
+          },
+        },
+      },
       nativeNvidiaProviderAuthorities: {
         broken: { ...receipt, providerId: "" },
         "nemoclaw-19080": receipt,
@@ -162,6 +199,14 @@ describe("sandbox registry normalization", () => {
     });
     registry.clearNativeNvidiaProviderAuthority("nemoclaw-19080");
     expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toBeUndefined();
+    expect(registry.getSandbox("alpha")?.nativeHostedProviderAuthorities).toBeUndefined();
+    expect(registry.getSandbox("beta")?.nativeNvidiaProviderAuthority).toBeUndefined();
+    expect(registry.getSandbox("beta")?.nativeHostedProviderAttachment).toEqual(receipt);
+    expect(registry.getSandbox("gamma")?.nativeHostedProviderAuthorities).toEqual([
+      expect.objectContaining({
+        providerId: "22222222-3333-4444-8555-666666666666",
+      }),
+    ]);
   });
 
   it("persists incomplete OpenClaw synchronization until explicit completion", async () => {

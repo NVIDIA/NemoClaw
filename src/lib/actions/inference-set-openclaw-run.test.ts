@@ -205,6 +205,50 @@ describe("runInferenceSet OpenClaw routing", () => {
     );
   });
 
+  it("creates a new native NVIDIA provider after reset removes retained authority", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-openai-inference-v1",
+          providerName: "nemoclaw-openai-api-v1",
+          providerId: "openai-owned",
+        },
+      },
+      resolveCredentialValue: () => "replacement-credential",
+    });
+    const createProvider = vi.spyOn(deps.providerAdapter, "createProvider");
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+    expect(createProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "nemoclaw-nvidia-prod-v1",
+      type: "nemoclaw-nvidia-inference-v1",
+      credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "replacement-credential" }],
+      config: [],
+      fromExisting: false,
+    });
+    const receipt = expect.objectContaining({
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "id-nemoclaw-nvidia-prod-v1",
+    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeHostedProviderAttachment: receipt,
+        nativeHostedProviderAuthorities: expect.arrayContaining([receipt]),
+      }),
+    );
+  });
+
   it("detaches previous native access before publishing another provider", async () => {
     const deps = createDeps({
       config: {
