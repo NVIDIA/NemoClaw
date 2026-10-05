@@ -28,6 +28,21 @@ function exactInspect(running = true, sandboxName = "alpha"): string {
 }
 
 describe("Docker privileged exact target", () => {
+  it("bounds direct target discovery by the caller's remaining deadline", () => {
+    mocks.dockerCapture.mockReturnValue(`${CONTAINER_ID}\topenshell-default--alpha-sandbox-id`);
+    const control = createDockerPrivilegedSandboxControl();
+
+    expect(
+      control.resolveTarget({
+        sandbox: { name: "alpha", openshellDriver: "docker" },
+        sandboxName: "alpha",
+        registeredSandboxNames: ["alpha"],
+        timeoutMs: 1_250,
+      }),
+    ).toEqual({ providerId: "docker", resourceHandle: CONTAINER_ID });
+    expect(mocks.dockerCapture).toHaveBeenCalledWith(expect.any(Array), { timeout: 1_250 });
+  });
+
   it("executes in the pinned running replacement without mutable-name discovery (#11905)", () => {
     mocks.dockerCapture.mockReturnValue(exactInspect());
     const control = createDockerPrivilegedSandboxControl();
