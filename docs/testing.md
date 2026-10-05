@@ -19,9 +19,9 @@ The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and
 Each workflow step calls the same command, so the local result matches the platform's CI job.
 It does not run the image, documentation, or dependency workflows, or another platform's job.
 
-On Linux with a local Docker engine, `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
+On Linux with a local Docker engine that uses the [containerd image store](build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
 Run `cargo ci build` and `cargo ci bundle` first.
-The step pulls the pinned OpenShell and Ollama images, builds a Pi agent image and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
+The step pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
 It then runs the `live-docker` nextest profile: the Ollama cache, runtime archive, offline runtime rebuild, standalone cache, Docker proxy, gateway recovery, gateway isolation, and profile revision tests, one at a time.
 Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
 It requests no inference and needs no GPU or credentials.

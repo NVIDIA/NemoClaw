@@ -125,17 +125,23 @@ fn prepare(
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the live-test images")?;
     let prefix = format!("nc-live-{}", nemoclaw_build::hex(&nonce));
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    // Pi provides python3, sha256sum and node, which every test needs.
-    owned.images.push(format!("{prefix}:pi"));
+    // Every test needs python3, sha256sum and node. Pi has them and is the
+    // smaller image, but is built only for ARM64; OpenClaw is built for both.
+    let (target, harness) = if platform == "linux_arm64" {
+        ("pi", "nvidia.fabric.pi")
+    } else {
+        ("openclaw", "nvidia.fabric.openclaw")
+    };
+    owned.images.push(format!("{prefix}:{target}"));
     let status = Command::new(std::env::current_exe()?)
-        .args(["images", "build", "--platform", &docker_platform, "pi"])
+        .args(["images", "build", "--platform", &docker_platform, target])
         .env("IMAGE_PREFIX", &prefix)
         .stdin(Stdio::null())
         .status()?;
     if !status.success() {
-        return Err("cannot build the Pi agent image".into());
+        return Err(format!("cannot build the {target} agent image").into());
     }
-    let agent = by_digest(&prefix, "pi")?;
+    let agent = by_digest(&prefix, target)?;
     // Two proxy images with distinct digests, for the image-change check.
     for variant in ["a", "b"] {
         let tag = format!("{prefix}:proxy-{variant}");
@@ -180,7 +186,7 @@ fn prepare(
                 port: live::free_port()?,
                 subnet: &subnet,
                 image: &agent,
-                harness: "nvidia.fabric.pi",
+                harness,
             }),
         )?;
         owned.uids.push(uid);

@@ -44,6 +44,15 @@ jobs:
         run: cargo ci build
       - name: Build and verify native bundle
         run: cargo ci bundle
+      # The tests use local images by digest and load OCI archives, which need
+      # Docker's containerd image store; hosted runners use the classic store.
+      - name: Use the containerd image store
+        run: |
+          config=/etc/docker/daemon.json
+          if [ -s "$config" ]; then current=$(sudo cat "$config"); else current='{}'; fi
+          printf '%s' "$current" | jq '.features["containerd-snapshotter"] = true' | sudo tee "$config" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
       - name: Run Docker live tests
         run: cargo ci live-docker
       - name: Upload live test results
