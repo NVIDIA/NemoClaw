@@ -55,3 +55,14 @@ mod spark;
 mod tls;
 #[path = "web_search.rs"]
 mod web_search;
+
+#[cfg(target_os = "linux")]
+mod existing_ollama;
+#[cfg(target_os = "linux")]
+mod managed_ollama;
+#[cfg(target_os = "linux")]
+mod remote_models;
+#[cfg(target_os = "linux")]
+mod service_images;
+#[cfg(target_os = "linux")]
+mod shared_service;
