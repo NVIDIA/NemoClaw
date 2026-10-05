@@ -13,13 +13,13 @@ The authoring library resolves questions using SDK and Fabric schemas, then prod
 The example TUI and tree printer consume the same resolver.
 No separate journey YAML format is needed for this prototype.
 
-## Domain model
+## Domain Model
 
 The [authoring domain model](authoring-domain.md) defines the concepts, ownership, answer transitions, and validation gates implemented by this prototype.
 Use it to distinguish reusable journey configuration from a mutable run and its computed resolution.
 This page owns the design choices, supported surface, and inspection criteria.
 
-## Partial document
+## Partial Document
 
 Parse authored YAML with the SDK's safe YAML limits into a sparse value tree before constructing `Document`.
 Keep absence distinct from an explicit `null`, an accepted answer, an SDK suggestion, and an intentional omission.
@@ -34,7 +34,7 @@ Report a constraint as pending when a missing discriminator prevents evaluation;
 Reject a supplied value as soon as its applicable constraint is known to fail.
 When all required values are resolved, materialize through `Document::parse` so SDK semantic checks and normalization remain authoritative.
 
-## Question guidance
+## Question Guidance
 
 `ask(field)` prompts even when the partial document supplies a valid value; that value is a suggestion.
 An applicable missing field prompts by default, including optional fields in the supported question surface.
@@ -43,12 +43,13 @@ An applicable missing field prompts by default, including optional fields in the
 Reject `omit` for a required or supplied field, reject other omit scopes, and reject `ask` plus `omit` for the same field or scope.
 Fabric determines which native settings exist, apply, and are required; guidance only controls deliberate prompts and omissions.
 The resolver checks active native settings even when the definition gives no native prompt guidance.
-Keep guidance for a currently unreachable SDK or adapter field and warn in the tree preview instead of rejecting the journey when the field exists in another valid schema branch; it may become reachable after another answer or catalog change. Reject guidance for a field absent from every SDK branch.
+Keep guidance for a currently unreachable SDK or adapter field and warn in the tree preview instead of rejecting the journey when the field exists in another valid schema branch; it may become reachable after another answer or catalog change.
+Reject guidance for a field absent from every SDK branch.
 Re-evaluate the current state after every answer and after a descriptor or target change.
 Keep independent answers and explain any dependent answer that reopens.
 When both the selected route's inference API and model are open, present the API first; either active question may still be answered directly.
 
-## Tree inspection
+## Tree Inspection
 
 Build a deterministic, bounded symbolic question tree from the same resolver used by interactive authoring.
 Branch on finite choices and on the omit choice for an optional question.
@@ -58,7 +59,7 @@ Show the SDK schema and Fabric catalog revisions, unsupported schema constructs,
 The printed tree must not include arbitrary supplied native setting values; it may indicate that a suggestion exists.
 Tree printing reads fixtures only and does not probe or apply resources.
 
-## Delivery status
+## Delivery Status
 
 | Slice | Implemented | Remaining work |
 | --- | --- | --- |
@@ -71,7 +72,7 @@ Tree printing reads fixtures only and does not probe or apply resources.
 Each slice works within the bounded single-sandbox surface.
 The limits below define what broader coverage still requires.
 
-## Inspection scenarios
+## Inspection Scenarios
 
 | Scenario | Inspect in printed tree and state |
 | --- | --- |
@@ -96,7 +97,7 @@ Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repo
 Starting a journey generates a missing deployment uid, so the uid is never a question.
 These previews do not establish complete coverage of arbitrary partial documents.
 
-## Prototype decisions and limits
+## Prototype Decisions and Limits
 
 - The SDK exposes a bounded YAML value parser so sparse authoring input uses the same syntax limits as complete documents.
 - The first partial assessment preserves supplied values and classifies full-schema errors. A compound rule remains deferred unless branch errors prove that adding values cannot satisfy it. The resolver can expand a `oneOf` with a shared required `const` discriminator directly from the SDK schema; this bounded case does not make the assessment a general partial evaluator.
@@ -122,7 +123,7 @@ These previews do not establish complete coverage of arbitrary partial documents
 - SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. A definition may additionally require compatible engine and image observations. `ready_document` rejects any observed target conflict and waits for compatible evidence when the definition requires it; unknown evidence otherwise remains unverified. Observations never change the authored document, and the TUI does not reject a runtime choice based on the author's workstation OS.
 - The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The default-path and per-example TUI tests exercise this path.
 
-## Alignment to the intended model
+## Alignment to the Intended Model
 
 | Design decision | Prototype behavior | Remaining gap |
 | --- | --- | --- |
@@ -132,9 +133,10 @@ These previews do not establish complete coverage of arbitrary partial documents
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance; explicit dependency changes name the answer that reopened a question | A changed external schema can invalidate a value without a specific earlier answer to name. |
 | Visual inspection uses the same resolver | The tree prints current questions and branches over finite choices returned by the resolver | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
 
-The TUI tests cover the default path, every single-sandbox example, mixed local and hosted routes, discovered model choices, and safe delegation; the authoring tests cover the minimum-inline journey. This implementation has not been qualified live against an explicitly configured bundle.
+The TUI tests cover the default path, every single-sandbox example, mixed local and hosted routes, discovered model choices, and safe delegation; the authoring tests cover the minimum-inline journey.
+This implementation has not been qualified live against an explicitly configured bundle.
 
-## Open design questions
+## Open Design Questions
 
 The prototype has not settled these; the rules above stand until one is decided.
 

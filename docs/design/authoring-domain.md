@@ -9,7 +9,7 @@ One run resolves that combination into questions, applies answers, and produces 
 The [onboarding design](onboarding-journeys.md) owns prototype coverage, inspection scenarios, and open design questions.
 The [architecture](architecture.md#configuration) places authoring within the SDK and Fabric boundaries.
 
-## Definition, run, and result
+## Definition, Run, and Result
 
 ```mermaid
 flowchart TD
@@ -53,7 +53,7 @@ The decision record is current decision status, rather than an event log or undo
 The TUI owns its history of state snapshots for Back.
 Journey position is authoring progress; selecting a route chooses which existing route to interview without creating deployment state.
 
-## Configuration and rules
+## Configuration and Rules
 
 The definition controls deliberate review: ask for a deployment name even if the template supplies one, review a schema-discovered family, or leave an absent optional value omitted.
 `JourneySelector::Field` identifies an exact question; `JourneySelector::Scope` selects a supported family through `JourneyScope`.
@@ -75,7 +75,7 @@ For example, an open inference preset suppresses its provider fields and current
 These relationships are built into authoring today, while independent exact-field order comes from the definition.
 The definition does not yet describe arbitrary dependencies or conditional prompt programs.
 
-## Values and decisions are separate
+## Values and Decisions Are Separate
 
 A supplied value answers “what is currently proposed?”
 Decision status answers “how has this run handled its review?”
@@ -93,7 +93,7 @@ A valid supplied value outside deliberate review can satisfy the journey without
 Missing and invalid values are assessment results, not additional `DecisionStatus` variants.
 `DecisionStatus` reports unreviewed, accepted, omitted, or reopened for the current run and route.
 
-## A question can represent an operation
+## A Question Can Represent an Operation
 
 The public question ID connects guidance, presentation, and submitted answers.
 An SDK JSON pointer often identifies a field, but several questions represent broader operations.
@@ -121,7 +121,7 @@ It commits the candidate only after the transition succeeds, so invalid answers 
 Answer transitions own changes and reopening; resolution reads the resulting state.
 The next resolution can also expose a previously accepted value that became invalid under a changed catalog.
 
-## Resolution and validation gates
+## Resolution and Validation Gates
 
 There are several results because supplied-value validity, completed review, and observed compatibility answer different questions.
 They are returned through one journey resolution.
@@ -141,7 +141,7 @@ Successful materialization covers the resolver's supported surface; Fabric's pla
 Without a configured target prerequisite, unknown target compatibility permits ordinary authoring; an observed conflict blocks `ready_document()`.
 An SDK document or a ready authoring result does not establish successful deployment or working inference.
 
-## Evidence and consumer responsibilities
+## Evidence and Consumer Responsibilities
 
 [DiscoveryEvidence](../../crates/nemoclaw-authoring/src/evidence.rs) holds engine and image observations keyed to the selected discovery inputs.
 [AuthoringFacts](../../crates/nemoclaw-authoring/src/facts.rs) holds endpoint, hardware, gateway, and credential-availability observations.
@@ -156,7 +156,7 @@ Authoring owns question resolution and answer transitions; the SDK owns discover
 The [tree printer](../../crates/nemoclaw-authoring/examples/print_journey_tree.rs) explores the same resolver and answer API with finite choices, optional omissions, and bounded symbolic free input.
 It prints a preview with explicit frontiers and limits, rather than storing a separate executable question tree.
 
-## Current boundaries to keep visible
+## Current Boundaries to Keep Visible
 
 - The journey supports one sandbox and known structural forms; it cannot automatically interview every arbitrary incomplete SDK document.
 - String selectors remain the public guidance language even though resolved answer operations are typed internally.
