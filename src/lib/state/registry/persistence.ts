@@ -206,9 +206,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -265,9 +270,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
