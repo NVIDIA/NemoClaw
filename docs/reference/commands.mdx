@@ -221,6 +221,11 @@ It also revalidates the sandbox lifecycle generation, identity, and OpenShell ga
 It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
 A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
 
+The adapter preserves the remote `hermes-acp` exit status, including `255`.
+It reports an SSH transport failure separately when the remote session does not report an exit status.
+If NemoClaw cannot remove its temporary SSH configuration, it reports the retained directory and directs you to remove it before you run `nemoclaw-acp` again.
+That cleanup failure makes an otherwise successful session exit `1`; it does not replace a remote nonzero exit status.
+
 </AgentOnly>
 
 ### `$$nemoclaw completion`
