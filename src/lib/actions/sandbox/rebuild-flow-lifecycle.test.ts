@@ -18,6 +18,7 @@ import {
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
+import { resolveNemoclawStateDir } from "../../state/paths";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 
@@ -262,7 +263,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+  it("recreates with the provider-captured exact GPU before rebuild restore (#10758)", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         sandboxGpuMode: "auto",
@@ -369,17 +370,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ captureStateFile: expect.any(Function) }),
-    );
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+    });
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
       "alpha",
       { gatewayName: "nemoclaw", workspace: "default" },
       [mcpEntry],
-    );
-    expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
@@ -445,7 +442,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
       sandboxName: "alpha",
       kind: "backup",
       runtimeSelection: {
@@ -484,27 +481,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.getSandboxEntry().stopped).toBe(true);
   });
 
-  it("retains removed immutability state when mutable config verification fails", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["permission verification failed"],
-      }),
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
-      stateRecord: "/tmp/shields-alpha.json",
-      recoveryArtifacts: [],
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/state was retained.*mutable config posture was not verified/u);
-
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
-  });
-
   it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {
     const harness = createRebuildFlowHarness({ sandboxEntry: { agent: "pi" } });
     harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
@@ -522,34 +498,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
-  it("rebuilds and retires a legacy Shields record when inner onboarding enforces the record check", async () => {
-    const stateDir = createHarnessTempDir("nemoclaw-rebuild-legacy-shields-record-");
-    fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), "{}\n");
-    const enforceInStateDir = (
-      sandboxName: string,
-      options: { readonly allowStateRecord?: boolean } = {},
-    ) => enforceRemovedImmutabilityMigrationBoundaryReal(sandboxName, { ...options, stateDir });
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      onboard: (_session, options) => {
-        enforceInStateDir("alpha", {
-          allowStateRecord: options.allowRemovedImmutabilityStateRecord === true,
-        });
-      },
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(enforceInStateDir);
+  it("rebuilds and removes a legacy Shields record when inner onboarding enforces the record check", async () => {
+    const recordPath = path.join(resolveNemoclawStateDir(), "shields-alpha.json");
+    fs.mkdirSync(path.dirname(recordPath), { recursive: true });
+    fs.writeFileSync(recordPath, "{}\n");
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {},
+        onboard: (_session, options) => {
+          enforceRemovedImmutabilityMigrationBoundaryReal("alpha", {
+            allowStateRecord: options.allowRemovedImmutabilityStateRecord === true,
+          });
+        },
+      });
+      harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
+        enforceRemovedImmutabilityMigrationBoundaryReal,
+      );
+      harness.retireRemovedImmutabilityStateRecordSpy.mockRestore();
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
 
-    expect(harness.onboardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ allowRemovedImmutabilityStateRecord: true }),
-    );
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
-      "alpha",
-      "mutable-rebuild",
-    );
+      expect(fs.existsSync(recordPath)).toBe(false);
+    } finally {
+      fs.rmSync(recordPath, { force: true });
+    }
   });
 
   it("keeps a sandbox with a legacy Shields record and prints replacement steps when backup reads are denied", async () => {
@@ -560,17 +534,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     });
     harness.backupSandboxStateSpy.mockReturnValue({
       success: false,
-      backedUpDirs: ["workspace"],
-      failedDirs: ["credentials"],
-      failedDirReasons: { credentials: "permission denied" },
+      backedUpDirs: [],
+      failedDirs: ["."],
+      failedDirReasons: { ".": "permission denied" },
       backedUpFiles: [],
       failedFiles: [],
-      manifest: {
-        agentType: "openclaw",
-        dir: "/sandbox/.openclaw",
-        backupPath: harness.backupPath,
-        timestamp: "2026-06-01T00:00:00.000Z",
-      },
+      error:
+        "Native home/workspace capture failed: tar: ./.openclaw/credentials: Cannot open: Permission denied",
     });
 
     await expect(
@@ -578,8 +548,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow("Failed to back up sandbox state");
 
     const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("wrong ownership or permissions");
     expect(errors).toContain(
-      "Sandbox 'alpha' has a state record from the removed Shields feature.",
+      "Sandbox 'alpha' also has a state record from the removed Shields feature.",
     );
     expect(errors).toContain("alpha download <sandbox-path> <host-dir>");
     expect(harness.onboardSpy).not.toHaveBeenCalled();

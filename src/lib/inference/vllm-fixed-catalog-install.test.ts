@@ -326,6 +326,37 @@ describe("fixed catalog vLLM installs", () => {
     );
   }
 
+  it.each(["automatic", "picker", "resume"] as const)(
+    "installs the bounded Spark recipe through %s selection at the reported 64 GB capacity",
+    async (mode) => {
+      const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const readinessReports = vllmInstallTestReadinessAtMemory(profile, 61_614_325_760);
+      await withActualSelectionGuard(readinessReports);
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: mode !== "picker",
+        promptFn: vi.fn(async (question: string) => (question.includes("Continue") ? "y" : "1")),
+        ...(mode === "resume" ? { modelIntent: "qwen3.6-35b-a3b-nvfp4" } : {}),
+        readinessReports,
+      });
+
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
+      );
+      expect(spies.logSpy).toHaveBeenCalledWith("    Context limit: 32768 tokens");
+      expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+      const command = mocks.dockerRunDetached.mock.calls[0]![0].at(-1) as string;
+      expect(command).toContain("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4");
+      expect(command).toContain("--max-model-len 32768");
+      expect(command).toContain("--max-num-seqs 1");
+      expect(command).toContain("--max-num-batched-tokens 4096");
+      expect(command).toContain("--gpu-memory-utilization 0.5");
+    },
+  );
+
   it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const modelIntent = "muse-glimmer-30b";

@@ -38,9 +38,6 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:download",
   "sandbox:logs",
   "sandbox:rebuild",
-  "sandbox:snapshot",
-  "sandbox:snapshot:create",
-  "sandbox:snapshot:list",
   "sandbox:status",
   "sandbox:stop",
 ]);
@@ -178,8 +175,7 @@ export abstract class NemoClawCommand extends Command {
     if (
       typeof commandId !== "string" ||
       (commandId !== "launch" && !commandId.startsWith("sandbox:")) ||
-      !portablePolicy ||
-      portablePolicy.multiSandboxLifecycle
+      !portablePolicy
     ) {
       return null;
     }

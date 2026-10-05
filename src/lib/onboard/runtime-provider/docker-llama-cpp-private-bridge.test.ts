@@ -16,6 +16,7 @@ import {
 import {
   createLlamaCppPrivateBridgeServer,
   parseLlamaCppPrivateBridgeArguments,
+  runLlamaCppPrivateBridge,
 } from "./docker-llama-cpp-private-bridge-process";
 
 const TRANSACTION = "9".repeat(64);
@@ -322,6 +323,40 @@ async function close(server: http.Server): Promise<void> {
     server.close((error) => (error ? reject(error) : resolve()));
   });
 }
+
+it("closes both bridge listeners when one address cannot bind (#12285)", async () => {
+  const servers = [http.createServer(), http.createServer()];
+  const port = await listen(servers[0]!);
+  await close(servers[0]!);
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const originalListeners = signals.map((signal) => process.listeners(signal));
+  const registerSignal = vi.spyOn(process, "once");
+  vi.spyOn(http, "createServer").mockReturnValueOnce(servers[0]!).mockReturnValueOnce(servers[1]!);
+
+  try {
+    await expect(
+      runLlamaCppPrivateBridge(
+        { ...authority, listenPort: port, bindAddresses: ["127.0.0.1", "127.0.0.1"] },
+        API_KEY,
+      ),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+    expect(servers.map((server) => server.listening)).toEqual([false, false]);
+    expect(signals.map((signal) => process.listeners(signal))).toEqual(originalListeners);
+  } finally {
+    servers[0]!.closeAllConnections();
+    servers[0]!.close();
+    servers[1]!.closeAllConnections();
+    servers[1]!.close();
+    process.removeListener(
+      "SIGINT",
+      registerSignal.mock.calls.find(([event]) => event === "SIGINT")![1],
+    );
+    process.removeListener(
+      "SIGTERM",
+      registerSignal.mock.calls.find(([event]) => event === "SIGTERM")![1],
+    );
+  }
+});
 
 async function request(
   port: number,

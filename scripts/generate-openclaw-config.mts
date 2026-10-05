@@ -83,7 +83,7 @@ const MANAGED_INFERENCE_HOSTNAME = "inference.local";
 // NemoClaw hands off this config.
 // NemoClaw does not own that runtime, so this is a generator-side mitigation,
 // not a source fix.
-// The runtime-overrides E2E validates this object with the pinned OpenClaw CLI;
+// The managed-image security E2E loads this value through the pinned OpenClaw CLI;
 // that does not prove live token reduction, so keep #4781 open. Remove this
 // override only after a newer pinned OpenClaw runtime has managed-inference
 // regression evidence that `/compact` completes and leaves a no-larger active
@@ -127,13 +127,12 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
-// The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
-// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
-// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
+// The managed image preinstalls these optional plugins and keeps them disabled until selected.
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
+  "tavily",
 ] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);

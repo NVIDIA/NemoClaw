@@ -9,6 +9,8 @@
 // recorded `provider`/`model`, leaving the sandbox rebuild to fail with an
 // authentication error (#3278).
 
+import { getRemoteProviderConfigForName } from "./inference-providers/provider-selection-keys";
+
 export type RemoteProviderConfigEntry = {
   label: string;
   providerName: string;
@@ -48,20 +50,6 @@ export type ResumeProviderRecoveryResult = {
   forceInferenceSetup: boolean;
   credentialEnv: string | null;
 };
-
-/**
- * Resolve a persisted OpenShell provider name back to its onboard provider config.
- */
-export function getRemoteProviderConfigForName(
-  provider: string | null | undefined,
-  remoteProviderConfig: Record<string, RemoteProviderConfigEntry>,
-): RemoteProviderConfigEntry | null {
-  if (!provider) return null;
-  if (provider === "nvidia-nim") return remoteProviderConfig.build;
-  return (
-    Object.values(remoteProviderConfig).find((entry) => entry.providerName === provider) || null
-  );
-}
 
 /**
  * Choose the credential env used to recreate a missing provider during resume.

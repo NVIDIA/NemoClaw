@@ -94,6 +94,7 @@ export {
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
 export {
   getSandboxAcrossGatewayRoots,
+  hasSandboxLifecycleAuthority,
   recordSandboxStopIntentAcrossGatewayRoots,
 } from "./registry/cross-port";
 export type {
@@ -538,6 +539,7 @@ export function registerSandbox(
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      dashboardExternalUrl: entry.dashboardExternalUrl ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,

@@ -63,7 +63,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Generate E2E target matrix": {
     INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     NEMOCLAW_GATEWAY_RUNTIMES:
-      "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
     JOBS: "${{ inputs.jobs }}",
     TARGETS: "${{ inputs.targets }}",
     EVENT_NAME: "${{ github.event_name }}",
@@ -71,7 +71,6 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
     CANDIDATE_SHA: "${{ github.sha }}",
     NEMOCLAW_E2E_CREDENTIALS_ALLOWED:
       "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}",
-    NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: "${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}",
   },
   "Stage immutable native Podman E2E toolchains": {},
 };
