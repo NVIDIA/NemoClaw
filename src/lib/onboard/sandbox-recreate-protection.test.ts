@@ -27,10 +27,12 @@ describe("createSandboxRecreateProtection", () => {
       failureKind: "none" as const,
     };
     const backupSandboxBeforeRecreate = vi.fn(() => backupResult);
+    const getSandbox = vi.fn(() => sandboxEntry);
     const protection = createSandboxRecreateProtection(
       {
         sandboxName: "my-assistant",
         sandboxEntry,
+        getSandbox,
         note,
       },
       {
@@ -87,6 +89,7 @@ describe("createSandboxRecreateProtection", () => {
     expect(protection.backup()).toBe(backupResult);
     expect(backupSandboxBeforeRecreate).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
+      getSandbox,
     });
   });
 
@@ -111,6 +114,7 @@ describe("createSandboxRecreateProtection", () => {
         {
           sandboxName: "my-assistant",
           sandboxEntry: { name: "my-assistant" },
+          getSandbox: () => ({ name: "my-assistant" }),
           note: vi.fn(),
         },
         {

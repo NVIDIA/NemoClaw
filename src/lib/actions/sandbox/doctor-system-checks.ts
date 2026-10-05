@@ -161,13 +161,29 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(_sandboxName: string): DoctorCheck {
-  migrateLegacyCloudflaredState();
-  const state = readCloudflaredState(resolveTunnelPidDir());
+function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `PID ${pid}, identity unavailable`,
+    hint: "process identity is unavailable; restore process inspection access, then retry",
+  };
+}
+
+export function cloudflaredDoctorCheck(
+  _sandboxName: string,
+  readState: typeof readCloudflaredState = readCloudflaredState,
+): DoctorCheck {
+  const usesProductionState = readState === readCloudflaredState;
+  if (usesProductionState) migrateLegacyCloudflaredState();
+  const state = readState(resolveTunnelPidDir());
+  const managedPid =
+    state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"
+      ? state.pid
+      : null;
   const unmanagedPids =
-    state.kind === "running"
-      ? []
-      : findUnmanagedCloudflaredPids(state.kind === "stale-pid-process" ? state.pid : null);
+    usesProductionState && state.kind !== "running" ? findUnmanagedCloudflaredPids(managedPid) : [];
   if (unmanagedPids.length > 0) {
     return {
       group: "Local services",
@@ -184,6 +200,8 @@ export function cloudflaredDoctorCheck(_sandboxName: string): DoctorCheck {
       return staleCloudflaredPidFileCheck();
     case "stale-pid-process":
       return staleCloudflaredPidCheck(state.pid);
+    case "unverified-pid-process":
+      return unverifiedCloudflaredPidCheck(state.pid);
     case "running":
       return {
         group: "Local services",

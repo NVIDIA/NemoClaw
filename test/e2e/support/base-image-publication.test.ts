@@ -264,35 +264,6 @@ describe("base-image publication evidence", () => {
     ).toBe(true);
   });
 
-  it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
-    const calls: string[][] = [];
-    const resolved = resolveFirstParentHistory(EXPECTED_SHA, ["Dockerfile.base"], (args) => {
-      calls.push(args);
-      return historyGitResponse(
-        args,
-        RELEVANT_SHA,
-        `${EXPECTED_SHA}\n${DESCENDANT_SHA}\n${RELEVANT_SHA}\n${STALE_SHA}`,
-      );
-    });
-
-    expect(resolved.relevantSha).toBe(RELEVANT_SHA);
-    expect([...resolved.distanceBySha]).toEqual([
-      [EXPECTED_SHA, 0],
-      [DESCENDANT_SHA, 1],
-      [RELEVANT_SHA, 2],
-    ]);
-    expect(calls[2]).toEqual([
-      "log",
-      "--first-parent",
-      "-n",
-      "1",
-      "--format=%H",
-      EXPECTED_SHA,
-      "--",
-      "Dockerfile.base",
-    ]);
-  });
-
   it("selects the merge commit instead of its side-branch source commit (#7372)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-history-"));
     const git = (...args: string[]) =>

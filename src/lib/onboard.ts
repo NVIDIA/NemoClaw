@@ -650,7 +650,6 @@ const {
   waitForGatewayHttpReadyBase,
   probeGatewayTcpReady,
 });
-
 const {
   getOpenshellBinary,
   openshellShellCommand,
@@ -658,6 +657,8 @@ const {
   runOpenshell,
   runCaptureOpenshell,
   captureOpenshell,
+  inferenceRouteMutator,
+  inferenceRouteObserver,
   gatewayLifecycleAdapter,
   gatewayReuseAdapter,
   getDockerDriverGatewayEndpointArg,
@@ -668,9 +669,9 @@ const {
   },
   getGatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
+  redactDiagnostic: runner.redactFullWithUrls,
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
-
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -680,7 +681,6 @@ const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter(
 });
 const { hasStaleGateway, isGatewayHealthy, getGatewayReuseState } =
   gatewayBinding.createGatewayNameBoundClassifiers(gatewayState, () => GATEWAY_NAME);
-
 const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
   gatewayReuse.createGatewayReuseHelpers({
     gatewayName: () => GATEWAY_NAME,
@@ -688,7 +688,6 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     lifecycle: gatewayLifecycleAdapter,
     cliDisplayName,
   });
-
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
@@ -708,7 +707,6 @@ const { refreshDockerDriverGatewayReuseState } =
     rememberDockerDriverGatewayPid,
     runDockerNetworkInspect: docker.dockerRun,
   });
-
 const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } =
   sandboxReuse.createSandboxReuseHelpers({
     runCaptureOpenshell,
@@ -2305,6 +2303,8 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     step,
     getGatewayName: () => GATEWAY_NAME,
     runOpenshell,
+    inferenceRouteMutator,
+    inferenceRouteObserver,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
@@ -3050,7 +3050,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          rebuildPreservedEnv: opts.rebuildPreservedEnv,
           hostMounts: effectiveHostMounts,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
