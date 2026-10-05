@@ -18,7 +18,7 @@
 # simpler option — from the same DGX in another terminal:
 #   E2E_USERS=5 ./scripts/client.sh
 # Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA overrides to 256. Set MAX_TOKENS only to force a value.
+# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 

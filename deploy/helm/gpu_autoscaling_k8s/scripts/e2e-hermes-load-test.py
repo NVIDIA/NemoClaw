@@ -43,13 +43,24 @@ FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Longer prompts so vLLM GPUs stay busy enough for HPA. Short one-word chats
-# do not move gpu_utilization_percent.
-PROMPTS = [
-    "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
-    "Write a long summary of transformer inference on NVIDIA GPUs.",
-    "Describe how vLLM serves models and batches concurrent chat requests.",
-]
+# GPU util keeps longer answers. Latency (MAX_TOKENS<=128) uses one-sentence
+# prompts so chats stay under ~10s.
+try:
+    _MAX_TOKENS = int(os.environ.get("MAX_TOKENS") or "1024")
+except ValueError:
+    _MAX_TOKENS = 1024
+if _MAX_TOKENS <= 128:
+    PROMPTS = [
+        "In one sentence, what is Kubernetes HPA?",
+        "In one sentence, what is GPU utilization?",
+        "In one sentence, what is vLLM?",
+    ]
+else:
+    PROMPTS = [
+        "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
+        "Write a long summary of transformer inference on NVIDIA GPUs.",
+        "Describe how vLLM serves models and batches concurrent chat requests.",
+    ]
 
 
 def sandbox_name(prefix: str, user_id: int) -> str:

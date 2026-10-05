@@ -121,6 +121,19 @@ def helper_b64() -> str:
     return _HELPER_B64
 
 
+def load_prompt() -> str:
+    try:
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+    except ValueError:
+        max_tokens = 1024
+    if max_tokens <= 128:
+        return "In one sentence, what is Kubernetes HPA?"
+    return (
+        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, "
+        "with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long."
+    )
+
+
 def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     try:
         raw = subprocess.check_output(
@@ -144,6 +157,23 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     current = int(parts[0]) if parts and parts[0].isdigit() else 0
     desired = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
     return current, desired
+
+
+def read_hpa_http(host: str, port: int) -> tuple[int, int]:
+    url = f"http://{host}:{port}/hpa"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return 0, 0
+    if not isinstance(data, dict):
+        return 0, 0
+    current = data.get("current")
+    desired = data.get("desired")
+    return (
+        int(current) if isinstance(current, int) or (isinstance(current, str) and str(current).isdigit()) else 0,
+        int(desired) if isinstance(desired, int) or (isinstance(desired, str) and str(desired).isdigit()) else 0,
+    )
 
 
 def hpa_motion(current: int, desired: int) -> str:
@@ -380,10 +410,11 @@ async def simulate_user_http(
     env["E2E_SESSION_KEY"] = f"agent:main:{sandbox}"
     env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
     env["E2E_ESCALATE_FACTOR"] = "0.35"
+    env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         str(HELPER_PATH),
-        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        load_prompt(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
@@ -467,6 +498,7 @@ async def simulate_user(
         "unset OPENCLAW_GATEWAY_TOKEN || true; "
         "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
+        "MAX_TOKENS=\"$8\" "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
         "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
         "bash -c 'exec -a e2e-openclaw-load python3 -'"
@@ -485,12 +517,13 @@ async def simulate_user(
         script,
         "bash",
         helper_b64(),
-        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        load_prompt(),
         str(duration_sec),
         str(inflight_start),
         str(inflight),
         str(timeout_sec),
         f"agent:main:{sandbox}",
+        str(os.environ.get("MAX_TOKENS") or "1024"),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -584,12 +617,17 @@ async def run_test(args: argparse.Namespace) -> int:
     print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
 
-    skip_hpa = bool(args.chat_only or endpoints)
+    skip_hpa = bool(args.chat_only and not args.host)
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, hold_started
         while not stop_load.is_set():
-            current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
+            if args.host:
+                current, desired = await asyncio.to_thread(
+                    read_hpa_http, args.host, args.discovery_port
+                )
+            else:
+                current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
             max_replicas = max(max_replicas, current, desired)
             hpa_rows.append(
                 {
@@ -604,7 +642,8 @@ async def run_test(args: argparse.Namespace) -> int:
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     stop_load.set()
-                    await asyncio.to_thread(stop_sandbox_chats, args.prefix, args.users)
+                    if not args.host:
+                        await asyncio.to_thread(stop_sandbox_chats, args.prefix, args.users)
                     return
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)

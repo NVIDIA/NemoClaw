@@ -271,12 +271,25 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     interval = float(os.environ.get("E2E_ESCALATE_INTERVAL_SEC", "15"))
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
-    prompts = [
-        prompt
-        or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
-        "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
-        "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
-    ]
+    # Latency HPA: short answers stay under ~10s (5 users on 1 GPU). The
+    # 2000-word prompts fill MAX_TOKENS and hold 18–40s during scale-up.
+    try:
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+    except ValueError:
+        max_tokens = 1024
+    if max_tokens <= 128:
+        prompts = [
+            prompt or "In one sentence, what is Kubernetes HPA?",
+            "In one sentence, what is GPU utilization?",
+            "In one sentence, what is Ollama?",
+        ]
+    else:
+        prompts = [
+            prompt
+            or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+            "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+            "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
+        ]
     stop = threading.Event()
     ok = 0
     err = 0

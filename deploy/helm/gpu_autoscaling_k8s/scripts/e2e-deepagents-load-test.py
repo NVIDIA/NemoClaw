@@ -43,13 +43,24 @@ FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Long answers (config.toml max_tokens=2048) so one dcode -n per sandbox
-# keeps NIM above 40% through the 7→8 HPA step. Short chats go idle first.
-PROMPTS = [
-    "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
-    "Do not use tools. Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
-    "Do not use tools. Write a detailed 2000-word description of how NIM serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
-]
+# GPU util keeps long answers. Latency (MAX_TOKENS<=128) uses one-sentence
+# prompts so chats stay under ~10s.
+try:
+    _MAX_TOKENS = int(os.environ.get("MAX_TOKENS") or "2048")
+except ValueError:
+    _MAX_TOKENS = 2048
+if _MAX_TOKENS <= 128:
+    PROMPTS = [
+        "Do not use tools. In one sentence, what is Kubernetes HPA?",
+        "Do not use tools. In one sentence, what is GPU utilization?",
+        "Do not use tools. In one sentence, what is NIM?",
+    ]
+else:
+    PROMPTS = [
+        "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word description of how NIM serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
+    ]
 
 
 def sandbox_name(prefix: str, user_id: int) -> str:

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +42,40 @@ def main() -> int:
             route = urlparse(self.path).path.rstrip("/") or "/"
             if route == "/clients":
                 body = path.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if route == "/hpa":
+                ns = os.environ.get("NAMESPACE", "nemoclaw-gpu")
+                name = os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy")
+                current, desired = 0, 0
+                try:
+                    raw = subprocess.check_output(
+                        [
+                            "kubectl",
+                            "get",
+                            "hpa",
+                            name,
+                            "-n",
+                            ns,
+                            "-o",
+                            "jsonpath={.status.currentReplicas} {.status.desiredReplicas}",
+                        ],
+                        text=True,
+                        timeout=5,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    parts = raw.split()
+                    if parts and parts[0].isdigit():
+                        current = int(parts[0])
+                    if len(parts) > 1 and parts[1].isdigit():
+                        desired = int(parts[1])
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                    pass
+                body = json.dumps({"current": current, "desired": desired}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
