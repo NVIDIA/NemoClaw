@@ -1196,18 +1196,19 @@ Without `--probe-only`, `connect` does not pull a model itself, but it does insp
 
 
 
-Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
-When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
+For a shared-route provider, before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
+When the live shared route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
 Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow.
-Before it opens SSH, `connect` probes the selected provider path from inside the sandbox with the selected agent's trusted CA and proxy context.
-Shared-route providers use `https://inference.local/v1/models`.
-NVIDIA Endpoints verifies its recorded sandbox-attached provider and probes `https://integrate.api.nvidia.com/v1/models`.
-HTTP `200` through `499` confirms that the route is reachable.
-For a shared-route provider, a recognized broken result lets `connect` attempt DNS or route repair and verify the route again.
-For NVIDIA Endpoints, `connect` does not inspect or change the unrelated shared route.
-When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
+Before it opens SSH for a shared-route provider, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
+HTTP `200` through `499` confirms that the shared route is reachable.
+A recognized broken shared-route result lets `connect` attempt DNS or route repair and verify the route again.
+When the initial shared-route probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
+
+For NVIDIA Endpoints, `connect` does not inspect or change the unrelated shared route.
+It verifies the recorded sandbox-attached provider and sends a native inference request for the selected model.
+The request must return a structurally valid successful inference result before `connect` opens SSH.
 <AgentOnly variant="deepagents">
 After route discovery succeeds, every configured Deep Agents Code route must also serve a valid response to a bounded request for the recorded model.
 A failed model request or missing provider or model metadata stops `connect` before SSH opens.
