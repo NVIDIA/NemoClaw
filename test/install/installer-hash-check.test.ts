@@ -27,9 +27,17 @@ import {
   V00116_CHECKSUM_MANIFESTS,
   V00116_SANDBOX_BUILD_DIGESTS,
   v00116Pins,
+  V012_ASSET_DIGESTS,
+  V012_CHECKSUM_MANIFESTS,
+  V012_SANDBOX_BUILD_DIGESTS,
+  V012_TEMPLATE_DIGESTS,
+  V012_TRUST_MUTATIONS,
+  v012Pins,
 } from "../helpers/openshell-release-fixtures";
 import {
   addV00106OperationalTrust,
+  extractPreparedRelease,
+  prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
@@ -393,6 +401,7 @@ const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.103", V00103_CHECKSUM_MANIFESTS],
   ["0.0.106", V00106_CHECKSUM_MANIFESTS],
   ["0.0.116", V00116_CHECKSUM_MANIFESTS],
+  ["0.1.2", V012_CHECKSUM_MANIFESTS],
 ]);
 const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_ASSET_DIGESTS],
@@ -400,6 +409,7 @@ const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.103", V00103_ASSET_DIGESTS],
   ["0.0.106", V00106_ASSET_DIGESTS],
   ["0.0.116", V00116_ASSET_DIGESTS],
+  ["0.1.2", V012_ASSET_DIGESTS],
 ]);
 const trustAlternateRelease = (source: string): string => {
   const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
@@ -594,7 +604,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
         ? removeV00106OperationalTrust(withPinFunction)
         : withPinFunction;
   const releaseTemplate =
-    openshellVersion === "0.0.116"
+    openshellVersion === "0.0.116" || openshellVersion === "0.1.2"
       ? operationalTemplate.replace(STABLE_GNU_SANDBOX_SELECTOR, STABLE_MUSL_SANDBOX_SELECTOR)
       : removeV00116SandboxBuildTrust(operationalTemplate);
   const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
@@ -615,9 +625,11 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
           ? V00106_SANDBOX_BUILD_DIGESTS
           : openshellVersion === "0.0.116"
             ? V00116_SANDBOX_BUILD_DIGESTS
-            : openshellVersion === "9.9.9"
-              ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
-              : undefined;
+            : openshellVersion === "0.1.2"
+              ? V012_SANDBOX_BUILD_DIGESTS
+              : openshellVersion === "9.9.9"
+                ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
+                : undefined;
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
     ? releaseTemplate
@@ -625,7 +637,9 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
-  const selected = BREV_TEMPLATE.replace(
+  const template =
+    openshellVersion === "0.1.2" ? BREV_TEMPLATE : BREV_TEMPLATE.replaceAll("0.1.2", "0.0.116");
+  const selected = template.replace(
     /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,
     `$1v${openshellVersion}$2`,
   );
@@ -656,8 +670,18 @@ function createFixture(
   const checksumManifests =
     CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
-  const installerPins = openshellVersion === "0.0.116" ? v00116Pins("installer") : undefined;
-  const brevPins = openshellVersion === "0.0.116" ? v00116Pins("Brev launchable") : undefined;
+  const installerPins =
+    openshellVersion === "0.0.116"
+      ? v00116Pins("installer")
+      : openshellVersion === "0.1.2"
+        ? v012Pins("installer")
+        : undefined;
+  const brevPins =
+    openshellVersion === "0.0.116"
+      ? v00116Pins("Brev launchable")
+      : openshellVersion === "0.1.2"
+        ? v012Pins("Brev launchable")
+        : undefined;
   const installerAssets =
     installerPins?.map(({ asset }) => asset) ??
     (openshellVersion === "9.9.9" ? SYNTHETIC_INSTALLER_ASSETS : INSTALLER_ASSETS);
@@ -970,6 +994,83 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
+  it("verifies the published OpenShell 0.1.2 release assets", () => {
+    expectTrustedRelease(
+      runFixture("complete", "0.1.2", true),
+      "0.1.2",
+      V012_CHECKSUM_MANIFESTS,
+      V012_ASSET_DIGESTS,
+    );
+  });
+
+  it("accepts the OpenShell 0.1.2 identities through the production extractor", () => {
+    const root = createFixture("0.1.2");
+    prepareReleaseFixtureRuntime(REPO_ROOT, root);
+    const result = extractPreparedRelease(REPO_ROOT, root);
+    expect(result.status, result.stderr).toBe(0);
+    const pins = JSON.parse(result.stdout) as {
+      asset: string;
+      operationalTemplateSha256: string;
+      releaseVersion: string;
+      sha256: string;
+      source: string;
+    }[];
+    const expected = [...v012Pins("installer"), ...v012Pins("Brev launchable")].filter(
+      ({ asset }) => !V012_CHECKSUM_MANIFESTS.has(asset),
+    );
+    expect(pins).toEqual(
+      expected.map((pin) => ({
+        ...pin,
+        operationalTemplateSha256: expect.stringMatching(
+          new RegExp("^(" + V012_TEMPLATE_DIGESTS.get(pin.source)!.join("|") + ")$"),
+        ),
+      })),
+    );
+    const release = extractPreparedRelease(REPO_ROOT, root, "release-tsv");
+    expect(release.status, release.stderr).toBe(0);
+    const rows = release.stdout.trim().split("\n");
+    expect(rows).toEqual([
+      ...[...V012_CHECKSUM_MANIFESTS].map(([asset, contents]) =>
+        [
+          "manifest",
+          "0.1.2",
+          "OpenShell release",
+          asset,
+          createHash("sha256").update(contents).digest("hex"),
+        ].join("\t"),
+      ),
+      [
+        "formula",
+        "0.1.2",
+        "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell.rb",
+        "openshell.rb",
+        V012_ASSET_DIGESTS.get("openshell.rb"),
+      ].join("\t"),
+      ...expected.map((pin) =>
+        ["pin", pin.releaseVersion, pin.source, pin.asset, pin.sha256].join("\t"),
+      ),
+    ]);
+  });
+
+  it.each(V012_TRUST_MUTATIONS)(
+    "rejects an altered OpenShell 0.1.2 %s",
+    (_label, name, value, diagnostic) => {
+      const root = createFixture("0.1.2");
+      prepareReleaseFixtureRuntime(REPO_ROOT, root);
+      const file = path.join(root, name);
+      const before = fs.readFileSync(file, "utf8");
+      expect(before).toContain(value);
+      const replacement = value.startsWith("https:")
+        ? "https://attacker.invalid/"
+        : (value.startsWith("sha256:") ? "sha256:" : "") + "0".repeat(64);
+      fs.writeFileSync(file, before.replace(value, replacement));
+      const result = extractPreparedRelease(REPO_ROOT, root);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(diagnostic);
+      expect(result.stdout).toBe("");
+    },
+  );
+
   it("accepts the complete trusted OpenShell 0.0.116 release identity", () => {
     expectTrustedRelease(
       runFixture("complete", "0.0.116", true),
@@ -984,7 +1085,12 @@ describe("installer hash verification", () => {
     const root = createFixture(version);
     const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
     const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
-    const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
+    const source = fs
+      .readFileSync(path.join(REPO_ROOT, runtimePath), "utf8")
+      .replace(
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
+      );
     const prepared = selectPreparedGatewayRuntime(source).replace(
       /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
       candidatePins.trim(),

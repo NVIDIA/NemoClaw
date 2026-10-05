@@ -2,12 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"`;
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
-  if (version === "0.0.106" || version === "0.0.116") return source;
+  const v012Comment =
+    "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
+    "  # only its exact pinned sandbox artifacts here, not version text alone.\n" +
+    "  # Runtime policy verification still precedes credential/provider changes.\n";
+  if (version !== "0.1.2" && source.includes(v012Comment)) {
+    const fallback =
+      "    local sandbox_digest\n" +
+      '    sandbox_digest="$(file_sha256 "$sandbox_bin")" || return 1\n' +
+      '    if [ "$(pinned_sandbox_build_version "$sandbox_digest")" = "0.1.2" ]; then\n' +
+      "      return 0\n" +
+      "    fi\n";
+    assert.ok(source.includes(fallback), "OpenShell 0.1.2 sandbox fixture fallback");
+    source = source
+      .replace(
+        v012Comment,
+        "  # MCP policy enforcement and credential replacement execute in\n" +
+          "  # openshell-sandbox. When that host artifact is present, require the native\n" +
+          "  # MCP policy marker from that exact binary.\n",
+      )
+      .replace(fallback, "");
+  }
+  if (version === "0.0.106" || version === "0.0.116" || version === "0.1.2") return source;
   const start = source.indexOf(MACOS_METHOD_START);
   const end = source.indexOf(MACOS_METHOD_END, start);
   if (start === -1 || end === -1 || source.indexOf(MACOS_METHOD_START, start + 1) !== -1) {
@@ -73,4 +97,36 @@ export function removeV00106OperationalTrust(source: string): string {
   );
   assert.ok(![capabilityStart, fallbackStart].includes(-1), "v0.0.106 proof boundaries");
   return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
+}
+
+export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): void {
+  const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
+  const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
+  const source = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  const prepared = source.replace(
+    /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
+    candidatePins.trim(),
+  );
+  fs.writeFileSync(path.join(root, runtimePath), prepared);
+}
+
+export function extractPreparedRelease(repoRoot: string, root: string, format = "json") {
+  return spawnSync(
+    "node",
+    [
+      "--no-warnings",
+      path.join(repoRoot, "scripts/checks/extract-installer-pins.mts"),
+      "--blueprint",
+      path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer",
+      path.join(root, "scripts/install-openshell.sh"),
+      "--brev-installer",
+      path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+      "--supervisor-runtime",
+      path.join(root, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+      "--format",
+      format,
+    ],
+    { encoding: "utf8" },
+  );
 }
