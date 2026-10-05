@@ -32,7 +32,7 @@ function createInferenceRouteStatusSetup(options: {
   fs.mkdirSync(localBin, { recursive: true });
   writeSandboxRegistry(home, sandboxName, {
     model: "nvidia/nemotron",
-    provider: "nvidia-prod",
+    provider: "compatible-endpoint",
     // These cases test only inference.local classification. Use the VM driver
     // so Docker post-reboot delivery recovery does not affect their assertions.
     openshellDriver: "vm",
@@ -92,7 +92,7 @@ function createInferenceRouteStatusSetup(options: {
           ]),
       "fi",
       'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-      "  echo 'Provider: nvidia-prod'",
+      "  echo 'Provider: compatible-endpoint'",
       "  echo 'Model: nvidia/nemotron'",
       "  exit 0",
       "fi",
@@ -262,7 +262,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
     ]);
   });
 
-  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", async () => {
+  it("sandbox status --json reports an unknown upstream endpoint as not probed when inference.local is reachable (#6192)", async () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: "OK 200",
       upstreamHttpStatus: "000",
@@ -400,7 +400,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
     );
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, "alpha");
+    writeSandboxRegistry(home, "alpha", { provider: "custom-shared-provider" });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -432,7 +432,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-rpc-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, "alpha");
+    writeSandboxRegistry(home, "alpha", { provider: "custom-shared-provider" });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -465,7 +465,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
     expect(parsed.rpcIssue).toEqual({ kind: "protobuf_mismatch" });
     expect(parsed.inferenceHealth).toBeNull();
     expect(parsed.model).toBe("test-model");
-    expect(parsed.provider).toBe("nvidia-prod");
+    expect(parsed.provider).toBe("custom-shared-provider");
   });
 
   it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", async () => {

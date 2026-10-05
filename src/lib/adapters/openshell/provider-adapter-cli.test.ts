@@ -989,7 +989,6 @@ describe("CLI OpenShell provider adapter", () => {
       ["provider", "profile", "-g", "nemoclaw", "export", "tavily", "--output", "json"],
     ]);
   });
-
   it.each([
     [
       "endpoint",
@@ -1001,6 +1000,19 @@ describe("CLI OpenShell provider adapter", () => {
         ],
       },
     ],
+    ...[
+      { path_template: "/credential/{api_key}" },
+      { token_grant: { token_endpoint: "https://other.example.com/token" } },
+    ].map((boundary) => [
+      Object.keys(boundary).join(),
+      {
+        ...TAVILY_PROFILE,
+        credentials: TAVILY_PROFILE.credentials.map((credential) => ({
+          ...credential,
+          ...boundary,
+        })),
+      },
+    ]),
     ["binary", { ...TAVILY_PROFILE, binaries: [...TAVILY_PROFILE.binaries, "/tmp/widened"] }],
     [
       "credential",

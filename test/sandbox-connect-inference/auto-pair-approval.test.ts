@@ -32,10 +32,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         {
           name: "approval-pass-sb",
           model: "claude-sonnet-4-20250514",
-          provider: "anthropic-prod",
+          provider: "custom-shared-provider",
           gpuEnabled: false,
         },
-        "anthropic-prod",
+        "custom-shared-provider",
         "claude-sonnet-4-20250514",
       );
 
@@ -76,10 +76,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         {
           name: "approval-pass-pol",
           model: "claude-sonnet-4-20250514",
-          provider: "anthropic-prod",
+          provider: "custom-shared-provider",
           gpuEnabled: false,
         },
-        "anthropic-prod",
+        "custom-shared-provider",
         "claude-sonnet-4-20250514",
       );
 
@@ -143,10 +143,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       {
         name: "approval-tmp-tamper",
         model: "claude-sonnet-4-20250514",
-        provider: "anthropic-prod",
+        provider: "custom-shared-provider",
         gpuEnabled: false,
       },
-      "anthropic-prod",
+      "custom-shared-provider",
       "claude-sonnet-4-20250514",
     );
     const maliciousPolicy = [
@@ -193,10 +193,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         {
           name: "approval-tolerant",
           model: "claude-sonnet-4-20250514",
-          provider: "anthropic-prod",
+          provider: "custom-shared-provider",
           gpuEnabled: false,
         },
-        "anthropic-prod",
+        "custom-shared-provider",
         "claude-sonnet-4-20250514",
       );
 

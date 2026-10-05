@@ -16,7 +16,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         {
           name: "my-sandbox",
           model: "claude-sonnet-4-20250514",
-          provider: "anthropic-prod",
+          provider: "custom-shared-provider",
           gpuEnabled: false,
         },
         "nvidia-prod",
@@ -34,7 +34,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "nemoclaw",
         "--no-verify",
         "--provider",
-        "anthropic-prod",
+        "custom-shared-provider",
         "--model",
         "claude-sonnet-4-20250514",
       ]);
@@ -42,7 +42,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       // Override must be loud (#3726), not a silent status-style line.
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("differs from the recorded route");
-      expect(combined).toContain("Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514");
+      expect(combined).toContain(
+        "Aligning the gateway to custom-shared-provider/claude-sonnet-4-20250514",
+      );
     },
   );
 

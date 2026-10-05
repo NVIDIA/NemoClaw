@@ -84,7 +84,7 @@ describe.concurrent("CLI sandbox status text output", () => {
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "alpha", {
       agent: "missing-terminal-agent",
-      provider: "openai-api",
+      provider: "custom-shared-provider",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
     });
@@ -101,7 +101,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: openai-api'",
+        "  echo '  Provider: custom-shared-provider'",
         "  echo '  Model: gpt-4o-mini'",
         "  exit 0",
         "fi",
@@ -138,7 +138,7 @@ describe.concurrent("CLI sandbox status text output", () => {
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "dcode-station", {
       agent: "langchain-deepagents-code",
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "nvidia/nemotron-3-super-120b-a12b",
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
@@ -156,7 +156,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Provider: custom-shared-provider'",
         "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
         "  exit 0",
         "fi",
@@ -271,7 +271,7 @@ describe.concurrent("CLI sandbox status text output", () => {
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "alpha", {
-      provider: "openai-api",
+      provider: "compatible-endpoint",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
     });
@@ -285,7 +285,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: openai-api'",
+        "  echo '  Provider: compatible-endpoint'",
         "  echo '  Model: gpt-4o-mini'",
         "  exit 0",
         "fi",
@@ -312,7 +312,7 @@ describe.concurrent("CLI sandbox status text output", () => {
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("Failure layer: docker_unreachable");
     expect(r.out).toContain("Sandbox: alpha");
-    expect(r.out).toContain("Provider: openai-api");
+    expect(r.out).toContain("Provider: compatible-endpoint");
     expect(r.out).toContain("Model:    gpt-4o-mini");
     expect(r.out).toContain("Inference: healthy (https://inference.local/v1/models)");
     expect(r.out).toContain(

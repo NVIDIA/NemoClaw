@@ -35,7 +35,7 @@ function setupFixture(sandboxName: string, phase: string) {
         [sandboxName]: {
           name: sandboxName,
           model: "nvidia/test-model",
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
           gpuEnabled: false,
         },
       },
@@ -83,7 +83,7 @@ if (args[0] === "policy" && args[1] === "get") {
 }
 
 if (args[0] === "inference" && args[1] === "get") {
-  process.stdout.write("Gateway inference:\\n  Provider: nvidia-prod\\n  Model: nvidia/test-model\\n");
+  process.stdout.write("Gateway inference:\\n  Provider: custom-shared-provider\\n  Model: nvidia/test-model\\n");
   process.exit(0);
 }
 

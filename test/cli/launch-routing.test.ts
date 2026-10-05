@@ -51,7 +51,11 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
   const callArgvFile = path.join(home, "openshell-call-argv");
   const execArgvFile = path.join(home, "openshell-exec-argv");
   fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home, { ...launchReadinessRegistryFixture(), agent });
+  writeSandboxRegistry(home, {
+    ...launchReadinessRegistryFixture(),
+    agent,
+    provider: "custom-shared-provider",
+  });
 
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -81,7 +85,7 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "fi",
       'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
       "  echo 'Gateway inference:'",
-      "  echo '  Provider: nvidia-prod'",
+      "  echo '  Provider: custom-shared-provider'",
       "  echo '  Model: test-model'",
       "  exit 0",
       "fi",

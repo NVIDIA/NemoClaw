@@ -77,7 +77,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, {
       model: "configured-model",
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       gpuEnabled: true,
     });
     fs.writeFileSync(
@@ -97,7 +97,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo",
-        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Provider: custom-shared-provider'",
         "  echo '  Model: live-model'",
         "  exit 0",
         "fi",
@@ -140,9 +140,9 @@ describe("CLI status gateway lifecycle process contracts", () => {
     expect(result.code).toBe(0);
     expect(result.out).toContain("Sandbox: alpha");
     expect(result.out).toContain("Model:    configured-model");
-    expect(result.out).toContain("Provider: nvidia-prod");
+    expect(result.out).toContain("Provider: custom-shared-provider");
     expect(result.out).toContain(
-      "gateway inference route (nvidia-prod/live-model) differs from the recorded route for this sandbox (nvidia-prod/configured-model)",
+      "gateway inference route (custom-shared-provider/live-model) differs from the recorded route for this sandbox (custom-shared-provider/configured-model)",
     );
     expect(result.out).toContain("Inference:");
     expect(result.out).toContain("healthy");

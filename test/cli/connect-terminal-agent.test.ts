@@ -20,6 +20,7 @@ describe("CLI dispatch for terminal agents", () => {
     writeSandboxRegistry(home, {
       ...launchReadinessRegistryFixture(),
       agent: "langchain-deepagents-code",
+      provider: "custom-shared-provider",
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -36,7 +37,7 @@ describe("CLI dispatch for terminal agents", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: test-model'",
+        "  printf '%s\\n' 'Gateway inference:' '  Provider: custom-shared-provider' '  Model: test-model'",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',

@@ -48,7 +48,9 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
       typeof credential.auth_style !== "string" ||
       typeof credential.header_name !== "string" ||
       (credential.query_param !== undefined && typeof credential.query_param !== "string") ||
-      (credential.refresh !== undefined && recordValue(credential.refresh) === null)
+      (credential.refresh !== undefined && recordValue(credential.refresh) === null) ||
+      (credential.path_template !== undefined && typeof credential.path_template !== "string") ||
+      (credential.token_grant !== undefined && recordValue(credential.token_grant) === null)
     ) {
       return null;
     }
@@ -60,6 +62,8 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
       header_name: credential.header_name,
       query_param: credential.query_param,
       refresh: credential.refresh ?? null,
+      path_template: credential.path_template ?? "",
+      token_grant: credential.token_grant ?? null,
     };
   });
   if (credentials.some((credential) => credential === null)) return null;

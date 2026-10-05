@@ -31,7 +31,7 @@ describe("CLI connect readiness", () => {
           alpha: {
             name: "alpha",
             model: "test-model",
-            provider: "nvidia-prod",
+            provider: "custom-shared-provider",
             gpuEnabled: false,
           },
         },
@@ -51,7 +51,7 @@ describe("CLI connect readiness", () => {
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Provider: custom-shared-provider'",
         "  echo '  Model: test-model'",
         "  exit 0",
         "fi",

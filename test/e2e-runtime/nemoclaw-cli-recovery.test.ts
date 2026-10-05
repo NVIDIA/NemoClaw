@@ -34,14 +34,24 @@ describe("nemoclaw CLI runtime recovery", () => {
             "my-assistant": {
               name: "my-assistant",
               model: "nvidia/nemotron-3-super-120b-a12b",
-              provider: "nvidia-prod",
+              provider: "custom-shared-provider",
               gpuEnabled: false,
             },
           },
         }),
         { mode: 0o600 },
       );
-      fs.writeFileSync(stateFile, JSON.stringify({ statusCalls: 0, sandboxGetCalls: 0 }));
+      // Recover the existing disconnected registration through the fallback CLI.
+      // A missing registration would require a real host gateway process.
+      fs.writeFileSync(
+        stateFile,
+        JSON.stringify({
+          statusCalls: 0,
+          sandboxGetCalls: 0,
+          gatewaySelectCalls: 0,
+          gatewayStartCalls: 0,
+        }),
+      );
       fs.writeFileSync(
         openshellPath,
         `#!${process.execPath}
@@ -55,14 +65,21 @@ if (args[0] === "status") {
   state.statusCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   if (state.statusCalls === 1) {
-    process.stdout.write("Error:   × No active gateway\\n");
+    process.stdout.write("Gateway: nemoclaw\\nStatus: Disconnected\\n");
   } else {
     process.stdout.write("Gateway: nemoclaw\\nStatus: Connected\\n");
   }
   process.exit(0);
 }
 
-if (args[0] === "gateway" && (args[1] === "start" || args[1] === "select")) {
+if (args[0] === "gateway" && args[1] === "start") {
+  state.gatewayStartCalls += 1;
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  process.exit(1);
+}
+
+if (args[0] === "gateway" && args[1] === "select") {
+  state.gatewaySelectCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   process.exit(0);
 }
@@ -117,7 +134,10 @@ process.exit(0);
       );
 
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Recovered NemoClaw gateway runtime via (start|select)/);
+      assert.match(result.stdout, /Recovered NemoClaw gateway runtime via select/);
+      const recoveredState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      assert.ok(recoveredState.gatewaySelectCalls > 0);
+      assert.equal(recoveredState.gatewayStartCalls, 0);
       assert.match(result.stdout, /Phase: Ready/);
     },
   );
