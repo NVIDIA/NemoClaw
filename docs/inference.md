@@ -7,8 +7,7 @@ Choose who operates the inference service, then select the API and model used by
 A deployment can select up to 32 inference providers across its sandboxes.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
-The [earlier native-inference attempt](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) records a blocker at its tested OpenShell revision.
-Use the current images and verify your chosen harness and model; historical results do not qualify every supported configuration.
+Use current images and verify your chosen harness and model; passing tests for one combination do not qualify another.
 
 OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
@@ -96,7 +95,7 @@ Service ownership does not depend on the harness; the service must support the [
 The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
 Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
-An accepted example is a configuration contract; [validation records](validation/README.md) identify which combinations completed live inference and at which revision.
+An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
 ## Choose the Request API
 

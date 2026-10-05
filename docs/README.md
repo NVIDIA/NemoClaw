@@ -6,7 +6,6 @@
 These guides describe the v1 development branch.
 Sections marked **TBD** need a verified implementation, test results, or a completed procedure before they can describe supported use.
 TBD is not a support claim or a delivery commitment.
-Use the [validation matrix](validation/README.md) to distinguish tested configurations from checks still required.
 
 ## Get Started
 
@@ -59,7 +58,6 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Run workspace checks and collect coverage | [Tests](testing.md) |
 | Exercise OpenTofu and bundles with local fixtures | [Run integration tests](testing/fixtures.md) |
 | Test explicitly owned live resources | [Run live tests](testing/live.md) |
-| Inspect retained results and their limits | [Recorded test results](validation/README.md) |
 | Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
 | Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
 | Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |

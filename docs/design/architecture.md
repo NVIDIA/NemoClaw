@@ -232,5 +232,4 @@ Export preserves desired settings and credential references, not agent files, hi
 ## Validation
 
 [Integration fixtures](../testing/fixtures.md) exercise the production provider and SDK through the pinned OpenTofu binary, including interrupted operations and failed observations.
-[Recorded results](../validation/README.md) identify tested revisions, platforms, and remaining limits.
 Successful resource creation or readiness does not establish working inference; that requires a separate model or agent response test.

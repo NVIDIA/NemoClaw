@@ -41,7 +41,7 @@ A source-derived provider version prevents reuse of a stale OpenTofu provider in
 To select a target, pass `bundle --platform PLATFORM`.
 The target names are `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64`.
 Building another target requires its Rust standard library, linker, and native SDK.
-[Native validation records](validation/rust-native-platforms.json) identify tested hosts; target selection alone does not qualify a runtime.
+Target selection alone does not qualify a runtime on that platform.
 
 Add the bundle’s `bin` directory to `PATH` and run `nemoclaw --help` to check CLI access.
 Continue with [deployment usage](usage.md).

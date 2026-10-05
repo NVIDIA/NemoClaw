@@ -4,7 +4,7 @@
 # Execution-Engine Assumptions
 
 This reference describes the checked-in engine boundaries.
-The [execution-target design](design/execution-targets.md) explains their rationale and links to validation records.
+The [execution-target design](design/execution-targets.md) explains their rationale.
 Use [the SSH service guide](remote-service.md) for deployment instructions.
 
 “Client host” means the host running the SDK, CLI, provider, or collector.
@@ -32,11 +32,10 @@ A changed bound gateway or credential engine endpoint is rejected; there is no t
 Unavailable or mismatched identity stops the operation.
 The rootless Podman validation found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.
 
-[Managed Podman qualification](validation/rust-managed-podman-linux-arm64.md) covers local rootless Podman 5.8.7 on Linux ARM64 after the OpenShell TLS fix.
+Managed Podman targets local rootless Podman on Linux.
 Its gateway bindings use the retained network UUID together with container identity, volume creation time, and signing keys.
 They do not derive identity from the changing compatibility field, a socket path, or a hostname.
 This is a gateway-specific binding, not a hardware or general inference-engine identity.
-The earlier [native Podman test results](validation/rust-podman-rootless-linux-arm64.json) cover an external OpenShell gateway and rootless sandbox path.
 
 ## Storage and Network Placement
 
@@ -92,8 +91,7 @@ Credential reads and application readiness remain direct observations of the sel
 
 Refresh and export share typed observations from the owning APIs.
 
-The [two-daemon validation](validation/rust-dual-daemon-linux-arm64.json) exercises routing and daemon isolation on one DGX Spark.
-It does not qualify a separate physical host, WAN behavior, rootful Podman, or other operating systems.
+A separate physical host, WAN behavior, rootful Podman, and other operating systems are unqualified.
 
 Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`.
 Provider and runtime paths are relative to their respective crate’s `src` directory.

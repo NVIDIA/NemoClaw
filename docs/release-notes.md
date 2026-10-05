@@ -32,9 +32,6 @@ Rehearsed release-specific migration and rollback instructions: **TBD**.
 
 ## Qualification and Known Issues
 
-Current [validation records](validation/README.md) name their source revisions and tested environments.
-They do not establish qualification of a future release candidate.
-
 Release-candidate results, supported configurations, and reviewed known issues: **TBD**.
 
 ## Previous Releases

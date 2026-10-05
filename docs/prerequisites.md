@@ -46,7 +46,7 @@ Follow the [source-build guide](build.md) for tool versions and a verified CLI/O
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-[Native platform test results](validation/rust-native-platforms.json) identify the tested revisions; they do not qualify GPU deployment on all five platforms.
+Native CI builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
 
 Prebuilt release downloads and a supported installation/upgrade channel: **TBD**.
 
@@ -76,5 +76,3 @@ The example deployment UUIDs, endpoints, and local image digests must be replace
 | Separate physical SSH model host | **TBD** — the retained two-daemon live result used one DGX Spark |
 | Distributed inference across two Sparks or Stations | **TBD** — SSH placement alone does not implement distributed inference |
 | Every harness/provider/model combination | **TBD** — requires test results for the specific combination |
-
-Use [recorded test results](validation/README.md) for the configurations tested so far.

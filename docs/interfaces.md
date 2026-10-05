@@ -112,7 +112,6 @@ Configuration failures name the sandbox and report a fixed stage, code, and runt
 For `pi_model_unknown`, check the selected route's [Pi model metadata](../examples/fabric-pi.yaml) or choose a model present in the native catalog.
 These codes require the matching bundle and an agent image rebuilt with the updated bridge and Fabric error-code patch; older images can report only a generic code.
 A successful descriptor plan does not establish membership in Pi's runtime model catalog.
-The [runtime-failure qualification](validation/fabric-runtime-failure-linux-arm64.md) records the tested error and recovery paths.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.
 Offline configuration tests do not qualify browser rendering or public dashboard access.
 

@@ -131,7 +131,6 @@ If the problem is an attached-provider or credential configuration that can be r
 Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
 If the authored sandbox policy must change, use the [destroy and recreate procedure](usage.md#destroy); ordinary apply still refuses policy replacement.
 Destroy remains available after the failed first apply and does not require successful admission or readiness.
-See the [policy rejection results](validation/policy-rejection-linux-arm64.md) for tested recovery paths and live-test limits.
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.

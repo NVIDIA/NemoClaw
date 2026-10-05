@@ -39,8 +39,6 @@ It retains the workspace and persistent storage; failures retain state and resou
 CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
-An earlier version of the test passed with OpenShell `1fe79f539` on Linux ARM64; see the [recorded upgrade results and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
-The [earlier main-process failure](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) remains specific to its recorded revision.
 If this test fails, passing lower-level fixture tests does not establish compatibility.
 Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
 
@@ -56,7 +54,6 @@ NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
 
 The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
 Neither read-only test creates resources or establishes live agent inference.
-Refer to [recorded volume-retention results](../validation/rust-storage-linux-arm64.json).
 
 ## Spark and Fabric
 
@@ -171,20 +168,56 @@ Run only one of these live tests against a given deployment at a time.
 After intentional destroy, apply the retained configuration first.
 A read-only plan cannot observe workspace resources until apply has restored the gateway.
 
-## Hosted NVIDIA OpenClaw Parity
+## Hosted NVIDIA Parity
 
-The [hosted OpenClaw test](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) compares a redacted v0 export with separately authored v1 YAML, then checks expected plan, apply, export/reapply, and destroy results.
-It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, and the declared NVIDIA credential.
-It checks configuration and readiness without requesting a model response.
-Select it explicitly; do not run live tests as an ignored-test aggregate.
+The hosted parity tests compare a reviewed, redacted v0 configuration export with separately authored v1 YAML, then run a new v1 deployment with NVIDIA hosted inference.
+They implement [NVIDIA/NemoClaw issue #11810](https://github.com/NVIDIA/NemoClaw/issues/11810) for OpenClaw and [issue #12019](https://github.com/NVIDIA/NemoClaw/issues/12019) for Hermes.
+They do not run, patch, adopt, or migrate a v0 deployment, its workspace, conversations, credentials, or runtime state, and the SDK has no v0 translator.
+The Hermes test does not qualify Relay, Switchyard, messaging, local inference, or custom images.
 
-## Hosted NVIDIA Hermes Parity
+Each fixture under `crates/nemoclaw-e2e/fixtures/` holds the raw export (`v0-export.yaml`), the reauthored current document (`v1.yaml`), and a `NOTICE.md` recording the producer revision and handling.
+The historical exports use an `agents` list; current v1 accepts one `agent` per sandbox.
+Only inside the test, the comparison replaces the single-entry list with `agent` and requires the result to equal the ordinarily parsed v1 document; any change to identity, inference, policy, or other portable intent fails.
+Only the authored v1 document drives deployment.
+To refresh a fixture, run the public v0 `nemoclaw config export` against a representative deployment, check the output for credential values, copy the redacted bytes without reshaping them, and update `v1.yaml` in the same change.
 
-The [hosted Hermes test](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) compares an exact-hash historical export with separately authored v1 YAML through a test-only projection.
-It checks expected plan and apply results, unchanged apply with stable resource identities, export/reapply, and destroy without requesting a model response.
-It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, the immutable Hermes image, and the declared NVIDIA credential.
-Select `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` explicitly; the test writes no separate report.
-This scenario does not qualify Relay or Switchyard.
+Run the deterministic comparisons without Docker or a credential:
+
+```sh
+cargo test -p nemoclaw-e2e --test integration hosted_parity::
+```
+
+The live tests then check the public deployment operations:
+
+| Test | Checks |
+|---|---|
+| `authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle` | Plan creates gateway storage and the gateway with OpenShell registration deferred; apply adds the provider profile and registration, sandbox, and workspace; a second plan, and export/reapply, report no changes; destroy removes the workloads and retains the workspace and gateway storage. It requests no model response; use the [native agent procedure](../agents.md#run-one-headless-openclaw-request) to verify a reply. |
+| `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` | Apply reaches readiness; a real Hermes request through NVIDIA hosted inference must return `FOUR`; unchanged plan, apply, and export/reapply keep resource identities; destroy retains the workspace and gateway storage. |
+
+Use an owned native Linux Docker daemon, a fresh deployment UID, an available gateway port and subnet, and an unused state-directory path whose parent exists.
+Supply `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, arguments, state, or repository files.
+The test installs that credential in OpenShell and does not revoke the upstream key.
+Keep the fixture's provider, sandbox, and agent names; the expected results name those resources.
+Build a matching bundle and load the YAML's immutable gateway and agent images, including the Hermes image for the Hermes test, into the selected daemon.
+A GPU is not required.
+
+From the repository root, with absolute paths and one test selected:
+
+```sh
+NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
+NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
+NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
+  cargo test -p nemoclaw-e2e --test integration \
+  hosted_parity::live::authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
+  -- --ignored
+```
+
+The test creates the state directory and rejects an existing path; assertion failures appear in the test output.
+Do not run live tests as an ignored-test aggregate.
+After a failed apply, keep both inputs, the bundle, and the state directory, and follow [interrupted-operation recovery](../usage.md#recover-an-interrupted-operation) with the same YAML and state; do not create another state directory for the same UID.
+Use [destroy](../usage.md#destroy) to remove a failed run's workloads; a successful run destroys them itself.
+Retire the upstream NVIDIA key separately when it is no longer needed.
 
 ## SSH Engine Transport
 
@@ -203,8 +236,6 @@ The `fabric_live` test requires external inference and does not install managed 
 It invokes the hosted runtime separately from apply with caller-supplied input.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
-The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the earlier custom-controller path, including live rootless Podman, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
-They do not qualify the current Docker-provider path on GPU hardware.
 
 ## Docker Gateway Recovery
 

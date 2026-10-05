@@ -38,5 +38,4 @@ Hermes service mode is selected explicitly through its Fabric settings; [Relay t
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-sdk/src/fabric_capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-[Recorded test results](../validation/README.md) distinguish native protocol fixtures from live inference at specific revisions.
 Complete first-message procedures and a release-qualified harness/model/platform matrix: **TBD**.

@@ -21,8 +21,8 @@ For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama
 | Capacity and context | Weight size, runtime memory, KV cache, context length, and concurrency fit the configured host/GPU budget |
 | Agent limits and tools | Native agent context/output/reasoning settings agree with the server and model; parser acceptance is not a tool-use qualification |
 
-Start with a model/configuration covered by [recorded test results](validation/README.md), then verify it against your current images and host.
-Older test results do not establish support across an entire release.
+Start from a maintained example, then verify it against your current images and host.
+A result for one revision does not establish support across a release.
 For an external endpoint, its operator owns installation and capacity; use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
 
 ## Pin and Serve the Model
@@ -180,8 +180,7 @@ All profiles retain the resident host-memory watchdog.
 
 The [profile catalog](../crates/nemoclaw-runtime/src/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
-One Qwen3-4B and OpenClaw lifecycle is retained in the [DGX Station test record](validation/dgx-station-qwen3-openclaw-linux-arm64.md).
-That result does not establish successful inference for another candidate, model, agent, GPU count, or host configuration; those qualification checks remain **TBD**.
+Successful inference for each candidate, model, agent, GPU count, and host configuration remains **TBD** until tested.
 
 ## Diagnose and Recover a Stopped Runtime
 

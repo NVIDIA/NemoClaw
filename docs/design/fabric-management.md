@@ -137,4 +137,4 @@ The [production-path test](../../crates/nemoclaw-e2e/tests/discovery.rs) consume
 The September 21 experiment used Fabric `6c08337b` with Pi and DeepAgents and passed its local lifecycle scenarios.
 It did not establish durable runtime management or fresh native health.
 Its NemoClaw controller, mutation ledger and adapter-specific runner have been removed; OpenTofu resource state and Fabric's public runtime API now serve their respective responsibilities.
-Historical native qualification records retain their original revisions and do not qualify this implementation.
+Native qualification at earlier revisions does not qualify this implementation.

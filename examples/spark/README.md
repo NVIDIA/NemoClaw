@@ -67,7 +67,6 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/spark-demo/state .local/s
 Apply checks startup and configuration; it does not generate an answer.
 Use the [Deep Agents/Pi request procedure](../../docs/agents.md#run-one-deep-agents-or-pi-request) or [headless OpenClaw request procedure](../../docs/agents.md#run-one-headless-openclaw-request) to ask each agent a question.
 The procedures explain how to select Pi’s `fast`/`smart` routes and OpenClaw’s `local`/`hosted` routes.
-The [qualification record](../../docs/validation/spark-examples-linux-arm64.md) identifies the hosted-model checks still pending.
 An unchanged apply should report no infrastructure changes.
 If startup fails, retain the state and inspect the [model supervisor's status and logs](../../docs/models.md#diagnose-and-recover-a-stopped-runtime) before retrying the original configuration.
 Destroy the owned workloads when finished:
@@ -96,5 +95,5 @@ It does not reproduce the upstream performance configurations: speculative decod
 These are text-agent scenarios; the presence of a vision-capable model does not qualify multimodal agent input.
 
 Validation status: parser, schema, compiled resource topology, export round trips, and maintained adapter contracts are checked by the Rust tests, including this nested directory.
-See the [live qualification record](../../docs/validation/spark-examples-linux-arm64.md) for tested model/scenario combinations and remaining gates.
+The [Spark live test](../../docs/testing/live.md#spark-and-fabric) checks plan and apply on a GB10 host.
 Passing configuration checks alone does not establish model loading, tool use, or performance.

@@ -193,7 +193,6 @@ Keep inference requests, fault injection, and recovery checks in explicitly name
 
 - [Run integration tests](testing/fixtures.md) with explicit OpenTofu and bundle paths.
 - [Run live tests](testing/live.md) only against explicitly owned resources.
-- [Inspect recorded test results](validation/README.md) for tested configurations and remaining limits.
 
 ### SSH Engine Transport
 

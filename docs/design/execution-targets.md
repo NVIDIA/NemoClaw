@@ -72,9 +72,7 @@ cvillela accepted execution-target preparation and independent inference placeme
 The preparation preserved existing YAML, resource addresses, and binding encodings; optional service placement and publication subsequently extended configuration.
 These changes introduce neither a generic provider framework nor a remote observation agent.
 
-[Transport tests](../validation/rust-ssh-linux-arm64.json) and [service fixtures](../validation/rust-remote-service-linux-arm64.json) cover SSH identity, observation failures, recovery, export, and retained teardown.
-[Two-daemon live results](../validation/rust-dual-daemon-linux-arm64.json) cover routing and daemon isolation on one DGX Spark, not separate-host capacity, WAN behavior, or another operating system.
-A separate-host GPU apply and agent response remain required before claiming that qualification.
+The [SSH service fixtures](../testing/fixtures.md#ssh-service-fixtures) and [live SSH transport tests](../testing/live.md#ssh-engine-transport) cover SSH identity, observation failures, recovery, export, and retained teardown.
+Separate-host capacity, WAN behavior, and other operating systems are unqualified; a separate-host GPU apply and agent response remain required before claiming that qualification.
 
-[External Podman](../validation/rust-podman-rootless-linux-arm64.json) and [managed Podman](../validation/rust-managed-podman-linux-arm64.md) results identify the tested native-driver revisions and local rootless Linux ARM64 scope.
-They do not qualify managed Podman inference, rootful operation, or remote Podman placement.
+Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are unqualified.

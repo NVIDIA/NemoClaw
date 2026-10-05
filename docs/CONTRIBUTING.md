@@ -19,7 +19,7 @@ Follow [schema maintenance](configuration-schema.md) to update its sources and r
 - Build, deployment, model, recipe, agent, SDK, and SSH instructions belong in their task guides.
 - Test commands belong in [testing.md](testing.md) and its fixture or live guides.
 - Architecture rationale belongs in [design/](design/architecture.md).
-- Retained results and qualification limits belong in [validation/](validation/README.md).
+- Test results belong in CI results and the commit bodies that rely on them, not in documentation pages.
 - Source notices and fixture provenance stay beside their artifacts.
 
 The user-guide structure is scaffolded in the [documentation index](README.md).
@@ -27,7 +27,7 @@ Use **TBD** when the implementation or procedure still needs verification, and b
 Do not fill it from main's documentation alone or infer product support from parser acceptance.
 Replace a TBD only when the text can link to the implementation, tests, or scoped qualification that supports its claims.
 
-Label historical findings with their revision and scope; do not rewrite retained results to imply that later code was tested.
+State a qualification limit as a property of the current code, not as a past test result; do not imply that a configuration is tested without a test that covers it.
 
 ## Write the Procedure
 

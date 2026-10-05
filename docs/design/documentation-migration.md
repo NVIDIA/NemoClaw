@@ -29,7 +29,7 @@ It also identifies release history and supporting publication inputs.
 The inventory now separates source disposition from authoring coverage, identifies current owners and links to implementations and test results, and names remaining gates.
 A held feature has no promised implementation date.
 
-The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), [examples](../../examples/), and [recorded test results](../validation/README.md).
+The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), and [examples](../../examples/).
 Extend those owners and extract overloaded sections where needed.
 At the baseline revision, the branch had no Fern publishing or general link-checking job.
 The [documentation build](../AUTOMATION.md) now defines Cargo-generated Fern pages, source and route validation, isolated v1 previews, and guarded release publication.
@@ -77,7 +77,7 @@ Keep canonical prose in repository Markdown; select publication tooling in D00.
 | Use coding-agent documentation or find project resources | [resources.md](../resources.md); version-specific starter prompt and routing skill if retained | HTML, Markdown, search, prompts, and skills select the same product version |
 | Understand release changes | [release-notes.md](../release-notes.md); preserved previous-release history | State breaking changes, removed workflows, tested configurations, known limits, and migration route |
 
-Keep [design rationale](architecture.md), [test procedures](../testing.md), and [recorded test results](../validation/README.md) distinct from getting-started instructions.
+Keep [design rationale](architecture.md), and [test procedures](../testing.md) distinct from getting-started instructions.
 Link support claims to implementations and test results; do not make users read internal qualification records to discover basic prerequisites.
 When extracting content, remove the duplicate procedure and update inbound links and consumed anchors.
 

@@ -165,7 +165,6 @@ docker run --rm --runtime=runc --network none --env HF_HUB_DISABLE_PROGRESS_BARS
 
 This test documents why post-download verification cannot preserve bounded writes with the evaluated client.
 It expects the client to write an oversized fixture before raising a size error; if that behavior changes, reevaluate whether the owner client can replace NemoClaw's downloader.
-See the [recorded results and limits](../validation/model-cache-linux-arm64.md).
 
 ## Runtime Image Loading
 
@@ -300,7 +299,6 @@ Fabric owns native tool configuration and enforcement tests.
 Run `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary with the verified bundle environment above.
 It checks retained authored intent and deployment observation failures.
 Native listener and authentication tests belong to Fabric's OpenClaw adapter.
-[Earlier Linux ARM64 results](../validation/rust-openclaw-interfaces-linux-arm64.json) apply only to their recorded revision.
 
 ## Hermes Native API Lifecycle
 
@@ -319,7 +317,6 @@ Fabric owns native service startup, authentication, configuration and protocol c
 
 Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with the verified bundle environment above.
 It checks retained public configuration and deployment observation failures; it does not establish native service health.
-[Earlier Hermes results](../validation/rust-hermes-native-interfaces-linux-arm64.json) identify their original sources and qualification limits.
 
 ## Hermes Relay Tracing Fixture
 
