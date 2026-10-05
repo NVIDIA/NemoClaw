@@ -6,7 +6,7 @@
 Use this model to understand the concepts in `nemoclaw-authoring` and where to change their behavior.
 A journey combines sparse desired state with guidance about decisions to review with a person.
 One run resolves that combination into questions, applies answers, and produces a document when its configured authoring gates pass.
-The [onboarding design](onboarding-journeys.md) owns prototype coverage, inspection scenarios, and remaining work.
+The [onboarding design](onboarding-journeys.md) owns prototype coverage, inspection scenarios, and open design questions.
 The [architecture](architecture.md#configuration) places authoring within the SDK and Fabric boundaries.
 
 ## Definition, run, and result
@@ -165,4 +165,4 @@ It prints a preview with explicit frontiers and limits, rather than storing a se
 - Target observations never change questions; they only assess compatibility, and they need an SDK-valid document.
 - Journey state is an in-memory run; the public API has no persisted session or decision history format.
 
-These limits and their inspection criteria belong to the [prototype plan](onboarding-journeys.md#remaining-work).
+The [prototype design](onboarding-journeys.md#prototype-decisions-and-limits) owns these limits, their inspection criteria, and its open design questions.

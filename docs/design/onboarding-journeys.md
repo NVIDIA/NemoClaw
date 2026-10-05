@@ -89,7 +89,7 @@ Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repo
 | Preview | Input | Result |
 | --- | --- | --- |
 | Minimum viable values | One empty sandbox, with explicit `ask` guidance for the name. | Stops at an unresolved SDK frontier; it does not enumerate every question. |
-| Minimum inline scaffold | `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml`: inline harness and inference forms, one route, and an external endpoint. | Asks the deployment, sandbox, agent, and route names, gateway management, harness, provider kind, and model. `minimally_supplied_inline_envelope_materializes_through_one_resolver` materializes it after those answers and explicit optional omissions; the example TUI also completes it through the watchable replay. |
+| Minimum inline scaffold | `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml`: inline harness and inference forms, one route, and an external endpoint. | Asks the deployment, sandbox, agent, and route names, gateway management, harness, provider kind, and model. `minimally_supplied_inline_envelope_materializes_through_one_resolver` materializes it after those answers and explicit optional omissions. |
 | Express | `examples/onboarding/openclaw.yaml`. | Zero questions, with absent optional adapter settings omitted through the `ActiveAdapterSettings` scope. Target compatibility remains a separate assessment. |
 | Guided preview | The express template without a route model, with explicit `ask` guidance for the name, harness, runtime, provider, API, and model fields. | Asks each of those fields. |
 
@@ -120,7 +120,7 @@ These previews do not establish complete coverage of arbitrary partial documents
 - `AuthoringFacts` and `DiscoveryEvidence` exist only after the document is SDK-valid, because discovery reads its inputs from a `Document`. Target observations never change questions; only endpoint facts add model choices. Hardware and gateway observations are collected but do not affect questions or readiness yet.
 - The TUI offers harness choices and settings schemas from the bundled Fabric catalog for the whole run. The selected image's catalog only feeds the target assessment, where a harness the image does not advertise is a conflict that blocks `ready_document`.
 - SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. A definition may additionally require compatible engine and image observations. `ready_document` rejects any observed target conflict and waits for compatible evidence when the definition requires it; unknown evidence otherwise remains unverified. Observations never change the authored document, and the TUI does not reject a runtime choice based on the author's workstation OS.
-- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The repeatable tmux replay and single-sandbox example tests exercise this path.
+- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The default-path and per-example TUI tests exercise this path.
 
 ## Alignment to the intended model
 
@@ -132,15 +132,16 @@ These previews do not establish complete coverage of arbitrary partial documents
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance; explicit dependency changes name the answer that reopened a question | A changed external schema can invalidate a value without a specific earlier answer to name. |
 | Visual inspection uses the same resolver | The tree prints current questions and branches over finite choices returned by the resolver | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
 
-The direct suite covers the default and minimum-inline replays, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
+The TUI tests cover the default path, every single-sandbox example, mixed local and hosted routes, discovered model choices, and safe delegation; the authoring tests cover the minimum-inline journey. This implementation has not been qualified live against an explicitly configured bundle.
 
-## Remaining work
+## Open design questions
 
-- Whether the partial evaluator can cover the generated SDK schema constructs used by the supported single-sandbox journey without duplicating constraints.
-- Which optional schema regions belong to the bounded onboarding question surface.
-- Whether a journey that switches harness retains adapter-specific guidance for each possible harness or changes to another journey definition.
-- Which terminal state should block authoring when SDK-valid YAML exists but Fabric or target compatibility is unverified.
-- How to observe the target before the document is SDK-valid, so the image catalog and environment facts can shape early choices such as harness, runtime, and engine.
+The prototype has not settled these; the rules above stand until one is decided.
 
-Update the relevant design rule here when implementation evidence changes it; describe the reason and affected slice in that rule.
-Do not keep a running activity journal.
+- **Partial evaluation:** can a partial evaluator cover the generated SDK schema constructs used by the single-sandbox journey without duplicating constraints?
+- **Question surface:** which optional schema regions belong to the bounded onboarding question surface?
+- **Harness changes:** when a journey switches harness, does it keep adapter-specific guidance for every harness, or change to another journey definition?
+- **Unverified targets:** which terminal state should block authoring when SDK-valid YAML exists but Fabric or target compatibility is unverified?
+- **Early target observation:** how can the target be observed before the document is SDK-valid, so the image catalog and environment can shape early choices such as harness, runtime, and engine?
+
+When implementation settles a question, change the affected rule above and remove the question.

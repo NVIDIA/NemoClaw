@@ -103,7 +103,7 @@ A pin update must preserve the currently qualified native configuration, model r
 
 The [authoring domain model](authoring-domain.md) defines the journey's configuration, run state, question resolution, and validation gates.
 It separates authored intent from decision status, interview position, and target observations.
-The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
+The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and open design questions.
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
