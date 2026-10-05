@@ -184,7 +184,7 @@ function legacyCloudflaredMigrationWarning(
       label: "cloudflared",
       status: "warn",
       detail: error instanceof Error ? error.message : "legacy cloudflared migration failed",
-      hint: `stop unintended cloudflared processes, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+      hint: `inspect each process and stop only the unintended one, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
     };
   }
 }

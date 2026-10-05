@@ -146,7 +146,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     }
   });
 
-  it("classifies only the host-scoped cloudflared log", () => {
+  it("classifies only the gateway-scoped host-side cloudflared log", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
     const tunnelDir = path.join(logRoot, "tunnel");
     fs.mkdirSync(tunnelDir, { recursive: true });

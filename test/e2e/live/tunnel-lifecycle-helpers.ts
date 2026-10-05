@@ -88,7 +88,7 @@ export function getCloudflaredLogPath(
   stateRoot = resolveNemoclawStateDir(),
   _sandboxName = SANDBOX_NAME,
 ): string | undefined {
-  // Source boundary: NemoClaw owns one host-scoped dashboard tunnel log. If
+  // Source boundary: NemoClaw owns one gateway-scoped host-side dashboard tunnel log. If
   // that exact file is missing, this live contract classifies the invalid state
   // as `nemoclaw_no_spawn` instead of falling back to legacy per-sandbox logs,
   // because unrelated stale processes can otherwise corrupt fault attribution.
@@ -106,7 +106,7 @@ function readCloudflaredLog(): string {
 
 function cloudflaredLogTail(lines = 80): string {
   const logPath = getCloudflaredLogPath();
-  if (!logPath) return "(no host-scoped cloudflared.log found in NemoClaw state)";
+  if (!logPath) return "(no gateway-scoped cloudflared.log found in NemoClaw state)";
   const text = fs.readFileSync(logPath, "utf8");
   return [
     `--- cloudflared.log (${logPath}, last ${lines} lines) ---`,

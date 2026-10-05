@@ -177,13 +177,13 @@ describe("doctor system checks", () => {
   it("reports legacy tunnel migration conflicts without aborting doctor", () => {
     const { cloudflaredDoctorCheck } = requireDist(modulePath);
     const result = cloudflaredDoctorCheck("my-sandbox", undefined, () => {
-      throw new Error("Multiple recorded cloudflared processes are running");
+      throw new Error("Multiple live cloudflared PID records exist");
     });
 
     expect(result).toMatchObject({
       status: "warn",
-      detail: "Multiple recorded cloudflared processes are running",
-      hint: "stop unintended cloudflared processes, then rerun `nemoclaw my-sandbox doctor`",
+      detail: "Multiple live cloudflared PID records exist",
+      hint: "inspect each process and stop only the unintended one, then rerun `nemoclaw my-sandbox doctor`",
     });
   });
 });

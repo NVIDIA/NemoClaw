@@ -76,7 +76,7 @@ describe("legacy tunnel state migration (#11628)", () => {
               : { kind: "running", pid: 4343 },
         },
       ),
-    ).toThrow("Multiple recorded cloudflared processes are running");
+    ).toThrow("Multiple live cloudflared PID records exist");
 
     expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
     expect(fs.readFileSync(path.join(legacyPidDir, "cloudflared.pid"), "utf8")).toBe("4343");

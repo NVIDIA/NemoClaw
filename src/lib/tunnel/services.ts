@@ -53,9 +53,9 @@ export interface ServiceOptions {
   dashboardPort?: number;
   /** Repo root directory — used to locate scripts/. */
   repoDir?: string;
-  /** Override the cloudflared PID directory (default: one host-scoped directory). */
+  /** Override the cloudflared PID directory (default: one gateway-scoped host-side directory). */
   pidDir?: string;
-  /** Gateway port whose host-scoped tunnel state is owned by this operation. */
+  /** Gateway port whose gateway-scoped host-side tunnel state is owned by this operation. */
   gatewayPort?: number;
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
@@ -832,7 +832,7 @@ export interface LegacyCloudflaredMigrationDeps {
 }
 
 /**
- * Move one live legacy sandbox-scoped dashboard tunnel record into the host-scoped state
+ * Move one live legacy sandbox-scoped dashboard tunnel record into the gateway-scoped host-side state
  * directory. Dedicated Google Chat tunnel directories are never candidates.
  * Multiple live records are ambiguous and fail closed.
  */
@@ -872,8 +872,8 @@ export function migrateLegacyCloudflaredState(
     ];
     const detail = activeRecords.map(({ pidDir, pid }) => `${pid} (${pidDir})`).join(", ");
     throw new Error(
-      `Multiple recorded cloudflared processes are running: ${detail}. ` +
-        "Stop the unintended processes, then retry the tunnel command.",
+      `Multiple live cloudflared PID records exist: ${detail}. ` +
+        "Inspect each process and stop only the unintended one, then retry the tunnel command.",
     );
   }
 

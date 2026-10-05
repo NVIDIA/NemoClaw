@@ -217,7 +217,7 @@ describe("sandbox name validation", () => {
   });
 });
 
-describe("host-scoped tunnel PID directory (#11628)", () => {
+describe("gateway-scoped host-side tunnel PID directory (#11628)", () => {
   it("uses one dashboard tunnel directory for every sandbox selection", () => {
     const alpha = resolveTunnelPidDir({ sandboxName: "alpha" });
     const beta = resolveTunnelPidDir({ sandboxName: "beta" });
@@ -310,7 +310,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           },
         },
       ),
-    ).toThrow("Multiple recorded cloudflared processes are running");
+    ).toThrow("Multiple live cloudflared PID records exist");
 
     expect(existsSync(join(targetPidDir, "cloudflared.pid"))).toBe(false);
     expect(existsSync(join(first, "cloudflared.pid"))).toBe(true);
@@ -334,7 +334,7 @@ describe("legacy tunnel state migration (#11628)", () => {
               : { kind: "running", pid: 4343 },
         },
       ),
-    ).toThrow("Multiple recorded cloudflared processes are running");
+    ).toThrow("Multiple live cloudflared PID records exist");
 
     expect(readFileSync(join(targetPidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
     expect(readFileSync(join(legacyPidDir, "cloudflared.pid"), "utf-8")).toBe("4343");
