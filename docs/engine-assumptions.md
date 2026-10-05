@@ -81,11 +81,11 @@ A failed collector never authorizes using client-host values as a fallback.
 |---|---|
 | Provider `services/capacity.rs` and `hardware/` | Explicit capacity observations consume measurements associated with the selected daemon identity. Missing or mismatched observations fail. |
 | Runtime `hardware/linux.rs` and `hardware/nvidia.rs` | Local collection reads local memory, GPU, architecture, and filesystem capacity. These measurements cannot stand in for a remote engine. |
-| Provider `hardware/ssh.rs` and `hardware/ssh_capacity.py` | Explicit managed SSH placement selects the provider’s fixed read-only host collector. Plain SSH engine connections default to unavailable capacity until an observer is supplied. |
+| Provider `hardware/ssh.rs` | Explicit managed SSH placement selects the provider’s fixed read-only host collector. Plain SSH engine connections default to unavailable capacity until an observer is supplied. |
 | Runtime `hardware/` and `execution/supervisor.rs` | Container-side memory and GPU observations enforce immediate startup and watchdog limits. Another engine’s host, PID, and cgroup visibility requires qualification. |
 | SDK `process.rs` | Process groups and Linux process identity govern local helper cleanup, separately from remote runtime resources. |
 
-The SSH collector requires existing host trust, Python 3, Docker, and NVIDIA tooling.
+The SSH collector requires existing host trust, a POSIX shell with `uname`, `stat`, and `head`, Docker, and NVIDIA tooling; it needs no interpreter.
 It rejects a Docker context that points at another host and installs no packages.
 When explicitly invoked, the optional collector performs only reads.
 Credential reads and application readiness remain direct observations of the selected runtime.

@@ -248,7 +248,7 @@ Service placement selects this transport independently of the OpenShell gateway.
 Explicit capacity observation uses the provider's host collector to read the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem.
 The collector rejects a Docker context pointing to another host and checks the daemon identity before accepting measurements.
 Collector failure never substitutes the client's hardware.
-For that observation, Python 3, Docker and `nvidia-smi` must already be available on that host.
+For that observation, a POSIX shell, Docker and `nvidia-smi` must already be available on that host.
 No packages are installed.
 
 This transport does not tunnel inference traffic.

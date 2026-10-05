@@ -87,6 +87,7 @@ fn tar_entry(name: &str, data: &[u8]) -> Vec<u8> {
     builder.into_inner().unwrap()
 }
 
+/// The provider's fixed collection script: marked sections of host output.
 fn capacity(root: &Path, control: &Value) -> ExitCode {
     if flag(control, "capacity_failure") {
         return ExitCode::from(1);
@@ -103,15 +104,28 @@ fn capacity(root: &Path, control: &Value) -> ExitCode {
     } else {
         format!("MemTotal: {total} kB\nMemAvailable: 125829120 kB\nMemFree: 115343360 kB\n")
     };
-    println!(
-        "{}",
-        json!({
-            "daemon": control.get("daemon").cloned().unwrap_or(json!("remote-engine")),
-            "architecture": "aarch64", "memory": memory, "compute_capability": "12.1\n",
-            "gpu_memory": "[N/A], [N/A]\n", "gpu": "NVIDIA GB10, 580.0\n", "processes": "",
-            "disk_free": 1u64 << 40,
-        })
-    );
+    let info = json!({
+        "ID": control.get("daemon").cloned().unwrap_or(json!("remote-engine")),
+        "OSType": "linux", "Architecture": "aarch64",
+        "DockerRootDir": "/srv/nemoclaw-fixture/docker",
+    });
+    let mut output = String::new();
+    for (name, content) in [
+        ("os", "Linux\n".to_owned()),
+        ("machine", "aarch64\n".into()),
+        ("context", "unix:///var/run/docker.sock\n".into()),
+        ("docker_host", "\n".into()),
+        ("info", format!("{info}\n")),
+        ("disk", format!("{} 1\n", 1u64 << 40)),
+        ("memory", memory),
+        ("gpu", "NVIDIA GB10, 580.0\n".into()),
+        ("compute_capability", "12.1\n".into()),
+        ("gpu_memory", "[N/A], [N/A]\n".into()),
+        ("processes", String::new()),
+    ] {
+        output.push_str(&format!("\n==nemoclaw:{name}==\n{content}"));
+    }
+    print!("{output}");
     ExitCode::SUCCESS
 }
 
@@ -558,7 +572,7 @@ fn main() -> ExitCode {
         return ExitCode::from(255);
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|arg| arg == "python3") {
+    if args.iter().any(|arg| arg.contains("==nemoclaw:")) {
         return capacity(&root, &control);
     }
     let dial = args.ends_with(&["docker".into(), "system".into(), "dial-stdio".into()])
