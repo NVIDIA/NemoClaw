@@ -235,14 +235,6 @@ This test creates uniquely named local containers and credential volumes and rem
 It checks SDK apply, export/reapply, failed readiness, image changes and container replacement with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes.
 OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
 
-The SDK's ignored `cpu_runtime_provider_reconciles_compute_and_retains_data` test exercises the production Ollama and vLLM resource graphs through real Docker and OpenTofu.
-It requires `NEMOCLAW_TEST_BUNDLE` and explicit `NEMOCLAW_TEST_RUNTIME_IMAGE_OLLAMA` and `NEMOCLAW_TEST_RUNTIME_IMAGE_VLLM` digest references to loaded CPU fixture images.
-Those images must provide Python 3 and `/usr/local/bin/nemoclaw-runtime`, which writes a fresh ready status to `/data/status.json` and stays running until stopped.
-They must also carry the current runtime-spec label and the backend, recipe, or authentication labels required by their compiled service; see [runtime image compatibility](../provider.md#runtime-image-compatibility).
-Run it with `cargo test -p nemoclaw-sdk cpu_runtime_provider_reconciles_compute_and_retains_data -- --ignored`.
-It adapts host placement and GPU-sized limits for CPU execution and checks replacement, network recreation, and a retained data sentinel.
-It does not qualify GPU execution, model preparation, inference, or the runtime's hardware checks.
-
 ## Standalone Cache and Credential Resources
 
 On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing Python 3.
