@@ -45,10 +45,13 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-// Immutable #12376 preimage at 25f4213a34bbd4d3ed2ee6e76a378469701c0fc2.
-const DCODE_NPM_REPLACEMENT_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "test/fixtures/installer-trust/brev-dcode-npm-replacement.sh.fixture"),
-  "utf8",
+// Exact #12376 npm replacement, derived from the canonical bootstrap template.
+const DCODE_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
+  '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
+  `  # Replace npm's private dependency tree: overlaying a newer archive can leave
+  # incompatible packages from the previous npm installation in node_modules.
+  sudo rm -rf /usr/local/lib/node_modules/npm
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
 );
 const DCODE_NPM_REPLACEMENT_DIGEST =
   "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
