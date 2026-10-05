@@ -20,6 +20,7 @@ import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   getLlamaCppRouteDetails,
   normalizeNativeHostedProviderAttachment,
+  nativeHostedProfile,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
   type GatewayInference,
@@ -627,7 +628,11 @@ export async function collectSandboxStatusSnapshot(
   let nativeHostedAttachmentFailure: string | null = null;
   if (!suppressInferenceProbe && lookup.state === "present" && nativeHosted && sb) {
     const expected = nativeHostedAttachment;
-    if (!gatewayName || !expected) {
+    if (nativeHostedProfile(sb.provider)?.profileId !== expected?.profileId) {
+      nativeHostedAttachmentFailure =
+        `Native provider attachment does not match the recorded provider for sandbox '${sandboxName}'. ` +
+        "Recreate the sandbox to restore native inference.";
+    } else if (!gatewayName || !expected) {
       nativeHostedAttachmentFailure =
         `${nativeAttachmentLabel} provider attachment is unavailable for sandbox '${sandboxName}'. ` +
         `Recreate the sandbox to restore ${nativeNvidiaAttachment ? "native NVIDIA" : "native hosted"} inference.`;

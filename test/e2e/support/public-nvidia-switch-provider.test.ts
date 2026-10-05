@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_HOSTED_PROFILES } from "../../../src/lib/inference/native-hosted/profiles.ts";
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  expectedNativeSwitchAttachmentEvidence,
+  readNativeSwitchAttachmentEvidence,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
@@ -121,5 +124,77 @@ describe("public NVIDIA inference switch provider", () => {
         redactionValues: [credential],
       }),
     );
+  });
+});
+
+describe("native hosted switch attachment evidence", () => {
+  it.each(NATIVE_HOSTED_PROFILES)(
+    "binds $logicalProvider metadata to its receipt and selected sandbox",
+    async (profile) => {
+      const credential = "fixture-credential-must-be-redacted";
+      const receipt = {
+        schemaVersion: 1,
+        profileId: profile.profileId,
+        providerName: profile.providerName,
+        providerId: "revision-1",
+      };
+      const metadata = [
+        `Name: ${profile.providerName}`,
+        "Id: revision-1",
+        `Type: ${profile.profileId}`,
+        "Resource version: 1",
+        `Credential keys: ${profile.credentialEnv}`,
+        "Config keys: <none>",
+      ].join("\n");
+      const openshell = vi.fn().mockImplementation(async (args: string[]) => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: args[0] === "provider" ? metadata : profile.providerName,
+      }));
+      const options = {
+        artifactName: "native-attachment",
+        env: { [profile.credentialEnv]: credential },
+        logicalProvider: profile.logicalProvider,
+        receipt,
+        sandbox: { openshell } as unknown as SandboxClient,
+        sandboxName: "selected-sandbox",
+      };
+      expect(await readNativeSwitchAttachmentEvidence(options)).toBe(
+        expectedNativeSwitchAttachmentEvidence(profile.logicalProvider),
+      );
+      expect(openshell).toHaveBeenNthCalledWith(
+        2,
+        ["sandbox", "provider", "list", "-g", "nemoclaw", "selected-sandbox"],
+        expect.objectContaining({ redactionValues: [credential] }),
+      );
+      expect(
+        await readNativeSwitchAttachmentEvidence({
+          ...options,
+          receipt: { ...receipt, providerId: "different-revision" },
+        }),
+      ).toContain("provider-id=mismatch");
+      expect(await readNativeSwitchAttachmentEvidence({ ...options, receipt: undefined })).not.toBe(
+        expectedNativeSwitchAttachmentEvidence(profile.logicalProvider),
+      );
+      openshell
+        .mockResolvedValueOnce({ exitCode: 0, stdout: metadata, stderr: "" })
+        .mockResolvedValueOnce({ exitCode: 0, stdout: "unrelated-provider", stderr: "" });
+      expect(await readNativeSwitchAttachmentEvidence(options)).toContain("attached=false");
+    },
+  );
+
+  it("leaves custom provider coverage with its existing owner", async () => {
+    const openshell = vi.fn();
+    expect(
+      await readNativeSwitchAttachmentEvidence({
+        artifactName: "custom",
+        env: {},
+        logicalProvider: "custom-provider",
+        receipt: undefined,
+        sandbox: { openshell } as unknown as SandboxClient,
+        sandboxName: "selected-sandbox",
+      }),
+    ).toBeNull();
+    expect(openshell).not.toHaveBeenCalled();
   });
 });

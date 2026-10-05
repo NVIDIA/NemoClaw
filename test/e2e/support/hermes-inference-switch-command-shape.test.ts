@@ -14,6 +14,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
+  expectedBaseUrl,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
   expectAuthenticatedBaselineInventoryRequest,
@@ -41,6 +42,59 @@ import {
 } from "../live/public-nvidia-switch-provider.ts";
 
 describe("Hermes inference switch command shape", () => {
+  it.each([
+    ["openai-api", "https://api.openai.com/v1", "authorization: bearer", "/chat/completions"],
+    ["anthropic-prod", "https://api.anthropic.com", "x-api-key:", "/v1/messages"],
+    [
+      "gemini-api",
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "authorization: bearer",
+      "/chat/completions",
+    ],
+    [
+      "openrouter-api",
+      "https://openrouter.ai/api/v1",
+      "authorization: bearer",
+      "/chat/completions",
+    ],
+    [
+      "hermes-provider",
+      "https://inference-api.nousresearch.com/v1",
+      "authorization: bearer",
+      "/chat/completions",
+    ],
+  ])(
+    "uses native endpoint and placeholder authentication for %s probes",
+    (provider, endpoint, header, route) => {
+      expect(expectedBaseUrl(provider)).toBe(endpoint);
+      const command = sandboxInferenceCommand('{"model":"selected-model"}', provider);
+      expect(command).toContain(`${endpoint}${route}`);
+      expect(command.toLowerCase()).toContain(`${header} nemoclaw-openshell-provider`);
+      expect(command).not.toContain("inference.local");
+    },
+  );
+
+  it("includes the Anthropic protocol version", () => {
+    expect(sandboxInferenceCommand("{}", "anthropic-prod")).toContain(
+      "anthropic-version: 2023-06-01",
+    );
+  });
+
+  it("preserves OpenRouter attribution headers", () => {
+    const command = sandboxInferenceCommand("{}", "openrouter-api");
+    expect(command).toContain("-H 'HTTP-Referer: https://www.nvidia.com/nemoclaw/'");
+    expect(command).toContain("-H 'X-OpenRouter-Title: NVIDIA NemoClaw'");
+  });
+
+  it.each(["openai-api", "anthropic-prod", "gemini-api", "hermes-provider"])(
+    "omits OpenRouter attribution for %s",
+    (provider) => {
+      const command = sandboxInferenceCommand("{}", provider);
+      expect(command).not.toContain("HTTP-Referer:");
+      expect(command).not.toContain("X-OpenRouter-Title:");
+    },
+  );
+
   afterEach(() => vi.unstubAllEnvs());
 
   function matchesApiKeyShape(line: string): boolean {
@@ -663,20 +717,76 @@ describe("Hermes inference switch command shape", () => {
   it("passes the public NVIDIA credential only to the native provider switch", async () => {
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
 
-    await runHermesInferenceSetWithRetry(
-      { command } as unknown as HostCliClient,
-      ["nvapi-hosted-key"],
-      [],
-      {
-        attempts: 1,
-        publicNvidiaApiKey: "nvapi-hosted-key",
-      },
-    );
+    await runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, [], [], {
+      attempts: 1,
+      nativeProviderApiKey: "nvapi-hosted-key",
+    });
 
     expect(command).toHaveBeenCalledOnce();
+    expect(JSON.stringify(command.mock.calls[0]?.slice(0, 2))).not.toContain("nvapi-hosted-key");
     expect(command.mock.calls[0]?.[2]).toMatchObject({
       env: { NVIDIA_INFERENCE_API_KEY: "nvapi-hosted-key" },
       redactionValues: ["nvapi-hosted-key"],
     });
+  });
+});
+
+describe("native provider switch credential isolation", () => {
+  it("selects native Anthropic Messages without a custom API override", async () => {
+    vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", "anthropic-prod");
+    vi.resetModules();
+    const helpers = await import("../live/hermes-inference-switch-helpers.ts");
+    expect(helpers.RUNTIME_SWITCH_API).toBe("anthropic-messages");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([
+    ["openai-api", "OPENAI_API_KEY"],
+    ["anthropic-prod", "ANTHROPIC_API_KEY"],
+    ["gemini-api", "GEMINI_API_KEY"],
+    ["openrouter-api", "OPENROUTER_API_KEY"],
+    ["hermes-provider", "OPENAI_API_KEY"],
+  ])("passes only the selected credential binding for %s", async (provider, credentialEnv) => {
+    vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", provider);
+    vi.resetModules();
+    const helpers = await import("../live/hermes-inference-switch-helpers.ts");
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    const credential = "fixture-native-provider-credential";
+    await helpers.runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, [], [], {
+      attempts: 1,
+      nativeProviderApiKey: credential,
+    });
+    const [executable, args, options] = command.mock.calls[0]!;
+    expect(executable).toBe("node");
+    expect(args).toContain(provider);
+    expect(args).not.toContain(credential);
+    expect(options.env[credentialEnv]).toBe(credential);
+    expect(Object.entries(options.env).filter(([, value]) => value === credential)).toEqual([
+      [credentialEnv, credential],
+    ]);
+    expect(options.redactionValues).toContain(credential);
+    const proxyCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "created", stderr: "" })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "route synced", stderr: "" });
+    const proxy = await helpers.prepareProxyResolutionRoute({
+      apiKey: "fixture-baseline-key",
+      host: { command: proxyCommand } as unknown as HostCliClient,
+      mockBaseline: undefined,
+      redactionValues: [],
+    });
+    expect(proxy.model).toBe(DEFAULT_HOSTED_INFERENCE_MODEL);
+    expect(proxyCommand.mock.calls[2]?.[1]).toEqual(
+      expect.arrayContaining(["--model", DEFAULT_HOSTED_INFERENCE_MODEL]),
+    );
   });
 });

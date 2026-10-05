@@ -623,6 +623,44 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     },
   );
 
+  it("refuses a native receipt for a different recorded provider before probing", async () => {
+    const sandbox: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "anthropic-prod",
+      model: "selected-model",
+      endpointUrl: "https://api.anthropic.com",
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "owned-openai-id",
+      },
+    };
+    const verify = vi.fn(async () => undefined);
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    const probeProvider = vi.fn(() => null);
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        verifyNativeHostedProviderAttachmentImpl: verify,
+        probeProviderHealthImpl: probeProvider,
+        probeSandboxInferenceInvocationImpl: invoke,
+      },
+    } as never);
+    expect(verify).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(probeProvider).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      detail: expect.stringContaining("does not match"),
+    });
+  });
+
   it("reports a missing native NVIDIA attachment before probing inference", async () => {
     liveGatewayInference("compatible-endpoint", "other/model");
     const sandbox = {

@@ -7,8 +7,11 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import {
+  resolveAgentInferenceApi,
+  nativeHostedProfile,
+} from "../../../src/lib/inference/config.ts";
+import { OPENROUTER_DEFAULT_HEADERS } from "../../../src/lib/inference/native-hosted/openrouter-headers.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -68,7 +71,9 @@ export const SWITCH_PROVIDER =
 export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 export const RUNTIME_SWITCH_API =
-  resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
+  SWITCH_PROVIDER === "anthropic-prod"
+    ? "anthropic-messages"
+    : (resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API);
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 export const PROXY_RESOLUTION_PROVIDER = "hermes-proxy-resolution-e2e";
@@ -231,7 +236,11 @@ export async function prepareProxyResolutionRoute({
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
     mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
-  const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
+  const model = mockBaseline
+    ? PROXY_RESOLUTION_MODEL
+    : nativeHostedProfile(SWITCH_PROVIDER) && SWITCH_PROVIDER !== PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? hostedInstallModel()
+      : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
   const registered = await host.command(
@@ -662,7 +671,7 @@ export async function runHermesInferenceSetWithRetry(
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
-    publicNvidiaApiKey?: string | null;
+    nativeProviderApiKey?: string | null;
   } = {},
 ): Promise<ShellProbeResult> {
   const args = [
@@ -676,6 +685,11 @@ export async function runHermesInferenceSetWithRetry(
     ...compatibleMetadataArgs,
   ];
   const evidenceArtifacts = options.artifacts;
+  const nativeProfile = nativeHostedProfile(SWITCH_PROVIDER);
+  const nativeCredential = options.nativeProviderApiKey;
+  const switchRedactionValues = [
+    ...new Set([...redactionValues, ...(nativeCredential ? [nativeCredential] : [])]),
+  ];
   return runInferenceSetWithRetry({
     attempts:
       options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
@@ -688,11 +702,11 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: `hermes-inference-set-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
-          ...(options.publicNvidiaApiKey
-            ? { NVIDIA_INFERENCE_API_KEY: options.publicNvidiaApiKey }
+          ...(nativeCredential && nativeProfile
+            ? { [nativeProfile.credentialEnv]: nativeCredential }
             : {}),
         }),
-        redactionValues,
+        redactionValues: switchRedactionValues,
         timeoutMs: 180_000,
       }),
   });
@@ -732,8 +746,9 @@ export function maybeAssertPidStable(
   beforePid && afterPid && assertStable(afterPid, beforePid);
 }
 
-export function expectedBaseUrl(): string {
-  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
+export function expectedBaseUrl(provider = SWITCH_PROVIDER): string {
+  const profile = nativeHostedProfile(provider);
+  if (profile) return profile.endpoint;
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
@@ -811,15 +826,23 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-const NATIVE_NVIDIA_PROVIDER_PLACEHOLDER_AUTH_HEADER =
+const NATIVE_PROVIDER_PLACEHOLDER_AUTH_HEADER =
   "Author" + "ization: Bearer nemoclaw-openshell-provider";
 
-export function sandboxInferenceCommand(payload: string): string {
-  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
-    // The upstream URL is the managed route for an attached OpenShell
-    // provider. OpenShell authorizes this profile-scoped request and replaces
-    // the placeholder without exposing the provider credential to the sandbox.
-    return `curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H '${NATIVE_NVIDIA_PROVIDER_PLACEHOLDER_AUTH_HEADER}' -d '${quotePayload(payload)}'`;
+export function sandboxInferenceCommand(payload: string, provider = SWITCH_PROVIDER): string {
+  const profile = nativeHostedProfile(provider);
+  if (profile) {
+    const anthropic = provider === "anthropic-prod";
+    const endpoint = `${profile.endpoint}${anthropic ? "/v1/messages" : "/chat/completions"}`;
+    const authHeader = anthropic
+      ? "x-api-key: nemoclaw-openshell-provider"
+      : NATIVE_PROVIDER_PLACEHOLDER_AUTH_HEADER;
+    const attributionHeaders =
+      provider === "openrouter-api"
+        ? OPENROUTER_DEFAULT_HEADERS.map(([name, value]) => ` -H '${name}: ${value}'`).join("")
+        : "";
+    const versionHeader = anthropic ? " -H 'anthropic-version: 2023-06-01'" : "";
+    return `curl -sS --max-time 90 ${endpoint} -H 'Content-Type: application/json' -H '${authHeader}'${versionHeader}${attributionHeaders} -d '${quotePayload(payload)}'`;
   }
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`

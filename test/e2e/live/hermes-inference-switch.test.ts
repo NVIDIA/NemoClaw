@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -51,9 +52,9 @@ import {
   strictHashPerms,
 } from "./hermes-inference-switch-helpers.ts";
 import {
-  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+  expectedNativeSwitchAttachmentEvidence,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
-  readPublicNvidiaSwitchAttachmentEvidence,
+  readNativeSwitchAttachmentEvidence,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
@@ -145,10 +146,14 @@ test(
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
         : null;
+    const nativeProfile = nativeHostedProfile(SWITCH_PROVIDER);
+    const nativeProviderApiKey = nativeProfile
+      ? (publicApiKey ?? secrets.required(nativeProfile.credentialEnv))
+      : null;
     const apiKey = mockBaseline
       ? MOCK_BASELINE_API_KEY
       : (publicApiKey ?? secrets.required("NVIDIA_INFERENCE_API_KEY"));
-    const redactionValues = [apiKey, publicApiKey].filter(
+    const redactionValues = [apiKey, publicApiKey, nativeProviderApiKey].filter(
       (value): value is string => typeof value === "string",
     );
     const installEnv: NodeJS.ProcessEnv = {
@@ -203,7 +208,7 @@ test(
       {
         artifacts,
         compatibleBinding: switchBinding,
-        publicNvidiaApiKey: publicApiKey,
+        nativeProviderApiKey,
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
@@ -306,8 +311,8 @@ test(
     );
 
     const state = registryState();
-    const attachmentEvidence = await readPublicNvidiaSwitchAttachmentEvidence({
-      artifactName: "hermes-native-nvidia-provider-attachment",
+    const attachmentEvidence = await readNativeSwitchAttachmentEvidence({
+      artifactName: "hermes-native-provider-attachment",
       env: env(),
       logicalProvider: SWITCH_PROVIDER,
       receipt: state.registry.sandboxes?.[SANDBOX_NAME]?.nativeHostedProviderAttachment,
@@ -326,9 +331,7 @@ test(
     ).toBe(
       [
         "hermes",
-        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-          ? PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE
-          : null,
+        expectedNativeSwitchAttachmentEvidence(SWITCH_PROVIDER),
         SWITCH_MODEL,
         SWITCH_PROVIDER,
       ]
@@ -336,13 +339,13 @@ test(
         .join("\n"),
     );
     expect(state.session).toEqual(baselineSession);
-    const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
-    const durableEndpointUrl = publicSwitch
+    const nativeSwitch = Boolean(nativeHostedProfile(SWITCH_PROVIDER));
+    const durableEndpointUrl = nativeSwitch
       ? null
       : (switchEndpointUrl ??
         process.env.NEMOCLAW_ENDPOINT_URL ??
         DEFAULT_HOSTED_INFERENCE_BASE_URL);
-    const durableCredentialEnv = publicSwitch
+    const durableCredentialEnv = nativeSwitch
       ? null
       : switchEndpointUrl
         ? "COMPATIBLE_ANTHROPIC_API_KEY"
@@ -352,7 +355,11 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : RUNTIME_SWITCH_API,
+      SWITCH_PROVIDER === "anthropic-prod"
+        ? "anthropic-messages"
+        : nativeSwitch
+          ? null
+          : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

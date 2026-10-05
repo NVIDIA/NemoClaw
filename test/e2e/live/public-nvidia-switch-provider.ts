@@ -1,12 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  normalizeNativeNvidiaProviderAttachment,
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "../../../src/lib/inference/native-nvidia/index.ts";
+import { normalizeNativeHostedProviderAttachment } from "../../../src/lib/inference/native-hosted/contract.ts";
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles.ts";
 import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
@@ -22,22 +18,40 @@ export function requirePublicNvidiaSwitchKey(value: string): string {
   return value;
 }
 
-export async function readPublicNvidiaSwitchAttachmentEvidence(options: {
+type AttachmentEvidenceOptions = {
   readonly artifactName: string;
   readonly env: NodeJS.ProcessEnv;
   readonly logicalProvider: string;
   readonly receipt: unknown;
   readonly sandbox: SandboxClient;
   readonly sandboxName: string;
-}): Promise<string | null> {
+};
+
+export async function readPublicNvidiaSwitchAttachmentEvidence(
+  options: AttachmentEvidenceOptions,
+): Promise<string | null> {
   if (options.logicalProvider !== PUBLIC_NVIDIA_SWITCH_PROVIDER) return null;
-  const receipt = normalizeNativeNvidiaProviderAttachment(options.receipt);
+  return readNativeSwitchAttachmentEvidence(options);
+}
+
+export function expectedNativeSwitchAttachmentEvidence(provider: string): string | null {
+  const profile = nativeHostedProfile(provider);
+  if (!profile) return null;
+  return `provider-inspection=0;provider-name=match;provider-profile=match;provider-id=match;attachment-inspection=0;attached=true;schema=1;profile=${profile.profileId};provider=${profile.providerName}`;
+}
+
+export async function readNativeSwitchAttachmentEvidence(
+  options: AttachmentEvidenceOptions,
+): Promise<string | null> {
+  const profile = nativeHostedProfile(options.logicalProvider);
+  if (!profile) return null;
+  const receipt = normalizeNativeHostedProviderAttachment(options.receipt);
   const providerRedactionValues = [
     options.env.NVIDIA_API_KEY,
-    options.env[NVIDIA_HOSTED_CREDENTIAL_ENV],
+    options.env[profile.credentialEnv],
   ].filter((value): value is string => typeof value === "string" && value.length > 0);
   const provider = await options.sandbox.openshell(
-    ["provider", "get", "-g", "nemoclaw", NVIDIA_HOSTED_NATIVE_PROVIDER],
+    ["provider", "get", "-g", "nemoclaw", profile.providerName],
     {
       artifactName: `${options.artifactName}-provider-metadata`,
       captureLimitBytes: 16 * 1024,
@@ -54,6 +68,7 @@ export async function readPublicNvidiaSwitchAttachmentEvidence(options: {
     {
       artifactName: options.artifactName,
       env: options.env,
+      redactionValues: providerRedactionValues,
       timeoutMs: 60_000,
     },
   );
@@ -63,15 +78,15 @@ export async function readPublicNvidiaSwitchAttachmentEvidence(options: {
     `provider-profile=${
       metadata?.type === receipt?.profileId &&
       metadata?.credentialKeys.length === 1 &&
-      metadata.credentialKeys[0] === NVIDIA_HOSTED_CREDENTIAL_ENV &&
+      metadata.credentialKeys[0] === profile.credentialEnv &&
       metadata.configKeys.length === 0 &&
-      metadata.type === NVIDIA_HOSTED_NATIVE_PROFILE_ID
+      metadata.type === profile.profileId
         ? "match"
         : "mismatch"
     }`,
     `provider-id=${metadata?.revision?.id === receipt?.providerId ? "match" : "mismatch"}`,
     `attachment-inspection=${String(attachments.exitCode)}`,
-    `attached=${String(attachments.stdout.split(/\s+/u).includes(NVIDIA_HOSTED_NATIVE_PROVIDER))}`,
+    `attached=${String(attachments.stdout.split(/\s+/u).includes(profile.providerName))}`,
     `schema=${String(receipt?.schemaVersion ?? "missing")}`,
     `profile=${receipt?.profileId ?? "missing"}`,
     `provider=${receipt?.providerName ?? "missing"}`,
