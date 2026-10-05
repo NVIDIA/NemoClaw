@@ -73,7 +73,7 @@ New source links become reachable on GitHub when that commit is pushed.
 Run focused tooling tests after changing the generator or publisher:
 
 ```sh
-cargo test --locked -p nemoclaw-build --test docs
+cargo test --locked -p nemoclaw-build --test integration docs::
 python3 -B -m unittest discover -s tools/docs -p 'test_*.py'
 ```
 

@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
       - name: Validate image selection and Dockerfile instructions
         run: |
-          cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test bake
+          cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test integration bake::
           docker buildx bake --check dummy agents ollama-proxy
       # cargo images builds the tool without the SDK, so the image job needs no protoc.
       - name: Build and qualify the reference contract image

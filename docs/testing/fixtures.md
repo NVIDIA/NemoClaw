@@ -146,7 +146,7 @@ From the repository root:
 ```sh
 ollama_base=$(awk '$1 == "FROM" { print $2; exit }' runtimes/ollama/Dockerfile)
 docker pull "$ollama_base"
-NEMOCLAW_TEST_OLLAMA_CACHE=1 cargo test -p nemoclaw-runtime --test ollama_cache -- --ignored --nocapture
+NEMOCLAW_TEST_OLLAMA_CACHE=1 cargo test -p nemoclaw-runtime --test integration ollama_cache:: -- --ignored --nocapture
 ```
 
 A failure identifies either the cache contract or a mismatch between the runtime image and `versions.json`.

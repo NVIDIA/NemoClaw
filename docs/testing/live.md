@@ -253,8 +253,8 @@ From the repository root, with absolute document paths and the local sandbox ima
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/first-owned-deployment.yaml \
 NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT=/absolute/path/to/second-owned-deployment.yaml \
 NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
-  cargo test -p nemoclaw-provider --test managed_gateway_live \
-    pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes -- --ignored --exact --nocapture
+  cargo test -p nemoclaw-provider --test integration \
+    managed_gateway_live::pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes -- --ignored --exact --nocapture
 ```
 
 Both sandboxes must reach Ready and execute commands through the real supervisor callback.
@@ -284,8 +284,8 @@ From the repository root, with an absolute document path and the local sandbox i
 ```sh
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/owned-deployment.yaml \
 NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
-  cargo test -p nemoclaw-provider --test managed_gateway_live \
-    profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart -- --ignored --exact --nocapture
+  cargo test -p nemoclaw-provider --test integration \
+    managed_gateway_live::profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart -- --ignored --exact --nocapture
 ```
 
 The sandbox must reach Ready with all five providers attached.

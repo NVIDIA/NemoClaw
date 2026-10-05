@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::support;
 
-mod support;
 use async_trait::async_trait;
 use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row, State};
 use nemoclaw_sdk::ObservationError;

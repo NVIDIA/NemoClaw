@@ -26,7 +26,7 @@ jobs:
       - uses: ./.github/actions/setup-docs
       - name: Test documentation generation and publication guards
         run: |
-          cargo test --locked -p nemoclaw-build --test docs
+          cargo test --locked -p nemoclaw-build --test integration docs::
           python3 -B -m unittest discover -s tools/docs -p 'test_*.py'
       - name: Check generated reference, local links, and Fern routes
         run: python3 tools/docs/fern.py check

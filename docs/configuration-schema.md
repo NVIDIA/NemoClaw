@@ -45,7 +45,7 @@ Run the focused tests and freshness check:
 
 ```sh
 cargo test --locked -p nemoclaw-sdk --test integration -- config_input:: config_schema:: config_validation::
-cargo test --locked -p nemoclaw-build --test schema --lib
+cargo test --locked -p nemoclaw-build --lib --test integration schema::
 cargo run --locked -p nemoclaw-build -- schema --check
 ```
 

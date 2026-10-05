@@ -78,7 +78,7 @@ Use the [agent image build prerequisites](build.md#build-agent-images); the targ
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
-cargo test -p nemoclaw-build --test bake
+cargo test -p nemoclaw-build --test integration bake::
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
