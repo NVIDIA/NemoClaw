@@ -89,7 +89,8 @@ The SDK records `supported: false`, `report: null`, and `reason_code: fabric_hea
 A reachable bridge or remembered runtime handle does not establish agent health.
 Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
 
-Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata leaves compatibility unknown.
+Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata or stdin input support leaves compatibility unknown.
+Such an image rejects configuration from this provider before changing its runtime.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.

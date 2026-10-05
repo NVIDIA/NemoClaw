@@ -116,7 +116,7 @@ async fn unsupported_health_retains_the_snapshot_but_does_not_complete_apply() {
 }
 
 #[tokio::test]
-async fn explicit_invocation_cleans_files_and_never_replays_uncertain_work() {
+async fn explicit_invocation_sends_input_on_stdin_and_never_replays_uncertain_work() {
     let (fixture, client, binding) = sandbox().await;
     let input = serde_json::json!({"prompt":"PRIVATE_REQUEST_SENTINEL"});
     for response in [
@@ -128,24 +128,23 @@ async fn explicit_invocation_cleans_files_and_never_replays_uncertain_work() {
         let error = client.invoke_agent(&binding, &input).await.unwrap_err();
         assert!(!error.to_string().contains("PRIVATE_REQUEST_SENTINEL"));
         let state = fixture.state.lock().unwrap();
-        assert!(state.staged_files.is_empty());
-        let calls = &state.exec_calls[before..];
-        assert_eq!(calls.iter().filter(|args| args.get(1).is_some_and(|arg| arg == "invoke")).count(), 1);
-        assert!(!calls.iter().flatten().any(|arg| arg.contains("PRIVATE_REQUEST_SENTINEL")));
+        // One exec carries the request on stdin; nothing stages or removes a file.
+        assert_eq!(state.exec_calls.len(), before + 1);
+        assert_eq!(
+            state.exec_calls[before][1..],
+            ["invoke", "--agent", binding["agent_name"].as_str(), "--input", "-"]
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&state.exec_stdin[before]).unwrap(),
+            input
+        );
+        assert!(!state.exec_calls[before].iter().any(|arg| arg.contains("PRIVATE_REQUEST_SENTINEL")));
     }
     fixture.state.lock().unwrap().exec_exit = 1;
     let before = fixture.state.lock().unwrap().exec_calls.len();
     assert!(client.invoke_agent(&binding, &input).await.is_err());
-    let state = fixture.state.lock().unwrap();
-    assert!(
-        state.staged_files.is_empty(),
-        "partial stage failure must clean its file"
-    );
-    assert!(
-        !state.exec_calls[before..]
-            .iter()
-            .any(|args| args.get(1).is_some_and(|arg| arg == "invoke"))
-    );
+    // A failed invocation is reported once and never retried.
+    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), before + 1);
 }
 
 #[tokio::test]
@@ -172,7 +171,7 @@ async fn fixture_generations_are_scoped_to_each_sandbox_host() {
         .unwrap();
     for (binding, generation) in [(&first, first_generation), (&second, second_generation)] {
         let path = format!("/sandbox/{}.json", binding["agent_name"]);
-        fixture.state.lock().unwrap().staged_files.insert(
+        fixture.state.lock().unwrap().sandbox_files.insert(
             path.clone(),
             serde_json::to_vec(&serde_json::json!({"metadata":{"name":binding["agent_name"]}}))
                 .unwrap(),
@@ -258,7 +257,7 @@ async fn fixture_confirmed_stop_clears_the_reported_configuration_association() 
 }
 
 #[tokio::test]
-async fn relocated_image_owns_bridge_commands_environment_and_staged_files() {
+async fn relocated_image_owns_bridge_commands_environment_and_input() {
     let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture");
     runtime.runtime.command = ["/srv/python3.99", "-I", "/srv/bridge.py"]
         .map(String::from)
@@ -299,29 +298,28 @@ async fn relocated_image_owns_bridge_commands_environment_and_staged_files() {
         runtime.command("check", &["--agent", &name, "--live"])
     );
     result.unwrap();
-    assert_eq!(calls.len(), 4);
-    assert_eq!(calls[1][0], "/srv/python3.99");
-    let path = &calls[1][3];
-    assert!(path.starts_with("/work/.nemoclaw-"));
+    assert_eq!(calls.len(), 2);
     assert_eq!(
-        calls[2],
+        calls[1],
         runtime.command(
             "configure",
             &[
                 "--agent",
                 &name,
                 "--config",
-                path,
+                "-",
                 "--expected-generation",
                 "fixture:0"
             ]
         )
     );
-    assert_eq!(calls[3][0], "/srv/python3.99");
-    assert_eq!(calls[3].last(), Some(path));
     {
         let state = fixture.state.lock().unwrap();
-        assert!(state.staged_files.is_empty());
+        assert!(state.exec_stdin[0].is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&state.exec_stdin[1]).unwrap(),
+            serde_json::json!({"metadata":{"name":name}})
+        );
         assert!(
             state
                 .exec_environments
@@ -361,80 +359,35 @@ async fn relocated_image_owns_bridge_commands_environment_and_staged_files() {
 }
 
 #[tokio::test]
-async fn staging_uses_writable_tmpdir_when_home_has_only_read_access() {
+async fn input_needs_no_writable_directory_and_invalid_input_never_executes() {
+    // Stdin delivery replaces staged files, so a read-only home and temporary
+    // directory no longer prevent configuration or invocation.
     let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture");
-    runtime
-        .runtime
-        .environment
-        .insert("HOME".into(), "/read-only".into());
-    runtime
-        .runtime
-        .environment
-        .insert("TMPDIR".into(), "/work//./tmp/".into());
+    for key in ["HOME", "TMPDIR"] {
+        runtime
+            .runtime
+            .environment
+            .insert(key.into(), "/read-only".into());
+    }
     let filesystem = runtime.runtime.policy.filesystem_policy.as_mut().unwrap();
     filesystem
         .read_only
         .get_or_insert_default()
         .push("/read-only".into());
-    filesystem.read_write = Some(vec!["/work/.".into()]);
+    filesystem.read_write = Some(Vec::new());
     let (fixture, client, mut binding) = sandbox_with_runtime(Some(runtime)).await;
     binding.insert(
         "config_json".into(),
-        serde_json::json!({
-            "metadata":{"name":binding["agent_name"]}
-        })
-        .to_string(),
+        serde_json::json!({"metadata":{"name":binding["agent_name"]}}).to_string(),
     );
     client.configure_agent(&binding).await.unwrap();
-    let state = fixture.state.lock().unwrap();
-    let calls = &state.exec_calls;
-    assert_eq!(calls.len(), 4);
-    let path = &calls[1][3];
-    assert!(path.starts_with("/work//./tmp/.nemoclaw-"), "{path}");
-    assert!(calls[2].windows(2).any(|args| args == ["--config", path]));
-    assert_eq!(calls[3].last(), Some(path));
-    assert!(state.staged_files.is_empty());
-}
-
-#[tokio::test]
-async fn staging_refuses_ungranted_directories_before_executing_commands() {
-    for home in [
-        "/read-only",
-        "/work-other",
-        "/work/../elsewhere",
-        "work",
-        r"C:\work",
-    ] {
-        let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture");
-        runtime
-            .runtime
-            .environment
-            .insert("HOME".into(), home.into());
-        runtime
-            .runtime
-            .environment
-            .insert("TMPDIR".into(), "/read-only".into());
-        let filesystem = runtime.runtime.policy.filesystem_policy.as_mut().unwrap();
-        filesystem
-            .read_only
-            .get_or_insert_default()
-            .push("/read-only".into());
-        filesystem.read_write = Some(vec!["/work".into()]);
-        let (fixture, client, binding) = sandbox_with_runtime(Some(runtime)).await;
-        let result = client
-            .invoke_agent(&binding, &serde_json::json!({"prompt":"hello"}))
-            .await;
-        assert!(
-            matches!(
-                result,
-                Err(nemoclaw_sdk::Error::Conflict(
-                    "image does not advertise a writable Fabric input directory"
-                ))
-            ),
-            "{home:?}: {result:?}"
-        );
-        let state = fixture.state.lock().unwrap();
-        assert!(state.exec_calls.is_empty(), "{home:?}");
-        assert!(state.staged_files.is_empty());
+    let calls = fixture.state.lock().unwrap().exec_calls.len();
+    let oversized = serde_json::json!({"prompt": "x".repeat(512 * 1024)});
+    for input in [serde_json::json!(["not", "an", "object"]), oversized] {
+        assert!(matches!(
+            client.invoke_agent(&binding, &input).await,
+            Err(nemoclaw_sdk::Error::Conflict(_))
+        ));
     }
+    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
 }

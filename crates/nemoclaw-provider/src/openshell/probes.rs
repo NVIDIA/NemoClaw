@@ -106,7 +106,7 @@ impl OpenShell {
         let config: serde_json::Value = serde_json::from_str(value(binding, "config_json"))
             .map_err(|_| ObservationError::Query)?;
         let response = self
-            .bridge_file(binding, "configure", &config, Some(&generation))
+            .bridge_input(binding, "configure", &config, Some(&generation))
             .await?;
         if response.status != "succeeded" {
             let failure = response

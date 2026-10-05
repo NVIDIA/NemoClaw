@@ -103,9 +103,7 @@ impl ProxyBackend {
                 result
             }));
         }
-        Err(Error::State(
-            "proxy lifecycle belongs to the Docker provider",
-        ))
+        Err(ObservationError::Query.into())
     }
     pub(super) async fn proxy_remove(&self, kind: &str, row: &Row) -> Result<(), Error> {
         if kind == STORAGE {
@@ -115,11 +113,6 @@ impl ProxyBackend {
             self.proxy_read(kind, row, false, true).await?;
             return Ok(());
         }
-        if !supports(kind) {
-            return Err(ObservationError::Query.into());
-        }
-        Err(Error::State(
-            "proxy lifecycle belongs to the Docker provider",
-        ))
+        Err(ObservationError::Query.into())
     }
 }

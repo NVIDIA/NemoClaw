@@ -28,7 +28,7 @@ class ProtocolLifecycle(unittest.IsolatedAsyncioTestCase):
             runtime_id="owned", status="active", stop=AsyncMock(), invoke=AsyncMock()
         )
         self.api = SimpleNamespace(plan=Mock(), start_runtime=AsyncMock(return_value=self.runtime))
-        self.patch = patch("fabric.Fabric", return_value=self.api)
+        self.patch = patch("backend.Fabric", return_value=self.api)
         self.patch.start()
         self.addCleanup(self.patch.stop)
         self.host = fabric.RuntimeHost("main")
@@ -288,6 +288,56 @@ class CommandArguments(unittest.TestCase):
                 fabric.parse_command(
                     ["invoke", "--agent", "main", "--input", str(path / "missing")]
                 )
+
+    def test_dash_reads_one_object_from_stdin_for_each_input_flag(self):
+        for operation, flag, field, value, extra in (
+            ("validate", "--config", "config", CONFIG, []),
+            ("configure", "--config", "config", CONFIG, ["--expected-generation", "opaque"]),
+            ("invoke", "--input", "input", {"message": "hello"}, []),
+        ):
+            stdin = SimpleNamespace(
+                buffer=io.BytesIO(json.dumps(value).encode()), isatty=lambda: False
+            )
+            with self.subTest(operation=operation), patch("sys.stdin", new=stdin):
+                request = fabric.parse_command([operation, "--agent", "main", flag, "-", *extra])
+            self.assertEqual(request[field], value)
+            self.assertEqual(stdin.buffer.read(), b"")
+
+    def test_stdin_requires_one_bounded_object_and_never_reads_a_terminal(self):
+        for content in (
+            b"",
+            b"[]",
+            b"{} {}",
+            b"\xff",
+            b'{"x":NaN}',
+            b'{"a":1,"a":2}',
+            b" " * (fabric.REQUEST_LIMIT + 1),
+        ):
+            stdin = SimpleNamespace(buffer=io.BytesIO(content), isatty=lambda: False)
+            with (
+                self.subTest(content=content[:10]),
+                patch("sys.stdin", new=stdin),
+                self.assertRaises(fabric.ProtocolError) as error,
+            ):
+                fabric.parse_command(["invoke", "--agent", "main", "--input", "-"])
+            self.assertEqual(error.exception.code, "invalid_input")
+        unread = Mock(read=Mock(side_effect=AssertionError("terminal stdin was read")))
+        for stdin in (None, SimpleNamespace(buffer=unread, isatty=lambda: True)):
+            with (
+                self.subTest(stdin=stdin),
+                patch("sys.stdin", new=stdin),
+                self.assertRaises(fabric.ProtocolError) as error,
+            ):
+                fabric.parse_command(["validate", "--agent", "main", "--config", "-"])
+            self.assertEqual(error.exception.code, "invalid_input")
+
+    def test_only_an_exact_dash_selects_stdin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "-"
+            path.write_text(json.dumps({"message": "file"}))
+            with patch("sys.stdin", new=Mock(buffer=Mock(read=Mock(side_effect=AssertionError)))):
+                request = fabric.parse_command(["invoke", "--agent", "main", "--input", str(path)])
+        self.assertEqual(request["input"], {"message": "file"})
 
     def test_handled_cli_errors_emit_one_safe_envelope_and_exit_one(self):
         output = io.StringIO()
@@ -567,7 +617,7 @@ class HostOwnership(unittest.IsolatedAsyncioTestCase):
                     "def plan(*args, **kwargs):",
                     "    (root / 'entered').touch()",
                     "    threading.Event().wait()",
-                    "fabric.Fabric = lambda: SimpleNamespace(plan=plan)",
+                    "__import__('backend').Fabric = lambda: SimpleNamespace(plan=plan)",
                     "fabric.serve = functools.partial(fabric.serve, directory=root)",
                     "raise SystemExit(fabric.main(['serve', '--agent', 'main']))",
                 ]

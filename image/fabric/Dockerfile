@@ -10,17 +10,19 @@ FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
 FROM ${OPENCLAW_IMAGE} AS openclaw-upstream
 FROM ${NODE_IMAGE} AS node
+# Only harnesses that run JavaScript copy this tree; the shared base has no Node.js.
+RUN mkdir -p /node/usr/local/bin /node/usr/local/lib \
+    && cp -a /usr/local/bin/node /node/usr/local/bin/ \
+    && cp -a /usr/local/lib/node_modules /node/usr/local/lib/ \
+    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /node/usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /node/usr/local/bin/npx
 
 FROM ${PYTHON_IMAGE} AS base
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
-    && python3 -m venv /opt/fabric \
+    && python3 -m venv --without-pip /opt/fabric \
     && install -d -m 0700 -o 1000 -g 1000 /sandbox
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
@@ -72,14 +74,16 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
+RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
 
 FROM runtime-base AS generic
 USER node
 
 FROM runtime-base AS interactive
+COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
 
 FROM interactive AS openclaw
@@ -104,6 +108,7 @@ COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
 
 FROM base AS hermes-assets
+COPY --from=node /node/ /
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
@@ -122,13 +127,15 @@ FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 # Hermes resolves bundled assets relative to its source checkout.
-RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
 COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 RUN printf '%s\n' '{"nvidia.fabric.hermes": ["/opt/hermes"]}' > /opt/nemoclaw/runtime-files.json
 USER node
 
 FROM common-wheels AS pi-build
+COPY --from=node /node/ /
 RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
     && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
     && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
@@ -150,6 +157,7 @@ RUN mkdir -p /opt/pi/adapters/typescript \
     done
 
 FROM runtime-base AS pi
+COPY --from=node /node/ /
 COPY --from=pi-build /opt/pi /opt/fabric-source
 # Fabric discovery skips symlinked directories, so link only the descriptor.
 # Its runner script resolves beside the real file under /opt/fabric-source.
@@ -173,4 +181,24 @@ RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
 ENV ADAPTER_PYTHON=/opt/fabric/bin/python NEMOCLAW_FABRIC_SOURCE=/src/fabric NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/src/fabric/tests/fixtures/discovery/future.fabric-adapter.json
+RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
+
+# A small executable specification with no native agent or model dependencies.
+FROM ${PYTHON_IMAGE} AS dummy
+RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+    && python3 -m venv --without-pip /opt/fabric \
+    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
+COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
+ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
+RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
+LABEL io.nemoclaw.fabric.reference="dummy"
+USER node
+HEALTHCHECK NONE
+ENTRYPOINT ["/usr/local/bin/fabric-agent"]
+CMD ["serve", "--agent", "main"]
+
+FROM dummy AS reference-tests
+COPY image/fabric/test_reference.py image/fabric/dummy_backend.py /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

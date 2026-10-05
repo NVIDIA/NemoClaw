@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(feature = "sdk")]
 mod platform;
+mod run_ci;
 mod runtime;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sdk")]
@@ -49,6 +50,35 @@ enum Action {
     Runtime {
         manifest: PathBuf,
     },
+    /// Run this platform's `CI / Native` steps, or one named step.
+    ///
+    /// Build this command without default features (`cargo ci`), so it can
+    /// install the pinned Protocol Buffers compiler before anything needs it.
+    Ci {
+        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle.
+        step: Option<String>,
+    },
+    /// Build agent images with their installed Fabric metadata, or qualify them.
+    Images {
+        #[command(subcommand)]
+        action: ImageAction,
+    },
+}
+#[derive(Subcommand)]
+enum ImageAction {
+    /// Build Bake targets (for example `agents`, `dummy`, or `openclaw`) and label them.
+    Build {
+        /// linux/arm64 or linux/amd64; must match the Docker host.
+        #[arg(long)]
+        platform: String,
+        #[arg(required = true)]
+        targets: Vec<String>,
+    },
+    /// Run the command contract inside each labeled local image.
+    Qualify {
+        #[arg(required = true)]
+        images: Vec<String>,
+    },
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -58,15 +88,14 @@ struct Artifact {
 #[derive(Deserialize)]
 struct Pins {
     rust: String,
-    #[cfg(feature = "sdk")]
     protobuf: String,
+    nextest: String,
     #[cfg(feature = "sdk")]
     opentofu: String,
     #[cfg(feature = "sdk")]
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
-    #[cfg(feature = "sdk")]
-    platforms: BTreeMap<String, BTreeMap<String, Artifact>>,
+    platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
 }
 fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
@@ -280,7 +309,23 @@ async fn main() -> Result<()> {
     {
         return Err("build tool source inputs changed; rebuild with cargo run --locked -p nemoclaw-build -- bundle".into());
     }
+    if let Action::Images { action } = cli.command {
+        let root = Path::new(".");
+        return match action {
+            ImageAction::Build { platform, targets } => {
+                nemoclaw_build::images::build(root, &platform, &targets)
+            }
+            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
+                eprintln!("Qualifying {image}");
+                nemoclaw_build::images::qualify(root, image)
+            }),
+        }
+        .map_err(Into::into);
+    }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
+    if let Action::Ci { step } = cli.command {
+        return run_ci::run_steps(&pins, step.as_deref()).await;
+    }
     let version = cargo().arg("--version").output()?;
     if !version.status.success()
         || !String::from_utf8(version.stdout)?.starts_with(&format!("cargo {} ", pins.rust))
@@ -292,17 +337,16 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
+        Action::Ci { .. } | Action::Images { .. } => {
+            unreachable!("CI and image commands returned before build tool checks")
+        }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {
-            let protoc =
-                Command::new(std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into()))
-                    .arg("--version")
-                    .output()?;
-            if !protoc.status.success()
-                || String::from_utf8(protoc.stdout)?.trim()
-                    != format!("libprotoc {}", pins.protobuf)
-            {
-                return Err("build requires the pinned Protocol Buffers compiler".into());
+            if !run_ci::protoc_matches(&run_ci::protoc_command(&pins.protobuf), &pins.protobuf) {
+                return Err(
+                    "build requires the pinned Protocol Buffers compiler; run cargo ci tools"
+                        .into(),
+                );
             }
 
             bundle(&pins, &platform::select(platform, bundle::platform)?).await

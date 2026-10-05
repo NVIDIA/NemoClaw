@@ -259,22 +259,4 @@ async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
     );
     assert_eq!(std::fs::read(published.join("retained")).unwrap(), b"keep");
     assert!(!published.join("manifest.json").exists());
-    // A legacy completion file cannot silently become a new output manifest.
-    std::fs::write(published.join("complete.json"), b"legacy").unwrap();
-    assert!(
-        preparation::prepare(
-            root.path(),
-            root.path(),
-            service,
-            &NoTools,
-            &CancellationToken::new()
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(
-        std::fs::read(published.join("complete.json")).unwrap(),
-        b"legacy"
-    );
-    assert!(!published.join("manifest.json").exists());
 }

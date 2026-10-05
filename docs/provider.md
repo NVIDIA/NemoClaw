@@ -154,7 +154,6 @@ Export preserves authored definitions and refuses conflicting credential referen
 Lifecycle postconditions reject known engine incompatibility, conflicting image/adapter metadata, and missing image runtime metadata.
 Other unknown evidence does not relax required resource-refresh or gateway checks.
 An image observation is scoped to the selected engine, not every possible execution host.
-Legacy sandbox bindings without retained runtime metadata require their original bundle for recovery and teardown; automatic migration is not provided.
 
 ## Target Hardware
 

@@ -636,10 +636,6 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     let binding = configured.into_parts().0.unwrap();
     {
         let state = fixture.state.lock().unwrap();
-        assert!(
-            state.staged_files.is_empty(),
-            "staged config must be removed"
-        );
         assert_eq!(
             state
                 .exec_calls
@@ -649,11 +645,12 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
             1,
             "only passive observation may be retried during host startup"
         );
-        let command = state
+        let index = state
             .exec_calls
             .iter()
-            .find(|args| args.get(1).is_some_and(|arg| arg == "configure"))
+            .position(|args| args.get(1).is_some_and(|arg| arg == "configure"))
             .unwrap();
+        let command = &state.exec_calls[index];
         assert_eq!(
             &command[..4],
             [
@@ -663,8 +660,9 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
                 "main"
             ]
         );
-        assert_eq!(command[4], "--config");
-        assert!(command[5].starts_with("/sandbox/.nemoclaw-"));
+        assert_eq!(command[4..6], ["--config", "-"]);
+        let sent: serde_json::Value = serde_json::from_slice(&state.exec_stdin[index]).unwrap();
+        assert_eq!(sent["metadata"]["name"], "main");
         assert_eq!(command[6], "--expected-generation");
         assert_eq!(command[7], "fixture:0");
         assert!(!command.iter().any(|arg| arg.contains("schema_version")));

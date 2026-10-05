@@ -6,7 +6,8 @@
 Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
-Set `PROTOC` to the compiler’s path if it is outside `PATH`.
+Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
+Otherwise, set `PROTOC` to the compiler’s path if it is outside `PATH`.
 [versions.json](../versions.json) records tool versions, download checksums, and the SDK's default agent, gateway, sandbox runtime, and supervisor image pins.
 The SDK generates its artifact constants from that manifest at build time.
 
@@ -71,7 +72,8 @@ Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image bui
 Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
 ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
-Agent images use Node.js 24.21.0 LTS and a shared Python 3.13.15 base.
+Agent images share a Python 3.13.15 base without pip.
+Only OpenClaw, Hermes, and Pi, whose harnesses run JavaScript, add Node.js 24.21.0 LTS.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -80,7 +82,7 @@ Digest-based sandbox use requires a Docker image store that retains repository d
 On a native Linux ARM64 host, run from the repository root:
 
 ```sh
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
@@ -106,18 +108,19 @@ Keep the original bundle and state to operate or destroy deployments created bef
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
 ```sh
-python3 image/build_fabric.py --platform linux/amd64 deepagents
+cargo images build --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
 Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `python3 image/build_fabric.py --platform linux/amd64 agents` to build both.
+Run `cargo images build --platform linux/amd64 agents` to build both.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
-On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `python3 image/build_fabric.py --platform linux/arm64 agents`.
+On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
 `AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
 The proxy and its `proxy-tests` target use the same explicit platform selector.
+The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary from [its crate](../crates/nemoclaw-ollama-proxy) and its license, with no shell or interpreter.
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
@@ -129,6 +132,44 @@ The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
 Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.
+
+### Reference Contract Image
+
+Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
+It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
+It is a test fixture, excluded from the production `agents` target and SDK harness catalog.
+On Linux ARM64, run from the repository root:
+
+```sh
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
+cargo images qualify nc-contract:dummy
+```
+
+Use `linux/amd64` on a native AMD64 host.
+The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
+It removes that container on success, failure, or timeout; the built image remains local.
+The suite exercises standalone validation and all six commands, including generation conflicts and readiness failure that preserves the configured runtime.
+The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings and the real adapter backend boundary.
+
+To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
+
+```sh
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
+cargo images qualify nc-contract:openclaw nc-contract:hermes nc-contract:pi
+```
+
+Pass each remaining built image to the same qualifier; CI runs it for every selected target.
+On a native Linux AMD64 host, build and qualify its two production targets instead:
+
+```sh
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/amd64 agents
+cargo images qualify nc-contract:deepagents nc-contract:openclaw
+```
+
+The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
+Production images additionally retain their Fabric discovery catalog.
+A passing command contract does not establish native readiness: production backends still report unsupported health at the pinned Fabric revision.
+See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 ## Build a Runtime Image
 

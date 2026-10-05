@@ -466,13 +466,9 @@ fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
 }
 
 #[test]
-fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
+fn every_sandbox_requires_one_agent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("local.yaml");
-    let sandbox = value["spec"]["sandboxes"][0].as_object_mut().unwrap();
-    if let Some(agents) = sandbox.remove("agents") {
-        sandbox.insert("agent".into(), agents[0].clone());
-    }
+    let value = input("local.yaml");
     agrees(&validator, &value, true);
     let mut missing = value.clone();
     missing["spec"]["sandboxes"][0]
@@ -480,12 +476,6 @@ fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
         .unwrap()
         .remove("agent");
     agrees(&validator, &missing, false);
-    let mut legacy = missing.clone();
-    legacy["spec"]["sandboxes"][0]["agents"] =
-        json!([value["spec"]["sandboxes"][0]["agent"].clone()]);
-    agrees(&validator, &legacy, false);
-    value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
-    agrees(&validator, &value, false);
 }
 
 #[test]

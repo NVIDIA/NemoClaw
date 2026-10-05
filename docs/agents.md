@@ -43,7 +43,7 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON object from a file and returns Fabric's result in `result.fabric_result`.
-The caller stages and removes the file; see the [bridge commands](design/fabric-management.md#bridge-commands).
+Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
 Do not reuse the former NemoClaw `fabric.configuration` helper or assume a universal prompt/result shape.
 A qualified native request walkthrough for this migrated runtime remains **TBD**.

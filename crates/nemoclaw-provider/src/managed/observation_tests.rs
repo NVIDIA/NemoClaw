@@ -499,7 +499,7 @@ fn owned_volume_accepts_an_isolated_daemon_data_root() {
 }
 
 #[tokio::test]
-async fn retired_gateway_process_layouts_fail_before_engine_access() {
+async fn gateway_processes_require_layout_two_before_engine_access() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(
         fixtures

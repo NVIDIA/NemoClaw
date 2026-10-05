@@ -11,6 +11,8 @@ on:
       - '**/Cargo.lock'
       - rust-toolchain.toml
       - deny.toml
+      - tools/ci/**
+      - runtimes/qwen38/**
       - .github/workflows/dependencies.yml
   workflow_dispatch:
 permissions:
@@ -36,3 +38,18 @@ jobs:
       - name: Check current vulnerability advisories
         if: github.event_name == 'workflow_dispatch'
         run: cargo deny --locked check advisories
+
+  scripts:
+    name: Python scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # These tests cover Python helper scripts, not the Rust build, so they run
+      # once here instead of in the native build jobs that `cargo ci` reproduces.
+      - name: Test CI orchestration
+        run: python3 -B -m unittest discover -s tools/ci -p 'test_*.py'
+      - name: Check recipe attribution and preparation adapters
+        run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'

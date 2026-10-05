@@ -278,7 +278,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_driver_default_host_callback_without_legacy_docker_fields() {
+fn managed_gateway_uses_driver_default_host_callback() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "../../../nemoclaw-provider/src/managed/reference.json"
     ))
@@ -373,21 +373,4 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
             .unwrap()
     );
     assert!(spec.binding_namespace(Some("random-first"), None).is_err());
-}
-
-#[test]
-fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
-    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-        "../../../nemoclaw-provider/src/managed/reference.json"
-    ))
-    .unwrap();
-    for fixture in fixtures {
-        let current: serde_json::Value =
-            serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
-        for management in ["managed", "external"] {
-            let mut legacy = current.clone();
-            legacy["gateway"]["management"] = json!(management);
-            assert!(serde_json::from_value::<Spec>(legacy).is_err());
-        }
-    }
 }

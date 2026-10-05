@@ -247,6 +247,10 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
     assert_eq!(status(&raw), Support::Supported);
+    // Interface version 1 is one exact shape; images built for another are rebuilt.
+    raw["bridge"]["input_sources"] = json!(["file", "stdin"]);
+    assert!(FabricCatalog::from_json(&raw.to_string()).is_err());
+    raw["bridge"] = bridge.clone();
     raw["bridge"]["interface_version"] = 2.into();
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();

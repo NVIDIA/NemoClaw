@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_sdk::{Error, image_runtime::path_is_granted};
+use nemoclaw_sdk::Error;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -149,7 +149,7 @@ impl Response {
 impl OpenShell {
     /// Validate through the adapter packaged in the bound sandbox image.
     pub async fn validate_agent(&self, binding: &Row, config: &Value) -> Result<Value, Error> {
-        let response = self.bridge_file(binding, "validate", config, None).await?;
+        let response = self.bridge_input(binding, "validate", config, None).await?;
         let result = response.result.ok_or_else(invalid)?;
         if response.status != "succeeded" || result["valid"] != true {
             return Err(Error::Conflict(
@@ -165,14 +165,26 @@ impl OpenShell {
         arguments: &[&str],
         seconds: u32,
     ) -> Result<Response, Error> {
+        self.bridge_with_stdin(binding, arguments, seconds, Vec::new())
+            .await
+    }
+
+    async fn bridge_with_stdin(
+        &self,
+        binding: &Row,
+        arguments: &[&str],
+        seconds: u32,
+        stdin: Vec<u8>,
+    ) -> Result<Response, Error> {
         let runtime = agent::binding(binding)?;
         let name = binding.get("agent_name").map(String::as_str).unwrap_or("");
         let (exit, output) = self
-            .exec_bound(
+            .exec_input(
                 binding,
                 runtime.command(arguments[0], &arguments[1..]),
                 runtime.environment(name),
                 seconds,
+                stdin,
             )
             .await?;
         Response::decode(arguments[0], exit, &output)
@@ -193,7 +205,9 @@ impl OpenShell {
         .snapshot()
     }
 
-    pub(super) async fn bridge_file(
+    /// Send one JSON object on stdin in the same exec as the command, so no
+    /// file is staged in the sandbox and no cleanup can leave the outcome unknown.
+    pub(super) async fn bridge_input(
         &self,
         binding: &Row,
         operation: &str,
@@ -207,78 +221,23 @@ impl OpenShell {
         if payload.len() > REQUEST_LIMIT {
             return Err(Error::Conflict("Fabric input exceeds the request limit"));
         }
-        let runtime = agent::binding(binding)?;
         let name = binding.get("agent_name").map(String::as_str).unwrap_or("");
-        let environment = runtime.environment(name);
-        let python = &environment["ADAPTER_PYTHON"];
-        let filesystem = super::row_policy(binding)?
-            .filesystem
-            .ok_or(ObservationError::Incomplete)?;
-        let directory = ["HOME", "TMPDIR"]
-            .into_iter()
-            .filter_map(|key| environment.get(key))
-            .find(|directory| path_is_granted(directory, &filesystem.read_write))
-            .ok_or(Error::Conflict(
-                "image does not advertise a writable Fabric input directory",
-            ))?;
-        let mut nonce = [0; 16];
-        getrandom::fill(&mut nonce)
-            .map_err(|_| Error::Conflict("cannot allocate Fabric input file"))?;
-        let token: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-        let path = format!("{}/.nemoclaw-{token}.json", directory.trim_end_matches('/'));
-        let stage = self
-            .exec_input(
-                binding,
-                vec![
-                    python.clone(),
-                    "-c".into(),
-                    include_str!("stage_json.py").into(),
-                    path.clone(),
-                ],
-                environment.clone(),
-                20,
-                payload,
-            )
-            .await;
-        let mut arguments = vec![
-            operation,
-            "--agent",
-            name,
-            if operation == "invoke" {
-                "--input"
-            } else {
-                "--config"
-            },
-            &path,
-        ];
+        let flag = if operation == "invoke" {
+            "--input"
+        } else {
+            "--config"
+        };
+        let mut arguments = vec![operation, "--agent", name, flag, "-"];
         if let Some(generation) = expected_generation {
             arguments.extend(["--expected-generation", generation]);
         }
-        let response = match stage {
-            Ok((0, _)) => self.bridge(binding, &arguments, 120).await,
-            Ok(_) => Err(Error::Conflict("cannot stage Fabric input file")),
-            Err(error) => Err(error),
-        };
-        let cleanup = self
-            .exec_bound(
-                binding,
-                vec![python.clone(), "-c".into(), "from pathlib import Path; import sys; Path(sys.argv[1]).unlink(missing_ok=True)".into(), path],
-                environment,
-                20,
-            )
-            .await;
-        match (response, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(response), Ok((0, _))) => Ok(response),
-            (Ok(_), _) => Err(Error::Conflict(
-                "Fabric input cleanup failed; command outcome requires observation",
-            )),
-        }
+        self.bridge_with_stdin(binding, &arguments, 120, payload)
+            .await
     }
 
     /// Send one explicit request. An ambiguous outcome is never retried.
     pub async fn invoke_agent(&self, binding: &Row, input: &Value) -> Result<Value, Error> {
-        let response = self.bridge_file(binding, "invoke", input, None).await?;
+        let response = self.bridge_input(binding, "invoke", input, None).await?;
         if response.status != "succeeded" {
             return Err(Error::Conflict(
                 if response

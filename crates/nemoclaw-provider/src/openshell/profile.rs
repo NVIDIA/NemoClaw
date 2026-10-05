@@ -426,13 +426,6 @@ mod tests {
         metadata.insert("unexpected".into(), "value".into());
         unknown.annotations = annotations(metadata);
         assert!(row(unknown, "workspace", &profile.id, true).is_err());
-        let mut legacy = profile.clone();
-        legacy.annotations = [
-            (OWNER.into(), "deployment".into()),
-            (GENERATION.into(), "generation".into()),
-        ]
-        .into();
-        assert!(row(legacy, "workspace", &profile.id, true).is_err());
         for key in ["owner", "generation"] {
             let mut foreign = profile.clone();
             let mut metadata: Row =
