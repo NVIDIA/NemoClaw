@@ -127,6 +127,9 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
     reloaded.reserveSandboxInferenceRoute("alpha", {
       provider: "ollama-local",
       model: "local-model",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
       gatewayName: "nemoclaw",
     });
     expect(reloaded.getSandbox("alpha")?.nativeHostedProviderAttachment).toBeUndefined();
@@ -134,6 +137,9 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
     reloaded.reserveSandboxInferenceRoute("beta", {
       provider: "ollama-local",
       model: "local-model",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
       gatewayName: "nemoclaw-9090",
     });
     expect(reloaded.getSandbox("beta")?.nativeHostedProviderAuthorities).toBeUndefined();
