@@ -905,6 +905,12 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           // These proofs install the reviewed shrinkwrapped runtime dependencies
           // with lifecycle scripts disabled. Keep them after every shape-only
           // dist scan so dependency materialization cannot perturb their timing.
+          const mcpNpxPatch = spawnSync(
+            nodeRuntime.executable,
+            [path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-npx.mts"), dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(mcpNpxPatch, "apply MCP npx normalization to the real distribution");
           const transportDiagnosticsPatch = spawnSync(
             nodeRuntime.executable,
             [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, dist],
