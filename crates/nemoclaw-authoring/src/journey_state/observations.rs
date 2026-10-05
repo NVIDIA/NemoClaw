@@ -15,7 +15,7 @@ impl JourneyState {
         let mut resolution = self.resolve(capabilities)?;
         // A host that can run only one local runtime makes it the suggestion,
         // even over a supplied value; the user still decides.
-        if let [only] = crate::discovery_queries::reachable_runtimes(observations).as_slice()
+        if let [only] = crate::local_runtimes::reachable_runtimes(observations).as_slice()
             && let Some(question) = resolution
                 .questions
                 .iter_mut()

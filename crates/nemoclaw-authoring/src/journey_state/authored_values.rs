@@ -263,7 +263,7 @@ impl AuthoredValues {
             .values
             .pointer(RUNTIME_PROVIDER)
             .and_then(Value::as_str)
-            .and_then(crate::discovery_queries::local_engine)
+            .and_then(crate::local_runtimes::local_engine)
         else {
             return Ok(());
         };
