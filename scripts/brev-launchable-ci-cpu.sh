@@ -285,9 +285,6 @@ else
     rm -f "$node_tmp"
     fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
-  # A tar overlay leaves removed npm dependencies behind. Replace only npm,
-  # after verifying the archive, and preserve unrelated global packages.
-  sudo rm -rf -- /usr/local/lib/node_modules/npm
   sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
   rm -f "$node_tmp"
   [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
