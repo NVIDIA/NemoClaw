@@ -75,7 +75,9 @@ spec:
       - name: --reasoning-parser
         value: qwen3
       - name: --load-format
-        value: fastsafetensors
+        value: safetensors
+      - name: --safetensors-load-strategy
+        value: lazy
 
   readiness:
     timeoutSeconds: 1800
