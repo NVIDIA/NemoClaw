@@ -181,14 +181,24 @@ function hostGatewayProcessStatus(
   pid: number,
   deps: HostGatewayProcessDeps,
 ): HostGatewayProcessStatus {
-  const result = deps.run("ps", ["-p", String(pid), "-o", "stat="], { env: deps.env });
+  // A Linux group leader can be a zombie while another thread still owns sockets.
+  const args = ["-p", String(pid), "-o", "stat="];
+  if (process.platform === "linux") args.push("-L");
+  const result = deps.run("ps", args, { env: deps.env });
   if (result.status === 1) {
     return result.stdout.trim() === "" && result.stderr.trim() === "" ? "exited" : "unknown";
   }
   if (result.status !== 0) return "unknown";
-  const state = result.stdout.trim().charAt(0);
-  if (EXITED_PROCESS_STATES.has(state)) return "exited";
-  return RUNNING_PROCESS_STATES.has(state) ? "running" : "unknown";
+  const states = result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim().charAt(0));
+  if (states.every((state) => EXITED_PROCESS_STATES.has(state))) return "exited";
+  return states.every(
+    (state) => EXITED_PROCESS_STATES.has(state) || RUNNING_PROCESS_STATES.has(state),
+  )
+    ? "running"
+    : "unknown";
 }
 
 function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
