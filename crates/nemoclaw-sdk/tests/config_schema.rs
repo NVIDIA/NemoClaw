@@ -170,15 +170,20 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 }
 
 #[test]
-fn schema_and_parser_accept_every_maintained_example() {
+fn every_example_is_accepted_and_round_trips_without_changing_intent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    for path in examples::yaml_files(&directory) {
-        if path.extension().is_some_and(|ext| ext == "yaml") {
-            let value: Value =
-                serde_saphyr::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            agrees(&validator, &value, true);
-        }
+    let paths = examples::yaml_files(&directory);
+    assert!(!paths.is_empty());
+    for path in paths {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: Value = serde_saphyr::from_str(&text).unwrap();
+        agrees(&validator, &value, true);
+        let document = Document::parse(text.as_bytes()).unwrap();
+        let restored = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+        assert_eq!(restored, document, "{}", path.display());
+        assert_eq!(restored.workspace(), document.workspace());
+        assert_eq!(restored.digest(), document.digest());
     }
 }
 

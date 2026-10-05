@@ -3,8 +3,7 @@
 
 # Configuration contract fixtures
 
-The YAML files are parser inputs.
-Adjacent JSON files record expected serialization, digests, workspace names, and inference endpoints.
+The YAML files are inputs that tests load and modify; examples under `examples/` cover the maintained configurations.
 
 These files are parser fixtures, not authorization to apply the embedded live deployment UIDs.
 Live tests must select independent identities.
