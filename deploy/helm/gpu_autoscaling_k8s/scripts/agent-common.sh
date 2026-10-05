@@ -380,6 +380,13 @@ agent_common_pin_hermes_model() {
     hermes config set model.default "${model}" >/dev/null
 }
 
+agent_common_pin_hermes_max_tokens() {
+  local sandbox_name="${1:?sandbox}"
+  local max_tokens="${2:-${MAX_TOKENS:-1024}}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    hermes config set model.max_tokens "${max_tokens}" >/dev/null
+}
+
 # GHCR Deep Agents images bake NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b.
 # Point dcode -n at the chart NIM model and drop leftover openai.params for
 # that baked id (Deep Agents errors if params name a model not in models[]).

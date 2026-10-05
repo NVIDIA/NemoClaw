@@ -50,7 +50,7 @@ HPA (GPU util >40% or latency >3000 ms)
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
-`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. After 60s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
+`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. Clients stop **new** chats once HPA current replicas = 8; in-flight chats still finish. After 15s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
 
 ## Prerequisites
 
@@ -791,7 +791,7 @@ See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/gr
 
 ### How is LLM latency calculated for HPA?
 
-The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. It is stored in a rolling window of 128 samples and exported as `nemoclaw_llm_latency_avg_milliseconds`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
+The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. Every completed chat on that pod is included in `nemoclaw_llm_latency_avg_milliseconds` (no 128-sample cap, no age cutoff). Clients stop **new** chats at 8 GPUs; already-started chats still complete. After 15s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 ### What port numbers are used?
 

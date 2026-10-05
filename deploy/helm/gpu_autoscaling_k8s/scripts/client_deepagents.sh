@@ -15,6 +15,8 @@
 #
 # Deep Agents has no HTTP dashboard. Run after agentscaling_deepagents_*.
 #   E2E_USERS=5 ./scripts/client_deepagents.sh
+# Workload: inflight stays 1. Default MAX_TOKENS=2048 (GPU util).
+# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -45,6 +47,7 @@ export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 # One agent per sandbox. Longer completions keep NIM busy (Hermes-style 7→8 climb).
 export MAX_TOKENS="$(agent_common_resolve_max_tokens deepagents)"
+# Stop *new* chats once current replicas = TARGET_PODS. In-flight chats still finish.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}"

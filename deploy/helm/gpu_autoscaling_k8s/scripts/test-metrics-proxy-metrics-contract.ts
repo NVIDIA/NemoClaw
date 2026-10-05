@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-process.env.LLM_LATENCY_WINDOW_SIZE = "8";
 process.env.LLM_LATENCY_IDLE_EXPIRE_MS = "100";
 
 const metricsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../files/metrics-proxy-metrics.ts");
@@ -39,19 +38,21 @@ assert.ok(
 
 recordLlmLatency(5000, true);
 recordLlmLatency(7000, true);
+for (let i = 0; i < 20; i += 1) recordLlmLatency(1000, true);
 lines = llmMetricsLines();
-assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 6000);
+// All 22 samples count: (5000 + 7000 + 20*1000) / 22 = 1454.54… → 1455
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 1455);
 assert.ok(
   !lines.some((entry: string) => entry.includes("latency_p50") || entry.includes("latency_p95")),
   "p50/p95 latency gauges must not be exported",
 );
 
-// Still within the idle window — gauge retains the rolling average.
+// Still within the idle window — gauge retains the average of all samples.
 nowMs += 99;
 lines = llmMetricsLines();
-assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 6000);
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 1455);
 
-// Past idle expire — rolling window clears so HPA sees 0 (below target).
+// Past idle expire — HPA average clears so HPA sees 0 (below target).
 nowMs += 1;
 lines = llmMetricsLines();
 assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 0);
@@ -62,7 +63,7 @@ lines = llmMetricsLines();
 assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 4000);
 
 // Cumulative request counters are not cleared by idle expiration.
-assert.match(lines.join("\n"), /nemoclaw_llm_requests_total\{result="success"\} 3/);
+assert.match(lines.join("\n"), /nemoclaw_llm_requests_total\{result="success"\} 23/);
 
 setLlmMetricsClockForTests(null);
 console.log("OK: rolling LLM latency_avg gauge idle-expires for HPA scale-down");

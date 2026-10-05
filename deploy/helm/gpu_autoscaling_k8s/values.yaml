@@ -335,13 +335,14 @@ autoscaling:
           periodSeconds: 10
       selectPolicy: Max
     scaleDown:
-      # One pod per step (N→…→1); shorter window so idle demos scale down faster.
+      # One pod per step (N→…→1). 60s window keeps max replicas visible for ~1–2 min
+      # after latency drops; 15s period so 8→1 is about two minutes, not ~3.5.
       # Avoid Percent policies with selectPolicy Max — e.g. 50% jumps 4→2.
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
           value: 1
-          periodSeconds: 30
+          periodSeconds: 15
       selectPolicy: Max
 
 metrics:
@@ -350,8 +351,10 @@ metrics:
   # Scraped by Prometheus so per-pod request/latency metrics (nemoclaw_llm_*) show up
   # in Grafana out of the box. Default true so install/load-test/reset re-runs (plain
   # `helm upgrade`, not --reuse-values) don't silently disable this on every re-apply.
-  # Clear rolling latency_avg after this idle period so latency HPA can scale down.
-  llmLatencyIdleExpireMs: 60000
+  # Clear latency_avg after this idle period so latency HPA can scale down.
+  # Does not cancel in-flight chats; clients stop *new* queries at max GPUs.
+  # The HPA gauge averages every sample until this idle reset (no 128-sample cap).
+  llmLatencyIdleExpireMs: 15000
   serviceMonitor:
     enabled: true
     interval: 30s

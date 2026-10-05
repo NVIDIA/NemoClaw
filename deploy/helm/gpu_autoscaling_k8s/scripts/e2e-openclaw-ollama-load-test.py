@@ -641,9 +641,13 @@ async def run_test(args: argparse.Namespace) -> int:
                     hold_started = time.monotonic()
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
+                    print(
+                        f"[load] {current} GPUs reached; stopping new chats "
+                        "(in-flight replies will finish)",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     stop_load.set()
-                    if not args.host:
-                        await asyncio.to_thread(stop_sandbox_chats, args.prefix, args.users)
                     return
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
@@ -806,7 +810,7 @@ def main() -> int:
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
     parser.add_argument("--hpa-namespace", default=os.environ.get("NAMESPACE", "nemoclaw-gpu"))
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))
-    parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "10")))
+    parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "2")))
     parser.add_argument("--scale-down-wait-loops", type=int, default=int(os.environ.get("SCALE_DOWN_WAIT_LOOPS", "40")))
     parser.add_argument(
         "--from-logs",

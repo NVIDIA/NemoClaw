@@ -15,6 +15,8 @@
 #
 # Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
 #   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
+# Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
+# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -44,6 +46,7 @@ export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 export MAX_TOKENS="$(agent_common_resolve_max_tokens hermes)"
+# Stop *new* chats once current replicas = TARGET_PODS. In-flight chats still finish.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
@@ -56,10 +59,17 @@ if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client_hermes.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
   echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
-  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" <<'PY'
-import json, sys, time, urllib.error, urllib.request
-host, users, duration, timeout, max_tokens = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5])
-prompt = "Explain Kubernetes HPA and GPU autoscaling in detail with examples."
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" "${TARGET_PODS}" <<'PY'
+import json, os, sys, time, urllib.error, urllib.request
+host, users, duration, timeout, max_tokens, target = (
+    sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+)
+prompt = (
+    "In one sentence, what is Kubernetes HPA?"
+    if max_tokens <= 128
+    else "Explain Kubernetes HPA and GPU autoscaling in detail with examples."
+)
+discovery = int(os.environ.get("E2E_DISCOVERY_PORT", "18788"))
 deadline = time.monotonic() + duration
 failed = 0
 for i in range(users):
@@ -79,9 +89,27 @@ for i in range(users):
     print(f"  user {i} → http://{host}:{8642 + i}/v1")
 if failed:
     raise SystemExit("client will not send chat until every http://dgx-ip:8642+i/health answers")
+
+def hpa_current():
+    try:
+        with urllib.request.urlopen(f"http://{host}:{discovery}/hpa", timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        return int(data.get("current") or 0)
+    except Exception:
+        return 0
+
 ok = err = 0
-while time.monotonic() < deadline:
+stopped = False
+while time.monotonic() < deadline and not stopped:
+    if hpa_current() >= target:
+        print(f"[load] {target} GPUs reached; stopping new chats (in-flight replies will finish)", flush=True)
+        stopped = True
+        break
     for i in range(users):
+        if hpa_current() >= target:
+            print(f"[load] {target} GPUs reached; stopping new chats (in-flight replies will finish)", flush=True)
+            stopped = True
+            break
         req = urllib.request.Request(
             f"http://{host}:{8642 + i}/v1/chat/completions",
             data=json.dumps({
@@ -146,6 +174,13 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   fi
 done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox pod is Ready"
+
+echo "Pinning Hermes max_tokens=${MAX_TOKENS} (keep provisioned model; one hermes -z per sandbox)"
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  agent_common_pin_hermes_max_tokens "${name}" \
+    || fail "could not pin max_tokens on sandbox ${i}"
+done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
