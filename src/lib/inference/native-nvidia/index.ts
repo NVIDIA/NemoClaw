@@ -149,7 +149,12 @@ export async function ensureNativeNvidiaProvider(input: {
       credentials: [{ name: NVIDIA_HOSTED_CREDENTIAL_ENV, value: input.credentialValue }],
       config: [],
     });
-    if (!updated.ok && !mutationOutcomeMayBeAmbiguous(updated.error)) {
+    if (!updated.ok && mutationOutcomeMayBeAmbiguous(updated.error)) {
+      throw new NativeNvidiaProviderError(
+        `OpenShell did not confirm whether provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' accepted its credential update. No provider receipt was recorded.`,
+      );
+    }
+    if (!updated.ok) {
       throw new NativeNvidiaProviderError(
         `Could not update OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}': ${providerErrorDetail(updated.error)}`,
       );

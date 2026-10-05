@@ -7,6 +7,7 @@ import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catal
 
 describe("native NVIDIA target ownership", () => {
   it.each([
+    "src/lib/actions/inference-set.ts",
     "src/lib/inference/native-nvidia/index.ts",
     "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
   ])("selects both provider-switch targets when %s changes", (changedFile) => {
