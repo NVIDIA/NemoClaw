@@ -272,3 +272,22 @@ export function buildManagedStartupOnboardProfile(
   });
   return Object.freeze({ ...built, credentialProxyReplayRequired });
 }
+
+import {
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "../../inference/native-compatible/contract";
+
+export function applyNativeCompatibleStartupRoute(
+  route: import("../../inference/config").SandboxInferenceConfig,
+  input: {
+    provider: string;
+    endpointUrl: string;
+    preferredInferenceApi: string;
+    receipt: NativeCompatibleProviderAttachment;
+  },
+) {
+  const receipt = requireMatchingNativeCompatibleAttachment(input.receipt, input);
+  if (!receipt) throw new Error("Native startup inference requires its provider receipt.");
+  return { ...route, inferenceBaseUrl: receipt.endpointUrl, inferenceApi: receipt.api };
+}

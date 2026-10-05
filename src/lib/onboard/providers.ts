@@ -18,6 +18,10 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeCompatibleProviderAuthority,
+  setNativeCompatibleProviderAuthority,
+} = require("../state/registry/native-compatible-provider-authority");
+const {
   getNativeNvidiaProviderAuthority,
   setNativeNvidiaProviderAuthority,
 } = require("../state/registry/native-nvidia-provider-authority");
@@ -397,6 +401,8 @@ function setupInferenceProviderDeps(runOpenshell) {
   return {
     providerExistsInGateway,
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeCompatibleProviderAuthority,
+    setNativeCompatibleProviderAuthority,
     getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority,
   };

@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  isNativeCompatibleHostedSelection,
+  normalizeNativeCompatibleProviderAttachment,
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "../../inference/native-compatible/contract";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { CLI_NAME } from "../../cli/branding";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
@@ -19,6 +26,8 @@ import {
 } from "./connect-inference-route-probe";
 import type { DoctorCheck } from "./doctor-report";
 import {
+  verifyNativeCompatibleStatusAttachment,
+  type VerifyNativeCompatibleStatusAttachment,
   probeSandboxInferenceGatewayHealth,
   probeSandboxNativeNvidiaModelsHealth,
   verifyNativeNvidiaStatusAttachment,
@@ -32,6 +41,9 @@ export type DoctorInferenceRoute = {
   recordedEndpointUrl?: string | null;
   agentName?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
+  preferredInferenceApi?: string | null;
+  credentialEnv?: string | null;
 };
 
 type ManagedLlamaCppDoctorDeps = {
@@ -79,6 +91,8 @@ export function collectManagedLlamaCppDoctorChecks(
 
 type DoctorInferenceDeps = {
   gatewayName?: string | null;
+  verifyNativeCompatibleProviderAttachmentImpl?: VerifyNativeCompatibleStatusAttachment;
+  probeSandboxInferenceInvocationImpl?: typeof probeSandboxInferenceInvocation;
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
   probeSandboxNativeNvidiaModelsHealthImpl?: typeof probeSandboxNativeNvidiaModelsHealth;
@@ -86,6 +100,74 @@ type DoctorInferenceDeps = {
   /** False for terminal agents that do not have a long-running gateway serving process. */
   includeServingProcessCheck?: boolean;
 };
+
+async function collectNativeCompatibleRouteProbe(
+  sandboxName: string,
+  route: DoctorInferenceRoute,
+  sandboxReachable: boolean,
+  deps: DoctorInferenceDeps,
+): Promise<ProviderHealthStatus> {
+  const base = {
+    ok: false,
+    probed: false,
+    providerLabel: "Native compatible route",
+    endpoint:
+      normalizeNativeCompatibleProviderAttachment(route.nativeCompatibleProviderAttachment)
+        ?.endpointUrl ?? "",
+    probeLabel: "native compatible",
+  };
+  if (!sandboxReachable)
+    return {
+      ...base,
+      detail: "skipped because the sandbox is not reachable through its named gateway",
+    };
+  try {
+    const receipt = requireMatchingNativeCompatibleAttachment(
+      route.nativeCompatibleProviderAttachment,
+      { ...route, endpointUrl: route.recordedEndpointUrl },
+    );
+    if (!deps.gatewayName || !receipt)
+      throw new Error(
+        "Native endpoint ownership receipt or gateway binding is missing. Recreate the sandbox.",
+      );
+    await verifyNativeCompatibleStatusAttachment({
+      gatewayName: deps.gatewayName,
+      sandboxName,
+      expected: receipt,
+      verify: deps.verifyNativeCompatibleProviderAttachmentImpl,
+    });
+    const result = await (
+      deps.probeSandboxInferenceInvocationImpl ?? probeSandboxInferenceInvocation
+    )({
+      sandboxName,
+      gatewayName: deps.gatewayName,
+      provider: route.provider,
+      model: route.model,
+      preferredInferenceApi: receipt.api,
+      nativeCompatibleProviderAttachment: receipt,
+      ...(route.agentName === "langchain-deepagents-code" ? { agentName: route.agentName } : {}),
+    });
+    return result.ok
+      ? {
+          ...base,
+          ok: true,
+          probed: true,
+          detail: "The attached provider served a native inference request.",
+        }
+      : {
+          ...base,
+          probed: true,
+          detail: formatUntrustedProbeDetail(result.detail),
+          failureLabel: "unreachable",
+        };
+  } catch (error) {
+    return {
+      ...base,
+      detail: formatUntrustedProbeDetail(error instanceof Error ? error.message : String(error)),
+      failureLabel: "unreachable",
+    };
+  }
+}
 
 async function collectNativeNvidiaRouteProbe(
   sandboxName: string,
@@ -315,16 +397,26 @@ export async function collectInferenceChecks(
   const effortCheck = reasoningEffortCheck(route);
   if (effortCheck) checks.push(effortCheck);
   const nativeNvidia = isNativeNvidiaProvider(route.provider);
-  const routeProbe = nativeNvidia
-    ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
-    : await collectInferenceRouteProbe(
-        sandboxName,
-        sandboxReachable,
-        deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
-        deps.gatewayName,
-      );
+  const nativeCompatible = isNativeCompatibleHostedSelection({
+    ...route,
+    endpointUrl: route.recordedEndpointUrl,
+  });
+  const routeProbe = nativeCompatible
+    ? await collectNativeCompatibleRouteProbe(sandboxName, route, sandboxReachable, deps)
+    : nativeNvidia
+      ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
+      : await collectInferenceRouteProbe(
+          sandboxName,
+          sandboxReachable,
+          deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+          deps.gatewayName,
+        );
   pushInferenceHealthCheck(checks, routeProbe, {
-    label: nativeNvidia ? "Inference route (native NVIDIA)" : "Inference route (gateway)",
+    label: nativeCompatible
+      ? "Inference route (native compatible)"
+      : nativeNvidia
+        ? "Inference route (native NVIDIA)"
+        : "Inference route (gateway)",
   });
   for (const diagnostic of collectProviderHealthDiagnostics(
     route,
@@ -346,3 +438,5 @@ export async function collectInferenceChecks(
   }
   return checks;
 }
+
+export { isNativeCompatibleHostedSelection, normalizeNativeCompatibleProviderAttachment };

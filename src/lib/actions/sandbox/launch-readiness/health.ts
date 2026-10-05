@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  isNativeCompatibleHostedSelection,
+  requireMatchingNativeCompatibleAttachment,
+} from "../../../inference/native-compatible/contract";
+import { verifyNativeCompatibleProviderAttachment } from "../../../inference/native-compatible/profile";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
@@ -79,6 +84,7 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  verifyNativeCompatibleAttachment?: typeof verifyNativeCompatibleProviderAttachment;
   verifyNativeNvidiaAttachment?: (input: {
     sandboxName: string;
     gatewayName: string;
@@ -256,6 +262,38 @@ export async function requireNativeNvidiaInferenceHealth(input: {
   return true;
 }
 
+export async function requireNativeCompatibleInferenceHealth(
+  input: Parameters<typeof requireNativeNvidiaInferenceHealth>[0],
+): Promise<boolean> {
+  if (!isNativeCompatibleHostedSelection(input.entry)) return false;
+  const expected = requireMatchingNativeCompatibleAttachment(
+    input.entry.nativeCompatibleProviderAttachment,
+    input.entry,
+  );
+  const provider = normalizedString(input.entry.provider);
+  const model = normalizedString(input.entry.model);
+  if (!expected || !provider || !model) throw new LaunchReadinessEvidenceError();
+  await (input.deps.verifyNativeCompatibleAttachment ?? verifyNativeCompatibleProviderAttachment)({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected,
+  });
+  const invocation = await (
+    input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+  )({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    agentName: input.agentName,
+    provider,
+    model,
+    preferredInferenceApi: expected.api,
+    nativeCompatibleProviderAttachment: expected,
+  });
+  if (!invocation.ok) throw new LaunchReadinessObservationError("health", "inference request");
+  return true;
+}
+
 async function probeInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
@@ -351,9 +389,13 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeNvidiaProviderAttachment(entry)) {
+    if (getNativeNvidiaProviderAttachment(entry) || isNativeCompatibleHostedSelection(entry)) {
       try {
-        await requireNativeNvidiaInferenceHealth({
+        await (
+          isNativeCompatibleHostedSelection(entry)
+            ? requireNativeCompatibleInferenceHealth
+            : requireNativeNvidiaInferenceHealth
+        )({
           sandboxName,
           gatewayName,
           agentName,

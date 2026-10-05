@@ -487,3 +487,45 @@ describe("transient inference invocation failures", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
 });
+
+describe("native compatible route health", () => {
+  it("accepts a native invocation without observing the managed route", () => {
+    expect(
+      buildSandboxInferenceRouteHealth(
+        null,
+        null,
+        { ok: true },
+        {
+          agentName: "openclaw",
+          provider: "compatible-endpoint",
+          nativeCompatibleEndpoint: "https://models.example.com/v1",
+        },
+      ),
+    ).toMatchObject({ ok: true, endpoint: "https://models.example.com/v1" });
+  });
+
+  it("does not substitute a healthy managed route for a failed native invocation", () => {
+    expect(
+      buildSandboxInferenceRouteHealth(
+        {
+          ok: true,
+          endpoint: "https://inference.local/v1/models",
+          httpStatus: 200,
+          detail: "reachable",
+        },
+        null,
+        {
+          ok: false,
+          detail: "request failed",
+          httpStatus: 403,
+          endpoint: "https://models.example.com/v1/responses",
+        },
+        {
+          agentName: "openclaw",
+          provider: "compatible-endpoint",
+          nativeCompatibleEndpoint: "https://models.example.com/v1",
+        },
+      ),
+    ).toMatchObject({ ok: false, endpoint: "https://models.example.com/v1/responses" });
+  });
+});

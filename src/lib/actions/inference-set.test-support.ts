@@ -264,6 +264,7 @@ export function createDeps(options: {
   inferenceRouteMutator?: OpenShellInferenceRouteMutator;
   inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   providerAdapter?: OpenShellProviderAdapter;
+  resolveNativeCompatibleEndpointHost?: InferenceSetDeps["resolveNativeCompatibleEndpointHost"];
   localValidation?: LocalValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
@@ -450,6 +451,9 @@ export function createDeps(options: {
         })),
       } satisfies OpenShellInferenceRouteObserver),
     providerAdapter,
+    resolveNativeCompatibleEndpointHost: options.resolveNativeCompatibleEndpointHost,
+    getNativeCompatibleProviderAuthority: () => undefined,
+    setNativeCompatibleProviderAuthority: vi.fn(),
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
     isLocalInferenceProvider: (provider) =>

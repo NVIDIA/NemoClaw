@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -977,6 +978,67 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(result.failureLines).toContain("    nemoclaw alpha destroy");
       expect(result.failureLines.join("\n")).not.toContain("rebuild");
       expect(result.failureLines.join("\n")).not.toContain("openshell sandbox provider detach");
+    },
+  );
+
+  it.each(["deleted", "not_found", "attached", "replacement"] as const)(
+    "retains compatible ownership unless removal is confirmed [case %s]",
+    async (outcome) => {
+      const identity = nativeCompatibleEndpointIdentity({
+        addresses: ["93.184.216.34"],
+        endpointUrl: "https://api.example.com/v1",
+        api: "openai-completions",
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned",
+        addresses: ["93.184.216.34"],
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+      };
+      const clear = vi.fn();
+      const remove = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () =>
+        outcome === "deleted"
+          ? { ok: true }
+          : {
+              ok: false,
+              error: {
+                kind: "command",
+                reason: outcome === "not_found" ? "not_found" : "attached",
+                message: "retained",
+                attachedSandboxes: ["alpha"],
+              },
+            },
+      );
+      const detach = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
+      const adapter = providerAdapter({
+        getProvider: async () => ({
+          ok: true,
+          value: {
+            name: receipt.providerName,
+            type: receipt.profileId,
+            credentialKeys: ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+            configKeys: [],
+            revision: { id: outcome === "replacement" ? "other" : "owned", resourceVersion: 1 },
+          },
+        }),
+        deleteProvider: remove,
+        detachProvider: detach,
+      });
+      const result = await runCredentialsResetAction(
+        { provider: receipt.providerName, confirmed: true },
+        {
+          providerAdapter: adapter,
+          getNativeCompatibleProviderAuthority: () => receipt,
+          clearNativeCompatibleProviderAuthority: clear,
+        },
+      );
+      expect(result.exitCode).toBe(outcome === "deleted" || outcome === "not_found" ? 0 : 1);
+      expect(clear).toHaveBeenCalledTimes(outcome === "deleted" || outcome === "not_found" ? 1 : 0);
+      expect(detach).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledTimes(outcome === "replacement" ? 0 : 1);
     },
   );
 

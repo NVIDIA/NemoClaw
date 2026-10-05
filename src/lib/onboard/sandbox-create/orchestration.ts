@@ -89,6 +89,8 @@ import {
   usesNativeNvidiaProvider,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeNvidiaAttachmentAfterCreate,
+  verifyNativeCompatibleAttachmentAfterCreate,
+  usesNativeCompatibleProvider,
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
@@ -1416,6 +1418,7 @@ export function createProviderEffectBoundary(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expectedNativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
@@ -1437,6 +1440,19 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeNvidiaProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (usesNativeCompatibleProvider(input.preparationInput.inferenceProvider)) {
+      context.revalidateSandboxIdentity(
+        `attaching native compatible provider for sandbox '${input.sandboxName}'`,
+      );
+      await verifyNativeCompatibleAttachmentAfterCreate({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        inferenceProvider: input.preparationInput.inferenceProvider,
+        expected: input.expectedNativeCompatibleProviderAttachment,
+        deps: input.preparationDeps,
+      });
+      return;
+    }
     if (!usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)) return;
     context.revalidateSandboxIdentity(
       `attaching and verifying native NVIDIA provider for sandbox '${input.sandboxName}'`,
@@ -1456,9 +1472,11 @@ export function createProviderEffectBoundary(input: {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
       },
-      runAfterVerifiedCreate: usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)
-        ? attachAndVerifyNativeNvidiaProvider
-        : undefined,
+      runAfterVerifiedCreate:
+        usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
+        usesNativeCompatibleProvider(input.preparationInput.inferenceProvider)
+          ? attachAndVerifyNativeNvidiaProvider
+          : undefined,
     };
   }
   return {
@@ -2035,6 +2053,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeCompatibleProviderAttachment:
+            resolvedCreateIntent.nativeCompatibleProviderAttachment,
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -2687,6 +2707,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 chatUiUrl,
                 provider,
                 endpointUrl: createIntent?.endpointUrl ?? null,
+                nativeCompatibleProviderAttachment:
+                  resolvedCreateIntent.nativeCompatibleProviderAttachment,
                 compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning,
                 preferredInferenceApi,
                 webSearchConfig,
@@ -3577,6 +3599,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxName,
       gatewayName: GATEWAY_NAME,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
+      expectedNativeCompatibleProviderAttachment:
+        resolvedCreateIntent.nativeCompatibleProviderAttachment,
       preparationInput: providerPreparationInput,
       preparationDeps: providerPreparationDeps,
       runVerifiedSandboxCreateEffects,

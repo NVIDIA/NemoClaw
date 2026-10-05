@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
@@ -423,5 +424,195 @@ describe("native NVIDIA onboarding", () => {
 
     expect(providerAdapter.importProviderProfile).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
+  });
+});
+
+function nativeCompatibleOnboardingFixture(
+  provider: "compatible-endpoint" | "compatible-anthropic-endpoint",
+  surfaceOk: boolean,
+) {
+  const identity = nativeCompatibleEndpointIdentity({
+    addresses: ["93.184.216.34"],
+    endpointUrl: "https://api.example.com/v1",
+    api: "openai-completions",
+  });
+  const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+  const getProvider = vi
+    .fn<OpenShellProviderAdapter["getProvider"]>()
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "not found" },
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: identity.providerName,
+        type: identity.profileId,
+        credentialKeys: ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: "provider-id", resourceVersion: 4 },
+      },
+    });
+  const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
+    ok: true,
+  }));
+  const providerAdapter = {
+    importProviderProfile,
+    getProvider,
+    createProvider,
+  } as unknown as OpenShellProviderAdapter;
+  const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+  const updateSandbox = vi.fn(() => true);
+  const setNativeCompatibleProviderAuthority = vi.fn(() => true);
+  const verifyInferenceRoute = vi.fn();
+  const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+  const surfaceProbe = vi.fn(async () => ({ ok: surfaceOk }));
+  const setupInference = createSetupInference({
+    probeOpenAiLikeEndpoint: surfaceProbe,
+    checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+    withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+      await operation(),
+    withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+      await operation(),
+    step: vi.fn(),
+    resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    getGatewayName: () => "onboarding-gateway",
+    runOpenshell,
+    updateSandbox,
+    setNativeCompatibleProviderAuthority,
+    getSandbox: () => null,
+    upsertProvider: vi.fn(async () => ({ ok: true })),
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    isNonInteractive: () => true,
+    hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+    providerAdapter,
+    hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+    redact: (value: string) => value,
+    compactText: (value: string) => value,
+    log: vi.fn(),
+    error: vi.fn(),
+    exitProcess: vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    }),
+  } as unknown as SetupInferenceDeps);
+
+  const run = setupInference(
+    "alpha",
+    "nvidia/nemotron-3-super-120b-a12b",
+    provider,
+    identity.endpoint,
+    "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY",
+    null,
+    [],
+    { revalidateSandboxIdentity: () => undefined, preferredInferenceApi: "openai-completions" },
+  );
+
+  return {
+    identity,
+    run,
+    createProvider,
+    importProviderProfile,
+    getProvider,
+    runOpenshell,
+    updateSandbox,
+    setNativeCompatibleProviderAuthority,
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    surfaceProbe,
+  };
+}
+
+describe("native compatible onboarding", () => {
+  it.each([
+    ["compatible-endpoint", 0],
+    ["compatible-anthropic-endpoint", 1],
+  ] as const)(
+    "publishes the compatible native surface for %s",
+    async (provider, expectedProbeCalls) => {
+      const {
+        identity,
+        run,
+        createProvider,
+        importProviderProfile,
+        getProvider,
+        runOpenshell,
+        updateSandbox,
+        setNativeCompatibleProviderAuthority,
+        verifyInferenceRoute,
+        verifyOnboardInferenceSmoke,
+        surfaceProbe,
+      } = nativeCompatibleOnboardingFixture(provider, true);
+      await expect(run).resolves.toEqual({ ok: true });
+      expect(surfaceProbe.mock.calls).toEqual(
+        [
+          [
+            identity.endpoint,
+            expect.any(String),
+            expect.any(String),
+            expect.objectContaining({ skipResponsesProbe: true }),
+          ],
+        ].slice(0, expectedProbeCalls),
+      );
+
+      expect(importProviderProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "onboarding-gateway" },
+        }),
+      );
+      expect(getProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+        providerName: identity.providerName,
+      });
+      expect(createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "onboarding-gateway" },
+          name: identity.providerName,
+          credentials: [
+            { name: "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY", value: "host-only-nvidia-credential" },
+          ],
+          config: [],
+        }),
+      );
+      expect(
+        runOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+      ).toEqual([]);
+      expect(verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+      expect(updateSandbox).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          provider,
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          nativeCompatibleProviderAttachment: {
+            schemaVersion: 1,
+            endpointUrl: identity.endpoint,
+            api: identity.api,
+            addresses: identity.addresses,
+            profileId: identity.profileId,
+            providerName: identity.providerName,
+            providerId: "provider-id",
+          },
+        }),
+      );
+      expect(setNativeCompatibleProviderAuthority).toHaveBeenCalledWith("onboarding-gateway", {
+        schemaVersion: 1,
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+        addresses: identity.addresses,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "provider-id",
+      });
+    },
+  );
+  it("refuses an incompatible OpenAI frontend before importing or activating a provider", async () => {
+    const { run, createProvider, importProviderProfile } = nativeCompatibleOnboardingFixture(
+      "compatible-anthropic-endpoint",
+      false,
+    );
+    await expect(run).rejects.toThrow();
+    expect(createProvider).not.toHaveBeenCalled();
+    expect(importProviderProfile).not.toHaveBeenCalled();
   });
 });

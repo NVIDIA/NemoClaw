@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ensureNativeCompatibleProvider } from "./inference-providers";
+import {
+  isNativeCompatibleSelection,
+  nativeCompatibleSelectionIdentity,
+  isNativeCompatibleHostedSelection,
+  normalizeNativeCompatibleProviderAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "./inference-providers";
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
@@ -236,6 +244,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeCompatibleProviderAuthority?: typeof import("../state/registry").getNativeCompatibleProviderAuthority;
+  setNativeCompatibleProviderAuthority?: typeof import("../state/registry").setNativeCompatibleProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
@@ -658,6 +668,11 @@ export function createSetupInference(
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+    const nativeCompatibleEndpoint = isNativeCompatibleHostedSelection({
+      provider,
+      endpointUrl,
+      credentialEnv,
+    });
     let shouldLogSuccessfulRoute = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () => {
@@ -680,7 +695,7 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        if (!isNativeNvidiaProvider(provider)) {
+        if (!isNativeNvidiaProvider(provider) && !nativeCompatibleEndpoint) {
           const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
             target: { kind: "named", gatewayName },
           });
@@ -775,6 +790,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeCompatibleProviderAttachment: NativeCompatibleProviderAttachment | undefined;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
@@ -795,6 +811,7 @@ export function createSetupInference(
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
             ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+            ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
               : {}),
@@ -961,6 +978,74 @@ export function createSetupInference(
                 lookup: deps.lookup,
               },
             );
+          }
+
+          if (nativeCompatibleEndpoint && endpointUrl) {
+            const api =
+              options.preferredInferenceApi ||
+              (provider === "compatible-anthropic-endpoint"
+                ? "anthropic-messages"
+                : "openai-completions");
+            const identity = nativeCompatibleSelectionIdentity({ provider, endpointUrl, api });
+            const providerAdapter = deps.providerAdapter;
+            if (!providerAdapter)
+              throw new Error("Native compatible setup requires an OpenShell provider adapter.");
+            const recorded = sandboxName ? deps.getSandbox?.(sandboxName) : null;
+            const recordedReceipt = normalizeNativeCompatibleProviderAttachment(
+              recorded?.nativeCompatibleProviderAttachment,
+            );
+            if (
+              recorded &&
+              !recorded.pendingRouteReservation &&
+              isNativeCompatibleSelection(recorded.provider) &&
+              !recordedReceipt
+            ) {
+              throw new Error(
+                "Recreate this beta sandbox before using native compatible inference.",
+              );
+            }
+            const credentialValue =
+              deps.hydrateCredentialEnv(
+                credentialEnv || deps.REMOTE_PROVIDER_CONFIG[provider]?.credentialEnv,
+              ) || null;
+            if (
+              provider === "compatible-anthropic-endpoint" &&
+              api === "openai-completions" &&
+              credentialValue
+            ) {
+              const probe =
+                deps.probeOpenAiLikeEndpoint ?? inferenceProviders.probeOpenAiLikeEndpointOptimized;
+              const surface = await probe(identity.endpoint, model, credentialValue, {
+                skipResponsesProbe: true,
+                pinnedAddresses: endpointPinnedAddresses,
+                trustedPrivateCapability: endpointTrustedPrivateCapability,
+              });
+              if (!surface.ok)
+                throw new Error(
+                  "The selected agent requires an OpenAI-compatible /v1/chat/completions surface, but the endpoint did not answer it. Choose a compatible endpoint or an agent that supports Anthropic Messages.",
+                );
+            }
+            nativeCompatibleProviderAttachment = await ensureNativeCompatibleProvider({
+              adapter: providerAdapter,
+              target: { kind: "named", gatewayName },
+              endpointUrl: identity.endpoint,
+              api,
+              lookup: deps.resolveEndpointHost,
+              trust: {
+                trustedPrivateHosts:
+                  deps.trustedPrivateEndpointHosts ??
+                  parseTrustedPrivateInferenceHostsFromEnv(process.env),
+              },
+              credentialValue,
+              resolveExpected: (profileId) =>
+                deps.getNativeCompatibleProviderAuthority?.(gatewayName, profileId) ??
+                (recordedReceipt?.profileId === profileId ? recordedReceipt : undefined),
+            });
+            deps.setNativeCompatibleProviderAuthority?.(
+              gatewayName,
+              nativeCompatibleProviderAttachment,
+            );
+            return null;
           }
 
           if (isNativeNvidiaProvider(provider)) {
@@ -1178,7 +1263,8 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          if (!nativeNvidiaProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
+          if (!nativeNvidiaProviderAttachment && !nativeCompatibleProviderAttachment)
+            commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireMatchingNativeCompatibleAttachment } from "../../inference/native-compatible/contract";
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
@@ -23,6 +24,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "model",
   "name",
   "nativeNvidiaProviderAttachment",
+  "nativeCompatibleProviderAttachment",
   "nativeNvidiaProviderAuthority",
   "openshellDriver",
   "pendingRouteReservation",
@@ -71,6 +73,11 @@ function withVerifiedCreateCheckpoint(
 }
 
 function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
+  try {
+    requireMatchingNativeCompatibleAttachment(entry.nativeCompatibleProviderAttachment, entry);
+  } catch {
+    return false;
+  }
   if (
     entry.dashboardPort !== undefined &&
     entry.dashboardPort !== null &&

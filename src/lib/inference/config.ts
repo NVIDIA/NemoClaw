@@ -13,6 +13,26 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./native-compatible/endpoint";
+export { getCompatibleAnthropicOpenAiSurfaceBaseUrl };
+import {
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "./native-compatible/contract";
+export {
+  isNativeCompatibleHostedSelection,
+  isNativeCompatibleSelection,
+  nativeCompatibleSelectionIdentity,
+  normalizeNativeCompatibleProviderAttachment,
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "./native-compatible/contract";
+export {
+  ensureNativeCompatibleProvider,
+  ensureNativeCompatibleProviderAttached,
+  detachNativeCompatibleProvider,
+  verifyNativeCompatibleProviderAttachment,
+} from "./native-compatible/profile";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -201,19 +221,6 @@ export function resolveAgentInferenceApi(
   return agentName === "hermes" && provider === "compatible-anthropic-endpoint"
     ? "openai-completions"
     : preferredInferenceApi;
-}
-
-/**
- * Return the OpenAI-compatible base used when a custom Anthropic endpoint is
- * routed through the managed Chat Completions frontend. Anthropic endpoint
- * normalization intentionally strips a trailing `/v1`; OpenShell's OpenAI
- * provider appends `/chat/completions`, so restore `/v1` exactly once here.
- */
-export function getCompatibleAnthropicOpenAiSurfaceBaseUrl(
-  endpointUrl: string | null | undefined,
-): string {
-  const trimmed = String(endpointUrl ?? "").replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 export function getProviderSelectionConfig(
@@ -507,4 +514,18 @@ export function formatInferenceRouteDriftForDisplay(
     recordedRoute,
     warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
   };
+}
+
+/** Configure the agent from the same endpoint and API that own its provider attachment. */
+export function getNativeCompatibleSandboxInferenceConfig(input: {
+  provider: string;
+  model: string;
+  endpointUrl: string;
+  preferredInferenceApi: string;
+  receipt: NativeCompatibleProviderAttachment;
+}) {
+  const receipt = requireMatchingNativeCompatibleAttachment(input.receipt, input);
+  if (!receipt) throw new Error("Native compatible inference requires its provider receipt.");
+  const route = getSandboxInferenceConfig(input.model, input.provider, receipt.api);
+  return { ...route, inferenceBaseUrl: receipt.endpointUrl, inferenceApi: receipt.api };
 }

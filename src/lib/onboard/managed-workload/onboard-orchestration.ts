@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyNativeCompatibleStartupRoute } from "../managed-startup/onboard-profile";
+import type { NativeCompatibleProviderAttachment } from "../../inference/native-compatible/contract";
 import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent/candidate";
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
@@ -202,6 +204,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -409,11 +412,21 @@ export function createManagedWorkloadOnboardRuntime(
             selectedProvider,
             input.preferredInferenceApi,
           );
-    const inference: SandboxInferenceConfig = dependencies.getSandboxInferenceConfig(
-      selectedModel,
-      selectedProvider,
-      inferenceApi,
-    );
+    const inference: SandboxInferenceConfig = input.nativeCompatibleProviderAttachment
+      ? applyNativeCompatibleStartupRoute(
+          dependencies.getSandboxInferenceConfig(
+            selectedModel,
+            selectedProvider,
+            input.nativeCompatibleProviderAttachment.api,
+          ),
+          {
+            provider: selectedProvider ?? "",
+            endpointUrl: input.endpointUrl ?? "",
+            preferredInferenceApi: inferenceApi ?? input.nativeCompatibleProviderAttachment.api,
+            receipt: input.nativeCompatibleProviderAttachment,
+          },
+        )
+      : dependencies.getSandboxInferenceConfig(selectedModel, selectedProvider, inferenceApi);
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:

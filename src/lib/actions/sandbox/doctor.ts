@@ -36,6 +36,8 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
+  isNativeCompatibleHostedSelection,
+  normalizeNativeCompatibleProviderAttachment,
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
@@ -390,7 +392,13 @@ async function resolveInferenceRoute(
 ): Promise<DoctorInferenceRoute> {
   const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
   let live: { provider: string; model: string } | null = null;
-  if (!recordedNativeNvidia && openshellBin && openshellConnected && gatewayName) {
+  if (
+    !recordedNativeNvidia &&
+    !(sb && isNativeCompatibleHostedSelection(sb)) &&
+    openshellBin &&
+    openshellConnected &&
+    gatewayName
+  ) {
     const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
@@ -404,6 +412,11 @@ async function resolveInferenceRoute(
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
+    credentialEnv: sb?.credentialEnv,
+    preferredInferenceApi: sb?.preferredInferenceApi,
+    nativeCompatibleProviderAttachment: normalizeNativeCompatibleProviderAttachment(
+      sb?.nativeCompatibleProviderAttachment,
+    ),
     agentName: sb?.agent,
     ...(recordedNativeNvidia
       ? {

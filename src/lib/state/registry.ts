@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireMatchingNativeCompatibleAttachment,
+  isNativeCompatibleSelection,
+} from "../inference/selection";
 import { isDeepStrictEqual } from "node:util";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
@@ -20,7 +24,12 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
-import { load, save } from "./registry/persistence";
+import {
+  load,
+  save,
+  readNativeCompatibleProviderAuthority,
+  applyNativeCompatibleProviderAuthority,
+} from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
@@ -499,6 +508,10 @@ export function registerSandbox(
     if (entry.nativeNvidiaProviderAuthority !== undefined && !nativeNvidiaProviderAuthority) {
       throw new Error("Cannot register a sandbox with invalid native NVIDIA provider authority");
     }
+    const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+      entry.nativeCompatibleProviderAttachment,
+      entry,
+    );
     const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -550,6 +563,7 @@ export function registerSandbox(
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
       ...(nativeNvidiaProviderAuthority ? { nativeNvidiaProviderAuthority } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
@@ -602,6 +616,7 @@ type SandboxInferenceRouteReservation = Pick<
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
   nativeNvidiaProviderAuthority?: SandboxEntry["nativeNvidiaProviderAuthority"];
 };
 
@@ -741,6 +756,10 @@ export function reserveSandboxInferenceRoute(
       }
       return true;
     }
+    const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+      route.nativeCompatibleProviderAttachment,
+      route,
+    );
     const existingForReservation: SandboxEntry = existing
       ? { ...existing }
       : { name, pendingRouteReservation: true };
@@ -760,6 +779,7 @@ export function reserveSandboxInferenceRoute(
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,
+      nativeCompatibleProviderAttachment,
       nativeNvidiaProviderAuthority:
         nativeNvidiaProviderAuthority ??
         (existing?.gatewayName === route.gatewayName
@@ -853,6 +873,13 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
         ? updates
         : { ...updates, nativeNvidiaProviderAuthority };
     const next = normalizeSandboxPolicyAttribution({ ...current, ...normalizedUpdates });
+    if (updates.provider !== undefined && !isNativeCompatibleSelection(updates.provider)) {
+      next.nativeCompatibleProviderAttachment = undefined;
+    }
+    next.nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+      next.nativeCompatibleProviderAttachment,
+      next,
+    );
     if (
       current.deferredN1xManagedVllmAccepted === true &&
       Object.entries(updates).some(
@@ -1082,4 +1109,18 @@ export function getConfiguredMessagingChannels(name: string): string[] {
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
   return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
+}
+
+export function getNativeCompatibleProviderAuthority(gatewayName: string, profileId: string) {
+  return readNativeCompatibleProviderAuthority(load(), gatewayName, profileId);
+}
+
+export function setNativeCompatibleProviderAuthority(
+  gatewayName: string,
+  receipt: import("../inference/native-compatible/contract").NativeCompatibleProviderAttachment,
+): void {
+  withLock(() => {
+    const state = load();
+    if (applyNativeCompatibleProviderAuthority(state, gatewayName, receipt)) save(state);
+  });
 }

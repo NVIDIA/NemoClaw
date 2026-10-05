@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  normalizeNativeCompatibleProviderAttachment,
+  isNativeCompatibleSelection,
+} from "../../../inference/gateway-route-compatibility";
+import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
@@ -136,12 +140,20 @@ function nativeNvidiaCreateIntentFields(
 ): {
   inferenceProvider: string | null;
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
 } {
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
   return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
+    inferenceProvider:
+      isNativeCompatibleSelection(provider) && entry?.nativeCompatibleProviderAttachment
+        ? (normalizeNativeCompatibleProviderAttachment(entry.nativeCompatibleProviderAttachment)
+            ?.providerName ?? null)
+        : nativeInferenceProviderForSandbox(provider),
+    ...(entry?.nativeCompatibleProviderAttachment
+      ? { nativeCompatibleProviderAttachment: entry.nativeCompatibleProviderAttachment }
+      : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
   };
 }

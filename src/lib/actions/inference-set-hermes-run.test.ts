@@ -11,6 +11,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   ...(await importOriginal()),
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
+import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
@@ -350,6 +351,11 @@ describe("runInferenceSet Hermes routing", () => {
   });
 
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
+    const native = await nativeCompatibleFixture(
+      "https://anthropic-compatible.example/v1",
+      "openai-completions",
+      false,
+    );
     const config: ConfigObject = {
       model: {
         default: "openai/gpt-5.4-mini",
@@ -359,6 +365,8 @@ describe("runInferenceSet Hermes routing", () => {
     };
     const deps = createDeps({
       config,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       entry: {
         name: "hermes",
         agent: "hermes",
@@ -377,17 +385,6 @@ describe("runInferenceSet Hermes routing", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     });
-    deps.calls.captureOpenshell.mockImplementation((args: string[]) =>
-      args[0] === "provider" && args[1] === "get"
-        ? {
-            status: 0,
-            output:
-              "Name: compatible-anthropic-endpoint\nType: openai\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: OPENAI_BASE_URL",
-            stdout: "",
-            stderr: "",
-          }
-        : { status: 0, output: "", stdout: "", stderr: "" },
-    );
 
     const result = await runInferenceSet(
       {
@@ -402,7 +399,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config.model).toEqual({
       default: "claude-sonnet-proxy",
       provider: "custom",
-      base_url: "https://inference.local/v1",
+      base_url: "https://anthropic-compatible.example/v1",
       api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     // The upstream annotation must track the selected provider together with
@@ -431,8 +428,11 @@ describe("runInferenceSet Hermes routing", () => {
 
   it("rejects inference set before mutating a legacy Anthropic provider (#6289)", async () => {
     const config: ConfigObject = { model: {} };
+    const native = await nativeCompatibleFixture("https://anthropic-compatible.example/v1");
     const deps = createDeps({
       config,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       entry: {
         name: "hermes",
         agent: "hermes",
@@ -446,13 +446,6 @@ describe("runInferenceSet Hermes routing", () => {
       target: HERMES_TARGET,
       session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
     });
-    deps.calls.captureOpenshell.mockReturnValue({
-      status: 0,
-      output:
-        "Name: compatible-anthropic-endpoint\nType: anthropic\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: ANTHROPIC_BASE_URL",
-      stdout: "",
-      stderr: "",
-    });
 
     await expect(
       runInferenceSet(
@@ -464,9 +457,10 @@ describe("runInferenceSet Hermes routing", () => {
         },
         deps,
       ),
-    ).rejects.toThrow("Run 'nemoclaw hermes rebuild'");
+    ).rejects.toThrow(/ownership receipt|Recreate/);
 
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(native.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });

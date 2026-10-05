@@ -125,3 +125,8 @@ export function inferenceSelectionRegistryFields(
 ): InferenceSelection {
   return normalizeInferenceSelection(input);
 }
+
+export {
+  requireMatchingNativeCompatibleAttachment,
+  isNativeCompatibleSelection,
+} from "./native-compatible/contract";

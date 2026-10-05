@@ -34,6 +34,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import { retryUntilAsync } from "../../core/retry";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
+  isNativeCompatibleHostedSelection,
   formatInferenceRouteDriftForDisplay,
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
@@ -123,6 +124,7 @@ import {
   publishLaunchReadiness,
   getNativeNvidiaProviderAttachment,
   requireNativeNvidiaInferenceHealth,
+  requireNativeCompatibleInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
@@ -1717,8 +1719,12 @@ async function ensureSandboxInferenceRouteUnlocked(
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
     const nativeNvidiaAttachment = getNativeNvidiaProviderAttachment(sb);
-    if (nativeNvidiaAttachment) {
-      await requireNativeNvidiaInferenceHealth({
+    if (nativeNvidiaAttachment || isNativeCompatibleHostedSelection(sb)) {
+      await (
+        isNativeCompatibleHostedSelection(sb)
+          ? requireNativeCompatibleInferenceHealth
+          : requireNativeNvidiaInferenceHealth
+      )({
         sandboxName,
         gatewayName,
         agentName: agent?.name,
@@ -1878,7 +1884,7 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
-  if (getNativeNvidiaProviderAttachment(snapshot)) {
+  if (getNativeNvidiaProviderAttachment(snapshot) || isNativeCompatibleHostedSelection(snapshot)) {
     return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);

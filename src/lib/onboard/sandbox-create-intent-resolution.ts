@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeCompatibleProviderAttachment } from "../inference/native-compatible/contract";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
@@ -28,6 +29,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -147,6 +149,7 @@ export function createSandboxCreateIntentResolver<
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
       nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
+      nativeCompatibleProviderAttachment: input.nativeCompatibleProviderAttachment,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: resolveSelectedChannels(input),

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
@@ -426,4 +427,68 @@ describe("doctor inference checks", () => {
       recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
     });
   });
+});
+
+describe("native compatible doctor", () => {
+  it.each([true, false])(
+    "requires the recorded attachment before invoking its endpoint [case %#]",
+    async (owned) => {
+      const identity = nativeCompatibleEndpointIdentity({
+        addresses: ["93.184.216.34"],
+        endpointUrl: "https://models.example.com/v1",
+        api: "openai-responses",
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned",
+        addresses: ["93.184.216.34"],
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+      };
+      const verify = vi.fn(async () => receipt);
+      const probe = vi.fn(async () => ({ ok: true as const }));
+      const shared = vi.fn(async () => gateway(true));
+      const checks = await collectInferenceChecks(
+        "alpha",
+        {
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          recordedEndpointUrl: identity.endpoint,
+          preferredInferenceApi: identity.api,
+          ...(owned ? { nativeCompatibleProviderAttachment: receipt } : {}),
+        },
+        true,
+        {
+          gatewayName: "nemoclaw",
+          verifyNativeCompatibleProviderAttachmentImpl: verify,
+          probeSandboxInferenceInvocationImpl: probe,
+          probeSandboxInferenceGatewayHealthImpl: shared,
+          probeProviderHealthImpl: () => null,
+          includeServingProcessCheck: false,
+        },
+      );
+      expect(shared).not.toHaveBeenCalled();
+      expect(checks).toContainEqual(
+        expect.objectContaining({
+          label: "Inference route (native compatible)",
+          status: owned ? "ok" : "fail",
+        }),
+      );
+      expect(probe).toHaveBeenCalledTimes(owned ? 1 : 0);
+      expect(probe.mock.calls).toEqual(
+        owned
+          ? [
+              [
+                expect.objectContaining({
+                  nativeCompatibleProviderAttachment: receipt,
+                  preferredInferenceApi: "openai-responses",
+                }),
+              ],
+            ]
+          : [],
+      );
+    },
+  );
 });

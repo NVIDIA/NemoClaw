@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeCompatibleProviderAuthorities } from "./native-compatible-provider-authority-state";
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -147,6 +148,11 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
+  const nativeCompatibleProviderAuthorities = normalizeNativeCompatibleProviderAuthorities(
+    data.nativeCompatibleProviderAuthorities,
+  );
+  if (nativeCompatibleProviderAuthorities)
+    base.nativeCompatibleProviderAuthorities = nativeCompatibleProviderAuthorities;
   return base;
 }
 
@@ -177,6 +183,11 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
+  const nativeCompatibleProviderAuthorities = normalizeNativeCompatibleProviderAuthorities(
+    data.nativeCompatibleProviderAuthorities,
+  );
+  if (nativeCompatibleProviderAuthorities)
+    base.nativeCompatibleProviderAuthorities = nativeCompatibleProviderAuthorities;
   return base;
 }
 
@@ -279,3 +290,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(messaging ? { messaging } : {}),
   };
 }
+
+export {
+  readNativeCompatibleProviderAuthority,
+  applyNativeCompatibleProviderAuthority,
+} from "./native-compatible-provider-authority-state";

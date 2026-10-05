@@ -517,3 +517,5 @@ export async function setupRemoteProviderInference(
     ? withOllamaProxyLifecycleTransaction(configureProvider)
     : configureProvider();
 }
+
+export { probeOpenAiLikeEndpointOptimized };

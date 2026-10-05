@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import {
@@ -21,6 +22,7 @@ import {
   buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
+  resolveSandboxInferenceInvocationEndpoint,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
 
@@ -643,5 +645,37 @@ describe("native inference transport failures", () => {
     await expect(
       probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
     ).rejects.toBe(error);
+  });
+});
+
+describe("native compatible invocation paths", () => {
+  it.each([
+    ["openai-completions", "/chat/completions"],
+    ["openai-responses", "/responses"],
+    ["anthropic-messages", "/v1/messages"],
+  ] as const)("uses the exact custom path for %s", (api, suffix) => {
+    const identity = nativeCompatibleEndpointIdentity({
+      addresses: ["93.184.216.34"],
+      endpointUrl: "https://models.example.com/api/v2",
+      api,
+    });
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: identity.profileId,
+      providerName: identity.providerName,
+      providerId: "owned",
+      addresses: ["93.184.216.34"],
+      endpointUrl: identity.endpoint,
+      api: identity.api,
+    };
+    const input = {
+      sandboxName: "alpha",
+      provider:
+        api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint",
+      model: "custom-model",
+      preferredInferenceApi: api,
+      nativeCompatibleProviderAttachment: receipt,
+    };
+    expect(resolveSandboxInferenceInvocationEndpoint(input)).toBe(`${identity.endpoint}${suffix}`);
   });
 });

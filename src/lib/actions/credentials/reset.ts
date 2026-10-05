@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  getNativeCompatibleProviderAuthority,
+  clearNativeCompatibleProviderAuthority,
+} from "../../state/registry/native-compatible-provider-authority";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -41,6 +45,8 @@ export type CredentialsResetResult = {
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
+  getNativeCompatibleProviderAuthority?: typeof getNativeCompatibleProviderAuthority;
+  clearNativeCompatibleProviderAuthority?: typeof clearNativeCompatibleProviderAuthority;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -99,6 +105,7 @@ export async function runCredentialsResetAction(
   const key = input.provider;
   const nativeNvidiaProvider =
     key === NVIDIA_HOSTED_LOGICAL_PROVIDER || key === NVIDIA_HOSTED_NATIVE_PROVIDER;
+  const nativeCompatibleProvider = /^nemoclaw-compatible-[a-f0-9]{64}-v1$/.test(key);
   const providerName = nativeNvidiaProvider ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
   const publicKey = nativeNvidiaProvider ? NVIDIA_HOSTED_LOGICAL_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
@@ -131,8 +138,37 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
+  const compatibleAuthority = nativeCompatibleProvider
+    ? (deps.getNativeCompatibleProviderAuthority ?? getNativeCompatibleProviderAuthority)(
+        target.gatewayName,
+        key,
+      )
+    : undefined;
+  if (nativeCompatibleProvider) {
+    if (!compatibleAuthority)
+      return fail(["  Native compatible provider ownership is missing; no provider was removed."]);
+    const observed = await providerAdapter.getProvider({ target, providerName });
+    if (observed.ok) {
+      if (
+        observed.value.revision?.id !== compatibleAuthority.providerId ||
+        observed.value.type !== compatibleAuthority.profileId ||
+        observed.value.name !== compatibleAuthority.providerName
+      )
+        return fail(["  Native compatible provider identity changed; no provider was removed."]);
+    } else if (!(observed.error.kind === "command" && observed.error.reason === "not_found"))
+      return fail([
+        "  Native compatible provider identity could not be observed; no provider was removed.",
+      ]);
+  }
+  const clearCompatibleAuthority = () => {
+    if (compatibleAuthority)
+      (deps.clearNativeCompatibleProviderAuthority ?? clearNativeCompatibleProviderAuthority)(
+        target.gatewayName,
+        compatibleAuthority,
+      );
+  };
   const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: !nativeNvidiaProvider,
+    detachAttached: !nativeNvidiaProvider && !nativeCompatibleProvider,
   });
 
   if (
@@ -141,6 +177,7 @@ export async function runCredentialsResetAction(
     recovery.error?.kind === "command" &&
     recovery.error.reason === "not_found"
   ) {
+    clearCompatibleAuthority();
     const removedLocal = forgetExtraProvider(key);
     return ok([
       removedLocal
@@ -154,6 +191,7 @@ export async function runCredentialsResetAction(
   const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
+  clearCompatibleAuthority();
   forgetExtraProvider(publicKey);
   if (nativeNvidiaProvider) {
     (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(

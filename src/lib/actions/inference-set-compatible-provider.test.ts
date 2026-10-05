@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import {
+  nativeCompatibleFixture,
+  nativeCompatibleRotationFixture,
+} from "../inference/native-compatible/switch.test-support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureHttpsPinRuntimeAdapter as realEnsureHttpsPinRuntimeAdapter } from "../inference/https-pin-runtime-adapter";
 import type { ConfigObject } from "../security/credential-filter";
@@ -12,20 +17,6 @@ import {
 } from "./inference-set.test-support";
 
 type ProbeSandboxRoute = NonNullable<Parameters<typeof createDeps>[0]["probeSandboxRoute"]>;
-
-const OPENAI_PROFILE_OUTPUT = JSON.stringify({
-  id: "openai",
-  credentials: [],
-  endpoints: [],
-  binaries: [],
-  inference_capable: true,
-});
-const OPENAI_PROFILE_RESULT = {
-  status: 0,
-  output: OPENAI_PROFILE_OUTPUT,
-  stdout: OPENAI_PROFILE_OUTPUT,
-  stderr: "",
-};
 
 async function runRejectedCompatibleSwitchScenario(options: {
   targetFamily: "openai" | "anthropic";
@@ -131,13 +122,17 @@ describe("runInferenceSet compatible providers", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("reuses durable endpoint metadata and restarts same-provider model switches", async () => {
+    const native = await nativeCompatibleFixture("https://inference-api.nvidia.com/v1");
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
       models: { providers: { inference: { api: "openai-completions", models: [] } } },
     };
     const deps = createDeps({
       config,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       entry: {
+        nativeCompatibleProviderAttachment: native.receipt,
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-endpoint",
@@ -212,13 +207,17 @@ describe("runInferenceSet compatible providers", () => {
   });
 
   it("reuses registered compatible endpoint metadata when only the model changes", async () => {
+    const native = await nativeCompatibleFixture("https://inference-api.nvidia.com/v1");
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
       models: { providers: { inference: { api: "openai-completions", models: [] } } },
     };
     const deps = createDeps({
       config,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       entry: {
+        nativeCompatibleProviderAttachment: native.receipt,
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-endpoint",
@@ -303,552 +302,350 @@ describe("runInferenceSet compatible providers", () => {
   });
 
   it.each([
-    ["an HTTPS IP-literal", "https://198.51.100.10/v1", "https://198.51.100.10/v1"],
-    ["a DNS-pinned HTTP", "http://compatible.example/v1", "http://198.51.100.10/v1"],
-  ])(
-    "creates an absent direct compatible provider for %s endpoint (#7725)",
-    async (_kind, endpointUrl, validatedEndpointUrl) => {
-      let providerCreated = false;
-      const captureOpenshell = vi.fn((args: string[]) => {
-        switch (`${args[0]}:${args[1]}`) {
-          case "provider:profile":
-            return OPENAI_PROFILE_RESULT;
-          case "inference:set":
-            return providerCreated
-              ? { status: 0, output: "", stdout: "", stderr: "" }
-              : {
-                  status: 1,
-                  output: "Error: provider 'compatible-endpoint' not found",
-                  stdout: "",
-                  stderr: "Error: provider 'compatible-endpoint' not found",
-                };
-          case "provider:get": {
-            const output = [
-              "Name: compatible-endpoint",
-              "Id: 11111111-2222-4333-8444-555555555555",
-              "Type: openai",
-              "Resource version: 1",
-              "Credential keys: COMPATIBLE_API_KEY",
-              "Config keys: OPENAI_BASE_URL",
-            ].join("\n");
-            return providerCreated
-              ? { status: 0, output, stdout: output, stderr: "" }
-              : {
-                  status: 1,
-                  output:
-                    "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
-                  stdout: "",
-                  stderr:
-                    "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
-                };
-          }
-          case "provider:create":
-            providerCreated = true;
-            return { status: 0, output: "", stdout: "", stderr: "" };
-          default:
-            return { status: 0, output: "", stdout: "", stderr: "" };
-        }
-      });
+    ["openai-completions", "https://compatible.example/v1"],
+    ["openai-responses", "https://compatible.example/v1"],
+    ["anthropic-messages", "https://compatible.example/v1"],
+    ["openai-completions", "http://compatible.example/v1"],
+    ["openai-completions", "https://93.184.216.34/v1"],
+  ] as const)(
+    "creates a scoped hosted provider for %s at %s and preserves its native endpoint",
+    async (api, endpointUrl) => {
+      const native = await nativeCompatibleFixture(endpointUrl, api, false);
+      const provider =
+        api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint";
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/old" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      };
       const deps = createDeps({
-        config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-        entry: {
-          name: "alpha",
-          agent: "openclaw",
-          provider: "nvidia-prod",
-          model: "nvidia/model-a",
-        },
-        session: baseSession({
-          provider: "nvidia-prod",
-          model: "nvidia/model-a",
-        }),
-        captureOpenshell,
-        rewriteConfigUrlsWithDnsPinning: async () => validatedEndpointUrl,
-        resolveCredentialValue: () => "real-upstream-secret",
-      });
-
-      await expect(
-        runInferenceSet(
-          {
-            provider: "compatible-endpoint",
-            model: "mock-model",
-            endpointUrl,
-            credentialEnv: "COMPATIBLE_API_KEY",
-            inferenceApi: "openai-completions",
-          },
-          deps,
-        ),
-      ).resolves.toMatchObject({
-        sandboxName: "alpha",
-        provider: "compatible-endpoint",
-        model: "mock-model",
-      });
-
-      const providerCreateIndex = captureOpenshell.mock.calls.findIndex(
-        ([args]) => args[0] === "provider" && args[1] === "create",
-      );
-      const successfulSetIndex = captureOpenshell.mock.calls.findIndex(
-        ([args], index) =>
-          index > providerCreateIndex && args[0] === "inference" && args[1] === "set",
-      );
-      expect(providerCreateIndex).toBeGreaterThanOrEqual(0);
-      expect(successfulSetIndex).toBeGreaterThan(providerCreateIndex);
-      expect(captureOpenshell.mock.calls[successfulSetIndex][0]).not.toContain("--no-verify");
-      expect(captureOpenshell.mock.calls[providerCreateIndex]).toEqual([
-        [
-          "provider",
-          "create",
-          "-g",
-          "nemoclaw",
-          "--name",
-          "compatible-endpoint",
-          "--type",
-          "openai",
-          "--credential",
-          "COMPATIBLE_API_KEY",
-          "--config",
-          `OPENAI_BASE_URL=${validatedEndpointUrl}`,
+        config,
+        entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+        entries: [
+          { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+          { name: "beta", agent: "openclaw", provider: "openai-api", model: "peer-model" },
         ],
+        providerAdapter: native.providerAdapter,
+        resolveNativeCompatibleEndpointHost: native.lookup,
+        resolveCredentialValue: () => "test-hosted-secret",
+      });
+      await runInferenceSet(
+        {
+          provider,
+          sandboxName: "alpha",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
+          credentialEnv:
+            api === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY",
+          inferenceApi: api,
+        },
+        deps,
+      );
+      expect(native.adapter.createProvider).toHaveBeenCalledWith(
         expect.objectContaining({
-          env: { COMPATIBLE_API_KEY: "real-upstream-secret" },
+          name: native.profile.providerName,
+          type: native.profile.profileId,
+          credentials: [{ name: native.profile.credentialEnv, value: "test-hosted-secret" }],
+          config: [],
         }),
-      ]);
-      expect(
-        deps.calls.updateSandbox.mock.calls
-          .filter(([, fields]) => fields.provider !== undefined)
-          .at(-1),
-      ).toEqual([
+      );
+      expect(native.adapter.attachProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          providerName: native.profile.providerName,
+        }),
+      );
+      expect(native.adapter.attachProvider).toHaveBeenCalledOnce();
+      expect(native.adapter.detachProvider).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox.mock.calls.every(([name]) => name === "alpha")).toBe(true);
+      expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
-          provider: "compatible-endpoint",
-          endpointUrl: validatedEndpointUrl,
+          endpointUrl: native.profile.endpoint,
+          preferredInferenceApi: api,
+          nativeCompatibleProviderAttachment: native.receipt,
         }),
-      ]);
+      );
+      expect(JSON.stringify(config)).toContain(native.profile.endpoint);
+      expect(JSON.stringify(config)).not.toContain("test-hosted-secret");
+      expect(JSON.stringify(config)).not.toContain("inference.local");
     },
   );
 
-  it("stops before route mutation when a newly created provider revision changes (#9806)", async () => {
-    let providerCreated = false;
-    let presentInspectionCount = 0;
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:profile":
-          return OPENAI_PROFILE_RESULT;
-        case "provider:get": {
-          const missingOutput = "Error: provider 'compatible-endpoint' not found";
-          presentInspectionCount += providerCreated ? 1 : 0;
-          const presentOutput = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            `Resource version: ${presentInspectionCount === 1 ? 1 : 2}`,
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return providerCreated
-            ? { status: 0, output: presentOutput, stdout: presentOutput, stderr: "" }
-            : { status: 1, output: missingOutput, stdout: "", stderr: missingOutput };
-        }
-        case "provider:create":
-          providerCreated = true;
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
-    });
+  it("refreshes changed DNS pins only for the selected sandbox and retains prior ownership", async () => {
+    const { previous, lookup, next, nextReceipt, attachments, authorities, adapter } =
+      await nativeCompatibleRotationFixture();
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      model: "old-model",
+      endpointUrl: previous.profile.endpoint,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: previous.profile.api,
+      nativeCompatibleProviderAttachment: previous.receipt,
+    };
     const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: previous.profile.api, models: [] } } },
       },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
-      captureOpenshell,
-      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
-      resolveCredentialValue: () => "real-upstream-secret",
+      entry,
+      entries: [entry, { ...entry, name: "beta" }],
+      providerAdapter: adapter,
+      resolveNativeCompatibleEndpointHost: lookup,
     });
+    deps.getNativeCompatibleProviderAuthority = (_gateway, profileId) => authorities.get(profileId);
+    deps.setNativeCompatibleProviderAuthority = (_gateway, receipt) => {
+      authorities.set(receipt.profileId, receipt);
+    };
 
-    const failure = await runInferenceSet(
+    await runInferenceSet(
       {
+        sandboxName: "alpha",
         provider: "compatible-endpoint",
-        model: "mock-model",
-        endpointUrl: "http://compatible.example/v1",
+        model: "old-model",
+        endpointUrl: previous.profile.endpoint,
         credentialEnv: "COMPATIBLE_API_KEY",
-        inferenceApi: "openai-completions",
+        inferenceApi: previous.profile.api,
       },
       deps,
-    ).catch((error: Error) => error);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(
-      "Could not verify newly created provider 'compatible-endpoint' immediately before inference route mutation",
     );
-    expect((failure as Error).message).toContain(
-      "Could not verify newly created provider 'compatible-endpoint' before rollback; no provider deletion was attempted",
+
+    expect(next.profileId).not.toBe(previous.profile.profileId);
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
+    expect(adapter.attachProvider).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ sandboxName: "alpha", providerName: next.providerName }),
     );
-    expect(
-      captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
-    ).toHaveLength(0);
-    expect(
-      captureOpenshell.mock.calls.filter(
-        ([args]) => args[0] === "provider" && args[1] === "delete",
-      ),
-    ).toHaveLength(0);
-    expect(
-      captureOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "get"),
-    ).toHaveLength(4);
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-  });
-
-  it("redacts provider inspection diagnostics before inference handling (#9806)", async () => {
-    const storedCredential = "stored-provider-secret"; // gitleaks:allow
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:get": {
-          const output = `provider lookup failed with credential ${storedCredential}`;
-          return { status: 1, output, stdout: "", stderr: output };
-        }
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
-    });
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
-      captureOpenshell,
-      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
-      resolveCredentialValue: () => "real-upstream-secret",
-    });
-
-    const failure = await runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "mock-model",
-        endpointUrl: "http://compatible.example/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        inferenceApi: "openai-completions",
-      },
-      deps,
-    ).catch((error: Error) => error);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain("OpenShell could not inspect the provider.");
-    expect((failure as Error).message).not.toContain(storedCredential);
-    expect(
-      captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
-    ).toHaveLength(0);
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-  });
-
-  it("removes an absent direct provider when verified route selection fails (#7725)", async () => {
-    let providerPresent = false;
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:profile":
-          return OPENAI_PROFILE_RESULT;
-        case "provider:get": {
-          const missingOutput =
-            "Error: code: 'Some requested entity was not found', message: \"provider not found\"";
-          const presentOutput = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            "Resource version: 1",
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return providerPresent
-            ? { status: 0, output: presentOutput, stdout: presentOutput, stderr: "" }
-            : { status: 1, output: missingOutput, stdout: "", stderr: missingOutput };
-        }
-        case "provider:create":
-          providerPresent = true;
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        case "provider:delete":
-          providerPresent = false;
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        case "inference:set":
-          return {
-            status: 1,
-            output:
-              "failed to verify inference endpoint for provider 'compatible-endpoint' and model 'mock-model' at http://198.51.100.10/v1: requested endpoint is unreachable",
-            stdout: "",
-            stderr:
-              "failed to verify inference endpoint for provider 'compatible-endpoint' and model 'mock-model' at http://198.51.100.10/v1: requested endpoint is unreachable",
-          };
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
-    });
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
+    expect(adapter.detachProvider).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        providerName: previous.profile.providerName,
       }),
-      captureOpenshell,
-      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
-      resolveCredentialValue: () => "real-upstream-secret",
-    });
+    );
+    expect([...attachments.get("alpha")!]).toEqual([next.providerName]);
+    expect([...attachments.get("beta")!]).toEqual([previous.profile.providerName]);
+    expect(authorities.get(previous.profile.profileId)).toEqual(previous.receipt);
+    expect(authorities.get(next.profileId)).toEqual(nextReceipt);
+    expect(previous.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(previous.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeCompatibleProviderAttachment: nextReceipt }),
+    );
+    expect(deps.calls.updateSandbox.mock.calls.every(([name]) => name === "alpha")).toBe(true);
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+  });
 
+  it("rejects an existing scoped provider without ownership before attachment or publication", async () => {
+    const native = await nativeCompatibleFixture();
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: native.providerAdapter,
+    });
     await expect(
       runInferenceSet(
         {
           provider: "compatible-endpoint",
-          model: "mock-model",
-          endpointUrl: "http://compatible.example/v1",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
         deps,
       ),
-    ).rejects.toThrow(/newly created OpenShell provider was removed/);
-    expect(providerPresent).toBe(false);
-    expect(
-      captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
-    ).toHaveLength(1);
-    expect(
-      captureOpenshell.mock.calls.filter(
-        ([args]) => args[0] === "provider" && args[1] === "delete",
-      ),
-    ).toHaveLength(1);
+    ).rejects.toThrow("ownership receipt");
+    expect(native.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      bindingPart: "endpoint URL",
-      recordedEndpointUrl: "http://198.51.100.9/v1",
-      recordedCredentialEnv: "COMPATIBLE_API_KEY",
-    },
-    {
-      bindingPart: "credential environment variable",
-      recordedEndpointUrl: "http://198.51.100.10/v1",
-      recordedCredentialEnv: "LEGACY_COMPATIBLE_API_KEY",
-    },
-  ])(
-    "rejects $bindingPart replacement for an existing direct provider (#7725)",
-    async ({ bindingPart, recordedEndpointUrl, recordedCredentialEnv }) => {
-      const captureOpenshell = createCompatibleProviderCapture({
-        name: "compatible-endpoint",
-        type: "openai",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        configKey: "OPENAI_BASE_URL",
+  it("stops before attachment when a newly created provider changes identity (#9806)", async () => {
+    const native = await nativeCompatibleFixture(undefined, undefined, false);
+    native.adapter.importProviderProfile
+      .mockResolvedValueOnce({ ok: true })
+      .mockImplementationOnce(async () => {
+        native.metadata.revision.id = "replacement";
+        return { ok: true };
       });
-      const deps = createDeps({
-        config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
-        entry: {
-          name: "alpha",
-          agent: "openclaw",
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: native.providerAdapter,
+    });
+    await expect(
+      runInferenceSet(
+        {
           provider: "compatible-endpoint",
-          model: "old-model",
-          endpointUrl: recordedEndpointUrl,
-          endpointSource: "inference-set",
-          credentialEnv: recordedCredentialEnv,
-          preferredInferenceApi: "openai-completions",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
         },
-        session: baseSession({
-          provider: "compatible-endpoint",
-          model: "old-model",
-          endpointUrl: recordedEndpointUrl,
-          credentialEnv: recordedCredentialEnv,
-          preferredInferenceApi: "openai-completions",
-        }),
-        captureOpenshell,
-        rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
-        resolveCredentialValue: () => "replacement-upstream-secret",
-      });
+        deps,
+      ),
+    ).rejects.toThrow("changed identity");
+    expect(native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(native.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
 
-      await expect(
-        runInferenceSet(
-          {
-            provider: "compatible-endpoint",
-            model: "new-model",
-            endpointUrl: "http://compatible.example/v1",
-            credentialEnv: "COMPATIBLE_API_KEY",
-            inferenceApi: "openai-completions",
-          },
-          deps,
-        ),
-      ).rejects.toThrow(
-        new RegExp(`Cannot replace existing provider.*binding differs in: ${bindingPart}`),
-      );
-      expect(
-        captureOpenshell.mock.calls.some(
-          ([args]) =>
-            (args[0] === "inference" && args[1] === "set") ||
-            (args[0] === "provider" && args[1] === "update"),
-        ),
-      ).toBe(false);
-      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    },
-  );
-
-  it("reuses an existing direct provider when its recorded endpoint matches", async () => {
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-endpoint",
-      type: "openai",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      configKey: "OPENAI_BASE_URL",
+  it("redacts provider inspection diagnostics before native publication (#9806)", async () => {
+    const native = await nativeCompatibleFixture();
+    const secret = "stored-provider-secret"; // gitleaks:allow
+    const realAdapter = createCliOpenShellProviderAdapter({
+      run: () => ({
+        status: 1,
+        output: `provider lookup failed with credential ${secret}`,
+        stdout: "",
+        stderr: `provider lookup failed with credential ${secret}`,
+      }),
     });
     const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "old-model",
-        endpointUrl: "http://198.51.100.10/v1",
-        endpointSource: "inference-set",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-      session: baseSession({
-        provider: "compatible-endpoint",
-        model: "old-model",
-        endpointUrl: "http://198.51.100.10/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      }),
-      captureOpenshell,
-      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
-      resolveCredentialValue: () => "replacement-upstream-secret",
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: { ...native.providerAdapter, getProvider: realAdapter.getProvider },
     });
-
-    await runInferenceSet(
+    const failure = await runInferenceSet(
       {
         provider: "compatible-endpoint",
-        model: "new-model",
-        endpointUrl: "http://compatible.example/v1",
+        model: "new",
+        endpointUrl: native.profile.endpoint,
         credentialEnv: "COMPATIBLE_API_KEY",
         inferenceApi: "openai-completions",
       },
       deps,
-    );
-
-    const inferenceSetCall = captureOpenshell.mock.calls.find(
-      ([args]) => args[0] === "inference" && args[1] === "set",
-    );
-    expect(inferenceSetCall?.[0]).not.toContain("--no-verify");
-    expect(
-      captureOpenshell.mock.calls.some(([args]) => args[0] === "provider" && args[1] === "update"),
-    ).toBe(false);
+    ).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("OpenShell could not inspect the provider");
+    expect((failure as Error).message).not.toContain(secret);
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("preserves explicit inference API through the final registry sync", async () => {
-    let providerVersion = 1;
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:profile":
-          return OPENAI_PROFILE_RESULT;
-        case "provider:get": {
-          const output = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            `Resource version: ${providerVersion}`,
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
-        }
-        case "provider:update":
-          providerVersion += 1;
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
-    });
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
-    };
+  it("rejects profile collisions before credential or sandbox mutation", async () => {
+    const native = await nativeCompatibleFixture(undefined, undefined, false);
+    native.adapter.importProviderProfile.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible", exitCode: 1, message: "collision" },
+    } as never);
     const deps = createDeps({
-      config,
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: native.providerAdapter,
+    });
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("security boundary");
+    expect(native.adapter.createProvider).not.toHaveBeenCalled();
+    expect(native.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["endpoint", "https://93.184.216.35/v1", "openai-completions"],
+    ["protocol", "https://93.184.216.34/v1", "openai-responses"],
+  ] as const)(
+    "rejects a receipt filed under another %s before mutation",
+    async (_kind, endpointUrl, api) => {
+      const native = await nativeCompatibleFixture();
+      const deps = createDeps({
+        config: {},
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "compatible-endpoint",
+          model: "old",
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: api,
+          nativeCompatibleProviderAttachment: native.receipt,
+        },
+        providerAdapter: native.providerAdapter,
+      });
+      await expect(
+        runInferenceSet({ provider: "compatible-endpoint", model: "new" }, deps),
+      ).rejects.toThrow(/receipt|attachment|selection/i);
+      expect(native.adapter.importProviderProfile).not.toHaveBeenCalled();
+      expect(native.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a replaced provider identity before attaching it", async () => {
+    const native = await nativeCompatibleFixture();
+    const deps = createDeps({
+      config: {},
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-        endpointUrl: "https://integrate.api.nvidia.com/v1",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      }),
-      captureOpenshell,
-    });
-
-    await runInferenceSet(
-      {
         provider: "compatible-endpoint",
-        model: "mock-responses-model",
-        noVerify: true,
-        endpointUrl: "https://compatible.example/v1",
+        model: "old",
+        endpointUrl: native.profile.endpoint,
         credentialEnv: "COMPATIBLE_API_KEY",
-        inferenceApi: "openai-responses",
+        preferredInferenceApi: native.profile.api,
+        nativeCompatibleProviderAttachment: native.receipt,
       },
-      deps,
-    );
+      providerAdapter: native.providerAdapter,
+    });
+    native.metadata.revision.id = "replacement";
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "new" }, deps),
+    ).rejects.toThrow("changed identity");
+    expect(native.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(native.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
 
-    expect(config.models).toMatchObject({
-      providers: {
-        inference: {
-          api: "openai-responses",
-          headers: {
-            "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
-          },
-          models: [{ id: "mock-responses-model", name: "inference/mock-responses-model" }],
+  it("detaches a newly selected endpoint after failed verification and retains recovery authority", async () => {
+    const native = await nativeCompatibleFixture(undefined, undefined, false);
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: native.providerAdapter,
+      probeSandboxRoute: async () => ({ ok: false, detail: "rejected", httpStatus: 403 }),
+    });
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
         },
-      },
-    });
-    // The DNS-backed HTTPS endpoint is pinned via the HTTPS-pin runtime
-    // adapter, so the persisted endpointUrl is the adapter's local route base
-    // URL, not the raw operator-supplied hostname — mirroring the existing
-    // HTTP precedent of persisting the validated/pinned address. The
-    // The canonical provider key stays stable while its invocation-local
-    // value is replaced by the route-scoped adapter token.
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual([
-      "alpha",
-      expect.objectContaining({
-        provider: "compatible-endpoint",
-        model: "mock-responses-model",
-        endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-responses",
-      }),
-    ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-endpoint",
-      model: "mock-responses-model",
-      endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-responses",
-    });
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
+        deps,
+      ),
+    ).rejects.toThrow("verification rejected");
+    expect(native.adapter.detachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha", providerName: native.profile.providerName }),
+    );
+    expect(native.attached.size).toBe(0);
+    expect(native.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(deps.setNativeCompatibleProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      native.receipt,
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
@@ -921,12 +718,14 @@ describe("runInferenceSet compatible providers", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
-      sandboxName: "alpha",
-      provider: "compatible-anthropic-endpoint",
-      model: "mock-anthropic-model",
-      preferredInferenceApi: "anthropic-messages",
-    });
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    );
     expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
       deps.calls.updateSandbox.mock.invocationCallOrder[0],
     );
@@ -1286,6 +1085,7 @@ describe("runInferenceSet compatible providers", () => {
           provider: "nvidia-prod",
           model: "nvidia/model-a",
         },
+        resolveNativeCompatibleEndpointHost: lookup,
         rewriteConfigUrlsWithDnsPinning: (value) =>
           actualConfig.rewriteConfigUrlsWithDnsPinning(value, lookup),
         // DNS-backed HTTPS endpoints (the "DNS-private" case below) route
@@ -1317,7 +1117,9 @@ describe("runInferenceSet compatible providers", () => {
           },
           deps,
         ),
-      ).rejects.toThrow(/endpoint-url is not allowed:.*private\/internal address/i);
+      ).rejects.toThrow(
+        /endpoint-url is not allowed:.*private\/internal address|hosted endpoint failed network validation/i,
+      );
 
       expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
       expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
@@ -1486,5 +1288,61 @@ describe("runInferenceSet compatible providers", () => {
       runInferenceSet({ provider: "openai-api", model: "gpt-test", noVerify: true }, noBindingDeps),
     ).rejects.toThrow("provider not found");
     expect(noBindingSet).toHaveBeenCalledOnce();
+  });
+});
+
+describe("native compatible model selection", () => {
+  async function scenario(requestOk: boolean) {
+    const native = await nativeCompatibleFixture();
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/old-model" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: native.profile.endpoint,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: native.profile.api,
+        nativeCompatibleProviderAttachment: native.receipt,
+      },
+      providerAdapter: native.providerAdapter,
+      probeSandboxRoute: async () =>
+        requestOk ? { ok: true } : { ok: false, detail: "rejected", httpStatus: 403 },
+    });
+    return {
+      native,
+      config,
+      deps,
+      run: () =>
+        runInferenceSet(
+          { provider: "compatible-endpoint", model: "new-model", sandboxName: "alpha" },
+          deps,
+        ),
+    };
+  }
+
+  it("publishes the scoped native model after a successful request", async () => {
+    const { native, config, deps, run } = await scenario(true);
+    await run();
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeCompatibleProviderAttachment: native.receipt }),
+    );
+    expect(JSON.stringify(config)).toContain(native.profile.endpoint);
+    expect(JSON.stringify(config)).not.toContain("inference.local");
+  });
+
+  it("retains the previous model when the native request fails", async () => {
+    const { deps, run } = await scenario(false);
+    await expect(run()).rejects.toThrow("verification rejected");
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 });

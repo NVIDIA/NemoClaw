@@ -694,6 +694,17 @@ export function createCliOpenShellProviderAdapter(
     );
     const error = commandError(result);
     if (error) return failure(error);
+    if (
+      request.expectedProfile &&
+      (request.expectedProfile.profileId !== request.profileType ||
+        !exportedProviderProfileMatchesContract(commandStdout(result), request.expectedProfile))
+    ) {
+      return failure({
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "OpenShell provider profile does not match the expected credential boundary.",
+      });
+    }
     const credentialKeys = parseProfileCredentialKeys(commandStdout(result), request.profileType);
     return credentialKeys
       ? success({ credentialKeys })

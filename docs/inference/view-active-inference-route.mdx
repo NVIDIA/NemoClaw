@@ -3,22 +3,42 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "View the Active Inference Route"
 sidebar-title: "View the Active Route"
-description: "Inspect the provider and model on the live NemoClaw-managed OpenShell inference route and the persisted URL for a compatible custom endpoint."
-description-agent: "Shows the live inference provider and model, plus the persisted URL for a compatible custom endpoint. Use when checking or reproducing the active route."
+description: "Inspect a sandbox's native inference selection or the shared OpenShell route, including a safe compatible endpoint URL."
+description-agent: "Shows the recorded native selection or shared inference provider and model, plus safe compatible endpoint metadata."
 keywords:
-  ["nemoclaw inference get", "active inference provider", "active inference model", "compatible endpoint URL"]
+  [
+    "nemoclaw inference get",
+    "active inference provider",
+    "active inference model",
+    "compatible endpoint URL",
+  ]
 content:
   type: "how_to"
 ---
 
-Use the NemoClaw CLI to read the provider and model on the live OpenShell inference route.
-For a compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
+Use the NemoClaw CLI to read the selected sandbox provider and model, or the shared OpenShell inference route.
+For a compatible custom provider using the shared route, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 This command reports configuration state and does not authenticate a model request.
 
-## Read the Live Route
+## Read a Sandbox-Attached Route
+
+For native NVIDIA and authenticated hosted compatible endpoints, use the sandbox-first command:
+
+```bash
+$$nemoclaw <name> inference get
+```
+
+The command reports the sandbox's recorded provider and model.
+It includes the endpoint URL only when it passes the credential-free display checks; opaque paths are withheld.
+A different shared gateway route does not override this selection.
+For compatible endpoints, a missing or mismatched ownership receipt stops the command instead of falling back to the shared route.
+Recreate a legacy hosted sandbox when the error reports that its receipt is missing.
+
+## Read the Shared Route
 
 Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
-The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+When the default sandbox has a native provider, the direct form reports that sandbox's recorded selection.
+Otherwise, it reads the shared route on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
 $$nemoclaw inference get
@@ -46,7 +66,7 @@ Expected output:
 }
 ```
 
-For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` only when every matching published registry row records the live provider and model.
+For compatible endpoints that still use the shared route, the text output adds `Endpoint` only when every matching published registry row records the live provider and model.
 Those rows must also agree on one API family, credential identity, and canonical, credential-free, reusable HTTP(S) URL.
 The URL must use the documented root or `/v1` API-base path; NemoClaw omits other paths because an opaque segment can carry a credential.
 The JSON output adds `endpointUrl` under the same condition.
@@ -96,10 +116,10 @@ $$nemoclaw <name> inference get
 ```
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
-For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
+For a sandbox that uses a shared route, the command resolves its recorded gateway and reads that gateway-wide route.
+For a compatible custom provider using the shared route, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
-OpenShell exposes one inference route to every sandbox registered on the same gateway.
+Sandboxes that use the shared route observe the same gateway inference selection.
 
 ## Include Sandbox Health
 
@@ -110,7 +130,9 @@ $$nemoclaw <name> status
 ```
 
 The status output shows the provider and model recorded for that sandbox.
-When the gateway's live shared route differs, status prints both routes and reports whether `connect` can safely restore the recorded route.
+For shared routes, status prints both routes when the gateway selection differs and reports whether `connect` can safely restore the recorded route.
+For authenticated hosted compatible endpoints, status verifies the recorded provider attachment and a fresh request to that endpoint.
+A healthy shared route does not override a failed native endpoint check.
 Refer to [Use Shared Gateway Routes](use-shared-gateway-routes) for the text and JSON drift fields and their compatibility rules.
 Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
 

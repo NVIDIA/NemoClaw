@@ -12,7 +12,11 @@ import {
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { getSandboxInferenceConfig } from "../../inference/config";
+import {
+  getSandboxInferenceConfig,
+  getNativeCompatibleSandboxInferenceConfig,
+  type NativeCompatibleProviderAttachment,
+} from "../../inference/config";
 import {
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
@@ -40,6 +44,7 @@ import {
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   sandboxName: string;
   gatewayName?: string;
   runtimeSelection?: OpenShellRuntimeSelection;
@@ -81,11 +86,16 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   headers: string[];
   payload: Record<string, unknown>;
 } {
-  const config = getSandboxInferenceConfig(
-    input.model,
-    input.provider,
-    input.preferredInferenceApi,
-  );
+  const config = input.nativeCompatibleProviderAttachment
+    ? getNativeCompatibleSandboxInferenceConfig({
+        provider: input.provider,
+        model: input.model,
+        endpointUrl: input.nativeCompatibleProviderAttachment.endpointUrl,
+        preferredInferenceApi:
+          input.preferredInferenceApi ?? input.nativeCompatibleProviderAttachment.api,
+        receipt: input.nativeCompatibleProviderAttachment,
+      })
+    : getSandboxInferenceConfig(input.model, input.provider, input.preferredInferenceApi);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const baseUrl = (
     useNativeNvidia
@@ -94,7 +104,12 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
         ? "https://inference.local/v1"
         : config.inferenceBaseUrl
   ).replace(/\/+$/u, "");
-  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  const apiBaseUrl =
+    input.nativeCompatibleProviderAttachment && config.inferenceApi !== "anthropic-messages"
+      ? baseUrl
+      : baseUrl.endsWith("/v1")
+        ? baseUrl
+        : `${baseUrl}/v1`;
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
@@ -253,7 +268,7 @@ export async function probeSandboxInferenceInvocation(
     const inferenceApi = getSandboxInferenceConfig(
       input.model,
       input.provider,
-      input.preferredInferenceApi,
+      input.nativeCompatibleProviderAttachment?.api ?? input.preferredInferenceApi,
     ).inferenceApi;
     if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
       return { ok: true };

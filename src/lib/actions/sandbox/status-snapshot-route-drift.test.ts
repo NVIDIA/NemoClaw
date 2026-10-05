@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
 import fs from "node:fs";
 import os from "node:os";
 
@@ -202,6 +203,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       preferredInferenceApi: "openai-completions",
     };
     const options = snapshotDeps(target);
+    options.suppressInferenceProbe = false;
     options.deps.listPublishedSandboxesAcrossGatewayRoots = () => [
       options.deps.getSandbox() as SandboxEntry,
       peer,
@@ -209,7 +211,8 @@ describe("collectSandboxStatusSnapshot route drift", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", options);
 
-    expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
   });
 
   it("does not advertise connect when a cross-root gateway peer has a conflicting route", async () => {
@@ -248,7 +251,8 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       getGatewayPresets: async () => [],
     });
 
-    expect(report.routeDrift).toMatchObject({ canConnect: false });
+    expect(report.routeDrift).toBeNull();
+    expect(report.inferenceHealth).toMatchObject({ ok: false, probed: false });
   });
 
   it("reads policies with the sandbox entry resolved from its owning gateway root", async () => {
@@ -403,6 +407,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
         getSandbox: () => sandbox,
         listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
         reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        verifyNativeCompatibleProviderAttachmentImpl: async () => {},
         probeProviderHealthImpl: () => null,
         probeSandboxInferenceGatewayHealthImpl: async () => ({
           ok: true,
@@ -421,7 +426,21 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     return snapshot.inferenceHealth;
   }
 
+  const identity = nativeCompatibleEndpointIdentity({
+    addresses: ["93.184.216.34"],
+    endpointUrl: "https://target.example/v1",
+    api: "openai-responses",
+  });
   const recorded = {
+    nativeCompatibleProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: identity.profileId,
+      providerName: identity.providerName,
+      providerId: "owned-compatible",
+      addresses: ["93.184.216.34"],
+      endpointUrl: identity.endpoint,
+      api: identity.api,
+    },
     provider: "compatible-endpoint",
     model: "recorded/model",
     endpointUrl: "https://target.example/v1",
@@ -429,7 +448,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     preferredInferenceApi: "openai-responses",
   } satisfies Partial<SandboxEntry>;
 
-  it("keeps the recorded API family when only the model drifted", async () => {
+  it("keeps the native model and API when the shared model differs", async () => {
     // The recorded API family describes the provider, which has not changed, so
     // dropping it would probe /v1/chat/completions against a responses-only
     // endpoint and report a healthy route as unhealthy.
@@ -438,7 +457,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     expect(
       await collectInferenceHealth(recorded, {
         provider: "compatible-endpoint",
-        model: "live/model",
+        model: "recorded/model",
         preferredInferenceApi: "openai-responses",
       }),
     ).toMatchObject({ ok: true, probed: true });
@@ -456,16 +475,15 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     ).toMatchObject({ ok: true, probed: true });
   });
 
-  it("drops the recorded API family when the provider itself drifted", async () => {
-    // A provider change must remove the recorded API family because the live
-    // provider might not implement it.
+  it("keeps the native endpoint API when the shared provider differs", async () => {
+    // Shared-route changes must not override the sandbox-attached endpoint protocol.
     liveGatewayInference("nvidia-prod", "nvidia/nemotron");
 
     expect(
       await collectInferenceHealth(recorded, {
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron",
-        preferredInferenceApi: null,
+        provider: "compatible-endpoint",
+        model: "recorded/model",
+        preferredInferenceApi: "openai-responses",
       }),
     ).toMatchObject({ ok: true, probed: true });
   });
@@ -615,7 +633,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       ),
     });
     expect(snapshot.inferenceHealth?.detail).toContain(
-      "Recreate the sandbox to restore native NVIDIA inference.",
+      "Recreate the sandbox to restore native inference.",
     );
   });
 

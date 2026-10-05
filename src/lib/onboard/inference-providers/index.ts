@@ -11,7 +11,7 @@
 
 export { setupHermesProviderInference } from "./hermes";
 export { setupOllamaLocalInference } from "./ollama-local";
-export { setupRemoteProviderInference } from "./remote";
+export { setupRemoteProviderInference, probeOpenAiLikeEndpointOptimized } from "./remote";
 export { setupRoutedInference } from "./routed";
 export { setupVllmLocalInference } from "./vllm-local";
 export { isRemoteProviderName, REMOTE_PROVIDER_NAMES } from "./types";
@@ -25,3 +25,12 @@ export type {
   SetupInferenceResult,
   VllmDeps,
 } from "./types";
+
+export { ensureNativeCompatibleProvider } from "../../inference/native-compatible/profile";
+export {
+  isNativeCompatibleSelection,
+  nativeCompatibleSelectionIdentity,
+  isNativeCompatibleHostedSelection,
+  normalizeNativeCompatibleProviderAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "../../inference/native-compatible/contract";

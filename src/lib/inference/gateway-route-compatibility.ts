@@ -499,3 +499,8 @@ export function assertGatewayRouteCompatibility(request: GatewayRouteCompatibili
   const result = checkGatewayRouteCompatibility(request);
   if (!result.ok) throw new GatewayRouteConflictError(result);
 }
+
+export {
+  normalizeNativeCompatibleProviderAttachment,
+  isNativeCompatibleSelection,
+} from "./native-compatible/contract";

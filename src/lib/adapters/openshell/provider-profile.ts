@@ -11,6 +11,7 @@ type ProviderProfileBoundary = Readonly<{
   endpoints: readonly unknown[];
   binaries: readonly string[];
   inference_capable: boolean;
+  discovery: { credentials: readonly string[] };
 }>;
 
 export type CheckedInProviderProfileContract = Readonly<{
@@ -37,6 +38,14 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
   ) {
     return null;
   }
+  const discovery = profile.discovery === undefined ? {} : recordValue(profile.discovery);
+  if (
+    !discovery ||
+    (discovery.credentials !== undefined &&
+      (!Array.isArray(discovery.credentials) ||
+        discovery.credentials.some((value) => typeof value !== "string")))
+  )
+    return null;
   const credentials = profile.credentials.map((value) => {
     const credential = recordValue(value);
     if (
@@ -48,7 +57,9 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
       typeof credential.auth_style !== "string" ||
       typeof credential.header_name !== "string" ||
       (credential.query_param !== undefined && typeof credential.query_param !== "string") ||
-      (credential.refresh !== undefined && recordValue(credential.refresh) === null)
+      (credential.refresh !== undefined && recordValue(credential.refresh) === null) ||
+      (credential.path_template !== undefined && typeof credential.path_template !== "string") ||
+      (credential.token_grant !== undefined && recordValue(credential.token_grant) === null)
     ) {
       return null;
     }
@@ -60,6 +71,8 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
       header_name: credential.header_name,
       query_param: credential.query_param,
       refresh: credential.refresh ?? null,
+      path_template: credential.path_template ?? "",
+      token_grant: credential.token_grant ?? null,
     };
   });
   if (credentials.some((credential) => credential === null)) return null;
@@ -70,6 +83,7 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
     endpoints: profile.endpoints,
     binaries: profile.binaries as string[],
     inference_capable: profile.inference_capable,
+    discovery: { credentials: (discovery.credentials ?? []) as string[] },
   };
 }
 

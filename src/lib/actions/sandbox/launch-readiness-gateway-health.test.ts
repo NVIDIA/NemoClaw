@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
+import { requireNativeCompatibleInferenceHealth } from "./launch-readiness/health";
 import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
@@ -311,4 +313,57 @@ describe("Deep Agents Code launch readiness", () => {
       }),
     );
   });
+});
+
+describe("native compatible launch health", () => {
+  it.each([true, false])(
+    "requires endpoint ownership and a successful fresh invocation [case %#]",
+    async (invocationOk) => {
+      const identity = nativeCompatibleEndpointIdentity({
+        addresses: ["93.184.216.34"],
+        endpointUrl: "https://models.example.com/v1",
+        api: "openai-responses",
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned",
+        addresses: ["93.184.216.34"],
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+      };
+      const verify = vi.fn(async () => receipt);
+      const invoke = vi.fn(async () =>
+        invocationOk
+          ? { ok: true as const }
+          : { ok: false as const, detail: "unavailable", httpStatus: null },
+      );
+      const result = requireNativeCompatibleInferenceHealth({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        entry: {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          endpointUrl: identity.endpoint,
+          preferredInferenceApi: identity.api,
+          nativeCompatibleProviderAttachment: receipt,
+        },
+        deps: { verifyNativeCompatibleAttachment: verify, inferenceInvocationProbe: invoke },
+      });
+      const outcome = await result.then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      expect(outcome).toEqual(invocationOk ? { value: true } : { error: expect.any(Error) });
+      expect(verify).toHaveBeenCalledOnce();
+      expect(invoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nativeCompatibleProviderAttachment: receipt,
+          provider: "compatible-endpoint",
+        }),
+      );
+    },
+  );
 });

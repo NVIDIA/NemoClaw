@@ -66,3 +66,8 @@ export function removeNativeNvidiaProviderAuthority(
   else delete state.nativeNvidiaProviderAuthorities;
   return true;
 }
+
+/** Shared gateway-name boundary for native provider authority maps. */
+export function isValidNativeProviderAuthorityGateway(value: string): boolean {
+  return isValidName(value);
+}

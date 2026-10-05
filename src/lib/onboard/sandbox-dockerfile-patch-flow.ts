@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "../inference/native-compatible/contract";
 import type { AgentDefinition } from "../agent/defs";
 import type { WebSearchConfig } from "../inference/web-search";
 import {
@@ -41,6 +45,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   chatUiUrl: string;
   provider: string | null;
   endpointUrl?: string | null;
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   compatibleEndpointReasoning?: "true" | "false";
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -121,6 +126,7 @@ export async function prepareSandboxDockerfilePatch({
   chatUiUrl,
   provider,
   endpointUrl = null,
+  nativeCompatibleProviderAttachment,
   compatibleEndpointReasoning,
   preferredInferenceApi,
   webSearchConfig,
@@ -198,6 +204,10 @@ export async function prepareSandboxDockerfilePatch({
     !fromDockerfile && STABLE_MANAGED_BUILD_ID_AGENTS.has(managedAgentName)
       ? "preserve"
       : "rewrite";
+  const nativeCompatible = requireMatchingNativeCompatibleAttachment(
+    nativeCompatibleProviderAttachment,
+    { provider, endpointUrl, preferredInferenceApi },
+  );
   const patched = (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
     stagedDockerfile,
     model,
@@ -208,7 +218,7 @@ export async function prepareSandboxDockerfilePatch({
     webSearchConfig,
     resolved ? resolved.ref : null,
     darwinVmCompat,
-    null,
+    nativeCompatible?.endpointUrl ?? null,
     hermesToolGateways,
     (() => {
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);

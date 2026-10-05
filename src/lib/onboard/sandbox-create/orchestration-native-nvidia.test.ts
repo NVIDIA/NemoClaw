@@ -10,6 +10,8 @@ const recordedProviderId = "11111111-2222-4333-8444-555555555555";
 
 function providerAdapter(providerId: string): OpenShellProviderAdapter {
   return {
+    attachProvider: vi.fn(),
+    detachProvider: vi.fn(),
     getProvider: vi.fn(async () => ({
       ok: true,
       value: {
@@ -113,13 +115,14 @@ describe("native NVIDIA post-create provider verification", () => {
     expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects a replaced provider before inspecting its sandbox attachments", async () => {
+  it("rejects a replaced provider without changing its sandbox attachments", async () => {
     const adapter = providerAdapter("99999999-2222-4333-8444-555555555555");
     const boundary = nativeProviderBoundary(adapter);
 
     await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
       /changed identity.*Recreate the sandbox/u,
     );
-    expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+    expect(adapter.attachProvider).not.toHaveBeenCalled();
+    expect(adapter.detachProvider).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,9 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  isNativeCompatibleHostedSelection,
+  normalizeNativeCompatibleProviderAttachment,
+  requireMatchingNativeCompatibleAttachment,
   getLlamaCppRouteDetails,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
@@ -54,6 +57,8 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  verifyNativeCompatibleStatusAttachment,
+  type VerifyNativeCompatibleStatusAttachment,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
@@ -334,6 +339,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
   verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
+  verifyNativeCompatibleProviderAttachmentImpl?: VerifyNativeCompatibleStatusAttachment;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -562,7 +568,11 @@ export async function collectSandboxStatusSnapshot(
   const nativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
     sb?.nativeNvidiaProviderAttachment,
   );
-  const nativeNvidia = Boolean(nativeNvidiaAttachment);
+  const nativeCompatible = sb ? isNativeCompatibleHostedSelection(sb) : false;
+  const compatibleReceipt = normalizeNativeCompatibleProviderAttachment(
+    sb?.nativeCompatibleProviderAttachment,
+  );
+  const nativeNvidia = Boolean(nativeNvidiaAttachment) || nativeCompatible;
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -614,28 +624,45 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
+  const nativeProviderLabel = nativeCompatible
+    ? "Native compatible provider"
+    : "Native NVIDIA provider";
   let nativeNvidiaAttachmentFailure: string | null = null;
   if (!suppressInferenceProbe && lookup.state === "present" && nativeNvidia && sb) {
-    const expected = nativeNvidiaAttachment;
+    const expected = nativeCompatible ? compatibleReceipt : nativeNvidiaAttachment;
     if (!gatewayName || !expected) {
       nativeNvidiaAttachmentFailure =
-        `Native NVIDIA provider attachment is unavailable for sandbox '${sandboxName}'. ` +
-        "Recreate the sandbox to restore native NVIDIA inference.";
+        `${nativeProviderLabel} attachment is unavailable for sandbox '${sandboxName}'. ` +
+        "Recreate the sandbox to restore native inference.";
     } else {
       try {
-        await verifyNativeNvidiaStatusAttachment({
-          gatewayName,
-          sandboxName,
-          expected,
-          ...(opts.deps?.verifyNativeNvidiaProviderAttachmentImpl
-            ? { verify: opts.deps.verifyNativeNvidiaProviderAttachmentImpl }
-            : {}),
-        });
+        if (nativeCompatible) {
+          const receipt = requireMatchingNativeCompatibleAttachment(
+            sb.nativeCompatibleProviderAttachment,
+            sb,
+          );
+          if (!receipt) throw new Error("Native compatible provider ownership is missing.");
+          await verifyNativeCompatibleStatusAttachment({
+            gatewayName,
+            sandboxName,
+            expected: receipt,
+            verify: opts.deps?.verifyNativeCompatibleProviderAttachmentImpl,
+          });
+        } else {
+          await verifyNativeNvidiaStatusAttachment({
+            gatewayName,
+            sandboxName,
+            expected: nativeNvidiaAttachment!,
+            ...(opts.deps?.verifyNativeNvidiaProviderAttachmentImpl
+              ? { verify: opts.deps.verifyNativeNvidiaProviderAttachmentImpl }
+              : {}),
+          });
+        }
       } catch (error) {
         const detail = sanitizedStatusDetail(error);
         nativeNvidiaAttachmentFailure =
-          `Native NVIDIA provider attachment is unavailable for sandbox '${sandboxName}'` +
-          `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native NVIDIA inference.`;
+          `${nativeProviderLabel} attachment is unavailable for sandbox '${sandboxName}'` +
+          `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native inference.`;
       }
     }
   }
@@ -745,6 +772,9 @@ export async function collectSandboxStatusSnapshot(
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
                     ...(nativeNvidia ? { nativeProvider: true } : {}),
+                    ...(compatibleReceipt
+                      ? { nativeCompatibleProviderAttachment: compatibleReceipt }
+                      : {}),
                   },
                   opts.deps?.probeSandboxInferenceInvocationImpl,
                   (error) =>
@@ -796,8 +826,8 @@ export async function collectSandboxStatusSnapshot(
       ? {
           ok: false,
           probed: false,
-          providerLabel: "Native NVIDIA provider attachment",
-          endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+          providerLabel: `${nativeProviderLabel} attachment`,
+          endpoint: compatibleReceipt?.endpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
           detail: nativeNvidiaAttachmentFailure,
           failureLabel: "unreachable",
           probeLabel: "provider attachment",
@@ -806,6 +836,7 @@ export async function collectSandboxStatusSnapshot(
           agentName: sb?.agent ?? null,
           provider: invocationRoute.provider ?? null,
           nativeNvidia,
+          ...(compatibleReceipt ? { nativeCompatibleEndpoint: compatibleReceipt.endpointUrl } : {}),
         });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
@@ -918,9 +949,9 @@ async function buildSandboxStatusReport(
   const livePolicies =
     sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
-  const nativeNvidia = Boolean(
-    normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
-  );
+  const nativeNvidia =
+    Boolean(normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment)) ||
+    (sb ? isNativeCompatibleHostedSelection(sb) : false);
   return {
     schemaVersion: 1,
     name: sandboxName,

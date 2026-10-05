@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ensureNativeCompatibleProviderAttached } from "../../inference/native-compatible/profile";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
@@ -82,6 +83,31 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
     );
   }
   await ensureNativeNvidiaProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export function usesNativeCompatibleProvider(inferenceProvider: string | null): boolean {
+  return (
+    typeof inferenceProvider === "string" &&
+    /^nemoclaw-compatible-[0-9a-f]{64}-v1$/u.test(inferenceProvider)
+  );
+}
+
+export async function verifyNativeCompatibleAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inferenceProvider: string | null;
+  readonly expected: SandboxEntry["nativeCompatibleProviderAttachment"];
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!usesNativeCompatibleProvider(input.inferenceProvider)) return;
+  if (!input.expected || input.expected.providerName !== input.inferenceProvider)
+    throw new Error("Sandbox is missing its matching native compatible provider receipt.");
+  await ensureNativeCompatibleProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,

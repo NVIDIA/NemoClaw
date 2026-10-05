@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  isNativeCompatibleHostedSelection,
+  requireMatchingNativeCompatibleAttachment,
+} from "../inference/native-compatible/contract";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
 import type {
@@ -313,6 +317,45 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
+  if (selectedSandbox && isNativeCompatibleHostedSelection(selectedSandbox)) {
+    let receipt;
+    try {
+      receipt = requireMatchingNativeCompatibleAttachment(
+        selectedSandbox.nativeCompatibleProviderAttachment,
+        selectedSandbox,
+      );
+    } catch {
+      throw new InferenceGetError(
+        "The selected sandbox has an invalid native endpoint receipt. Recreate the sandbox before using inference.",
+      );
+    }
+    if (!receipt)
+      throw new InferenceGetError(
+        "The selected sandbox has no native endpoint receipt. Recreate legacy sandboxes before using inference.",
+      );
+    const payload: InferenceGetResult = {
+      provider: selectedSandbox.provider ?? null,
+      model: selectedSandbox.model ?? null,
+      ...(valueLooksLikeSecret(receipt.endpointUrl) ||
+      !endpointPathIsCredentialFreeForDisplay(receipt.endpointUrl)
+        ? endpointOmission("withheld")
+        : { endpointUrl: receipt.endpointUrl }),
+    };
+    if (!options.quiet) {
+      if (options.json) deps.log(JSON.stringify(payload, null, 2));
+      else {
+        deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
+        deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+        if (payload.endpointUrl)
+          deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+        else {
+          deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
+          deps.log(`Action:   ${payload.endpointRecovery}`);
+        }
+      }
+    }
+    return payload;
+  }
   if (
     selectedSandbox &&
     isNativeNvidiaProvider(selectedSandbox.provider) &&
@@ -393,7 +436,7 @@ export async function runInferenceGet(
       deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
       deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
       if (payload.endpointUrl) {
-        deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+        deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl ?? null)}`);
       } else if (payload.endpointStatus && payload.endpointRecovery) {
         deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
         if (payload.affectedSandboxes?.length) {

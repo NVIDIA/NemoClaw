@@ -11,7 +11,10 @@ import {
 } from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { planInferenceRouteReconcile } from "../../inference/config";
+import {
+  planInferenceRouteReconcile,
+  isNativeCompatibleHostedSelection,
+} from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -90,6 +93,7 @@ export { createBoundLaunchReadinessDeps };
 export {
   getNativeNvidiaProviderAttachment,
   requireNativeNvidiaInferenceHealth,
+  requireNativeCompatibleInferenceHealth,
 } from "./launch-readiness/health";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
@@ -828,7 +832,7 @@ async function captureLaunchIdentity(
   const inference = registry.getSandboxEntryInference(entry);
   const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
   let liveInference: { provider: string; model: string } | null = null;
-  if (!nativeNvidia) {
+  if (!nativeNvidia && !isNativeCompatibleHostedSelection(entry)) {
     const inferenceGetStartedAt = performance.now();
     let inferenceResult: Awaited<
       ReturnType<

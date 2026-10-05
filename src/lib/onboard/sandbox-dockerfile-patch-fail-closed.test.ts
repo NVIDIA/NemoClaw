@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -142,6 +143,41 @@ describe("prepareSandboxDockerfilePatch DCode provider input", () => {
       expect(fs.readFileSync(dockerfile.path, "utf8")).toBe(dockerfile.source);
     },
   );
+
+  it("bakes only the recorded native endpoint into the legacy agent image", async () => {
+    const dockerfile = stagedDcodeDockerfile();
+    const identity = nativeCompatibleEndpointIdentity({
+      addresses: ["93.184.216.34"],
+      endpointUrl: "https://models.example.com/v1",
+      api: "openai-completions",
+    });
+    const patch = vi.fn<
+      NonNullable<
+        NonNullable<
+          Parameters<typeof prepareSandboxDockerfilePatch>[0]["deps"]
+        >["patchStagedDockerfile"]
+      >
+    >(() => ({ dashboardRemoteBindPrepared: false }));
+    await prepareSandboxDockerfilePatch({
+      ...baseInput,
+      agent: dcodeAgent,
+      stagedDockerfile: dockerfile.path,
+      provider: "compatible-endpoint",
+      endpointUrl: identity.endpoint,
+      preferredInferenceApi: identity.api,
+      nativeCompatibleProviderAttachment: {
+        schemaVersion: 1,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned",
+        addresses: ["93.184.216.34"],
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+      },
+      deps: { ...deps, patchStagedDockerfile: patch },
+    });
+    expect(patch.mock.calls[0]?.[9]).toBe(identity.endpoint);
+  });
 
   it("validates the managed inference provider fallback before changing the legacy Dockerfile (#7112)", async () => {
     const dockerfile = stagedDcodeDockerfile();

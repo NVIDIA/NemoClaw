@@ -5,7 +5,8 @@ title: "Set Up an OpenAI-Compatible Endpoint"
 sidebar-title: "OpenAI-Compatible Endpoint"
 description: "Connect NemoClaw to a self-hosted or custom OpenAI-compatible inference endpoint."
 description-agent: "Shows how to configure an OpenAI-compatible endpoint for NemoClaw, including raw model files and non-interactive onboarding."
-keywords: ["nemoclaw openai compatible endpoint", "custom inference endpoint", "self-hosted inference"]
+keywords:
+  ["nemoclaw openai compatible endpoint", "custom inference endpoint", "self-hosted inference"]
 content:
   type: "how_to"
 ---
@@ -13,8 +14,18 @@ content:
 Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/completions` or a compatible `/v1/responses` API.
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
-The agent connects to `inference.local` inside the sandbox.
-OpenShell forwards that traffic to the endpoint configured during onboarding.
+For authenticated hosted endpoints, the agent uses the endpoint URL configured during onboarding.
+NemoClaw attaches an OpenShell provider restricted to that endpoint and selected API to the sandbox.
+Host-local endpoints, including the supported no-authentication loopback option, retain their existing `inference.local` route.
+
+Use `$$nemoclaw <name> status` and a short agent request to verify the hosted route after onboarding.
+An incompatible existing provider profile stops setup before activation.
+Existing hosted sandboxes without a native provider ownership receipt must be recreated before using this path.
+
+The provider retains the IP addresses validated when you selected the endpoint.
+If the endpoint changes addresses and requests stop working, use `$$nemoclaw <name> inference set` with the same provider, model, endpoint, and credential options to select it again and verify the new route.
+See [Switch Providers](../manage-inference/switch-providers) for the command syntax and API options.
+This attaches a separate provider for the new address set without changing another sandbox's recorded access.
 
 ## Start the Server
 
@@ -45,6 +56,7 @@ lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN
 Continue only when every listener address is in `127.0.0.0/8`, is `::1`, or is an IPv4-mapped address in `::ffff:127.0.0.0/8`.
 Stop the server and correct its bind configuration if the output contains `*`, `0.0.0.0`, `::`, or another address.
 Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated path and do not use this loopback-only proxy requirement.
+
 </Warning>
 
 ## Run Onboarding
@@ -113,8 +125,8 @@ Start the endpoint before running the non-interactive command because onboarding
 Set `NEMOCLAW_REASONING=true` when the endpoint serves a reasoning-only model.
 
 <Warning>
-Reasoning mode validates only `/v1/chat/completions` and does not verify tool calling or streaming.
-Enable it only when the endpoint supports the capabilities your agent requires.
+  Reasoning mode validates only `/v1/chat/completions` and does not verify tool calling or
+  streaming. Enable it only when the endpoint supports the capabilities your agent requires.
 </Warning>
 
 ```bash
@@ -135,16 +147,16 @@ NEMOCLAW_PROVIDER=custom \
   $$nemoclaw onboard --non-interactive
 ```
 
-| Variable | Purpose |
-|---|---|
-| `NEMOCLAW_PROVIDER` | Set to `custom`. |
-| `NEMOCLAW_ENDPOINT_URL` | Base URL of the server, without userinfo, query, or fragment components. |
-| `NEMOCLAW_MODEL` | Model ID reported by the server. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Protected service ports remain excluded. |
-| `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
-| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
-| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |
-| `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
+| Variable                                   | Purpose                                                                                                                                                                                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NEMOCLAW_PROVIDER`                        | Set to `custom`.                                                                                                                                                                                                                                 |
+| `NEMOCLAW_ENDPOINT_URL`                    | Base URL of the server, without userinfo, query, or fragment components.                                                                                                                                                                         |
+| `NEMOCLAW_MODEL`                           | Model ID reported by the server.                                                                                                                                                                                                                 |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE`            | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Protected service ports remain excluded. |
+| `NEMOCLAW_REASONING`                       | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`.                                                                                                                                             |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`           | Optional comma-separated hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported.                                                                                                                             |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables.                                                                                                              |
+| `COMPATIBLE_API_KEY`                       | Endpoint API key. Required unless loopback no-auth mode is selected.                                                                                                                                                                             |
 
 <AgentOnly variant="openclaw">
 

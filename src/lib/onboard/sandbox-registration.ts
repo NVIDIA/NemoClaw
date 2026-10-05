@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireMatchingNativeCompatibleAttachment } from "../inference/native-compatible/contract";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
@@ -70,6 +71,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -208,6 +210,10 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+    input.nativeCompatibleProviderAttachment,
+    input.inferenceSelection,
+  );
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     input.nativeNvidiaProviderAttachment,
   );
@@ -266,6 +272,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -347,6 +354,8 @@ export function prepareCreatedSandboxRegistration(
       : pending?.nativeNvidiaProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    nativeCompatibleProviderAttachment:
+      input.nativeCompatibleProviderAttachment ?? pending?.nativeCompatibleProviderAttachment,
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
       : input.inferenceSelection,

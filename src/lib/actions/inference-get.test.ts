@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import fs from "node:fs";
 import os from "node:os";
 
@@ -172,6 +173,86 @@ function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: st
 }
 
 describe("runInferenceGet", () => {
+  it("reads an endpoint-scoped native receipt without consulting the managed route", async () => {
+    const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+    const identity = nativeCompatibleEndpointIdentity({
+      addresses: ["93.184.216.34"],
+      endpointUrl: "https://models.example.com/v1",
+      api: "openai-responses",
+    });
+    deps.getDefaultSandbox = () => "alpha";
+    deps.getSandbox = () => ({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: identity.endpoint,
+      preferredInferenceApi: identity.api,
+      nativeCompatibleProviderAttachment: {
+        schemaVersion: 1,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned-provider",
+        addresses: ["93.184.216.34"],
+        endpointUrl: identity.endpoint,
+        api: identity.api,
+      },
+    });
+    await expect(runInferenceGet({ quiet: true }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: identity.endpoint,
+    });
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "withholds opaque native endpoint paths from output [case %#]",
+    async (json) => {
+      const deps = createDeps(configuredRoute("stale", "stale"));
+      const identity = nativeCompatibleEndpointIdentity({
+        addresses: ["93.184.216.34"],
+        endpointUrl: "https://models.example.com/tenant-private-token/v1",
+        api: "openai-completions",
+      });
+      deps.getDefaultSandbox = () => "alpha";
+      deps.getSandbox = () => ({
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: identity.endpoint,
+        preferredInferenceApi: identity.api,
+        nativeCompatibleProviderAttachment: {
+          schemaVersion: 1,
+          profileId: identity.profileId,
+          providerName: identity.providerName,
+          providerId: "owned",
+          addresses: ["93.184.216.34"],
+          endpointUrl: identity.endpoint,
+          api: identity.api,
+        },
+      });
+      const result = await runInferenceGet({ json }, deps);
+      expect(result).toMatchObject({ endpointStatus: "withheld" });
+      expect(JSON.stringify([result, deps.log.mock.calls])).not.toContain("tenant-private-token");
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses legacy hosted endpoint inference instead of falling back to the managed route", async () => {
+    const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+    deps.getDefaultSandbox = () => "alpha";
+    deps.getSandbox = () => ({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://models.example.com/v1",
+    });
+    await expect(runInferenceGet({ quiet: true }, deps)).rejects.toThrow(
+      "no native endpoint receipt",
+    );
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+
   it("reads a recorded native NVIDIA route without consulting the shared gateway route", async () => {
     const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
     const sandbox = {
