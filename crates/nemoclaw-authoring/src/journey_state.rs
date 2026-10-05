@@ -6,9 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
 use nemoclaw_sdk::discovery::ObservationStatus;
-use nemoclaw_sdk::discovery_session::DiscoveryObservations;
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};

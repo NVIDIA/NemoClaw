@@ -3,7 +3,8 @@
 
 use super::labels::display_value;
 use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
-use nemoclaw_sdk::{config::Document, discovery_session::DiscoveryObservations};
+use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::config::Document;
 use serde_json::Value;
 
 pub(crate) struct JourneyWizard {

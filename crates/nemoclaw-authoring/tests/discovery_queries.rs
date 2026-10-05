@@ -6,7 +6,7 @@
 use nemoclaw_authoring::{discovery_queries, inference_request_for_document};
 use nemoclaw_sdk::{
     config::{Document, InferenceApi, InferenceProviderKind},
-    discovery_session::{DiscoveryQuery, plan_queries},
+    discovery::{DiscoveryQuery, plan_queries},
 };
 
 fn document(path: &str) -> Document {

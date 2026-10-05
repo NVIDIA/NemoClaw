@@ -47,8 +47,6 @@ tempfile.workspace = true
 getrandom.workspace = true
 process-wrap.workspace = true
 tokio-util.workspace = true
-reqwest.workspace = true
-futures-util.workspace = true
 bollard-stubs = "=1.53.1-rc.29.3.1"
 interprocess = { version = "2.4.4", features = ["tokio"] }
 

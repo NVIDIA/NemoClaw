@@ -4,12 +4,9 @@
 use super::*;
 use async_trait::async_trait;
 use nemoclaw_sdk::{Error, config::Gateway, discovery::GatewayCapabilities};
-use openshell_sdk::{EdgeAuthInterceptor, OpenShellClient};
+use openshell_sdk::OpenShellClient;
 use std::{sync::Arc, time::Duration};
-use tonic::{
-    Request,
-    transport::{Certificate, Channel, ClientTlsConfig, Identity},
-};
+use tonic::Request;
 
 #[derive(Clone)]
 pub struct OpenShell {
@@ -99,52 +96,16 @@ impl ConnectedOpenShellGateway {
         gateway: &Gateway,
         secrets: Arc<dyn Secrets>,
     ) -> Result<Self, ObservationError> {
-        nemoclaw_sdk::config::validate_endpoint(gateway.endpoint(), true)
-            .map_err(|_| ObservationError::Query)?;
-        if gateway.endpoint().starts_with("http:")
-            && (gateway.credential().is_some() || gateway.tls().is_some())
-        {
-            return Err(ObservationError::Authentication);
-        }
-        let mut endpoint = Channel::from_shared(gateway.endpoint().to_owned())
-            .map_err(|_| ObservationError::Transport)?
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(90));
-        if gateway.endpoint().starts_with("https:") {
-            let mut tls = ClientTlsConfig::new().with_native_roots();
-            if let Some(references) = gateway.tls() {
-                let file = |name: &str| -> Result<Vec<u8>, ObservationError> {
-                    std::fs::read(secrets.resolve(name)?)
-                        .map_err(|_| ObservationError::Authentication)
-                };
-                tls = ClientTlsConfig::new()
-                    .ca_certificate(Certificate::from_pem(file(&references.ca.env)?))
-                    .identity(Identity::from_pem(
-                        file(&references.certificate.env)?,
-                        file(&references.key.env)?,
-                    ));
-            }
-            endpoint = endpoint
-                .tls_config(tls)
-                .map_err(|_| ObservationError::Authentication)?;
-        }
-        let token = gateway
-            .credential()
-            .map(|credential| secrets.resolve(&credential.env))
-            .transpose()?;
-        // ClientConfig cannot express mTLS, lazy connection, or call bounds at
-        // the pinned revision. from_parts preserves those channel guarantees.
-        let client =
-            OpenShellClient::from_parts(endpoint.connect_lazy(), authentication(token.as_deref())?);
         Ok(Self {
-            client: Arc::new(client),
+            client: Arc::new(nemoclaw_discovery::gateway::client(
+                gateway,
+                secrets.as_ref(),
+            )?),
             secrets,
         })
     }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
-        let mut request = Request::new(value);
-        request.set_timeout(Duration::from_secs(30));
-        request
+        nemoclaw_discovery::gateway::request(value)
     }
     async fn workspace(&self, name: &str, removing: bool) -> Result<Option<Row>, ObservationError> {
         let response = authoritative(
@@ -283,22 +244,6 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
     ) -> Result<(i32, Vec<u8>), Error> {
         ConnectedOpenShellGateway::exec(self, binding, command, environment, seconds, stdin).await
     }
-}
-
-fn authentication(token: Option<&str>) -> Result<EdgeAuthInterceptor, ObservationError> {
-    let interceptor =
-        EdgeAuthInterceptor::new(token, None).map_err(|_| ObservationError::Authentication)?;
-    // Upstream bearer construction does not mark metadata sensitive. Keep
-    // credentials out of diagnostics before handing the slot to the SDK.
-    if let Some(slot) = interceptor.bearer_slot()
-        && let Some(value) = slot
-            .write()
-            .map_err(|_| ObservationError::Authentication)?
-            .as_mut()
-    {
-        value.set_sensitive(true);
-    }
-    Ok(interceptor)
 }
 
 fn row_value<'a>(row: &'a Row, key: &str) -> &'a str {
@@ -486,7 +431,6 @@ mod tests {
         Mutex,
         atomic::{AtomicUsize, Ordering},
     };
-    use tonic::service::Interceptor;
 
     struct FixtureGateway {
         observations: AtomicUsize,
@@ -554,32 +498,6 @@ mod tests {
         ) -> Result<(i32, Vec<u8>), Error> {
             unreachable!()
         }
-    }
-
-    #[test]
-    fn sdk_authentication_preserves_sensitive_bearer_metadata_and_deadlines() {
-        let mut interceptor = authentication(Some("secret-sentinel")).unwrap();
-        let mut request = Request::new(());
-        request.set_timeout(Duration::from_secs(30));
-        let request = interceptor.call(request).unwrap();
-        let bearer = request.metadata().get("authorization").unwrap();
-        assert_eq!(bearer, "Bearer secret-sentinel");
-        assert!(bearer.is_sensitive());
-        assert!(!format!("{request:?}").contains("secret-sentinel"));
-        assert!(request.metadata().contains_key("grpc-timeout"));
-        assert!(
-            authentication(None)
-                .unwrap()
-                .call(Request::new(()))
-                .unwrap()
-                .metadata()
-                .get("authorization")
-                .is_none()
-        );
-        assert!(matches!(
-            authentication(Some("invalid\nsecret-sentinel")),
-            Err(ObservationError::Authentication)
-        ));
     }
 
     #[tokio::test]

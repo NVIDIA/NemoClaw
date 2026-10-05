@@ -7,11 +7,9 @@ use nemoclaw_authoring::{
     Capabilities, JourneyQuestionKind, JourneyState, discovery_queries, environment_queries,
     inference_request_for_document,
 };
+use nemoclaw_discovery::{Direct, DiscoveryObservations};
 use nemoclaw_sdk::{
-    CancellationToken, Error,
-    config::Document,
-    discovery_session::DiscoverySession,
-    discovery_session::{DiscoveryObservations, DiscoveryQuery, DiscoverySource},
+    CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{collections::VecDeque, io, time::Duration};
@@ -53,7 +51,7 @@ pub(crate) async fn run(
     capabilities: Capabilities,
     state: JourneyState,
     cancel: &CancellationToken,
-    bundle: Option<&std::path::Path>,
+    discover: bool,
 ) -> Result<Option<Document>, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::enter()?;
     let area = crossterm::terminal::size().map(|(width, height)| Rect::new(0, 0, width, height))?;
@@ -75,13 +73,13 @@ pub(crate) async fn run(
         }
         // Learn what this machine can run before the first question, so early
         // choices can use it. Each read is attempted once, even when it fails.
-        if let Some(bundle) = bundle {
+        if discover {
             let queries = environment_probe(&wizard);
             if !queries.is_empty() {
                 terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
                 if !ask_target(
                     &mut wizard,
-                    bundle,
+                    read_target,
                     queries,
                     cancel,
                     &mut queued_events,
@@ -96,12 +94,10 @@ pub(crate) async fn run(
         }
         // Resolver failures are rendered by the view; keep the loop alive so
         // the user can go back instead of exiting the TUI.
-        if let Some(bundle) = bundle
-            && let Some(query) = model_catalog_probe(&wizard)
-        {
+        if discover && let Some(query) = model_catalog_probe(&wizard) {
             if !ask_target(
                 &mut wizard,
-                bundle,
+                read_target,
                 vec![query],
                 cancel,
                 &mut queued_events,
@@ -160,15 +156,10 @@ pub(crate) async fn run(
                     .resolve(&wizard.capabilities)
                     .ok()
                     .and_then(|resolution| resolution.assessment().document().cloned());
-                if let (Some(bundle), Some(document)) = (bundle, document) {
+                if let (true, Some(document)) = (discover, document) {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(
-                            bundle,
-                            &document,
-                            wizard.state.current_route(),
-                            &discovery_cancel,
-                        ),
+                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -210,7 +201,7 @@ pub(crate) async fn run(
             KeyCode::Enter => {
                 if wizard.started
                     && matches!(wizard.question(), Ok(None))
-                    && let Some(bundle) = bundle
+                    && discover
                     && let Some(document) = wizard
                         .state
                         .resolve(&wizard.capabilities)
@@ -219,12 +210,7 @@ pub(crate) async fn run(
                 {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(
-                            bundle,
-                            &document,
-                            wizard.state.current_route(),
-                            &discovery_cancel,
-                        ),
+                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -336,11 +322,14 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
     (!wizard.observations.contains(&query)).then_some(query)
 }
 
-/// Ask the target and keep what it says. `false` means the user escaped while it
-/// was being read, which abandons the questionnaire.
+/// Ask the target with `read` and keep what it says. `false` means the user
+/// escaped while it was being read, which abandons the questionnaire.
 pub(super) async fn ask_target(
     wizard: &mut JourneyWizard,
-    bundle: &std::path::Path,
+    read: impl AsyncFnOnce(
+        Vec<DiscoveryQuery>,
+        &CancellationToken,
+    ) -> Result<DiscoveryObservations, Error>,
     queries: Vec<DiscoveryQuery>,
     cancel: &CancellationToken,
     queued_events: &mut VecDeque<Event>,
@@ -348,7 +337,7 @@ pub(super) async fn ask_target(
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
     let Some(observed) = wait_for_discovery(
-        observe_queries(bundle, queries, &discovery_cancel),
+        read(queries, &discovery_cancel),
         cancel,
         &discovery_cancel,
         queued_events,
@@ -362,41 +351,24 @@ pub(super) async fn ask_target(
     Ok(true)
 }
 
-/// Ask the target the given queries in one provider round. With no provider
-/// session, or when the round fails as a whole, every query is recorded as
-/// unknown rather than absent, so it is not asked again on every pass.
-pub(super) async fn observe_queries(
-    bundle: &std::path::Path,
+/// Read the target directly. A read that fails is an unknown observation,
+/// never absence, so it is not asked again on every pass.
+async fn read_target(
     queries: Vec<DiscoveryQuery>,
     cancel: &CancellationToken,
 ) -> Result<DiscoveryObservations, Error> {
-    let unknown = |reason: &str| {
-        let mut observations = DiscoveryObservations::new();
-        for query in &queries {
-            observations.record(query.clone(), query.unknown(reason));
-        }
-        observations
-    };
-    let Ok(mut session) = DiscoverySession::new(bundle) else {
-        return Ok(unknown("no provider session"));
-    };
-    match session.observe(&queries, cancel).await {
-        Ok(observations) => Ok(observations),
-        Err(Error::Cancelled) => Err(Error::Cancelled),
-        Err(_) => Ok(unknown("provider discovery failed")),
-    }
+    nemoclaw_discovery::observe(&queries, &Direct, &EnvironmentSecrets, cancel).await
 }
 
 /// Read again everything the journey needs about the target for `document`.
 async fn observe_target(
-    bundle: &std::path::Path,
     document: &Document,
     route: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<DiscoveryObservations, Error> {
     let queries = discovery_queries(document, route)
         .map_err(|_| Error::State("invalid discovery selection"))?;
-    observe_queries(bundle, queries, cancel).await
+    read_target(queries, cancel).await
 }
 
 #[cfg(test)]

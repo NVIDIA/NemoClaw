@@ -25,7 +25,7 @@ flowchart TD
     Rules[SDK schema and Fabric Capabilities] --> Resolver
     Resolver --> Policy[QuestionPolicy: dependencies and order]
     Policy --> Result[JourneyResolution: questions and assessments]
-    Observations[DiscoveryObservations from a DiscoverySource] -->|resolve_with_observations| Result
+    Observations[DiscoveryObservations from nemoclaw-discovery] -->|resolve_with_observations| Result
     Result --> Question[JourneyQuestion: one applicable decision]
     Question --> UI[TUI or other consumer]
     UI -->|answer or omit| State
@@ -143,15 +143,15 @@ An SDK document or a ready authoring result does not establish successful deploy
 
 ## Observations and consumer responsibilities
 
-A `DiscoveryQuery` names a read of the target by everything that determines its answer, and `DiscoveryObservations` holds what each query returned: engine, hardware, image, inference endpoint, gateway, and credential-availability observations, in the SDK's [discovery session](../../crates/nemoclaw-sdk/src/discovery_session.rs).
+An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-discovery/src/lib.rs) holds what each query returned: engine, hardware, image, inference endpoint, gateway, and credential-availability observations.
 Each observation is keyed by its query, so an observation about one engine, image, or endpoint is never read as one about another.
 A read that could not be made is recorded as an unknown observation with its reason, so it stays distinct from a query never asked and is not repeated on every pass.
-A `DiscoverySource` answers queries: `DiscoverySession` reads the real target through the provider, and `RecordedDiscovery` replays recorded observations, so decisions can be tested for any hardware without owning it.
+`nemoclaw_discovery::observe` reads the real target; tests build or deserialize recorded observations, so decisions can be tested for any hardware without owning it.
 `discovery_queries` returns the queries a journey asks for an SDK-valid document.
 They are the SDK's `plan_queries`, the list a plan compiles into its discovery data sources, so onboarding and planning cannot ask different questions, plus the credential checks.
 Three exclusions are deliberate and tested: only the selected route's inference catalog is read, onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
 `environment_queries` returns the queries that need no answers, which are the local engines, so the first question can use them.
-Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman, through `RecordedDiscovery`.
+Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
 An empty `DiscoveryObservations` leaves the resolution unchanged.

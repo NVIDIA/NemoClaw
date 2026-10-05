@@ -1243,9 +1243,9 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
 #[test]
 fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
     use nemoclaw_authoring::inference_request_for_document;
+    use nemoclaw_discovery::DiscoveryObservations;
     use nemoclaw_sdk::{
-        discovery::ObservationStatus,
-        discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
+        discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus},
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1419,7 +1419,7 @@ fn sparse_journey_delegation_requires_current_target_observations() {
         state
             .delegate_remaining(
                 &capabilities,
-                &nemoclaw_sdk::discovery_session::DiscoveryObservations::new()
+                &nemoclaw_discovery::DiscoveryObservations::new()
             )
             .is_err()
     );
@@ -1436,8 +1436,7 @@ fn sparse_journey_delegation_requires_current_target_observations() {
 fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
     use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
-        discovery::ObservationStatus,
-        discovery_session::{DiscoveryObservation, DiscoveryQuery},
+        discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus},
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let capabilities = Capabilities::available();

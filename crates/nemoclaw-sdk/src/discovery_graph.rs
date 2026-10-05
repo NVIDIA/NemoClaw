@@ -4,13 +4,64 @@
 //! Discovery reads have no dependency on resource creation or image acquisition.
 use crate::{
     config::{ConfigError, Document},
-    discovery_session::{DiscoveryQuery, literal, plan_queries},
+    discovery::{DiscoveryQuery, plan_queries},
 };
 use serde_json::{Map, Value, json};
 
-/// Add `query`'s data source under `name` and report its observation as `key`.
-/// The inputs come from the query, as for an onboarding discovery session, and
-/// `extend` adds what only a plan needs. A plan's one engine read is `current`.
+/// The data source and inputs that answer `query` in a plan. An image read on
+/// a platform takes it from the plan's one engine read, `current`.
+fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> {
+    Ok(match query {
+        DiscoveryQuery::Engine(request) => (
+            "engine_capabilities",
+            json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
+        ),
+        DiscoveryQuery::Hardware { engine } => {
+            ("target_hardware", json!({"engine":literal(engine)}))
+        }
+        DiscoveryQuery::Fabric {
+            engine,
+            image,
+            requirements,
+            platform,
+        } => {
+            let mut inputs = json!({
+                "engine": literal(engine),
+                "image": literal(image),
+                "requirements_json": literal(
+                    &serde_json::to_string(requirements).expect("Fabric requirements")
+                ),
+            });
+            if platform.is_some() {
+                for field in ["architecture", "operating_system"] {
+                    inputs[field] = json!(format!(
+                        "${{jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).{field}}}"
+                    ));
+                }
+            }
+            ("fabric_capabilities", inputs)
+        }
+        DiscoveryQuery::Inference(request) => {
+            request
+                .validate()
+                .map_err(|_| ConfigError::new("discovery inputs are invalid"))?;
+            (
+                "inference_capabilities",
+                json!({"endpoint":literal(&request.endpoint),"api":request.api,"credential_env":request.credential_env}),
+            )
+        }
+        DiscoveryQuery::Gateway { .. } | DiscoveryQuery::Credential { .. } => {
+            unreachable!("a plan reads the gateway and credentials outside its discovery reads")
+        }
+    })
+}
+
+fn literal(value: &str) -> String {
+    value.replace("${", "$${").replace("%{", "%%{")
+}
+
+/// Add `query`'s data source under `name` and report its observation as `key`;
+/// `extend` adds what only a plan needs.
 fn read(
     graph: &mut Value,
     observations: &mut Map<String, Value>,
@@ -19,9 +70,7 @@ fn read(
     key: &str,
     extend: impl FnOnce(&mut Value),
 ) -> Result<(), ConfigError> {
-    let (kind, mut inputs) = query
-        .data(Some("current"))
-        .map_err(|_| ConfigError::new("discovery inputs are invalid"))?;
+    let (kind, mut inputs) = inputs(query)?;
     extend(&mut inputs);
     let source = format!("nemoclaw_{kind}");
     graph["data"][&source][name] = inputs;

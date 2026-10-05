@@ -4,7 +4,7 @@
 use crate::Diagnostics;
 use nemoclaw_sdk::{
     config::Document,
-    discovery_session::{DiscoveryQuery, plan_queries},
+    discovery::{DiscoveryQuery, plan_queries},
     inference_discovery::EndpointRequest,
 };
 

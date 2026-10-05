@@ -4,11 +4,8 @@
 //! observations, with no engine or hardware present. Each host is tried against
 //! a template that names Docker and one that names Podman, so a suggestion that
 //! ignored the host could not pass by agreeing with the template.
-use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument, environment_queries};
-use nemoclaw_sdk::{
-    CancellationToken,
-    discovery_session::{DiscoveryObservations, DiscoverySource, RecordedDiscovery},
-};
+use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument};
+use nemoclaw_discovery::DiscoveryObservations;
 use serde_json::{Value, json};
 
 const RUNTIME: &str = "/spec/sandboxes/0/runtime/provider";
@@ -19,14 +16,9 @@ const BOTH_ENGINES: &str = include_str!("fixtures/observations/both-engines.json
 const NOTHING_RECORDED: &str = "[]";
 
 /// The runtime the journey suggests for a template that names `template`, once
-/// the environment queries have been answered from `recorded`.
+/// the environment queries have been answered as `recorded`.
 async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
-    let mut source =
-        RecordedDiscovery::new(serde_json::from_str::<DiscoveryObservations>(recorded).unwrap());
-    let observations = source
-        .observe(&environment_queries(), &CancellationToken::new())
-        .await
-        .unwrap();
+    let observations = serde_json::from_str::<DiscoveryObservations>(recorded).unwrap();
     let capabilities = Capabilities::available();
     let yaml =
         String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())

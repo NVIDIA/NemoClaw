@@ -5,17 +5,19 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, environment_probe, model_catalog_probe, observe_queries},
+    terminal::{ask_target, environment_probe, model_catalog_probe},
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
     Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
     discovery_queries, environment_queries, inference_request_for_document,
 };
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
-    CancellationToken,
+    CancellationToken, Error,
     config::Document,
-    discovery_session::{DiscoveryObservation, DiscoveryQuery},
+    discovery::{DiscoveryObservation, DiscoveryQuery, EngineObservation},
+    inference_discovery::EndpointObservation,
 };
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
@@ -630,49 +632,33 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     );
 }
 
-#[tokio::test]
-async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
-    let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let document = state
-        .resolve(&capabilities)
-        .unwrap()
-        .assessment()
-        .document()
-        .unwrap()
-        .clone();
-    let request = inference_request_for_document(&document, state.current_route())
-        .unwrap()
-        .unwrap();
-    let missing = std::path::Path::new("/definitely/missing/nemoclaw-bundle");
-    let observed = observe_queries(
-        missing,
-        vec![DiscoveryQuery::Inference(request.clone())],
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    // With no provider session the model catalog is unknown, never absent.
-    let catalog = observed
-        .inference(&request)
-        .expect("the attempt is recorded");
-    assert_eq!(
-        catalog.status,
-        nemoclaw_sdk::discovery::ObservationStatus::Unknown
-    );
-}
-
-/// A bundle that does not exist: the target cannot be reached, so every read is
-/// recorded as unknown, deterministically and without any process or network.
-fn unreachable_bundle() -> &'static std::path::Path {
-    std::path::Path::new("/definitely/missing/nemoclaw-bundle")
+/// A target that cannot be reached: every read is recorded as unknown,
+/// deterministically and without any process or network.
+async fn unreachable(
+    queries: Vec<DiscoveryQuery>,
+    _: &CancellationToken,
+) -> Result<DiscoveryObservations, Error> {
+    let mut observed = DiscoveryObservations::new();
+    for query in queries {
+        let observation = match &query {
+            DiscoveryQuery::Engine(_) => {
+                DiscoveryObservation::Engine(EngineObservation::unknown("unreachable"))
+            }
+            DiscoveryQuery::Inference(_) => {
+                DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
+            }
+            other => panic!("unexpected read {other:?}"),
+        };
+        observed.record(query, observation);
+    }
+    Ok(observed)
 }
 
 /// Ask the target without a terminal: nobody types during the read.
 async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
     ask_target(
         wizard,
-        unreachable_bundle(),
+        unreachable,
         queries,
         &CancellationToken::new(),
         &mut std::collections::VecDeque::new(),

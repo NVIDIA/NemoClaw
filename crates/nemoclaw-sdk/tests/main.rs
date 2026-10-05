@@ -38,8 +38,6 @@ mod deployment;
 mod discovery;
 #[path = "discovery_graph.rs"]
 mod discovery_graph;
-#[path = "discovery_observations.rs"]
-mod discovery_observations;
 #[path = "engine_endpoint.rs"]
 mod engine_endpoint;
 #[path = "error.rs"]

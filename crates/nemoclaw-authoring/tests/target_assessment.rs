@@ -5,10 +5,13 @@ use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, DiscoveryAssessment, JourneyDefinition, PartialDocument,
     assess_target,
 };
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
-    discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-    discovery_session::{DiscoveryObservations, DiscoveryQuery},
+    discovery::{
+        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
+        FabricObservation, ObservationStatus,
+    },
 };
 
 /// Whether any reason the assessment gives contains `text`.
@@ -137,8 +140,14 @@ fn a_read_that_failed_is_unknown_so_unverified_rather_than_unobserved() {
     let document = document();
     let (engine, fabric) = (engine_query(&document), fabric_query(&document));
     let observations = DiscoveryObservations::new()
-        .with(engine.clone(), engine.unknown("engine unreachable"))
-        .with(fabric.clone(), fabric.unknown("image unreadable"));
+        .with(
+            engine,
+            DiscoveryObservation::Engine(EngineObservation::unknown("engine unreachable")),
+        )
+        .with(
+            fabric,
+            DiscoveryObservation::Fabric(FabricObservation::unknown("image unreadable")),
+        );
     let assessment = assess_target(&document, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_says(&assessment, "The selected engine remains unverified");

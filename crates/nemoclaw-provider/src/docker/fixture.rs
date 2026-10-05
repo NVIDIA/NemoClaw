@@ -7,8 +7,8 @@ pub(crate) use transport::Fixture;
 
 impl Fixture {
     pub fn engine_for(&self, logical_endpoint: &str) -> super::Engine {
-        let mut engine = super::Engine::connect(&self.endpoint).unwrap();
-        engine.endpoint = logical_endpoint.into();
-        engine
+        super::Engine::connect(&self.endpoint)
+            .unwrap()
+            .relabel(logical_endpoint)
     }
 }

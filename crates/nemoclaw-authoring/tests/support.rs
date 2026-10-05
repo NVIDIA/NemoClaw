@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Helpers shared by the authoring tests.
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
-    discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-    discovery_session::{
-        DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries,
+    discovery::{
+        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
+        FabricObservation, ObservationStatus, plan_queries,
     },
     fabric_capabilities::{ImageMetadata, assess_image},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},

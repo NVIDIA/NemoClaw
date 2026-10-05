@@ -8,7 +8,7 @@ use nemoclaw_sdk::{
     compile,
     config::{ComputeDriver, Document, ExternalGateway, Gateway},
     discovery::DiscoveryRequest,
-    discovery_session::{DiscoveryQuery, plan_queries},
+    discovery::{DiscoveryQuery, plan_queries},
     fabric_capabilities::FabricRequirements,
     inference_discovery::endpoint_requests,
     services::{

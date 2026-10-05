@@ -1,26 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::{
-    docker::{Connections, Engine},
-    hardware::HostObserver,
-};
+use crate::{docker::Engine, hardware::HostObserver};
 use nemoclaw_sdk::discovery::ObservationStatus;
 use nemoclaw_sdk::{hardware_discovery::GpuObservation, hardware_discovery::HardwareObservation};
 use std::time::Duration;
-/// Read only the selected engine API. Never run a collector, inspect the client's
-/// host, start a probe container, or infer GPU absence from missing advertisements.
-pub async fn observe_hardware(connections: &Connections, endpoint: &str) -> HardwareObservation {
-    let work = async { connections.resolve(endpoint)?.info().await };
-    match tokio::time::timeout(Duration::from_secs(5), work).await {
-        Ok(Ok(info)) => HardwareObservation::from_info(info),
-        _ => {
-            let mut observation = HardwareObservation::unknown();
-            observation.reason =
-                Some("Hardware information from the selected engine is unobservable.".into());
-            observation
-        }
-    }
-}
 
 /// Explicit direct operation using the existing hardware collector contract.
 /// Callers select the observer; provider refresh never invokes this operation.

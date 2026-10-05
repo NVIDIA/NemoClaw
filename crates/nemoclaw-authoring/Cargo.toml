@@ -16,6 +16,7 @@ name = "integration"
 path = "tests/main.rs"
 
 [dependencies]
+nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 getrandom.workspace = true
 jsonschema.workspace = true

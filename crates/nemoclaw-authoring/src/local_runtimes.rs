@@ -4,10 +4,10 @@
 //! The runtimes a journey can run sandboxes on, found on this machine's default
 //! sockets: which engine each needs, the query that asks whether it is
 //! available, and which of them the observations show to be reachable.
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::ComputeDriver,
-    discovery::{DiscoveryRequest, ObservationStatus},
-    discovery_session::{DiscoveryObservations, DiscoveryQuery},
+    discovery::{DiscoveryQuery, DiscoveryRequest, ObservationStatus},
 };
 
 /// The local engine socket for each runtime a journey can offer.

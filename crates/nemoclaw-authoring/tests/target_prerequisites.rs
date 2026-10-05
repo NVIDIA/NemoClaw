@@ -7,7 +7,7 @@ use nemoclaw_authoring::{
 };
 use nemoclaw_sdk::{
     discovery::ObservationStatus,
-    discovery_session::{DiscoveryObservation, DiscoveryQuery},
+    discovery::{DiscoveryObservation, DiscoveryQuery},
     inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
 use serde_json::json;

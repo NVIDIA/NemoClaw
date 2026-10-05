@@ -1,10 +1,105 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Bounded read-only observations shared by authoring and provider data sources.
+//! What a deployment needs to know about its target, and what each read reports.
 pub use crate::gateway_observation::{GatewayCapabilities, GatewayObservation};
-use crate::{config::ComputeDriver, fabric_catalog::FabricCatalog};
+use crate::{
+    config::{ComputeDriver, ConfigError, Document, Gateway},
+    fabric_capabilities::FabricRequirements,
+    fabric_catalog::FabricCatalog,
+    inference_discovery::EndpointRequest,
+};
 use serde::{Deserialize, Serialize};
+
+/// A read of the target, identified by everything that determines its answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DiscoveryQuery {
+    Engine(DiscoveryRequest),
+    Hardware {
+        engine: String,
+    },
+    /// An image read, judged against what its sandbox requires.
+    Fabric {
+        engine: String,
+        image: String,
+        requirements: FabricRequirements,
+        /// The engine whose platform the image must run on: a managed
+        /// gateway's. An external gateway's image store does not establish it.
+        platform: Option<DiscoveryRequest>,
+    },
+    Inference(EndpointRequest),
+    Gateway {
+        gateway: Gateway,
+        compute_drivers: Vec<ComputeDriver>,
+    },
+    /// Whether a credential reference resolves locally; never its value.
+    Credential {
+        reference: String,
+    },
+}
+
+/// The compute drivers the gateway must support for `document`'s sandboxes.
+pub(crate) fn gateway_drivers(document: &Document) -> std::collections::BTreeSet<ComputeDriver> {
+    document
+        .spec
+        .sandboxes
+        .iter()
+        .map(|sandbox| sandbox.runtime.provider)
+        .collect()
+}
+
+/// The reads a plan makes of the target for `document`, in the order it names
+/// them: the gateway, each external inference endpoint, the hardware of every
+/// engine that services or a managed gateway use, a managed gateway's engine,
+/// and one image read per sandbox. The image reads are per sandbox, sorted by
+/// sandbox name, because each carries that sandbox's own requirements, and a
+/// managed gateway's image reads run on its engine's platform.
+pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
+    let mut queries = vec![DiscoveryQuery::Gateway {
+        gateway: document.spec.gateway.clone(),
+        compute_drivers: gateway_drivers(document).into_iter().collect(),
+    }];
+    queries.extend(
+        crate::inference_discovery::endpoint_requests(document)
+            .map_err(|_| ConfigError::new("inference discovery inputs are invalid"))?
+            .into_iter()
+            .map(DiscoveryQuery::Inference),
+    );
+    let mut engines = crate::services::discovery_engines(document)?;
+    if let Some(gateway) = document.spec.gateway.as_managed() {
+        engines.insert(gateway.engine.clone());
+    }
+    queries.extend(
+        engines
+            .into_iter()
+            .map(|engine| DiscoveryQuery::Hardware { engine }),
+    );
+    let engine = match &document.spec.gateway {
+        Gateway::Managed(gateway) => &gateway.engine,
+        Gateway::External(gateway) => &gateway.engine,
+    };
+    let platform = document
+        .spec
+        .gateway
+        .as_managed()
+        .map(|_| DiscoveryRequest {
+            engine: engine.clone(),
+            compute_driver: document.spec.sandboxes[0].runtime.provider,
+        });
+    queries.extend(platform.clone().map(DiscoveryQuery::Engine));
+    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
+    sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
+    for sandbox in sandboxes {
+        queries.push(DiscoveryQuery::Fabric {
+            engine: engine.clone(),
+            image: sandbox.image.ref_.clone(),
+            requirements: FabricRequirements::for_sandbox(document, sandbox)?,
+            platform: platform.clone(),
+        });
+    }
+    Ok(queries)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

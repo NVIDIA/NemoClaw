@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
-    CancellationToken,
     config::ComputeDriver,
-    discovery::{DiscoveryObservation, DiscoveryRequest, EngineObservation, ObservationStatus},
-    discovery_session::{
-        DiscoveryObservations, DiscoveryQuery, DiscoverySource, RecordedDiscovery,
+    discovery::{
+        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
+        ObservationStatus,
     },
     hardware_discovery::HardwareObservation,
 };
@@ -63,40 +63,19 @@ fn observations_are_found_by_the_inputs_that_produced_them() {
 }
 
 #[test]
-fn a_read_that_could_not_be_made_is_recorded_as_unknown_and_not_asked_again() {
+fn a_read_that_could_not_be_made_is_recorded_and_not_asked_again() {
     let failed = DiscoveryQuery::Hardware {
         engine: "ssh://gpu-box".into(),
     };
     let unasked = DiscoveryQuery::Engine(docker());
-    let observations =
-        DiscoveryObservations::new().with(failed.clone(), failed.unknown("engine unreachable"));
-    let Some(DiscoveryObservation::Hardware(recorded)) = observations.get(&failed) else {
-        panic!("the failed read is recorded");
-    };
-    assert_eq!(recorded.status, ObservationStatus::Unknown);
-    assert_eq!(recorded.reason.as_deref(), Some("engine unreachable"));
+    let observations = DiscoveryObservations::new().with(
+        failed.clone(),
+        DiscoveryObservation::Hardware(HardwareObservation::unknown_because("engine unreachable")),
+    );
     assert_eq!(
         observations.missing(&[failed, unasked.clone(), unasked.clone()]),
         vec![unasked]
     );
-}
-
-#[test]
-fn an_unknown_observation_matches_the_kind_of_its_query() {
-    let observation = DiscoveryQuery::Engine(docker()).unknown("unreachable");
-    assert!(matches!(
-        observation,
-        DiscoveryObservation::Engine(ref engine) if engine.status == ObservationStatus::Unknown
-    ));
-    let credential = DiscoveryQuery::Credential {
-        reference: "KEY".into(),
-    }
-    .unknown("not resolved");
-    assert!(matches!(
-        credential,
-        DiscoveryObservation::Credential(ref value) if value.reference == "KEY"
-            && value.status == ObservationStatus::Unknown
-    ));
 }
 
 #[test]
@@ -117,16 +96,6 @@ fn recording_again_replaces_the_earlier_observation() {
 }
 
 #[test]
-fn observations_are_empty_until_something_is_recorded() {
-    let query = DiscoveryQuery::Credential {
-        reference: "KEY".into(),
-    };
-    assert!(DiscoveryObservations::new().is_empty());
-    let recorded = DiscoveryObservations::new().with(query.clone(), query.unknown("unread"));
-    assert!(!recorded.is_empty());
-}
-
-#[test]
 fn observations_survive_a_round_trip_through_json() {
     let observations = DiscoveryObservations::new()
         .with(
@@ -139,34 +108,10 @@ fn observations_survive_a_round_trip_through_json() {
             },
             DiscoveryObservation::Hardware(HardwareObservation::unknown()),
         );
+    assert!(!observations.is_empty());
     let encoded = serde_json::to_string(&observations).unwrap();
     assert_eq!(
         serde_json::from_str::<DiscoveryObservations>(&encoded).unwrap(),
         observations
     );
-}
-
-#[tokio::test]
-async fn a_recording_answers_what_it_holds_and_records_the_rest_as_unknown() {
-    let known = DiscoveryQuery::Engine(docker());
-    let unknown = DiscoveryQuery::Hardware {
-        engine: "ssh://gpu-box".into(),
-    };
-    let mut source = RecordedDiscovery::new(DiscoveryObservations::new().with(
-        known.clone(),
-        DiscoveryObservation::Engine(engine(ObservationStatus::Available)),
-    ));
-    let observed = source
-        .observe(&[known.clone(), unknown.clone()], &CancellationToken::new())
-        .await
-        .unwrap();
-    assert_eq!(
-        status_of(&observed, &docker()),
-        Some(ObservationStatus::Available)
-    );
-    assert!(matches!(
-        observed.get(&unknown),
-        Some(DiscoveryObservation::Hardware(hardware))
-            if hardware.status == ObservationStatus::Unknown
-    ));
 }

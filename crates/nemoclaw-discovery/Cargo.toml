@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemoclaw-discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Read-only facts about a deployment target, shared by the provider and onboarding."
+# One integration-test binary links the crate and its dependencies once.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+bollard.workspace = true
+futures-util.workspace = true
+openshell-sdk.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+tonic.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }
+
+[lints]
+workspace = true

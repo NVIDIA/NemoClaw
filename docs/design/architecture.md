@@ -105,21 +105,20 @@ The [authoring domain model](authoring-domain.md) defines the journey's configur
 It separates authored intent from decision status, interview position, and target observations.
 The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
 
-With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
-An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
-It does not create deployment state.
+Onboarding reads the target directly through the [`nemoclaw-discovery`](../../crates/nemoclaw-discovery/src/lib.rs) crate, whose read functions the provider's data sources also call during a plan.
+It needs no bundle and creates no deployment state.
 Discovery observations are keyed by the query that produced them: an engine and compute driver, a hardware engine, an image with its sandbox's Fabric requirements and platform engine, an inference endpoint request, a gateway, or a credential reference.
 Onboarding looks up the current document's queries, so an observation made for a different engine, compute driver, image, requirement, or inference endpoint request is never found.
 A read that could not be made is an unknown observation with its reason, never absence, so it is not asked again until the caller refreshes it.
 Changing the harness or a route changes the image read's requirements, so the image is unobserved until it is read again.
-Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
+Independent reads run concurrently.
 
-A read whose inputs need no deployment resource is a `DiscoveryObservation`, which a discovery session and a plan both produce from the same `DiscoveryQuery` inputs.
-An image read for a managed gateway takes its platform from the engine read in the same OpenTofu plan, so the provider computes one compatibility verdict for plan and onboarding.
+A read whose inputs need no deployment resource is a `DiscoveryObservation`, which onboarding's `observe` and a plan's data sources both produce from the same `DiscoveryQuery` and the same read function.
+An image read for a managed gateway takes its platform from the engine read, and `judge_image` computes its compatibility verdict for plan and onboarding alike.
 A read that references a resource in the same plan, or whose result a resource consumes, is a `PlanObservation` and appears only in a plan's report: runtime-image acquisition, service readiness after install, and values OpenTofu cannot compute until apply.
 Known engine incompatibility or conflicting image/adapter requirements block review and saving.
 Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies harness choices whether or not target inspection is available, and target inspection only assesses compatibility.
-Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same OpenTofu data sources.
+Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same functions.
 Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.

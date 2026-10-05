@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{Diagnostics, diagnostics::diagnostic};
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{Document, Gateway},
-    discovery::ObservationStatus,
-    discovery_session::{
-        DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, plan_queries,
-    },
+    discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus, plan_queries},
     fabric_capabilities::Support,
 };
 
