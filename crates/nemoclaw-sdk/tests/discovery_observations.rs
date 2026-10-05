@@ -55,7 +55,9 @@ fn observations_are_found_by_the_inputs_that_produced_them() {
     assert!(!observations.contains(&DiscoveryQuery::Engine(other)));
     assert!(
         observations
-            .hardware("unix:///var/run/docker.sock")
+            .get(&DiscoveryQuery::Hardware {
+                engine: "unix:///var/run/docker.sock".into(),
+            })
             .is_none()
     );
 }
@@ -68,7 +70,9 @@ fn a_read_that_could_not_be_made_is_recorded_as_unknown_and_not_asked_again() {
     let unasked = DiscoveryQuery::Engine(docker());
     let observations =
         DiscoveryObservations::new().with(failed.clone(), failed.unknown("engine unreachable"));
-    let recorded = observations.hardware("ssh://gpu-box").unwrap();
+    let Some(DiscoveryObservation::Hardware(recorded)) = observations.get(&failed) else {
+        panic!("the failed read is recorded");
+    };
     assert_eq!(recorded.status, ObservationStatus::Unknown);
     assert_eq!(recorded.reason.as_deref(), Some("engine unreachable"));
     assert_eq!(
@@ -160,10 +164,9 @@ async fn a_recording_answers_what_it_holds_and_records_the_rest_as_unknown() {
         status_of(&observed, &docker()),
         Some(ObservationStatus::Available)
     );
-    assert_eq!(
-        observed
-            .hardware("ssh://gpu-box")
-            .map(|hardware| hardware.status),
-        Some(ObservationStatus::Unknown)
-    );
+    assert!(matches!(
+        observed.get(&unknown),
+        Some(DiscoveryObservation::Hardware(hardware))
+            if hardware.status == ObservationStatus::Unknown
+    ));
 }

@@ -249,15 +249,6 @@ impl DiscoveryObservations {
         }
     }
 
-    pub fn hardware(&self, engine: &str) -> Option<&HardwareObservation> {
-        match self.get(&DiscoveryQuery::Hardware {
-            engine: engine.into(),
-        }) {
-            Some(DiscoveryObservation::Hardware(observation)) => Some(observation),
-            _ => None,
-        }
-    }
-
     pub fn fabric(&self, engine: &str, image: &str) -> Option<&FabricObservation> {
         match self.get(&DiscoveryQuery::Fabric {
             engine: engine.into(),
@@ -271,20 +262,6 @@ impl DiscoveryObservations {
     pub fn inference(&self, request: &EndpointRequest) -> Option<&EndpointObservation> {
         match self.get(&DiscoveryQuery::Inference(request.clone())) {
             Some(DiscoveryObservation::Inference(observation)) => Some(observation),
-            _ => None,
-        }
-    }
-
-    pub fn gateway(
-        &self,
-        gateway: &Gateway,
-        compute_drivers: &[ComputeDriver],
-    ) -> Option<&GatewayObservation> {
-        match self.get(&DiscoveryQuery::Gateway {
-            gateway: gateway.clone(),
-            compute_drivers: compute_drivers.to_vec(),
-        }) {
-            Some(DiscoveryObservation::Gateway(observation)) => Some(observation),
             _ => None,
         }
     }
@@ -736,12 +713,21 @@ esac
         let engine_read = observed
             .engine(&engine)
             .expect("the engine read is recorded");
-        let hardware_read = observed
-            .hardware(&engine.engine)
-            .expect("the hardware read is recorded");
-        let gateway_read = observed
-            .gateway(&external_gateway(), &drivers)
-            .expect("the gateway read is recorded");
+        let Some(DiscoveryObservation::Hardware(hardware_read)) =
+            observed.get(&DiscoveryQuery::Hardware {
+                engine: engine.engine.clone(),
+            })
+        else {
+            panic!("the hardware read is recorded");
+        };
+        let Some(DiscoveryObservation::Gateway(gateway_read)) =
+            observed.get(&DiscoveryQuery::Gateway {
+                gateway: external_gateway(),
+                compute_drivers: drivers.clone(),
+            })
+        else {
+            panic!("the gateway read is recorded");
+        };
         assert_eq!(engine_read.status, ObservationStatus::Unknown);
         assert_eq!(hardware_read.status, ObservationStatus::Unknown);
         assert_eq!(gateway_read.status, ObservationStatus::Unknown);
@@ -846,8 +832,11 @@ esac
             .unwrap();
         assert_eq!(observed.engine(&engine), Some(&engine_observation));
         assert_eq!(
-            observed.gateway(&external_gateway(), &drivers),
-            Some(&gateway_observation)
+            observed.get(&DiscoveryQuery::Gateway {
+                gateway: external_gateway(),
+                compute_drivers: drivers.clone(),
+            }),
+            Some(&DiscoveryObservation::Gateway(gateway_observation))
         );
         assert_eq!(
             observed
