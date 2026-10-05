@@ -63,6 +63,11 @@ export function resolveGatewayNativeHostedProviderAuthority(input: {
   collect(input.gatewayAuthority);
   if (input.recordedGatewayName === input.gatewayName) {
     collect(input.recordedAttachment);
+  }
+  if (input.profile.logicalProvider === "nvidia-prod") {
+    return normalizeNativeHostedProviderAuthorities(receipts)?.[0];
+  }
+  if (input.recordedGatewayName === input.gatewayName) {
     for (const receipt of normalizeNativeHostedProviderAuthorities(input.recordedAuthorities) ?? [])
       collect(receipt);
   }

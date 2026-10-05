@@ -200,13 +200,10 @@ describe("sandbox registry normalization", () => {
     registry.clearNativeNvidiaProviderAuthority("nemoclaw-19080");
     expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toBeUndefined();
     expect(registry.getSandbox("alpha")?.nativeHostedProviderAuthorities).toBeUndefined();
-    expect(registry.getSandbox("beta")?.nativeNvidiaProviderAuthority).toBeUndefined();
+    expect(registry.getSandbox("beta")).not.toHaveProperty("nativeNvidiaProviderAuthority");
     expect(registry.getSandbox("beta")?.nativeHostedProviderAttachment).toEqual(receipt);
-    expect(registry.getSandbox("gamma")?.nativeHostedProviderAuthorities).toEqual([
-      expect.objectContaining({
-        providerId: "22222222-3333-4444-8555-666666666666",
-      }),
-    ]);
+    expect(registry.getSandbox("gamma")?.nativeHostedProviderAuthorities).toBeUndefined();
+    expect(registry.getSandbox("gamma")).not.toHaveProperty("nativeNvidiaProviderAuthority");
   });
 
   it("persists incomplete OpenClaw synchronization until explicit completion", async () => {

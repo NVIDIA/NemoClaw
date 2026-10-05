@@ -498,12 +498,6 @@ export function registerSandbox(
     const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
       entry.nativeNvidiaProviderAttachment ?? nativeHostedProviderAttachment,
     );
-    const nativeNvidiaProviderAuthority = normalizeNativeNvidiaProviderAttachment(
-      entry.nativeNvidiaProviderAuthority ?? nativeNvidiaProviderAttachment,
-    );
-    if (entry.nativeNvidiaProviderAuthority !== undefined && !nativeNvidiaProviderAuthority) {
-      throw new Error("Cannot register a sandbox with invalid native NVIDIA provider authority");
-    }
     const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -560,8 +554,6 @@ export function registerSandbox(
         nativeHostedProviderAttachment,
       ),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-      ...(nativeNvidiaProviderAuthority ? { nativeNvidiaProviderAuthority } : {}),
-
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -615,7 +607,6 @@ type SandboxInferenceRouteReservation = Pick<
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   nativeHostedProviderAuthorities?: SandboxEntry["nativeHostedProviderAuthorities"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
-  nativeNvidiaProviderAuthority?: SandboxEntry["nativeNvidiaProviderAuthority"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
@@ -666,12 +657,6 @@ export function reserveSandboxInferenceRoute(
     const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
       route.nativeNvidiaProviderAttachment ?? nativeHostedProviderAttachment,
     );
-    const nativeNvidiaProviderAuthority = normalizeNativeNvidiaProviderAttachment(
-      route.nativeNvidiaProviderAuthority ?? nativeNvidiaProviderAttachment,
-    );
-    if (route.nativeNvidiaProviderAuthority !== undefined && !nativeNvidiaProviderAuthority) {
-      throw new Error("Cannot reserve invalid native NVIDIA provider authority identity");
-    }
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
       route.hostLocalInferenceProvenance !== undefined &&
@@ -734,10 +719,6 @@ export function reserveSandboxInferenceRoute(
             nativeHostedProviderAttachment ?? existing.nativeHostedProviderAttachment,
           ) &&
           isDeepStrictEqual(
-            existing.nativeNvidiaProviderAuthority,
-            nativeNvidiaProviderAuthority ?? existing.nativeNvidiaProviderAuthority,
-          ) &&
-          isDeepStrictEqual(
             normalizeInferenceSelection(existing),
             normalizeInferenceSelection(route),
           ));
@@ -777,11 +758,6 @@ export function reserveSandboxInferenceRoute(
         normalized.provider?.trim() === "nvidia-prod"
           ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
           : undefined,
-      nativeNvidiaProviderAuthority:
-        nativeNvidiaProviderAuthority ??
-        (existing?.gatewayName === route.gatewayName
-          ? existing.nativeNvidiaProviderAuthority
-          : undefined),
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),
@@ -870,19 +846,7 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    const nativeNvidiaProviderAuthority = normalizeNativeNvidiaProviderAttachment(
-      updates.nativeNvidiaProviderAuthority,
-    );
-    if (updates.nativeNvidiaProviderAuthority !== undefined && !nativeNvidiaProviderAuthority) {
-      throw new Error(
-        `Refusing to update sandbox '${name}' with invalid native NVIDIA provider authority.`,
-      );
-    }
-    const normalizedUpdates =
-      updates.nativeNvidiaProviderAuthority === undefined
-        ? updates
-        : { ...updates, nativeNvidiaProviderAuthority };
-    const next = normalizeSandboxPolicyAttribution({ ...current, ...normalizedUpdates });
+    const next = normalizeSandboxPolicyAttribution({ ...current, ...updates });
     if (
       current.deferredN1xManagedVllmAccepted === true &&
       Object.entries(updates).some(

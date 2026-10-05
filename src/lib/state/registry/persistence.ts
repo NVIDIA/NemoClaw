@@ -198,10 +198,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
   const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
-    retainNativeHostedProviderAuthority(
-      entry.nativeHostedProviderAuthorities,
-      normalizeNativeHostedProviderAttachment(entry.nativeNvidiaProviderAuthority),
-    ),
+    entry.nativeHostedProviderAuthorities,
     nativeHostedProviderAttachment,
   );
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
@@ -238,9 +235,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
@@ -281,10 +283,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
   const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
-    retainNativeHostedProviderAuthority(
-      durable.nativeHostedProviderAuthorities,
-      normalizeNativeHostedProviderAttachment(durable.nativeNvidiaProviderAuthority),
-    ),
+    durable.nativeHostedProviderAuthorities,
     nativeHostedProviderAttachment,
   );
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
@@ -321,9 +320,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),

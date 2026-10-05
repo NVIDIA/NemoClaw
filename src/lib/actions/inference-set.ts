@@ -20,6 +20,7 @@ import {
   ensureNativeHostedProviderAttached,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
+  normalizeNativeNvidiaProviderAttachment,
   resolveGatewayNativeHostedProviderAuthority,
   retainNativeHostedProviderAuthority,
   resolveAgentInferenceApi,
@@ -182,6 +183,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   };
   getNativeHostedProviderAuthority?: typeof registry.getNativeHostedProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
+  setNativeHostedProviderAuthority: typeof registry.setNativeHostedProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -316,6 +319,8 @@ function defaultDeps(): InferenceSetDeps {
     listSandboxes: registry.listSandboxes,
     getNativeHostedProviderAuthority: registry.getNativeHostedProviderAuthority,
     getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
+    setNativeHostedProviderAuthority: registry.setNativeHostedProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -1281,6 +1286,17 @@ function readRegisteredNativeAuthority(
       );
 }
 
+function recordNativeProviderAuthority(
+  deps: InferenceSetDeps,
+  gatewayName: string,
+  attachment?: NativeHostedProviderAttachment,
+): void {
+  if (!attachment) return;
+  const nvidiaAuthority = normalizeNativeNvidiaProviderAttachment(attachment);
+  if (nvidiaAuthority) deps.setNativeNvidiaProviderAuthority(gatewayName, nvidiaAuthority);
+  else deps.setNativeHostedProviderAuthority(gatewayName, attachment);
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1640,6 +1656,7 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeHostedProviderAttachment = nativeHostedSelection.attachment;
     nativeHostedAttachmentChanged = nativeHostedSelection.attachmentChanged;
+    recordNativeProviderAuthority(deps, preparedRoute.gatewayName, nativeHostedProviderAttachment);
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({

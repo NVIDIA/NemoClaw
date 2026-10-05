@@ -142,9 +142,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   pendingNativeHostedProviderDetach?: NativeHostedProviderAttachment;
   /** Legacy Slice 1 receipt; normalized when loaded. */
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
-  /** Durable NVIDIA authority retained for Slice 1 interoperability. */
-  nativeNvidiaProviderAuthority?: NativeNvidiaProviderAttachment;
-
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

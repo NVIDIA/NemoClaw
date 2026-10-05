@@ -36,6 +36,7 @@ describe("native hosted provider ownership", () => {
         gatewayName: "alpha",
         recordedGatewayName: "alpha",
         recordedAuthorities: receipts,
+        gatewayAuthority: nvidiaReceipt,
         sandboxes: [],
       }),
     ).toEqual(nvidiaReceipt);
@@ -64,14 +65,14 @@ describe("native hosted provider ownership", () => {
       ).toBeUndefined();
     },
   );
-  it("accepts retained Slice 1 proof on the same gateway", () => {
+  it("rejects legacy peer Slice 1 proof without gateway authority", () => {
     expect(
       resolveGatewayNativeHostedProviderAuthority({
         profile: nvidia,
         gatewayName: "alpha",
         sandboxes: [{ gatewayName: "alpha", nativeNvidiaProviderAuthority: nvidiaReceipt }],
       }),
-    ).toEqual(nvidiaReceipt);
+    ).toBeUndefined();
   });
   it("refuses conflicting identities even when the current sandbox has a receipt", () => {
     expect(() =>
@@ -80,12 +81,8 @@ describe("native hosted provider ownership", () => {
         gatewayName: "alpha",
         recordedGatewayName: "alpha",
         recordedAttachment: nvidiaReceipt,
-        sandboxes: [
-          {
-            gatewayName: "alpha",
-            nativeHostedProviderAuthorities: [{ ...nvidiaReceipt, providerId: "replacement" }],
-          },
-        ],
+        gatewayAuthority: { ...nvidiaReceipt, providerId: "replacement" },
+        sandboxes: [],
       }),
     ).toThrow("Conflicting");
   });

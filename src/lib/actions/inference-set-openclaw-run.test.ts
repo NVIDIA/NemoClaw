@@ -79,7 +79,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
-  it("reuses a same-gateway native NVIDIA provider authority from a peer sandbox", async () => {
+  it("rejects peer sandbox receipts without gateway NVIDIA authority", async () => {
     const peerAttachment = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1" as const,
@@ -130,15 +130,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       value: { names: attachedToAlpha ? [peerAttachment.providerName] : [] },
     }));
 
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
-      deps,
-    );
-
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ nativeHostedProviderAttachment: peerAttachment }),
-    );
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true }, deps),
+    ).rejects.toThrow(/without a matching NemoClaw ownership receipt/u);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it.each(
@@ -196,6 +191,11 @@ describe("runInferenceSet OpenClaw routing", () => {
       deps,
     );
 
+    const recordAuthority =
+      profile.logicalProvider === "nvidia-prod"
+        ? deps.calls.setNativeNvidiaProviderAuthority
+        : deps.calls.setNativeHostedProviderAuthority;
+    expect(recordAuthority).toHaveBeenCalledWith("nemoclaw", gatewayAuthority);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
@@ -800,6 +800,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
       entry,
       updateSandbox,
+      getNativeNvidiaProviderAuthority: () => attachment,
       resolveCredentialValue: (key) => (key === "OPENAI_API_KEY" ? "synthetic-openai-key" : ""),
     });
 
@@ -856,13 +857,13 @@ describe("runInferenceSet OpenClaw routing", () => {
         gatewayName: "nemoclaw",
         provider: "ollama-local",
         model: "gpt-5.4",
-        nativeNvidiaProviderAuthority: {
-          schemaVersion: 1,
-          profileId: "nemoclaw-nvidia-inference-v1",
-          providerName: "nemoclaw-nvidia-prod-v1",
-          providerId: "recorded-provider-id",
-        },
       },
+      getNativeNvidiaProviderAuthority: () => ({
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "recorded-provider-id",
+      }),
       providerAdapter,
       resolveCredentialValue: () => "",
     });

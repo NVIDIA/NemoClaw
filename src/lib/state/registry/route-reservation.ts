@@ -4,7 +4,6 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
 import { normalizePendingSandboxCreateIdentity } from "./pending-create-identity";
@@ -26,8 +25,6 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "nativeHostedProviderAttachment",
   "nativeHostedProviderAuthorities",
   "nativeNvidiaProviderAttachment",
-  "nativeNvidiaProviderAuthority",
-
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",
@@ -90,12 +87,6 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   if (
     entry.nativeHostedProviderAttachment !== undefined &&
     !normalizeNativeHostedProviderAttachment(entry.nativeHostedProviderAttachment)
-  ) {
-    return false;
-  }
-  if (
-    entry.nativeNvidiaProviderAuthority !== undefined &&
-    !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAuthority)
   ) {
     return false;
   }

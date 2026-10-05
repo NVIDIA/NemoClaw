@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-it("admits native NVIDIA provider authority on a pending route reservation", async () => {
+it("admits a pending route reservation without per-sandbox provider authority", async () => {
   const { classifySandboxInferenceRouteReservation } = await import("./registry/route-reservation");
   const selection = {
     provider: "ollama-local",
@@ -36,12 +36,6 @@ it("admits native NVIDIA provider authority on a pending route reservation", asy
     endpointSource: selection.endpointSource,
     credentialEnv: selection.credentialEnv,
     preferredInferenceApi: selection.preferredInferenceApi,
-    nativeNvidiaProviderAuthority: {
-      schemaVersion: 1,
-      profileId: "nemoclaw-nvidia-inference-v1",
-      providerName: "nemoclaw-nvidia-prod-v1",
-      providerId: "provider-id",
-    },
   });
 
   expect(disposition.kind).toBe("owned");
@@ -66,9 +60,7 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
-    expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAuthority).toMatchObject({
-      providerId: "provider-id",
-    });
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("nativeNvidiaProviderAuthority");
 
     registry.reserveSandboxInferenceRoute("alpha", {
       provider: "anthropic-prod",
@@ -80,7 +72,7 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
     });
 
     expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAttachment).toBeUndefined();
-    expect(registry.getSandbox("alpha")?.nativeNvidiaProviderAuthority).toBeUndefined();
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("nativeNvidiaProviderAuthority");
   } finally {
     await fs.rm(home, { recursive: true, force: true });
     vi.unstubAllEnvs();
