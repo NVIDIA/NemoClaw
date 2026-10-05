@@ -14,11 +14,15 @@ The evaluation steps below create a separate deployment; they do not provide an 
 
 | Earlier task | Current destination |
 |---|---|
-| Interactive onboarding and agent-specific aliases | One `nemoclaw` CLI operating on YAML; [get started](get-started.md) |
+| Install with npm | Build the native bundle from source; a published installation channel is **TBD** |
+| Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see [get started](get-started.md) |
+| `launch`, `status`, `doctor`, `backup-all`, or `rebuild` | No equivalent commands; the [CLI reference](reference/cli.md) lists the current ones |
 | Imperative inference or sandbox changes | [Desired-state lifecycle](usage.md), with explicit update/replacement limits |
-| Export configuration | `nemoclaw export`; see [CLI reference](reference/cli.md) and [state](state.md) |
+| Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](reference/cli.md) and [state](state.md) |
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](agents.md) and [interfaces](interfaces.md) |
-| Integrate a lifecycle library | [Rust SDK](sdk.md); TypeScript API compatibility is **TBD** |
+| Integrate the TypeScript lifecycle package | [Rust SDK](sdk.md); no compatible TypeScript package is provided |
+| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](sandbox-network.md#choose-a-policy); managed approval and explanation are **TBD** |
+| Use Okta/Entra runtime identity and OAuth refresh | **TBD**; provider authentication references do not replace it |
 | Snapshot, restore, upload/download, or transfer history | **TBD** — see [native-data preservation](state.md#configuration-export-and-native-data) |
 | Manage messaging, MCP servers, or arbitrary plugins | **TBD** — see [additional agent integrations](agents.md#additional-agent-integrations) |
 | Provision a model router, managed NIM/llama.cpp, or distributed inference | **TBD** — see [additional inference workflows](inference.md#additional-inference-workflows) |

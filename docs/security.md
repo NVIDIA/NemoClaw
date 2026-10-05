@@ -111,12 +111,6 @@ Production tracing privacy review and retention guidance: **TBD**.
 Use the private channels in [SECURITY.md](../SECURITY.md), including NVIDIA's disclosure program and encrypted PSIRT email.
 Do not include vulnerability details or credentials in a public issue.
 
-## Earlier Runtime Identity
-
-The earlier experimental Okta/Entra runtime-identity profiles and OAuth refresh lifecycle have no equivalent declaration in the v1 schema.
-A v1 runtime-identity procedure remains **TBD** pending an accepted implementation and tenant-scoped qualification.
-Provider authentication references do not implement that older identity workflow.
-
 ## Implementation and Tests
 
 The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-provider/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.

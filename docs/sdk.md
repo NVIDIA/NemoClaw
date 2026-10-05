@@ -263,4 +263,4 @@ Published package installation and version-selection instructions: **TBD**.
 Generate the API reference from the repository root with `cargo doc --locked -p nemoclaw-sdk --no-deps`; open `target/doc/nemoclaw_sdk/index.html` locally.
 The examples above can be compiled as a local application without contacting live resources; running the preview requires the declared services and credentials.
 Hosted Rust API reference and a live rehearsal of the application/secret-store integration: **TBD**.
-Compatibility policy across SDK releases and migration from the earlier TypeScript lifecycle package: **TBD**.
+Compatibility policy across SDK releases: **TBD**.

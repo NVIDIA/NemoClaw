@@ -110,6 +110,7 @@ This removes the upstream cause of suspected GPU false drift; live GPU export an
 Missing policy observations or drift do not produce a partial configuration.
 
 Policy changes require sandbox replacement, which ordinary apply rejects.
+External OpenShell policy edits conflict with the declared policy and stop export; they do not bypass that rejection.
 Back up sandbox files and conversation history before using the explicit [destroy and recreate procedure](usage.md#destroy).
 Destroy deletes those sandbox files; retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
@@ -130,11 +131,3 @@ Destroy remains available after the failed first apply and does not require succ
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.
-
-## Earlier Policy Workflows
-
-V1 has no NemoClaw commands for named preset installation, interactive network-request approval, or explaining policy to an agent.
-Use the [isolated preset or complete explicit policy](#choose-a-policy) as declared intent.
-External OpenShell policy edits can conflict with that intent and stop export; they are not a supported bypass for refused replacement.
-Equivalent managed approval/explanation workflows remain **TBD** pending implementation.
-Integration-specific examples, including raw TLS applications, require their own endpoint, credential, and live enforcement qualification.
