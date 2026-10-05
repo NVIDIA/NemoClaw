@@ -1174,6 +1174,19 @@ test(
         .map(resultText)
         .join("\n"),
     ).toBe(true);
+    const pathProbe = await host.command(
+      "bash",
+      [
+        "-lc",
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
+      ],
+      { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
+    );
+    expect(
+      pathProbe.exitCode === 0 && pathProbe.stdout.includes("openshell"),
+      resultText(pathProbe),
+    ).toBe(true);
+
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
     await waitForSandboxStatus(host);
