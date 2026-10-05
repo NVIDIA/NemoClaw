@@ -109,7 +109,7 @@ export function getCloudflaredLogPath(
   // `nemoclaw_no_spawn` instead of falling back to the newest /tmp log, because
   // unrelated parallel/stale sandboxes can otherwise corrupt fault attribution.
   // Remove this filesystem fallback point entirely once NemoClaw exposes
-  // machine-readable tunnel diagnostics from `nemoclaw status --json`.
+  // machine-readable tunnel diagnostics from `nemoclaw tunnel status --json`.
   const sandboxLog = path.join(logRoot, `nemoclaw-services-${sandboxName}`, "cloudflared.log");
   return fs.existsSync(sandboxLog) ? sandboxLog : undefined;
 }
@@ -154,7 +154,7 @@ function extractTunnelUrl(text: string): string | undefined {
 }
 
 export function publicTunnelProbeCurlArgs(tunnelUrl: string): string[] {
-  // Source boundary: the public tunnel URL already came from `nemoclaw status`
+  // Source boundary: the public tunnel URL already came from `nemoclaw tunnel status`
   // and matched `*.trycloudflare.com`. Do not ask curl to follow redirects;
   // a 3xx response is a tunnel/output contract failure unless NemoClaw grows a
   // documented same-host redirect requirement. If that happens, replace this
@@ -394,7 +394,7 @@ export async function runTunnelLifecycleContract({
   let tunnelUrl: string | undefined;
   let lastStatusText = "";
   for (let attempt = 1; cloudflaredTargetMatches && attempt <= 15; attempt += 1) {
-    const status = await host.nemoclaw(["status"], {
+    const status = await host.nemoclaw(["tunnel", "status"], {
       artifactName: `status-with-tunnel-url-${attempt}`,
       env: tunnelLifecycleCommandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
@@ -427,7 +427,8 @@ export async function runTunnelLifecycleContract({
         reason = "cloudflared.log missing — NemoClaw failed to spawn the cloudflared process";
         break;
       case "nemoclaw_capture_bug":
-        reason = "cloudflared.log has a trycloudflare URL but nemoclaw status did not surface it";
+        reason =
+          "cloudflared.log has a trycloudflare URL but nemoclaw tunnel status did not surface it";
         break;
       case "nemoclaw_local":
         reason = `cloudflared.log reports it cannot reach localhost:${LOCAL_DASHBOARD_PORT}`;
@@ -511,7 +512,7 @@ export async function runTunnelLifecycleContract({
   let postStopUrl: string | undefined;
   let statusReadable = false;
   for (let attempt = 1; attempt <= 10; attempt += 1) {
-    const status = await host.nemoclaw(["status"], {
+    const status = await host.nemoclaw(["tunnel", "status"], {
       artifactName: `status-after-tunnel-stop-${attempt}`,
       env: tunnelLifecycleCommandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
@@ -525,6 +526,6 @@ export async function runTunnelLifecycleContract({
     if (!postStopUrl) break;
     await sleep(1_000);
   }
-  expect(statusReadable, "nemoclaw status should be readable after tunnel stop").toBe(true);
+  expect(statusReadable, "nemoclaw tunnel status should be readable after tunnel stop").toBe(true);
   expect(postStopUrl, "tunnel URL must be absent after nemoclaw tunnel stop").toBeUndefined();
 }
