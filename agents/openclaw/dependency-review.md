@@ -36,7 +36,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
-  The pull request workflow resolves the implementation and policy from the PR base SHA and applies them to the proposed manifest and lockfile.
+  The pull request workflow loads the audit implementation, policy, manifest, and lockfile from the candidate checkout.
   The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
@@ -65,7 +65,7 @@ The lock records the exact version, registry URL, and integrity for every transi
   They do not attest that trusted CI verified registry signatures.
 - `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.
   The PR workflow requires this check before merge.
-  The `pr-reviewed-npm-audit` job loads its audit implementation from the base branch revision and evaluates the dependency files from the commit under review.
+  The `pr-reviewed-npm-audit` job loads its audit implementation, policy, and dependency files from the commit under review.
   The managed-image build job requires that result before local builds and same-repository digest publication.
   The base-image workflow requires its audit result before it builds or publishes any base image.
   It also requires the result before it invokes managed-image publication.
@@ -74,7 +74,7 @@ The lock records the exact version, registry URL, and integrity for every transi
   A matching marker from a local base or mutable tag is package metadata without independent CI attestation.
   It cannot authorize reuse; the existing version checks reinstall the locked runtime or reject a newer base.
 - `regressionTest`: `test/security/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, `reviewed-npm-audit` CI check, and this review synchronized.
-  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
+  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the candidate checkout supplies the audit action and inputs, and that publication depends on the audit.
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
 
