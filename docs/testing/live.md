@@ -71,7 +71,7 @@ From the repository root, with absolute paths:
 NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark-inline.yaml \
 NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test spark spark_yaml_plans_and_applies_expected_resources -- --ignored
+  cargo test -p nemoclaw-e2e --test integration spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
 The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
@@ -151,8 +151,8 @@ Supply a fresh, owned OpenClaw or Hermes deployment configuration with a free ga
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_LIVE_MODEL_CONFIG=/absolute/path/to/vllm.yaml \
 NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
-  cargo test -p nemoclaw-e2e --test model_live \
-    selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
+  cargo test -p nemoclaw-e2e --test integration \
+    model_live::selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
 It checks initial apply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.

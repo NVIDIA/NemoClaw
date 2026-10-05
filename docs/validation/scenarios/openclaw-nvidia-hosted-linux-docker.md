@@ -37,7 +37,7 @@ The checked-in contract lives under `crates/nemoclaw-e2e/fixtures/openclaw-nvidi
 Run the deterministic checks without Docker or a credential:
 
 ```sh
-cargo test -p nemoclaw-e2e --test hosted_parity
+cargo test -p nemoclaw-e2e --test integration hosted_parity::
 ```
 
 ## Live Verification
@@ -74,8 +74,8 @@ NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
 NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
 NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
-  cargo test -p nemoclaw-e2e --test hosted_parity \
-  authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
+  cargo test -p nemoclaw-e2e --test integration \
+  hosted_parity::live::authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
   -- --ignored
 ```
 

@@ -5,6 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the SDK and provider once. The Brev test
+# stays separate because its workflow copies that one executable to a VM.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "brev"
+path = "tests/brev.rs"
 
 [dependencies]
 rcgen = "0.14.10"

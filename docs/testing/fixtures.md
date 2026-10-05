@@ -16,7 +16,7 @@ Build the production provider and supply absolute executable paths explicitly:
 cargo build -p nemoclaw-provider --bin terraform-provider-nemoclaw
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test provider_protocol -- --ignored
+  cargo test -p nemoclaw-e2e --test integration provider_protocol:: -- --ignored
 ```
 
 These tests launch a fixture provider built by that crate and use temporary files.
@@ -29,7 +29,7 @@ On Unix with `python3` on `PATH`, run from the repository root to test combined 
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test service_capacity -- --ignored
+  cargo test -p nemoclaw-e2e --test integration service_capacity:: -- --ignored
 ```
 
 This fixture checks shared-host overcommit, deferred reads, preserved state after failed observations, and cleanup without capacity checks.
@@ -42,7 +42,7 @@ Test the production provider's full OpenShell resource graph against the local g
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test opentofu_openshell -- --ignored
+  cargo test -p nemoclaw-e2e --test integration opentofu_openshell:: -- --ignored
 ```
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
@@ -59,7 +59,7 @@ They use only the local gRPC fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment --test export_observations --test fabric_deployment --test multiple_providers -- --ignored
+  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multiple_providers:: --ignored
 ```
 
 CI uses the [nextest lifecycle profile](../testing.md#test-runner) with four concurrent tests.
@@ -89,7 +89,7 @@ Run from the repository root:
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test sandbox_readiness -- --ignored
+  cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored
 ```
 
 The fixture runs the sandbox completion data source through OpenTofu against a local gRPC server, without SDK deployment orchestration.
@@ -104,7 +104,7 @@ On Unix with `python3` on `PATH`, build the production provider as above and run
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test service_readiness -- --ignored
+  cargo test -p nemoclaw-e2e --test integration service_readiness:: -- --ignored
 ```
 
 The fixture uses an isolated SSH/Docker simulator and a builtin OpenTofu consumer, without SDK deployment orchestration or a reachable OpenShell gateway.
@@ -206,7 +206,7 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 ## SSH Service Fixtures
 
 The `remote_service` E2E fixture exercises the bundled CLI/provider boundary with an isolated Docker-over-SSH simulator and OpenShell fixture.
-Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
+Run `cargo test -p nemoclaw-e2e --test integration remote_service:: -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
 It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, cache reconstruction with unchanged credentials, and failed observation or credential-daemon retargeting without lost bindings.
 Destroy removes disposable containers and service networks while retaining storage.
 The partial-runtime fixtures verify teardown after failed creation without first creating the missing compute; failed readiness also permits corrected intent while retaining bindings.
@@ -228,7 +228,7 @@ Run from the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
 NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
-  cargo test -p nemoclaw-e2e --test docker_provider_proxy -- --ignored
+  cargo test -p nemoclaw-e2e --test integration docker_provider_proxy:: -- --ignored
 ```
 
 This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
@@ -252,7 +252,7 @@ From the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
 NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-  cargo test -p nemoclaw-e2e --test cache_provider -- --ignored
+  cargo test -p nemoclaw-e2e --test integration cache_provider:: -- --ignored
 ```
 
 The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `nemoclaw_inference_storage`; no SDK compiler or deployment coordinator runs.
@@ -293,9 +293,9 @@ With a freshly built native bundle, run the SDK/CLI lifecycle fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment multiple_agents_cli_export_reapply_and_policy_drift -- --ignored
+  cargo test -p nemoclaw-e2e --test integration deployment::separate_agent_sandboxes_cli_export_reapply_and_policy_drift -- --ignored
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment tool_disclosure_cli_export_reapply_and_drift -- --ignored
+  cargo test -p nemoclaw-e2e --test integration deployment::tool_disclosure_cli_export_reapply_and_drift -- --ignored
 ```
 
 These fixtures check export/reapply, security policy and configuration observation failures without mutation or lost state.
@@ -315,7 +315,7 @@ With a verified bundle, run:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test remote_service managed_hermes -- --ignored
+  cargo test -p nemoclaw-e2e --test integration remote_service::managed_hermes -- --ignored
 ```
 
 The fixture simulates SSH/Docker and OpenShell while exercising apply, export/reapply, observation failures and retained data through the bundled CLI/provider.
