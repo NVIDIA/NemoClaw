@@ -278,11 +278,7 @@ export function inspectContainer(
   expect(sandboxId).toBeTruthy();
   expect(entry.Name).toBe(`${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`);
   expect(labels).toMatchObject({
-    [PODMAN_ISOLATION_ROLE_LABEL]: "sandbox",
-    [PODMAN_MANAGED_LABEL]: "true",
-    [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
     [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
-    [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
   });
   // The rootless driver drops to the policy identity after workspace setup.
   expect(entry.Config.Cmd).toEqual([

@@ -10,7 +10,11 @@ import { describe, expect, test, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
-import { runCommand, startPinnedGateway } from "../live/podman-cpu-lifecycle-helpers.ts";
+import {
+  inspectContainer,
+  runCommand,
+  startPinnedGateway,
+} from "../live/podman-cpu-lifecycle-helpers.ts";
 
 const PHASES = ["exercise the Podman lifecycle helper", "verify helper cleanup"] as const;
 
@@ -56,6 +60,69 @@ function killProcessIfAlive(pid: number | null): void {
 }
 
 describe("Podman CPU lifecycle helper", () => {
+  function inspectedContainer(identity = "a".repeat(64), namespace = "") {
+    return {
+      Id: identity,
+      Name: "openshell-default--candidate-sandbox-id",
+      Config: {
+        Labels: {
+          "openshell.ai/sandbox-id": "sandbox-id",
+          "openshell.ai/sandbox-namespace": namespace,
+        },
+        Cmd: [
+          "launch-capability-free",
+          "1000",
+          "1000",
+          "/.openshell/channel/sandbox/bootstrap.json",
+          "/sandbox",
+        ],
+        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+      },
+    };
+  }
+
+  test("binds inspection to the scoped discovery result", () => {
+    const container = inspectedContainer();
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: container.Id + "\n" })
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: JSON.stringify([container]) });
+    expect(inspectContainer({ capture } as never, "candidate", container.Id)).toEqual(container);
+    expect(capture.mock.calls).toEqual([
+      [
+        [
+          "ps",
+          "--all",
+          "--quiet",
+          "--no-trunc",
+          "--filter",
+          "label=openshell.managed=true",
+          "--filter",
+          "label=openshell.ai/sandbox-name=candidate",
+          "--filter",
+          "label=openshell.ai/sandbox-workspace=default",
+          "--filter",
+          "label=openshell.ai/isolation-role=sandbox",
+        ],
+      ],
+      [["container", "inspect", container.Id]],
+    ]);
+  });
+
+  test.each([
+    ["another container", "b".repeat(64), ""],
+    ["another namespace", "a".repeat(64), "foreign"],
+  ])("rejects inspection of %s", (_reason, identity, namespace) => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: "a".repeat(64) + "\n" })
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: "",
+        stdout: JSON.stringify([inspectedContainer(identity, namespace)]),
+      });
+    expect(() => inspectContainer({ capture } as never, "candidate")).toThrow();
+  });
   test("reports CLI child lifecycle through the canonical ShellProbe boundary (#8497)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-podman-command-test-"));
     const logLines: string[] = [];

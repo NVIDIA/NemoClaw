@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 
 const MISSING_VOLUME_PATTERN = /\bno such volume\b/iu;
@@ -206,6 +207,15 @@ export function prepareManagedStateVolumes(
       : (() => {
           throw new Error("Managed state volumes require runtime provider authority.");
         })());
+  // Match the OpenShell create CLI selector, not the unrelated /sandbox directory.
+  const workspace = process.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE;
+  if (!workspace || workspace.trim() !== workspace || /[\0\r\n]/u.test(workspace)) {
+    throw new Error("Managed state volume requires an exact OpenShell workspace.");
+  }
+  const approvalLabels = {
+    "openshell.ai/sandbox-attachable": "true",
+    "openshell.ai/sandbox-attachable-workspace": workspace,
+  };
   const created: ManagedStartupStateRoot[] = [];
   const reused: boolean[] = [];
   try {
@@ -218,9 +228,10 @@ export function prepareManagedStateVolumes(
       }
       if (before.status === "absent") {
         const createArgs = ["create"];
-        for (const [name, value] of Object.entries(root.ownershipLabels).sort(([left], [right]) =>
-          left.localeCompare(right),
-        )) {
+        for (const [name, value] of Object.entries({
+          ...root.ownershipLabels,
+          ...approvalLabels,
+        }).sort(([left], [right]) => left.localeCompare(right))) {
           createArgs.push("--label", `${name}=${value}`);
         }
         createArgs.push(root.resourceIdentity);
@@ -245,6 +256,12 @@ export function prepareManagedStateVolumes(
               ? "the volume disappeared after creation"
               : "the exact NemoClaw ownership labels do not match";
         throw new Error(`Cannot use managed state volume '${root.resourceIdentity}': ${detail}.`);
+      }
+      if (!labelsMatch(verified.labels, approvalLabels)) {
+        throw new Error(
+          "Managed state volume lacks OpenShell attachment approval for the selected workspace. " +
+            "Retained data was not changed; operator reconciliation is required.",
+        );
       }
       reused.push(before.status === "observed");
     }

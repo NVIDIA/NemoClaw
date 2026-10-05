@@ -16,6 +16,80 @@ import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
 
 describe("Docker-driver gateway env config validation", () => {
+  it.each(["cert_path", "key_path", "client_ca_path"])("rejects missing TLS input %s", (key) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-"));
+    try {
+      const configPath = writeSafeGatewayAuthConfig(stateDir);
+      fs.writeFileSync(
+        configPath,
+        fs.readFileSync(configPath, "utf-8").replace(new RegExp("^" + key + " = .+\\n", "m"), ""),
+      );
+      expect(() =>
+        assertDockerDriverGatewayAuthConfigSafe(
+          {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: configPath,
+          },
+          {},
+        ),
+      ).toThrow("openshell.gateway.tls." + key);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["relative CA path", /^client_ca_path = .+$/m, 'client_ca_path = "relative.crt"'],
+    ["schema 1", /version = 2/, "version = 1"],
+    [
+      "retired TLS switch",
+      /\[openshell.gateway.tls\]/,
+      "[openshell.gateway.tls]\nrequire_client_auth = true",
+    ],
+    ["OIDC config", /$/, '\n[openshell.gateway.oidc]\nissuer = "https://issuer.invalid"\n'],
+  ] as const)("rejects %s without changing the config", (_kind, pattern, replacement) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-"));
+    try {
+      const configPath = writeSafeGatewayAuthConfig(stateDir);
+      const gatewayEnv: Record<string, string> = {
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        OPENSHELL_GATEWAY_CONFIG: configPath,
+      };
+      const config = fs.readFileSync(configPath, "utf-8").replace(pattern, replacement);
+      fs.writeFileSync(configPath, config);
+      expect(() => assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, {})).toThrow(
+        /absolute TLS path|openshell.version=2|client-CA authentication/,
+      );
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(config);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["OIDC environment", { OPENSHELL_OIDC_ISSUER: "https://issuer.invalid" }, {}],
+    ["empty OIDC environment", { OPENSHELL_OIDC_ISSUER: "" }, {}],
+    ["OIDC gateway environment", {}, { OPENSHELL_OIDC_ISSUER: "https://issuer.invalid" }],
+  ] as const)("rejects %s without changing the config", (_kind, environment, overlay) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-"));
+    try {
+      const configPath = writeSafeGatewayAuthConfig(stateDir);
+      const before = fs.readFileSync(configPath, "utf-8");
+      expect(() =>
+        assertDockerDriverGatewayAuthConfigSafe(
+          {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: configPath,
+            ...overlay,
+          },
+          environment,
+        ),
+      ).toThrow("client-CA authentication");
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(before);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
   it("rejects wildcard gateway binds while gateway JWT auth is active", () => {
     expect(() =>
       assertDockerDriverGatewayBindAddressSafe({

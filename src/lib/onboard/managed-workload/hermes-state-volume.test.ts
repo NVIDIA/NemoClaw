@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { createHermesStateVolumeDockerHarness as dockerHarness } from "../__test-helpers__/hermes-state-volume";
@@ -32,6 +32,74 @@ const context = {
 } as const;
 
 describe("managed Hermes state volume", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([undefined, "team-ml"])("approves a new volume only for workspace %s", (workspace) => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+    const docker = dockerHarness();
+    const scope = prepareManagedHermesStateVolume(context, {
+      runDocker: docker.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    });
+    expect(docker.volume?.labels).toMatchObject({
+      "openshell.ai/sandbox-attachable": "true",
+      "openshell.ai/sandbox-attachable-workspace": workspace ?? "default",
+    });
+    expect(scope?.reused).toBe(false);
+  });
+
+  it.each([
+    ["missing", {}],
+    [
+      "other workspace",
+      {
+        "openshell.ai/sandbox-attachable": "true",
+        "openshell.ai/sandbox-attachable-workspace": "another",
+      },
+    ],
+    [
+      "not approved",
+      {
+        "openshell.ai/sandbox-attachable": "false",
+        "openshell.ai/sandbox-attachable-workspace": "default",
+      },
+    ],
+  ] as const)("preserves an owned retained volume with %s approval", (_problem, approval) => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", "default");
+    const created = dockerHarness();
+    prepareManagedHermesStateVolume(context, {
+      runDocker: created.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    })!.commit();
+    const retained = created.volume!;
+    delete retained.labels["openshell.ai/sandbox-attachable"];
+    delete retained.labels["openshell.ai/sandbox-attachable-workspace"];
+    Object.assign(retained.labels, approval);
+    const docker = dockerHarness(retained);
+    const before = JSON.stringify(docker.volume);
+    expect(() =>
+      prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+    ).toThrow("Retained data was not changed");
+    expect(JSON.stringify(docker.volume)).toBe(before);
+    expect(docker.calls.every((args) => args[0] === "inspect")).toBe(true);
+    expect(
+      removeManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+    ).toEqual({
+      status: "removed",
+    });
+  });
+
+  it.each(["", " default", "default\n"])(
+    "rejects invalid workspace %j before effects",
+    (workspace) => {
+      vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+      const docker = dockerHarness();
+      expect(() =>
+        prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+      ).toThrow("exact OpenShell workspace");
+      expect(docker.calls).toEqual([]);
+    },
+  );
   it("creates and mounts one labeled writable volume for managed Docker Hermes", () => {
     const docker = dockerHarness();
     let exitCleanup: (() => void) | null = null;

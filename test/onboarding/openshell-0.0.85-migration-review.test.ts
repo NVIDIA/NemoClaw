@@ -36,7 +36,7 @@ describe("OpenShell migration executable contracts", () => {
       "utf8",
     );
     expect(helper).toContain("parse as parseToml");
-    expect(helper).toContain('expect(gateway.compute_drivers).toEqual(["docker"])');
+    expect(helper).toContain('expect(gateway.compute_driver).toBe("docker")');
     expect(helper).toContain("Object.keys(drivers)");
     expect(helper).toContain("fs.realpathSync(`/proc/${gatewayPid}/exe`)");
     expect(helper).toContain('["-H", "-ltnp"]');

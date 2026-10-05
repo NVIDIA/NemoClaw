@@ -612,6 +612,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
       // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
       "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
+      // Exact 0.1.2 pinned-sandbox feature check; runtime policy checks remain required.
+      "610fa58bc4242f23e6ce5e22444dd595995c5a9466bf406a34e5a548869377bc",
     ],
     manifests: [
       {

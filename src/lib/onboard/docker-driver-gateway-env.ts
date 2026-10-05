@@ -418,7 +418,24 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   const toml = fs.readFileSync(configPath, "utf-8");
   const values = parseTomlScalarValues(toml);
   assertTomlBoolean(values, "openshell.gateway.disable_tls", false);
-  assertTomlBoolean(values, "openshell.gateway.tls.require_client_auth", true);
+  assertTomlInteger(values, "openshell.version", 2);
+  // OpenShell 0.1.2 derives mandatory client authentication from a CA without OIDC.
+  // The retired TOML switch is rejected upstream, so validate its actual inputs.
+  for (const key of ["cert_path", "key_path", "client_ca_path"] as const) {
+    const fullKey = `openshell.gateway.tls.${key}`;
+    if (!path.isAbsolute(assertTomlString(values, fullKey))) {
+      throw new Error(`OpenShell gateway ${fullKey} must be an absolute TLS path`);
+    }
+  }
+  if (
+    values.has("openshell.gateway.tls.require_client_auth") ||
+    values.has("openshell.gateway.oidc.issuer") ||
+    (gatewayEnv.OPENSHELL_OIDC_ISSUER ?? environment.OPENSHELL_OIDC_ISSUER) !== undefined
+  ) {
+    throw new Error(
+      "OpenShell gateway requires schema 2 client-CA authentication without OIDC overrides",
+    );
+  }
   assertTomlBoolean(values, "openshell.gateway.mtls_auth.enabled", true);
   assertTomlBoolean(values, "openshell.gateway.auth.allow_unauthenticated_users", false);
   for (const key of ["signing_key_path", "public_key_path", "kid_path"] as const) {

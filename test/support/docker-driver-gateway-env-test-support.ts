@@ -12,6 +12,8 @@ export function writeSafeGatewayAuthConfig(dir: string): string {
   const signingKeyPath = path.join(jwtDir, "signing.pem");
   const publicKeyPath = path.join(jwtDir, "public.pem");
   const kidPath = path.join(jwtDir, "kid");
+  const caPath = path.join(dir, "test-ca.crt");
+  fs.writeFileSync(caPath, "test certificate fixture\n", { mode: 0o600 });
   fs.mkdirSync(jwtDir, { recursive: true, mode: 0o700 });
   for (const [filePath, value] of [
     [signingKeyPath, "test signing key\n"],
@@ -23,11 +25,16 @@ export function writeSafeGatewayAuthConfig(dir: string): string {
   fs.writeFileSync(
     configPath,
     [
+      "[openshell]",
+      "version = 2",
+      "",
       "[openshell.gateway]",
       "disable_tls = false",
       "",
       "[openshell.gateway.tls]",
-      "require_client_auth = true",
+      `cert_path = ${JSON.stringify(caPath)}`,
+      `key_path = ${JSON.stringify(signingKeyPath)}`,
+      `client_ca_path = ${JSON.stringify(caPath)}`,
       "",
       "[openshell.gateway.mtls_auth]",
       "enabled = true",

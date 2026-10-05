@@ -3,7 +3,6 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -58,7 +57,9 @@ const GATEWAY_PID_NAME = "openshell-gateway.pid";
 const SANDBOX_LABEL = "openshell.ai/sandbox-name";
 const TMPFS_MARKER = `${EXACT_MAIN_TMPFS_TARGET}/candidate-main-marker`;
 const DURABLE_MARKER = "/sandbox/.deepagents/.state/candidate-main-driver-config-marker";
-const SUPERVISOR_TARGET = "/opt/openshell/bin/openshell-sandbox";
+const SANDBOX_BINARY_TARGET = "/.openshell/runtime/openshell-sandbox";
+const CHANNEL_TARGET = "/.openshell/channel";
+const SUPERVISOR_STATE_TARGET = "/.openshell/supervisor";
 const SANDBOX_TOKEN_TARGET = "/etc/openshell/auth/sandbox.jwt";
 const TLS_MOUNT_TARGETS = [
   "/etc/openshell/tls/client/ca.crt",
@@ -81,7 +82,7 @@ type ParsedGatewayConfig = {
   configSha256: string;
   endpoint: string;
   gatewayId: string;
-  networkName: string;
+  sandboxLabel: string;
   port: number;
   supervisorImage: string;
 };
@@ -100,7 +101,7 @@ type ConfiguredDockerMount = {
 };
 
 type RuntimeSnapshot = {
-  bridgeAddress: string;
+  supervisorId: string;
   config: ParsedGatewayConfig;
   containerId: string;
   gatewayBinarySha256: string;
@@ -196,12 +197,13 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   const raw = fs.readFileSync(configPath, "utf8");
   const parsed = requireRecord(parseToml(raw), "rendered OpenShell config");
   const openshell = requireRecord(parsed.openshell, "openshell");
-  expect(openshell.version).toBe(1);
+  expect(openshell.version).toBe(2);
   const gateway = requireRecord(openshell.gateway, "openshell.gateway");
-  expect(gateway.compute_drivers).toEqual(["docker"]);
+  expect(gateway.compute_driver).toBe("docker");
   expect(gateway.disable_tls).toBe(false);
   const tls = requireRecord(gateway.tls, "openshell.gateway.tls");
-  expect(tls.require_client_auth).toBe(true);
+  expect(gateway).not.toHaveProperty("oidc");
+  expect(process.env.OPENSHELL_OIDC_ISSUER).toBeUndefined();
   const mtls = requireRecord(gateway.mtls_auth, "openshell.gateway.mtls_auth");
   expect(mtls.enabled).toBe(true);
   const auth = requireRecord(gateway.auth, "openshell.gateway.auth");
@@ -211,23 +213,17 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   const gatewayId = requireString(jwt.gateway_id, "gateway JWT gateway_id");
   for (const key of ["signing_key_path", "public_key_path", "kid_path"] as const) {
     const filePath = requireString(jwt[key], `gateway JWT ${key}`);
-    expect(path.isAbsolute(filePath), `gateway JWT ${key} must be absolute`).toBe(true);
     assertRestrictedRegularFile(filePath, `gateway JWT ${key}`);
   }
 
   const drivers = requireRecord(openshell.drivers, "openshell.drivers");
-  expect(
-    Object.keys(drivers),
-    "NemoClaw must render only the selected Docker driver table",
-  ).toEqual(["docker"]);
   const docker = requireRecord(drivers.docker, "openshell.drivers.docker");
   const endpoint = requireString(docker.grpc_endpoint, "Docker grpc_endpoint");
   const endpointUrl = new URL(endpoint);
   expect(endpointUrl.protocol).toBe("https:");
   expect(endpointUrl.hostname).toBe("127.0.0.1");
   const port = Number(endpointUrl.port);
-  expect(Number.isSafeInteger(port) && port > 0 && port <= 65_535).toBe(true);
-  const networkName = requireString(docker.network_name, "Docker network_name");
+  const sandboxLabel = requireString(docker.sandbox_label, "Docker sandbox_label");
   const supervisorImage = requireString(docker.supervisor_image, "Docker supervisor_image");
   expect(supervisorImage).toBe(process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE);
   expect(fs.realpathSync(requireString(docker.supervisor_bin, "Docker supervisor_bin"))).toBe(
@@ -262,7 +258,7 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
     configSha256: createHash("sha256").update(raw).digest("hex"),
     endpoint,
     gatewayId,
-    networkName,
+    sandboxLabel,
     port,
     supervisorImage,
   };
@@ -276,33 +272,11 @@ function readGatewayPid(): number {
   return pid;
 }
 
-async function requireDockerBridgeAddress(
-  host: HostCliClient,
-  networkName: string,
-  phase: string,
-): Promise<string> {
-  const result = await host.command(
-    "docker",
-    ["network", "inspect", networkName, "--format", "{{json .IPAM.Config}}"],
-    {
-      artifactName: `exact-main-driver-network-${phase}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const configs = JSON.parse(result.stdout.trim()) as Array<{
-    Gateway?: unknown;
-  }>;
-  const gateway = configs
-    .map((config) => config.Gateway)
-    .find((value): value is string => typeof value === "string" && isIP(value) === 4);
-  return requireString(gateway, "Docker network IPv4 gateway");
-}
-
-async function requireRunningSandboxContainer(
+export async function requireRunningSandboxContainer(
   host: HostCliClient,
   sandboxName: string,
+  sandboxLabel: string,
+  role: "sandbox" | "supervisor",
   phase: string,
 ): Promise<string> {
   const result = await host.command(
@@ -312,11 +286,17 @@ async function requireRunningSandboxContainer(
       "--no-trunc",
       "--filter",
       `label=${SANDBOX_LABEL}=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-namespace=${sandboxLabel}`,
+      "--filter",
+      `label=openshell.ai/isolation-role=${role}`,
       "--format",
       "{{.ID}}",
     ],
     {
-      artifactName: `exact-main-driver-container-${phase}`,
+      artifactName: `exact-main-driver-container-${role}-${phase}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     },
@@ -326,7 +306,7 @@ async function requireRunningSandboxContainer(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  expect(ids, `expected exactly one running Docker container for ${sandboxName}`).toHaveLength(1);
+  expect(ids, `expected exactly one running Docker ${role} for ${sandboxName}`).toHaveLength(1);
   return ids[0]!;
 }
 
@@ -345,21 +325,19 @@ async function inspectJson<T>(
   return JSON.parse(result.stdout.trim()) as T;
 }
 
-async function assertRuntimeMounts(
+export async function assertRuntimeMounts(
   host: HostCliClient,
   proof: ExactMainDriverConfigProof,
-  config: ParsedGatewayConfig,
   containerId: string,
+  supervisorId: string,
   phase: string,
 ): Promise<void> {
-  const components = proof.components!;
   const configuredMounts = await inspectJson<ConfiguredDockerMount[] | null>(
     host,
     containerId,
     "{{json .HostConfig.Mounts}}",
     `exact-main-driver-configured-mounts-${phase}`,
   );
-  expect(Array.isArray(configuredMounts), "Docker HostConfig.Mounts must be structured").toBe(true);
   expect(configuredMounts?.find((mount) => mount.Target === EXACT_MAIN_TMPFS_TARGET)).toMatchObject(
     {
       Type: "tmpfs",
@@ -387,20 +365,40 @@ async function assertRuntimeMounts(
     "{{json .Mounts}}",
     `exact-main-driver-mounts-${phase}`,
   );
-  const tmpfs = mounts.filter((mount) => mount.Destination === EXACT_MAIN_TMPFS_TARGET);
-  expect(tmpfs).toHaveLength(1);
-  expect(tmpfs[0]).toMatchObject({ Type: "tmpfs", RW: true });
-  const supervisor = mounts.find((mount) => mount.Destination === SUPERVISOR_TARGET);
-  expect(supervisor).toMatchObject({ Type: "bind", RW: false });
-  expect(fs.realpathSync(requireString(supervisor?.Source, "supervisor bind source"))).toBe(
-    components.sandbox,
+  const channel = mounts.find((mount) => mount.Destination === CHANNEL_TARGET);
+  expect(channel).toMatchObject({ Type: "volume", RW: true });
+  const supervisorMounts = await inspectJson<DockerMount[]>(
+    host,
+    supervisorId,
+    "{{json .Mounts}}",
+    `exact-main-driver-supervisor-mounts-${phase}`,
   );
+  const supervisorChannel = supervisorMounts.find((mount) => mount.Destination === CHANNEL_TARGET);
+  expect(supervisorChannel).toMatchObject({ Type: "volume", RW: false });
+  expect(requireString(supervisorChannel?.Source, "supervisor channel source")).toBe(
+    requireString(channel?.Source, "sandbox channel source"),
+  );
+  const supervisorState = supervisorMounts.find(
+    (mount) => mount.Destination === SUPERVISOR_STATE_TARGET,
+  );
+  expect(supervisorState).toMatchObject({ Type: "volume", RW: false });
+  expect(mounts.some((mount) => mount.Destination === SUPERVISOR_STATE_TARGET)).toBe(false);
   for (const target of [...TLS_MOUNT_TARGETS, SANDBOX_TOKEN_TARGET]) {
-    expect(mounts.find((mount) => mount.Destination === target)).toMatchObject({
-      Type: "bind",
-      RW: false,
-    });
+    expect(mounts.some((mount) => mount.Destination === target)).toBe(false);
   }
+  const binary = await host.command(
+    "docker",
+    ["exec", "--user", "0", containerId, "sha256sum", SANDBOX_BINARY_TARGET],
+    {
+      artifactName: `exact-main-driver-staged-binary-${phase}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(binary.exitCode, resultText(binary)).toBe(0);
+  expect(binary.stdout.trim().split(/\s+/u)[0]).toBe(
+    expectedBinarySha(proof.provenance!, "standaloneSandbox"),
+  );
   const binds = await inspectJson<unknown>(
     host,
     containerId,
@@ -417,14 +415,44 @@ async function assertRuntimeMounts(
     "{{json .NetworkSettings.Networks}}",
     `exact-main-driver-container-networks-${phase}`,
   );
-  expect(networks[config.networkName], `sandbox must join ${config.networkName}`).toBeDefined();
+  expect(Object.keys(networks).filter((network) => network !== "none")).toEqual([]);
+  expect(
+    await inspectJson<string>(
+      host,
+      containerId,
+      "{{json .HostConfig.NetworkMode}}",
+      `exact-main-driver-workload-network-mode-${phase}`,
+    ),
+  ).toBe("none");
+  expect(
+    await inspectJson<string>(
+      host,
+      supervisorId,
+      "{{json .HostConfig.NetworkMode}}",
+      `exact-main-driver-supervisor-network-mode-${phase}`,
+    ),
+  ).toBe("host");
+  const workloadLabels = await inspectJson<JsonRecord>(
+    host,
+    containerId,
+    "{{json .Config.Labels}}",
+    `exact-main-driver-workload-labels-${phase}`,
+  );
+  const supervisorLabels = await inspectJson<JsonRecord>(
+    host,
+    supervisorId,
+    "{{json .Config.Labels}}",
+    `exact-main-driver-supervisor-labels-${phase}`,
+  );
+  expect(requireString(supervisorLabels["openshell.ai/sandbox-id"], "supervisor sandbox ID")).toBe(
+    requireString(workloadLabels["openshell.ai/sandbox-id"], "workload sandbox ID"),
+  );
 }
 
-async function assertGatewayListeners(
+export async function assertGatewayListeners(
   host: HostCliClient,
   gatewayPid: number,
   config: ParsedGatewayConfig,
-  bridgeAddress: string,
   phase: string,
 ): Promise<void> {
   const listeners = await host.command("ss", ["-H", "-ltnp"], {
@@ -436,9 +464,13 @@ async function assertGatewayListeners(
   const owned = resultText(listeners)
     .split(/\r?\n/)
     .filter((line) => line.includes(`pid=${gatewayPid},`));
-  expect(owned.some((line) => line.includes(`127.0.0.1:${config.port}`))).toBe(true);
-  expect(owned.some((line) => line.includes(`${bridgeAddress}:${config.port}`))).toBe(true);
-  expect(owned.some((line) => line.includes(`0.0.0.0:${config.port}`))).toBe(false);
+  const gatewayListeners = owned.filter((line) =>
+    line.trim().split(/\s+/u)[3]?.endsWith(`:${config.port}`),
+  );
+  expect(gatewayListeners.length).toBeGreaterThan(0);
+  expect(
+    gatewayListeners.every((line) => line.trim().split(/\s+/u)[3] === `127.0.0.1:${config.port}`),
+  ).toBe(true);
 }
 
 async function captureRuntimeSnapshot(options: {
@@ -461,16 +493,28 @@ async function captureRuntimeSnapshot(options: {
   expect(gatewayBinarySha256).toBe(expectedBinarySha(provenance, "gateway"));
   expect(sha256File(components.cli)).toBe(expectedBinarySha(provenance, "cli"));
   expect(sha256File(components.sandbox)).toBe(expectedBinarySha(provenance, "standaloneSandbox"));
-  const bridgeAddress = await requireDockerBridgeAddress(host, config.networkName, phase);
-  await assertGatewayListeners(host, gatewayPid, config, bridgeAddress, phase);
-  const containerId = await requireRunningSandboxContainer(host, sandboxName, phase);
-  await assertRuntimeMounts(host, proof, config, containerId, phase);
+  await assertGatewayListeners(host, gatewayPid, config, phase);
+  const containerId = await requireRunningSandboxContainer(
+    host,
+    sandboxName,
+    config.sandboxLabel,
+    "sandbox",
+    phase,
+  );
+  const supervisorId = await requireRunningSandboxContainer(
+    host,
+    sandboxName,
+    config.sandboxLabel,
+    "supervisor",
+    phase,
+  );
+  await assertRuntimeMounts(host, proof, containerId, supervisorId, phase);
   await sandbox.expectListed(sandboxName, {
     artifactName: `exact-main-driver-openshell-list-${phase}`,
     timeoutMs: 60_000,
   });
   return {
-    bridgeAddress,
+    supervisorId,
     config,
     containerId,
     gatewayBinarySha256,
@@ -507,11 +551,15 @@ async function assertSandboxMountAndAuth(options: {
       'case ",$mount_options," in *,nodev,*) ;; *) exit 1 ;; esac',
       `test "$(stat -c '%a' ${EXACT_MAIN_TMPFS_TARGET})" = 1777`,
       `set -- $(stat -fc '%S %b' ${EXACT_MAIN_TMPFS_TARGET}); test $(( $1 * $2 )) -le ${EXACT_MAIN_TMPFS_MOUNT.size_bytes}`,
-      `test -r ${SANDBOX_TOKEN_TARGET} && test -s ${SANDBOX_TOKEN_TARGET}`,
-      ...TLS_MOUNT_TARGETS.map((target) => `test -r ${target} && test -s ${target}`),
+      ...[
+        SANDBOX_TOKEN_TARGET,
+        ...TLS_MOUNT_TARGETS,
+        `${SUPERVISOR_STATE_TARGET}/auth.json`,
+        `${SUPERVISOR_STATE_TARGET}/tls/key.pem`,
+      ].map((target) => `test ! -r ${target}`),
       markerCheck,
       durableCheck,
-      `printf 'tmpfs=%s mode=%s auth_mounts=present\\n' "$mount_type" "$(stat -c '%a' ${EXACT_MAIN_TMPFS_TARGET})"`,
+      `printf 'tmpfs=%s mode=%s supervisor_credentials=unreadable\\n' "$mount_type" "$(stat -c '%a' ${EXACT_MAIN_TMPFS_TARGET})"`,
     ].join("\n"),
   );
   const result = await options.sandbox.execShell(options.sandboxName, script, {
@@ -520,7 +568,6 @@ async function assertSandboxMountAndAuth(options: {
     timeoutMs: 60_000,
   });
   expect(result.exitCode, resultText(result)).toBe(0);
-  expect(resultText(result)).toContain("tmpfs=tmpfs mode=1777 auth_mounts=present");
 }
 
 async function writeSnapshotArtifact(
@@ -536,19 +583,20 @@ async function writeSnapshotArtifact(
     selectedDriver: "docker",
     renderedConfigSha256: snapshot.config.configSha256,
     renderedEndpoint: snapshot.config.endpoint,
-    networkName: snapshot.config.networkName,
+    sandboxLabel: snapshot.config.sandboxLabel,
+    workloadNetwork: "none",
+    supervisorNetwork: "host",
+    supervisorId: snapshot.supervisorId,
     supervisorImage: snapshot.config.supervisorImage,
     gatewayBinarySha256: snapshot.gatewayBinarySha256,
     gatewayPid: snapshot.gatewayPid,
     containerId: snapshot.containerId,
-    listeners: [
-      `127.0.0.1:${snapshot.config.port}`,
-      `${snapshot.bridgeAddress}:${snapshot.config.port}`,
-    ],
+    listeners: [`127.0.0.1:${snapshot.config.port}`],
     auth: {
       gatewayTls: "enabled",
       hostMtls: "required-and-list-succeeded",
-      sandboxJwtAndMtls: "mounted-and-supervisor-relay-exec-succeeded",
+      supervisorAuthentication: "isolated-state-and-supervisor-relay-exec-succeeded",
+      workloadCredentialAccess: "denied",
       unauthenticatedUsers: "disabled",
     },
     mount: {

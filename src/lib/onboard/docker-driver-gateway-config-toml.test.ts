@@ -64,6 +64,21 @@ function podmanGatewayRuntime(env: Record<string, string>) {
   });
 }
 
+function schemaOneGatewayConfig(toml: string, driver: "docker" | "podman"): string {
+  const legacy = toml
+    .replace("version = 2", "version = 1")
+    .replace(/^allow_driver_config = true\n/m, "")
+    .replace('compute_driver = "' + driver + '"', 'compute_drivers = ["' + driver + '"]')
+    .replace(/^sandbox_label = /m, "sandbox_namespace = ")
+    .replace(/^(client_ca_path = .+)$/m, "$1\nrequire_client_auth = true");
+  return driver === "docker"
+    ? legacy.replace(
+        /^supervisor_image = /m,
+        'network_name = "openshell-docker"\nsupervisor_image = ',
+      )
+    : legacy;
+}
+
 function writePreScopedGatewayConfig(
   stateDir: string,
   includeDefaultNamespace = false,
@@ -96,7 +111,7 @@ function writePreScopedGatewayConfig(
     gatewayId,
     gatewayRuntime,
   );
-  toml = toml.replace(
+  toml = schemaOneGatewayConfig(toml, driver).replace(
     /^sandbox_namespace = .*\n/m,
     includeDefaultNamespace ? 'sandbox_namespace = "default"\n' : "",
   );
@@ -107,6 +122,23 @@ function writePreScopedGatewayConfig(
 }
 
 describe("docker-driver-gateway config TOML", () => {
+  it("upgrades a scoped schema 1 config without changing its JWT or sandbox identity", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-schema-one-"));
+    try {
+      const env = writeGatewayConfig(stateDir);
+      const configPath = env.OPENSHELL_GATEWAY_CONFIG;
+      const before = fs.readFileSync(configPath, "utf-8");
+      const bundle = jwtBundlePaths(stateDir);
+      const keyBefore = fs.readFileSync(bundle.signingKeyPath, "utf-8");
+      fs.writeFileSync(configPath, schemaOneGatewayConfig(before, "docker"), { mode: 0o600 });
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(before);
+      expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(keyBefore);
+      expect(env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(gatewayIdForStateDir(stateDir));
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
   it("renders only the fixed external component interceptor settings (#11340)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
     try {
@@ -221,7 +253,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain(`public_key_path = "${publicKeyPath}"`);
       expect(toml).toContain(`kid_path = "${kidPath}"`);
       expect(toml).toContain(`gateway_id = "${gatewayIdForStateDir(stateDir)}"`);
-      expect(toml).toContain(`sandbox_namespace = "${gatewayIdForStateDir(stateDir)}"`);
+      expect(toml).toContain(`sandbox_label = "${gatewayIdForStateDir(stateDir)}"`);
       expect(toml).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
       expect(toml).toContain("disable_tls = false");
       expect(toml).toContain("[openshell.gateway.tls]");
@@ -232,7 +264,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain("enabled = true");
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
-      expect(toml).toContain('compute_drivers = ["docker"]');
+      expect(toml).toContain('compute_driver = "docker"');
       expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
       expect(toml).toContain(`guest_tls_ca = "${path.join(stateDir, "tls", "ca.crt")}"`);
       expect(toml).toContain(
@@ -258,9 +290,7 @@ describe("docker-driver-gateway config TOML", () => {
         gatewayIdForStateDir(stateDir),
       );
       expect(parseTomlString(restartedToml, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
-      expect(parseTomlString(restartedToml, "sandbox_namespace")).toBe(
-        gatewayIdForStateDir(stateDir),
-      );
+      expect(parseTomlString(restartedToml, "sandbox_label")).toBe(gatewayIdForStateDir(stateDir));
       expect(readRegularFileUtf8(signingKeyPath)).toBe(signingKeyBeforeRestart);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -288,8 +318,8 @@ describe("docker-driver-gateway config TOML", () => {
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
       expect(parseTomlString(rewritten, "gateway_id")).toBe(gatewayId);
-      expect(parseTomlString(rewritten, "sandbox_namespace")).toBe("default");
-      expect(parseTomlString(rewritten, "network_name")).toBe("openshell-upgraded");
+      expect(parseTomlString(rewritten, "sandbox_label")).toBe("default");
+      expect(rewritten).not.toContain("network_name =");
       expect(parseTomlString(rewritten, "supervisor_bin")).toBe("/opt/openshell/sandbox");
       expect(env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe("default");
       expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
@@ -396,7 +426,7 @@ describe("docker-driver-gateway config TOML", () => {
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
       expect(parseTomlString(rewritten, "gateway_id")).toBe(gatewayId);
-      expect(parseTomlString(rewritten, "sandbox_namespace")).toBe("default");
+      expect(parseTomlString(rewritten, "sandbox_label")).toBe("default");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -687,8 +717,8 @@ describe("docker-driver-gateway config TOML", () => {
       const misleadingToml = fs
         .readFileSync(configPath, "utf-8")
         .replace(
-          /^sandbox_namespace = .*\n/m,
-          `operator_note = """\nsandbox_namespace = "${namespace}"\n"""\n`,
+          /^sandbox_label = .*\n/m,
+          `operator_note = """\nsandbox_label = "${namespace}"\n"""\n`,
         );
       fs.writeFileSync(configPath, misleadingToml, { encoding: "utf-8", mode: 0o600 });
 
@@ -821,7 +851,7 @@ describe("docker-driver-gateway config TOML", () => {
 
       const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(parseTomlString(config, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
-      expect(parseTomlString(config, "sandbox_namespace")).toBe(gatewayIdForStateDir(stateDir));
+      expect(parseTomlString(config, "sandbox_label")).toBe(gatewayIdForStateDir(stateDir));
       expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -959,9 +989,9 @@ describe("docker-driver-gateway config TOML", () => {
       });
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
-      expect(rewritten).toContain('compute_drivers = ["podman"]');
+      expect(rewritten).toContain('compute_driver = "podman"');
       expect(rewritten).toContain("[openshell.drivers.podman]");
-      expect(rewritten).not.toContain("sandbox_namespace");
+      expect(rewritten).not.toContain("sandbox_label");
       expect(parseTomlString(rewritten, "gateway_id")).toBe(gatewayId);
       expect(parseTomlString(rewritten, "socket_path")).toBe(
         path.join(stateDir, "new-podman.sock"),
