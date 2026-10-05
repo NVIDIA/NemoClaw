@@ -709,4 +709,177 @@ esac
         ));
         assert!(!session.directory.path().join("calls").exists());
     }
+
+    /// Replace the fake `tofu` of a session's bundle.
+    fn write_tofu(session: &DiscoverySession, script: &str) {
+        fs::write(session.bundle.tofu(), script).unwrap();
+    }
+
+    fn docker_engine() -> crate::discovery::DiscoveryRequest {
+        crate::discovery::DiscoveryRequest {
+            engine: "unix:///var/run/docker.sock".into(),
+            compute_driver: crate::config::ComputeDriver::Docker,
+        }
+    }
+
+    fn external_gateway() -> Gateway {
+        Gateway::External(crate::config::ExternalGateway {
+            endpoint: "http://127.0.0.1:17681".into(),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn a_failed_round_leaves_every_query_unknown_rather_than_unasked() {
+        let (_bundle, mut session) = fixture();
+        write_tofu(
+            &session,
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> calls\ncase \"$1\" in init) exit 0 ;; plan) exit 1 ;; *) exit 17 ;; esac\n",
+        );
+        let engine = docker_engine();
+        let drivers = vec![crate::config::ComputeDriver::Docker];
+        let observed = session
+            .observe(
+                &[
+                    DiscoveryQuery::Engine(engine.clone()),
+                    DiscoveryQuery::Hardware {
+                        engine: engine.engine.clone(),
+                    },
+                    DiscoveryQuery::Gateway {
+                        gateway: external_gateway(),
+                        compute_drivers: drivers.clone(),
+                    },
+                ],
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let engine_read = observed
+            .engine(&engine)
+            .expect("the engine read is recorded");
+        let hardware_read = observed
+            .hardware(&engine.engine)
+            .expect("the hardware read is recorded");
+        let gateway_read = observed
+            .gateway(&external_gateway(), &drivers)
+            .expect("the gateway read is recorded");
+        assert_eq!(engine_read.status, ObservationStatus::Unknown);
+        assert_eq!(hardware_read.status, ObservationStatus::Unknown);
+        assert_eq!(gateway_read.status, ObservationStatus::Unknown);
+        assert!(engine_read.reason.is_some() && gateway_read.reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn credential_availability_is_read_locally_and_never_records_the_value() {
+        let (_bundle, mut session) = fixture();
+        // PATH is set in every test process; the other name never is.
+        let never_set = "NEMOCLAW_TEST_CREDENTIAL_NEVER_SET";
+        let observed = session
+            .observe(
+                &[
+                    DiscoveryQuery::Credential {
+                        reference: "PATH".into(),
+                    },
+                    DiscoveryQuery::Credential {
+                        reference: never_set.into(),
+                    },
+                ],
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            observed
+                .credential("PATH")
+                .map(|credential| credential.status),
+            Some(ObservationStatus::Available)
+        );
+        assert_eq!(
+            observed
+                .credential(never_set)
+                .map(|credential| credential.status),
+            Some(ObservationStatus::Unavailable)
+        );
+        let recorded = serde_json::to_string(&observed).unwrap();
+        assert!(!recorded.contains(&std::env::var("PATH").unwrap()));
+        assert!(!session.directory.path().join("calls").exists());
+    }
+
+    #[tokio::test]
+    async fn one_round_serves_provider_reads_the_gateway_read_and_credentials() {
+        let (_bundle, mut session) = fixture();
+        let engine = docker_engine();
+        let drivers = vec![crate::config::ComputeDriver::Docker];
+        let engine_observation = crate::discovery::EngineObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            server_version: Some("27.3.1".into()),
+            architecture: Some("aarch64".into()),
+            operating_system: Some("linux".into()),
+            memory_bytes: None,
+            cpus: None,
+        };
+        let gateway_observation = crate::discovery::GatewayObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "openshell_gateway_info".into(),
+            capabilities: Some(crate::discovery::GatewayCapabilities {
+                gateway_version: "1.2.3".into(),
+                compute_drivers: vec![["docker".to_string()].into()],
+            }),
+            compatible: Some(true),
+        };
+        let directory = session.directory.path().to_owned();
+        let output = |value: Value| {
+            json!({"planned_values": {"outputs": {"observation": {"value": value}}}}).to_string()
+        };
+        fs::write(
+            directory.join("provider.json"),
+            output(json!({"query_0": serde_json::to_string(&engine_observation).unwrap()})),
+        )
+        .unwrap();
+        fs::write(
+            directory.join("gateway.json"),
+            output(json!(serde_json::to_string(&gateway_observation).unwrap())),
+        )
+        .unwrap();
+        // The provider round is the first `show`, the gateway read the second.
+        write_tofu(
+            &session,
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> calls\ncase \"$1\" in\n  init|plan) exit 0 ;;\n  show) if [ \"$(grep -c '^show$' calls)\" = 1 ]; then cat provider.json; else cat gateway.json; fi ;;\n  *) exit 17 ;;\nesac\n",
+        );
+        let observed = session
+            .observe(
+                &[
+                    DiscoveryQuery::Engine(engine.clone()),
+                    DiscoveryQuery::Gateway {
+                        gateway: external_gateway(),
+                        compute_drivers: drivers.clone(),
+                    },
+                    DiscoveryQuery::Credential {
+                        reference: "PATH".into(),
+                    },
+                ],
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(observed.engine(&engine), Some(&engine_observation));
+        assert_eq!(
+            observed.gateway(&external_gateway(), &drivers),
+            Some(&gateway_observation)
+        );
+        assert_eq!(
+            observed
+                .credential("PATH")
+                .map(|credential| credential.status),
+            Some(ObservationStatus::Available)
+        );
+        // One initialization serves both plans.
+        assert_eq!(
+            fs::read_to_string(directory.join("calls")).unwrap(),
+            "init\nplan\nshow\nplan\nshow\n"
+        );
+    }
 }
