@@ -88,7 +88,6 @@ fn observed_target(document: &Document) -> Observed {
         .map(String::from)
         .collect(),
         health_checks: Vec::new(),
-        input_sources: vec!["file".into(), "stdin".into()],
     });
     Observed {
         engine: Some(EngineObservation {

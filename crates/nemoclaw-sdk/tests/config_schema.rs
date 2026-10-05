@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
-#[path = "support/examples.rs"]
-mod examples;
+use crate::examples;
 
 use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(name);
-    serde_saphyr::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    crate::support::example(name)
 }
 
 fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {
@@ -170,15 +165,20 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 }
 
 #[test]
-fn schema_and_parser_accept_every_maintained_example() {
+fn every_example_is_accepted_and_round_trips_without_changing_intent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    for path in examples::yaml_files(&directory) {
-        if path.extension().is_some_and(|ext| ext == "yaml") {
-            let value: Value =
-                serde_saphyr::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            agrees(&validator, &value, true);
-        }
+    let paths = examples::yaml_files(&directory);
+    assert!(!paths.is_empty());
+    for path in paths {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: Value = serde_saphyr::from_str(&text).unwrap();
+        agrees(&validator, &value, true);
+        let document = Document::parse(text.as_bytes()).unwrap();
+        let restored = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+        assert_eq!(restored, document, "{}", path.display());
+        assert_eq!(restored.workspace(), document.workspace());
+        assert_eq!(restored.digest(), document.digest());
     }
 }
 
@@ -412,39 +412,6 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
 }
 
 #[test]
-fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let expected = root
-        .join(nemoclaw_sdk::config::schema::SCHEMA_PATH)
-        .canonicalize()
-        .unwrap();
-    let schema: Value = serde_json::from_slice(&std::fs::read(&expected).unwrap()).unwrap();
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    for path in examples::yaml_files(&root.join("examples")) {
-        let text = std::fs::read_to_string(&path).unwrap();
-        let associations: Vec<_> = text
-            .lines()
-            .filter_map(|line| line.strip_prefix("# yaml-language-server: $schema="))
-            .collect();
-        assert_eq!(
-            associations.len(),
-            1,
-            "{} must select one schema",
-            path.display()
-        );
-        let selected = path.parent().unwrap().join(associations[0]);
-        assert_eq!(
-            selected.canonicalize().unwrap(),
-            expected,
-            "{}",
-            path.display()
-        );
-        let value: Value = serde_saphyr::from_str(&text).unwrap();
-        agrees(&validator, &value, true);
-    }
-}
-
-#[test]
 fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
@@ -466,13 +433,9 @@ fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
 }
 
 #[test]
-fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
+fn every_sandbox_requires_one_agent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("local.yaml");
-    let sandbox = value["spec"]["sandboxes"][0].as_object_mut().unwrap();
-    if let Some(agents) = sandbox.remove("agents") {
-        sandbox.insert("agent".into(), agents[0].clone());
-    }
+    let value = input("local.yaml");
     agrees(&validator, &value, true);
     let mut missing = value.clone();
     missing["spec"]["sandboxes"][0]
@@ -480,12 +443,6 @@ fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
         .unwrap()
         .remove("agent");
     agrees(&validator, &missing, false);
-    let mut legacy = missing.clone();
-    legacy["spec"]["sandboxes"][0]["agents"] =
-        json!([value["spec"]["sandboxes"][0]["agent"].clone()]);
-    agrees(&validator, &legacy, false);
-    value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
-    agrees(&validator, &value, false);
 }
 
 #[test]

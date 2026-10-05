@@ -64,8 +64,7 @@ OpenShell stop completion and retained-data behavior still require qualification
 ## Image Contract and Reference Implementation
 
 Every packaged `fabric-agent` image exposes `/opt/nemoclaw/bridge.json` and the matching `io.nemoclaw.fabric.bridge` label.
-The manifest contains `interface_version`, the six `operations`, a cumulative prefix of native `health_checks` (`live`, `active`, `ready`), and the supported `input_sources`: `file` and `stdin`.
-Fields added within an interface version are additive; consumers ignore fields they do not recognize.
+The manifest contains exactly `interface_version`, the six `operations`, and a cumulative prefix of native `health_checks` (`live`, `active`, `ready`); consumers reject other fields.
 The current command and response interface remains version 1.
 Fabric image catalogs embed the same capability object; the builder rejects disagreement.
 Fabric revision remains provenance for validation responses; missing provenance does not invalidate a configuration that the installed validator accepts.

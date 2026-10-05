@@ -15,6 +15,9 @@ pub mod vllm;
 pub use tokio_util::sync::CancellationToken;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 mod execution;
+#[cfg(test)]
+#[path = "../../test-support/http.rs"]
+mod http_fixture;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 pub use execution::run;
 #[derive(

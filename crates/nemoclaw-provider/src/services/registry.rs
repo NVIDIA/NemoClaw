@@ -5,8 +5,6 @@ use crate::{
     ObservationError,
     backend::{Backend, Row},
 };
-#[cfg(test)]
-use nemoclaw_sdk::services::resource_schemas;
 /// Resolves a provider resource row to its package-owned backend.
 pub struct BackendRegistry<'a> {
     connections: &'a crate::docker::Connections,
@@ -22,16 +20,6 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
-        if matches!(
-            kind,
-            installers::vllm::SERVICE_KIND
-                | installers::ollama::SERVICE_KIND
-                | nemoclaw_sdk::services::installers::ollama::proxy::PROXY
-        ) {
-            return Err(ObservationError::Backend(
-                "service lifecycle belongs to the Docker provider",
-            ));
-        }
         if matches!(
             kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND
@@ -67,34 +55,5 @@ impl<'a> BackendRegistry<'a> {
             ))));
         }
         Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-
-    #[test]
-    fn migrated_compute_is_not_a_custom_provider_resource_or_backend() {
-        let schemas = resource_schemas();
-        let connections = crate::docker::Connections::default();
-        let registry = BackendRegistry::new(&connections);
-        for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
-            assert!(!schemas.iter().any(|schema| schema.kind == kind));
-            assert!(matches!(
-                registry.resolve(kind, &Row::new()),
-                Err(ObservationError::Backend(
-                    "service lifecycle belongs to the Docker provider"
-                ))
-            ));
-        }
-        for kind in [
-            "inference_storage",
-            "ollama_service_storage",
-            "ollama_proxy_storage",
-            "ollama_external_model",
-        ] {
-            assert!(schemas.iter().any(|schema| schema.kind == kind));
-        }
     }
 }

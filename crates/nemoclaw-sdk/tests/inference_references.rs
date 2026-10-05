@@ -7,7 +7,7 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
+    crate::support::example("fabric-openclaw.yaml")
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
     let inference = value["spec"]["sandboxes"][0]["agent"]

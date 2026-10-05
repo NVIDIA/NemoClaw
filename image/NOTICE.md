@@ -28,7 +28,7 @@ The image workflow qualifies the installed native adapters against owned local i
 The host delegates configuration and runtime operations to Fabric; its `check` command reports unsupported because the pinned SDK has no health API.
 The [provider caller](../crates/nemoclaw-provider/src/openshell/protocol.rs) uses the retained image command and interpreter for bridge calls and temporary input files.
 
-[`build_fabric.py`](build_fabric.py) builds local images, runs Fabric discovery in each installed environment without starting an adapter, and attaches the returned snapshot as `io.nemoclaw.fabric.catalog`.
+`cargo images build` ([source](../crates/nemoclaw-build/src/images.rs)) builds local images, runs Fabric discovery in each installed environment without starting an adapter, and attaches the returned snapshot as `io.nemoclaw.fabric.catalog`.
 It selects installed-package records using Fabric provenance and preserves the descriptor contents.
 Installed image catalogs also declare the bridge interface version, commands, and supported health levels; the bundled descriptor catalog makes no claim about an installed bridge.
 The Dockerfile records each adapter’s additional runtime directories in `/opt/nemoclaw/runtime-files.json`; the image catalog includes them as `runtime_files`.

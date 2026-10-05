@@ -237,8 +237,7 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     let bridge = json!({
         "interface_version": 1,
         "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
-        "health_checks": [],
-        "input_sources": ["file", "stdin"]
+        "health_checks": []
     });
     let mut raw = serde_json::to_value(catalog()).unwrap();
     let status = |raw: &serde_json::Value| {
@@ -248,18 +247,9 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
     assert_eq!(status(&raw), Support::Supported);
-    // Later bridge fields are additive within interface version 1.
-    raw["bridge"]["future_capability"] = json!({"any": "shape"});
-    assert_eq!(status(&raw), Support::Supported);
-    // The provider sends input only on stdin.
-    raw["bridge"] = bridge.clone();
-    raw["bridge"]["input_sources"] = json!(["file"]);
-    assert_eq!(status(&raw), Support::Unknown);
-    raw["bridge"]
-        .as_object_mut()
-        .unwrap()
-        .remove("input_sources");
-    assert_eq!(status(&raw), Support::Unknown);
+    // Interface version 1 is one exact shape; images built for another are rebuilt.
+    raw["bridge"]["input_sources"] = json!(["file", "stdin"]);
+    assert!(FabricCatalog::from_json(&raw.to_string()).is_err());
     raw["bridge"] = bridge.clone();
     raw["bridge"]["interface_version"] = 2.into();
     assert_eq!(status(&raw), Support::Unknown);

@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the SDK once instead of once per file.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
 
 [lints]
 workspace = true

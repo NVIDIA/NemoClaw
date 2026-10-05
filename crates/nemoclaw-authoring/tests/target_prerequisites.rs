@@ -32,7 +32,6 @@ fn installed_catalog() -> FabricCatalog {
         .map(String::from)
         .collect(),
         health_checks: Vec::new(),
-        input_sources: vec!["file".into(), "stdin".into()],
     });
     catalog
 }

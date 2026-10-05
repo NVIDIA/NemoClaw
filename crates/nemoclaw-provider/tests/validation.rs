@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::support;
 
 use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row, State};
 use nemoclaw_sdk::ObservationError;
-use std::sync::Arc;
-mod support;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use support::specification;
 use tf_provider::{AttributePath, Diagnostics, Resource};
 

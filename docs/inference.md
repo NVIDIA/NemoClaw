@@ -140,17 +140,16 @@ Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until 
 ## Build an Image with the Configuration Interface
 
 Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
-Images built for the former `inference.local` route are incompatible; rebuild before creating a native-inference deployment.
 
 Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
 
 ```sh
 # On Linux ARM64:
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 # For Hermes:
-python3 image/build_fabric.py --platform linux/arm64 hermes
+cargo images build --platform linux/arm64 hermes
 # On Linux AMD64:
-python3 image/build_fabric.py --platform linux/amd64 deepagents
+cargo images build --platform linux/amd64 deepagents
 ```
 
 These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally and attach catalog metadata obtained through the installed Fabric discovery API.

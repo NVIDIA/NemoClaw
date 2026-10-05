@@ -35,7 +35,7 @@ NVIDIA notices identify NemoClaw contributions; they do not replace upstream own
 | `verify_packed.py` | Adapted from `files/build_ple_packed_table.py` on 2026-09-11. Verifies tensor shape, size, snapshot identity, and every packed row, then emits a hash. | AGPL-3.0-or-later |
 | `apply_patches.py` | Adapts `start.sh` patch installation and the `files/patch_ple_offload.py` worker patch. On 2026-09-11, added immutable input checks, source retention, and rejection of a missing packed PLE table. | AGPL-3.0-or-later |
 | `prepare.py`, `verify.py` | NemoClaw JSON protocol adapters that invoke the separately licensed preparation and verification programs as subprocesses. | Apache-2.0 |
-| `test_prepare.py`, `test_attribution.py`, `crates/nemoclaw-e2e/fixtures/spark_preparation.py` | NemoClaw tests of recovery, generated notices, and the upstream packed-table format. | Apache-2.0 |
+| `test_prepare.py`, `test_attribution.py` | NemoClaw tests of recovery and generated notices. | Apache-2.0 |
 
 On 2026-09-18, `apply_patches.py` renamed its generated-file hash mapping without changing `patched-files.json`.
 

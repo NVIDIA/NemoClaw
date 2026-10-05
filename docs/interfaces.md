@@ -72,7 +72,7 @@ Missing image metadata leaves compatibility unverified.
 From the repository root, build the matching image and its installed Fabric metadata:
 
 ```sh
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 ```
 
 Select `linux/amd64` on an AMD64 builder.
@@ -144,7 +144,7 @@ See [native controls](agents.md#native-controls-at-initialization) for their own
 Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and build from the repository root:
 
 ```sh
-python3 image/build_fabric.py --platform linux/arm64 hermes
+cargo images build --platform linux/arm64 hermes
 ```
 
 Replace the example's image digest and deployment-specific values, then apply using the [desired-state workflow](usage.md).

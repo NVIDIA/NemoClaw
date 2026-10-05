@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::transport::Fixture;
 use nemoclaw_sdk::{
     ObservationError, Secrets,
     config::InferenceApi,
@@ -8,6 +9,7 @@ use nemoclaw_sdk::{
         AuthenticationStatus, EndpointRequest, observe_credential, observe_endpoint,
     },
 };
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 struct Missing;
 impl Secrets for Missing {
@@ -15,34 +17,53 @@ impl Secrets for Missing {
         Err(ObservationError::Authentication)
     }
 }
-async fn fixture(status: &str, body: &str) -> (String, tokio::task::JoinHandle<String>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let task = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut data = Vec::new();
-        while !data.ends_with(b"\r\n\r\n") {
-            data.push(stream.read_u8().await.unwrap());
-        }
-        stream.write_all(response.as_bytes()).await.unwrap();
-        String::from_utf8(data).unwrap()
-    });
-    (endpoint, task)
+/// One catalog endpoint that answers every request the same way and records
+/// each request line and headers, so tests can check what was sent.
+struct Catalog {
+    endpoint: String,
+    requests: Arc<Mutex<Vec<String>>>,
+    _server: Fixture,
+}
+impl Catalog {
+    fn request(&self) -> String {
+        let requests = self.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1, "expected one catalog request");
+        requests[0].clone()
+    }
+}
+async fn fixture(status: u16, body: &str) -> Catalog {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    let body = body.as_bytes().to_vec();
+    let server = Fixture::start_tcp(move |request| {
+        let headers = request
+            .headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>();
+        seen.lock().unwrap().push(format!(
+            "{} {} HTTP/1.1\r\n{headers}",
+            request.method, request.path
+        ));
+        Some((status, body.clone()))
+    })
+    .await;
+    Catalog {
+        endpoint: format!("{}/v1", server.endpoint),
+        requests,
+        _server: server,
+    }
 }
 #[tokio::test]
 async fn model_catalog_is_read_only_deduplicated_and_does_not_claim_generation_api() {
-    let (endpoint, request) = fixture(
-        "200 OK",
+    let catalog = fixture(
+        200,
         r#"{"data":[{"id":"model-b"},{"id":"model-a"},{"id":"model-b"}]}"#,
     )
     .await;
     let observed = observe_endpoint(
         &EndpointRequest {
-            endpoint,
+            endpoint: catalog.endpoint.clone(),
             api: InferenceApi::OpenaiResponses,
             credential_env: None,
         },
@@ -54,39 +75,34 @@ async fn model_catalog_is_read_only_deduplicated_and_does_not_claim_generation_a
     assert_eq!(observed.reachable, Some(true));
     assert_eq!(observed.authentication, AuthenticationStatus::NotRequired);
     assert!(!observed.api_verified);
-    assert!(
-        request
-            .await
-            .unwrap()
-            .starts_with("GET /v1/models HTTP/1.1\r\n")
-    );
+    assert!(catalog.request().starts_with("GET /v1/models HTTP/1.1\r\n"));
 }
 #[tokio::test]
 async fn authentication_and_incomplete_catalog_are_distinct_from_unreachable() {
     for (status, body, expected, auth) in [
         (
-            "401 Unauthorized",
+            401,
             r#"{"error":"PRIVATE_SENTINEL"}"#,
             ObservationStatus::Unavailable,
             AuthenticationStatus::Required,
         ),
         (
-            "200 OK",
+            200,
             r#"{"different":[]}"#,
             ObservationStatus::Unknown,
             AuthenticationStatus::Unknown,
         ),
         (
-            "404 Not Found",
+            404,
             r#"{"error":"PRIVATE_SENTINEL"}"#,
             ObservationStatus::Unknown,
             AuthenticationStatus::Unknown,
         ),
     ] {
-        let (endpoint, task) = fixture(status, body).await;
+        let catalog = fixture(status, body).await;
         let observed = observe_endpoint(
             &EndpointRequest {
-                endpoint,
+                endpoint: catalog.endpoint.clone(),
                 api: InferenceApi::OpenaiCompletions,
                 credential_env: None,
             },
@@ -101,7 +117,7 @@ async fn authentication_and_incomplete_catalog_are_distinct_from_unreachable() {
                 .unwrap()
                 .contains("PRIVATE_SENTINEL")
         );
-        task.await.unwrap();
+        catalog.request();
     }
 }
 #[test]
@@ -150,10 +166,10 @@ async fn redirects_are_not_followed_and_catalog_bounds_are_enforced() {
     assert_eq!(observed.reachable, Some(true));
     task.await.unwrap();
     let body = serde_json::json!({"data":[{"id":"x".repeat(1025)}]}).to_string();
-    let (endpoint, task) = fixture("200 OK", &body).await;
+    let catalog = fixture(200, &body).await;
     let observed = observe_endpoint(
         &EndpointRequest {
-            endpoint,
+            endpoint: catalog.endpoint.clone(),
             api: InferenceApi::OpenaiCompletions,
             credential_env: None,
         },
@@ -162,43 +178,27 @@ async fn redirects_are_not_followed_and_catalog_bounds_are_enforced() {
     .await;
     assert_eq!(observed.status, ObservationStatus::Unknown);
     assert!(observed.models.is_empty());
-    task.await.unwrap();
+    catalog.request();
 }
 
 #[tokio::test]
 async fn anthropic_pagination_is_complete_before_publishing_model_choices() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let task = tokio::spawn(async move {
-        let mut paths = Vec::new();
-        for body in [
-            r#"{"data":[{"id":"model-a"}],"has_more":true,"last_id":"model-a"}"#,
-            r#"{"data":[{"id":"model-b"}],"has_more":false}"#,
-        ] {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut bytes = Vec::new();
-            while !bytes.ends_with(b"\r\n\r\n") {
-                bytes.push(stream.read_u8().await.unwrap());
-            }
-            let request = String::from_utf8(bytes).unwrap();
-            assert!(request.contains("anthropic-version: 2023-06-01"));
-            paths.push(request.lines().next().unwrap().to_owned());
-            stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .unwrap();
-        }
-        paths
-    });
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let seen = paths.clone();
+    let mut pages = [
+        r#"{"data":[{"id":"model-a"}],"has_more":true,"last_id":"model-a"}"#,
+        r#"{"data":[{"id":"model-b"}],"has_more":false}"#,
+    ]
+    .into_iter();
+    let server = Fixture::start_tcp(move |request| {
+        assert_eq!(request.header("anthropic-version"), Some("2023-06-01"));
+        seen.lock().unwrap().push(request.path);
+        Some((200, pages.next()?.as_bytes().to_vec()))
+    })
+    .await;
     let observed = observe_endpoint(
         &EndpointRequest {
-            endpoint: format!("http://{address}"),
+            endpoint: server.endpoint.clone(),
             api: InferenceApi::AnthropicMessages,
             credential_env: None,
         },
@@ -207,8 +207,9 @@ async fn anthropic_pagination_is_complete_before_publishing_model_choices() {
     .await;
     assert_eq!(observed.status, ObservationStatus::Available);
     assert_eq!(observed.models, vec!["model-a", "model-b"]);
-    let paths = task.await.unwrap();
-    assert_eq!(paths[0], "GET /v1/models?limit=1000 HTTP/1.1");
+    let paths = paths.lock().unwrap();
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0], "/v1/models?limit=1000");
     assert!(paths[1].contains("after_id=model-a"));
 }
 
@@ -259,10 +260,10 @@ async fn credential_headers_follow_the_owning_local_http_endpoint_policy() {
             Ok("SECRET_HEADER_VALUE".into())
         }
     }
-    let (endpoint, task) = fixture("200 OK", r#"{"data":[{"id":"known-model"}]}"#).await;
+    let catalog = fixture(200, r#"{"data":[{"id":"known-model"}]}"#).await;
     let observed = observe_endpoint(
         &EndpointRequest {
-            endpoint,
+            endpoint: catalog.endpoint.clone(),
             api: InferenceApi::OpenaiCompletions,
             credential_env: Some("API_KEY".into()),
         },
@@ -272,8 +273,8 @@ async fn credential_headers_follow_the_owning_local_http_endpoint_policy() {
     assert_eq!(observed.status, ObservationStatus::Available);
     assert_eq!(observed.authentication, AuthenticationStatus::Accepted);
     assert!(
-        task.await
-            .unwrap()
+        catalog
+            .request()
             .contains("authorization: Bearer SECRET_HEADER_VALUE")
     );
     assert!(
@@ -300,11 +301,10 @@ async fn an_endpoint_cannot_echo_the_credential_into_model_suggestions_or_state(
             Ok("SECRET_HEADER_VALUE".into())
         }
     }
-    let (endpoint, task) =
-        fixture("200 OK", r#"{"data":[{"id":"model-SECRET_HEADER_VALUE"}]}"#).await;
+    let catalog = fixture(200, r#"{"data":[{"id":"model-SECRET_HEADER_VALUE"}]}"#).await;
     let observed = observe_endpoint(
         &EndpointRequest {
-            endpoint,
+            endpoint: catalog.endpoint.clone(),
             api: InferenceApi::OpenaiCompletions,
             credential_env: Some("API_KEY".into()),
         },
@@ -318,5 +318,5 @@ async fn an_endpoint_cannot_echo_the_credential_into_model_suggestions_or_state(
             .unwrap()
             .contains("SECRET_HEADER_VALUE")
     );
-    task.await.unwrap();
+    catalog.request();
 }

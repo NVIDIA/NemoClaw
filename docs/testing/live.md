@@ -50,8 +50,8 @@ The read-only live storage test requires an explicit OpenTofu runtime state file
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
-  cargo test -p nemoclaw-sdk --test managed_live \
-  retained_inference_credentials_preserve_their_reference_binding -- --ignored
+  cargo test -p nemoclaw-sdk --test integration \
+  managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
 
 The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
@@ -71,7 +71,7 @@ From the repository root, with absolute paths:
 NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark-inline.yaml \
 NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test spark spark_yaml_plans_and_applies_expected_resources -- --ignored
+  cargo test -p nemoclaw-e2e --test integration spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
 The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
@@ -151,8 +151,8 @@ Supply a fresh, owned OpenClaw or Hermes deployment configuration with a free ga
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_LIVE_MODEL_CONFIG=/absolute/path/to/vllm.yaml \
 NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
-  cargo test -p nemoclaw-e2e --test model_live \
-    selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
+  cargo test -p nemoclaw-e2e --test integration \
+    model_live::selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
 It checks initial apply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
@@ -189,7 +189,7 @@ This scenario does not qualify Relay or Switchyard.
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.
-Set `NEMOCLAW_TEST_SSH_ENGINE` to an explicit SSH URL and `NEMOCLAW_TEST_ENGINE_ID` to an independently observed daemon ID, then run `cargo test -p nemoclaw-sdk --test ssh_live ssh_observes -- --ignored`.
+Set `NEMOCLAW_TEST_SSH_ENGINE` to an explicit SSH URL and `NEMOCLAW_TEST_ENGINE_ID` to an independently observed daemon ID, then run `cargo test -p nemoclaw-sdk --test integration ssh_live::ssh_observes -- --ignored`.
 Run `ssh_failure` separately against rejected authentication, an untrusted host key, or an unavailable endpoint; it must report observation failure, not absence.
 
 The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the full ID of a stopped container labeled `nemoclaw.experiment=ssh-transport`.
@@ -253,8 +253,8 @@ From the repository root, with absolute document paths and the local sandbox ima
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/first-owned-deployment.yaml \
 NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT=/absolute/path/to/second-owned-deployment.yaml \
 NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
-  cargo test -p nemoclaw-provider --test managed_gateway_live \
-    pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes -- --ignored --exact --nocapture
+  cargo test -p nemoclaw-provider --test integration \
+    managed_gateway_live::pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes -- --ignored --exact --nocapture
 ```
 
 Both sandboxes must reach Ready and execute commands through the real supervisor callback.
@@ -284,8 +284,8 @@ From the repository root, with an absolute document path and the local sandbox i
 ```sh
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/owned-deployment.yaml \
 NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
-  cargo test -p nemoclaw-provider --test managed_gateway_live \
-    profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart -- --ignored --exact --nocapture
+  cargo test -p nemoclaw-provider --test integration \
+    managed_gateway_live::profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart -- --ignored --exact --nocapture
 ```
 
 The sandbox must reach Ready with all five providers attached.

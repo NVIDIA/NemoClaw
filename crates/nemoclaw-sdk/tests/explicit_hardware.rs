@@ -7,7 +7,7 @@ use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::Ser
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap()
+    crate::support::example("spark/vllm.yaml")
 }
 
 #[test]

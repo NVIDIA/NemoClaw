@@ -2089,6 +2089,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "flate2",
+ "getrandom 0.4.3",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
  "pulldown-cmark",
@@ -2148,6 +2149,24 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tower",
+]
+
+[[package]]
+name = "nemoclaw-ollama-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]

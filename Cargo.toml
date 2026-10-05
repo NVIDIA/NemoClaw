@@ -7,6 +7,7 @@ members = [
     "crates/nemoclaw-cli",
     "crates/nemoclaw-runtime",
     "crates/nemoclaw-build",
+    "crates/nemoclaw-ollama-proxy",
     "examples/onboarding-tui",
 ]
 resolver = "3"
@@ -70,11 +71,3 @@ crossterm = "0.29"
 
 [patch."https://github.com/NVIDIA/OpenShell"]
 openshell-sdk = { path = "crates/vendor/openshell-sdk" }
-
-# Keep line-number backtraces without generating full local-variable debug data.
-[profile.dev]
-debug = 1
-
-# Deployment tests verify native bundle digests on every operation.
-[profile.dev.package.sha2]
-opt-level = 3
