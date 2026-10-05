@@ -6,18 +6,19 @@
 This page classifies every target read by what it depends on.
 Plan and onboarding must make consistent decisions from the same facts, so the reads that need no plan belong upstream of both.
 It records the current state and does not change behavior.
-Verified against revision `160786001`.
+Verified against revision `127604989`.
 
 ## Layers
 
 | Layer | A read belongs here when | Used by |
 |---|---|---|
 | 1. Environment fact | Its inputs are literal query values and it reads only the environment. | Plan and onboarding |
-| 2. Judgment | It is a function of layer-1 facts and a requirement from the document or carried by the query. | Plan and onboarding, through one shared function |
-| 3. Graph-bound | Its inputs reference resources or outputs in the same graph, or its result feeds a resource. | Plan only |
+| 2. Judgment | It is a function of layer-1 facts and a requirement the query carries. | Plan and onboarding, through the same query |
+| 3. Plan-bound | Its inputs reference a resource in the same graph, or a resource consumes its result. | Plan only |
 
-OpenTofu orders layer-3 reads against resources, so they can exist only inside the plan graph.
-Layer-1 and layer-2 reads need no resources.
+A resource exists only in a plan, so OpenTofu can order a layer-3 read only inside the plan graph.
+A read may still reference another read: the image read takes its platform from the engine read.
+That reference keeps it in layer 2, because a discovery session can make both reads in one round.
 
 ## Classification
 
@@ -29,7 +30,7 @@ Layer-3 variants are in [`PlanObservation`](../../crates/nemoclaw-sdk/src/deploy
 |---|---|---|---|---|
 | `Engine` | `engine_capabilities` | 1 and 2: status means the engine meets gateway prerequisites for the query's compute driver | Gate the plan, and report | Assess compatibility, suggest a runtime |
 | `Hardware` | `target_hardware` | 1 | Report its status only | Nothing; it is asked and not read |
-| `Fabric` | `fabric_capabilities` | 1 for the raw image data; 2 for `compatibility`, present only with requirements; 3 for `runtime_json`, `binaries_json`, and `compatibility_status` | Gate the plan, feed resources, report | Assess compatibility client-side from the raw read |
+| `Fabric` | `fabric_capabilities` | 1 for the raw image data; 2 for `compatibility`, judged against the query's requirements on its platform engine; 3 for `runtime_json`, `binaries_json`, and `compatibility_status` | Gate the plan, feed resources, report | Relay the same `compatibility` |
 | `Inference` | `inference_capabilities` | 1, read from the control host | Report; never a gate | Suggest models, gate delegation |
 | `Gateway` | `gateway_capabilities` | 1 and 2: status and `compatible` are verdicts against the required drivers | Report, resolved only when compatible | Nothing; it is asked and not read |
 | `Credential` | none; read from the control host environment | 1; the value is never recorded | List and defer | Gate delegation |
@@ -56,18 +57,17 @@ Two data sources are not in the enum.
 
 | Judgment | Where |
 |---|---|
-| Image compatibility | The provider's image data source and onboarding's `assess_target`, both through `assess_image` |
 | Resolved or unresolved | `DiscoveryReport::unresolved` for plan, and onboarding's `assess_target` |
 | Gateway compatibility | `GatewayObservation::from_result` and the report's resolved check |
 
 Plan classifies deferrals only from its typed report; `Plan::discovery_deferred` adds the one case the report cannot hold, a discovery output OpenTofu cannot compute yet.
+Image compatibility has one implementation: the provider computes it from the image query's inputs, which `DiscoveryQuery::data` writes identically for a plan and a discovery session.
 The names `endpoint_N`, `target_N`, and `sandbox_N` must agree across `populate`, `is_observation`, and `category`.
 
 ## Implications
 
 These follow from the tables and are not decisions.
 
-- Onboarding could read Fabric compatibility from the observation, as plan does, if its Fabric query carried the sandbox's requirements and the engine's platform.
 - A raw image observation can be separate from its verdict, while the data source keeps the outputs the graph needs.
 - The CLI prints the report's `targets` and `observations`, so a query-keyed report would change that output.
 
