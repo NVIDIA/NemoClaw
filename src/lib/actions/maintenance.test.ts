@@ -57,6 +57,7 @@ vi.mock("../state/registry", () => ({
   recordSandboxStopIntent: mocks.recordSandboxStopIntent,
   updateSandbox: mocks.updateSandbox,
 }));
+vi.mock("../state/registry/lock", () => ({ withRegistryLockAt: vi.fn() }));
 vi.mock("../state/gateway-registry", async () => ({
   resolveHome: (await import("../state/state-root")).resolveHome,
   listHostGatewayRegistryEntries: mocks.listHostGatewayRegistryEntries,
