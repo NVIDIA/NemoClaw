@@ -18,7 +18,7 @@ import {
   TAVILY_PROVIDER_PROFILE_AGENTS,
   TAVILY_PROVIDER_PROFILE_ID,
   webSearchProviderProfileId,
-} from "../messaging/applier/web-search-provider-profile";
+} from "../inference/web-search/provider-profile";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,

@@ -8,6 +8,7 @@
     "@openclaw/googlechat@2026.9.5",
     "@openclaw/msteams@2026.9.5",
     "@openclaw/slack@2026.9.5",
+    "@openclaw/tavily-plugin@2026.9.5",
     "@openclaw/whatsapp@2026.9.5",
     "@tencent-weixin/openclaw-weixin@2.4.9",
     "@zed-industries/codex-acp@0.11.1",

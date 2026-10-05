@@ -111,6 +111,8 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
   "sha512-dnXM0FGBqqYVDaEze8nzpcjXOLSc/xENGvfx9xt09JWFi45uBF8x9+e0E4i4l1H9pqFFI3zPI1TU4U6lYT8w0w==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.5.tgz";
+const PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY =
+  "sha512-jlV7NUB+oag/7O/k36DqfzYXexZsMuOLCcDZ6ZAKRXsTZasgpH7vMN9FJMHEry8aTlggbAFf001SlYbYnv5olg==";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
   "sha512-Q45q/ZW+zw6Gr5Fg8J8V8xMWYXegMVEn3q8TcRBJyuD0nP0PtuW9FdkPF82KJ/yCP0tj18VPCgLPOuhYaiwR7A==";
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
@@ -802,6 +804,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
+        );
+        expect(requiredDockerArg("OPENCLAW_TAVILY_PLUGIN_2026_9_5_INTEGRITY")).toBe(
+          PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY,
         );
         const { result, calls } = runOptionalOpenClawPluginBlock();
 
@@ -1577,6 +1582,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "OPENCLAW_2026_9_5_TARBALL",
           "OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY",
           "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_5_INTEGRITY",
+          "OPENCLAW_TAVILY_PLUGIN_2026_9_5_INTEGRITY",
         ]);
 
         const futurePinArgNames = [
@@ -1775,10 +1781,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:fe5baa1d9bbe53b3cf616a13ff7dcb0f21d6ce7a7d6d9856b9909e81c53a884c",
+          "ADD --chmod=0444 --checksum=sha256:8bf31b80b70bec323d54d765ca5ea110a0c39a5dc9f975684208fc517e67de9d",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:40c0cf23e8373f2285034b8f0a575cc51ec1ed53d081b0e1592d219dd411e54d",
+          "ADD --chmod=0444 --checksum=sha256:061442c5547e1695915c74faacdc8f38d8d04ba40718bfccd25fc7d7718b4ae4",
+        );
+        expect(archiveBlock).toContain(
+          "ADD --chmod=0444 --checksum=sha256:c03d7b070c07e6aa4f7da36cd7a2c66e14862e9af53810d6e8a64e3ca8f1d3a8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.5.tgz /tavily-plugin-2026.9.5.tgz",
         );
         expect(archiveBlock).not.toContain("propagator-jaeger-2.9.0.tgz");
         expect(archiveBlock).not.toContain("core-2.9.0.tgz");

@@ -226,10 +226,9 @@ check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' 
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_not_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
-check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
-check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
-check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"' "optional plugin reviewed npm-pack install confirmation"
-check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi' "optional plugin fallback source cleanup"
+check_contains "$optional_plugin_block" 'plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"' "optional plugin reviewed archive"
+check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"' "optional plugin reviewed npm-pack install confirmation"
+check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$(dirname "$plugin_archive")"; fi' "optional plugin fallback source cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"

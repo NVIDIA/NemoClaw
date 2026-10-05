@@ -89,8 +89,12 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The same reviewed install with npm forced offline for every optional
   // plugin command; it still preserves the generated dashboard config.
   "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
-  // The same offline optional-plugin install with reviewed 2026.9.5 pins.
+  // The same offline optional-plugin install with reviewed 2026.9.2 pins.
   "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
+  // Reviewed Tavily preinstall with archive verification before native installation.
+  "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
+  // The same Tavily-aware installation with reviewed 2026.9.5 pins.
+  "b1d8e91af9b2f10986a27a6bd4c3fc4dda19e22a4a8c44460a0685331a59a1fe",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
