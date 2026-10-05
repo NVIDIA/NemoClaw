@@ -6,7 +6,6 @@
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
 Fern's version selector offers **Latest (main)** and **v1 (Development)** in one site.
 Latest remains the default at its existing routes; v1 uses `/nemoclaw/v1/`.
-Sections marked **TBD** remain visible in generated pages.
 Publication does not qualify the procedures or product configurations they describe.
 
 ## Sources and Outputs
@@ -32,7 +31,7 @@ It installs only the [locked docs dependency](../../tools/docs/main/package.json
 Main's npm application dependencies are not installed.
 The imported installation prompt and agent variants appear only in Latest.
 V1 runtime guidance remains in [agents.md](../agents.md), and [resources](../resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
-A rehearsed installation prompt remains **TBD** until its procedure is verified.
+The installation prompt has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 
 To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
 Before a public release, select the main revision intended for publication; a main branch tip is not automatically its latest published release.
@@ -137,13 +136,13 @@ Public publication is disabled while the variable is absent.
 The workflow uses a repository variable because GitHub evaluates the job condition before loading environment variables.
 The existing `docs.nvidia.com/nemoclaw` domain serves both versions.
 Main's current single-version publisher would remove the v1 entry on its next release; coordination in step 4 is required before enabling this workflow.
-That change on main and the shared-site cutover are **TBD**.
+That change on main and the switch to the shared site are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 Changes to the public destination must update both the Fern configuration and the publisher, then repeat preview and release checks.
 
 The v1 version entry is a moving documentation version, not a per-release archive.
 For a documentation rollback, revert the relevant source/configuration change on `v1`, validate staging, and publish a new release tag through the same ancestry guard.
 The pinned main snapshot retains earlier guides, changelog files, and legacy redirect rules in the combined build.
-A complete hosted legacy-route sweep and a rehearsed public rollback remain **TBD**.
+Legacy routes on the hosted site have not been checked, and public rollback has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 Main's separate post-merge documentation-authoring bot is not part of this publishing workflow.
 
 ## Hosted Outputs and Release Verification
@@ -166,8 +165,8 @@ The [staging build for c7e8e116c8](https://github.com/NVIDIA/NemoClaw/actions/ru
 The preview moves with successful publication; repeat these checks for the release candidate.
 The generic header on a v1 Markdown page can link to the unversioned index and advertise MCP.
 Use the version-specific index explicitly; header text alone does not verify MCP availability or version-scoped search.
-Complete rendered-page/legacy-route coverage and public-cutover verification remain **TBD**.
+Checks of every rendered page, every legacy route and the public switch-over are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 Fern's [docs MCP server](https://buildwithfern.com/learn/docs/ai-features/mcp-server) requires Ask Fern to be enabled for the destination.
-Provisioning, search indexing, MCP access, and checks that results stay within v1 are **TBD**.
+Provisioning, search indexing, MCP access and v1-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 Do not advertise a working v1 search or MCP endpoint based only on a successful local build.

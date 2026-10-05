@@ -87,7 +87,7 @@ The pinned Fabric has no health API, so the bridge returns unsupported with its 
 The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
 **Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
 A reachable bridge or remembered runtime handle does not establish agent health.
-Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
+Real adapters report health as unsupported until Fabric's health API is pinned ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
 
 Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.

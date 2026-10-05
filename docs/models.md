@@ -177,7 +177,7 @@ All profiles retain the resident host-memory watchdog.
 
 The [profile catalog](../crates/nemoclaw-runtime/src/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
-Successful inference for each candidate, model, agent, GPU count, and host configuration remains **TBD** until tested.
+Inference has not been tested for every candidate, model, agent, GPU count and host ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Diagnose and Recover a Stopped Runtime
 

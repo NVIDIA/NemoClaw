@@ -4,15 +4,13 @@
 # Release Notes
 
 These notes describe the v1 development documentation and its release boundaries.
-A release version, date, artifact manifest, and approved support matrix: **TBD**.
+v1 has no release yet; [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
 The workspace package version alone does not establish that a release has been published.
 
 ## Product Changes
 
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 See [the overview](overview.md) for implemented boundaries and [the CLI reference](reference/cli.md) for commands.
-
-Final changes tied to a release tag and matching artifacts: **TBD**.
 
 ## Breaking Changes and Migration
 
@@ -21,16 +19,7 @@ See [migration](migration.md) for where each earlier task lives now, and [state]
 
 ## Qualification and Known Issues
 
-Release-candidate results, supported configurations, and reviewed known issues: **TBD**.
-Before a release, these checks remain open against the candidate bundle and images:
-
-- First deployment and native access from a clean host, through an OpenClaw or Hermes reply, recovery, and a cleanup preview.
-- Each claimed model, platform, provider, and separate-host configuration, qualified individually.
-- Native integrations and data continuity, including backup, restore, and return to the earlier deployment, for each claimed harness.
-- A published installation path, version compatibility, the provider's direct-use contract, and an approved platform matrix.
-- Public documentation cutover: a reviewed main snapshot, a hosted sweep of legacy routes and anchors, staging checks, and a rehearsed rollback.
-
-Managed NIM, llama.cpp, model routing, distributed inference, MCP and channel lifecycles, and native-data adoption need implementation before the documentation can describe them.
+See [current limits](limits.md) for what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## Previous Releases
 

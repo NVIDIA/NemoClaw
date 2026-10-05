@@ -46,7 +46,7 @@ Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JS
 Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal prompt/result shape.
-A qualified native request walkthrough for this migrated runtime remains **TBD**.
+No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ### Run One Headless OpenClaw Request
 
@@ -93,7 +93,7 @@ Native delivery and live collector qualification remain separate from configurat
 Relay configuration belongs to Fabric's public configuration and the exact Hermes adapter contract.
 It does not trigger adapter selection in NemoClaw.
 Do not infer native API availability from a tracing setting.
-Qualification of the migrated Relay configuration, trace artifacts, and retained native sessions remains **TBD**.
+Relay configuration, trace artifacts and retained sessions have not been tested live ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ## Define and Attach Integrations
 
@@ -147,7 +147,7 @@ The reserved `nemoclaw-tavily` profile authorizes the supported search/extract p
 Inference names using `tavily-search` or its registration prefix are reserved when attached.
 Unused definitions create no resources or credentials.
 Follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
-Live Tavily/OpenShell qualification for this migration remains **TBD**.
+Tavily search has not been tested live through OpenShell ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Hermes Native Server
 

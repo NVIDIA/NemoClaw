@@ -9,7 +9,8 @@
         {"title": "Check prerequisites", "source": "docs/prerequisites.md", "slug": "prerequisites"},
         {"title": "Deploy OpenClaw with existing services", "source": "docs/get-started.md", "slug": "get-started"},
         {"title": "Assess migration", "source": "docs/migration.md", "slug": "migration"},
-        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"}
+        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"},
+        {"title": "Check current limits", "source": "docs/limits.md", "slug": "limits"}
       ]
     },
     {

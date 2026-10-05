@@ -343,8 +343,7 @@ The Docker provider has a fixed release version and checksum-pinned native archi
 
 ## Direct OpenTofu Usage
 
-Public provider distribution and installation instructions: **TBD**.
-Supported user-authored HCL examples and their lifecycle/retention contract: **TBD**.
-Import, adoption, remote-state backends, and compatibility across provider releases: **TBD**.
+The provider is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

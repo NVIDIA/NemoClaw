@@ -62,7 +62,7 @@ Then remove that dedicated bundle directory using your host's file manager and r
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
+There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images

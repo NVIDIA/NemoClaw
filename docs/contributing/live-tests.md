@@ -276,7 +276,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-A verified manual cleanup procedure remains [TBD](../state.md#deletion-and-retention).
+There is no verified cleanup procedure yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -308,7 +308,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-The [manual retained-storage cleanup procedure](../state.md#deletion-and-retention) remains **TBD**.
+A cleanup procedure for retained storage is tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 
