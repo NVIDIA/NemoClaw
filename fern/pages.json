@@ -49,12 +49,12 @@
     {
       "title": "Develop and validate",
       "pages": [
-        {"title": "Tests", "source": "docs/testing.md", "slug": "testing"},
-        {"title": "Run integration tests", "source": "docs/testing/fixtures.md", "slug": "testing/fixtures"},
-        {"title": "Run live tests", "source": "docs/testing/live.md", "slug": "testing/live"},
-        {"title": "Contribute documentation", "source": "docs/CONTRIBUTING.md", "slug": "contributing"},
-        {"title": "Maintain the configuration schema", "source": "docs/configuration-schema.md", "slug": "configuration-schema"},
-        {"title": "Build and publish documentation", "source": "docs/AUTOMATION.md", "slug": "documentation-build"}
+        {"title": "Tests", "source": "docs/contributing/testing.md", "slug": "testing"},
+        {"title": "Run integration tests", "source": "docs/contributing/integration-tests.md", "slug": "testing/fixtures"},
+        {"title": "Run live tests", "source": "docs/contributing/live-tests.md", "slug": "testing/live"},
+        {"title": "Contribute documentation", "source": "docs/contributing/documentation.md", "slug": "contributing"},
+        {"title": "Maintain the configuration schema", "source": "docs/contributing/configuration-schema.md", "slug": "configuration-schema"},
+        {"title": "Build and publish documentation", "source": "docs/contributing/documentation-build.md", "slug": "documentation-build"}
       ]
     }
   ]

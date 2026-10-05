@@ -19,7 +19,7 @@ The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and
 Each workflow step calls the same command, so the local result matches the platform's CI job.
 It does not run the image, documentation, or dependency workflows, or another platform's job.
 
-On Linux with a local Docker engine that uses the [containerd image store](build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
+On Linux with a local Docker engine that uses the [containerd image store](../build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
 Run `cargo ci build` and `cargo ci bundle` first.
 The step pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
 It then runs the `live-docker` nextest profile: the Ollama cache, runtime archive, offline runtime rebuild, standalone cache, Docker proxy, gateway recovery, gateway isolation, and profile revision tests, one at a time.
@@ -45,7 +45,7 @@ Keep the ruleset's check names aligned when renaming jobs; workflow display name
 Superseded PR runs are cancelled.
 Running branch pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups.
-The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/live.md#bare-brev).
+The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Test Runner
 
@@ -57,15 +57,15 @@ The `lifecycle` profile selects the isolated bundle fixtures and native-state te
 CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
 Lifecycle timing artifacts contain per-test durations for comparing scheduling changes.
 Both profiles finish the remaining tests after a failure.
-Use the [fixture prerequisites](testing/fixtures.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
+Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.
 
 ## Dependency Policy
 
-The [dependency workflow](../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
+The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
 Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
-The [policy](../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.
+The [policy](../../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.
 
 Install cargo-deny 0.20.2 once, then run from the repository root:
 
@@ -83,7 +83,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -108,9 +108,9 @@ Use `ruff format .` through the same pinned uv invocation to apply formatting.
 The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
-The [image workflow](../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../image/test_agent_contract.py) against every selected agent image.
-Use the [reference image procedure](build.md#reference-contract-image) to run that suite locally against explicit image references.
+The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
+It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
+Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
 The suite tests real entrypoints, file and stdin inputs, exit codes, capability labels, standalone validation, host startup and shutdown, and retained files; the dummy also exercises successful configuration, health, invocation, and preparation.
 The workflow separately qualifies the installed OpenClaw, Hermes, and Pi adapters against isolated local inference, on platforms with those image targets.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
@@ -144,7 +144,7 @@ The checksum-addressed OpenTofu archives in `.build/downloads` use a separate ca
 Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
-The [shared Rust setup](../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, and Brev builds and exports the installed `PROTOC` to later steps.
+The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, and Brev builds and exports the installed `PROTOC` to later steps.
 That runner compiles without the SDK in `target/ci-runner`, so it can install the compiler before anything needs it.
 GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.
 Parallel VM preparation reduces the build's contribution to elapsed time even on a cold run.
@@ -191,9 +191,9 @@ For deployment tests, keep the YAML and expected plan/apply resource actions eas
 Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
 
-- [Run integration tests](testing/fixtures.md) with explicit OpenTofu and bundle paths.
-- [Run live tests](testing/live.md) only against explicitly owned resources.
+- [Run integration tests](integration-tests.md) with explicit OpenTofu and bundle paths.
+- [Run live tests](live-tests.md) only against explicitly owned resources.
 
 ### SSH Engine Transport
 
-Use [SSH service fixtures](testing/fixtures.md#ssh-service-fixtures) or [live SSH transport tests](testing/live.md#ssh-engine-transport).
+Use [SSH service fixtures](integration-tests.md#ssh-service-fixtures) or [live SSH transport tests](live-tests.md#ssh-engine-transport).

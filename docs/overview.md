@@ -54,7 +54,7 @@ Use the [documentation index](README.md) to find other tasks.
 
 ## Tested Configurations and Limits
 
-The [accepted scope](design/scope.md) defines the product contract; the [test guides](testing.md) describe what each test covers.
+The [accepted scope](design/scope.md) defines the product contract; the [test guides](contributing/testing.md) describe what each test covers.
 Parser acceptance or a reachable endpoint does not establish working inference.
 
 Enterprise deployment qualification and service-level support commitments: **TBD**.

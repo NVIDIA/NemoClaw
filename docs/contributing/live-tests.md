@@ -81,7 +81,7 @@ After failure, retain state for [explicit recovery](../usage.md#updates-and-reco
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
 The test compares the input with exported configuration, then requires plan and apply to replace `docker_container.inference_service_inference_qwen` and reconcile its image resource while retaining storage.
-Storage retention and watchdog recovery have separate tests under [runtime boundaries](fixtures.md#runtime-boundaries) and [generic models](#generic-models).
+Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
 Rebuilding `dist` replaces development artifacts; keep the selected bundle unchanged until the operation ends.

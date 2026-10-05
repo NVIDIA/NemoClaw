@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Real Docker and OpenTofu tests that need only a Linux runner's Docker engine.
-# `cargo ci live-docker` runs the same thing locally; see docs/testing.md.
+# `cargo ci live-docker` runs the same thing locally; see docs/contributing/testing.md.
 name: Live / Docker
 on:
   push:

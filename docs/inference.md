@@ -474,14 +474,14 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 
 An empty `changes` list on apply does not skip configuration or readiness checks.
 Operation results no longer contain `agentResponse`.
-After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
+After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](contributing/live-tests.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 
 The deterministic lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
-The [offline harness fixture](testing/fixtures.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
+The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
 ## Additional Inference Workflows
 

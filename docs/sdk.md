@@ -226,7 +226,7 @@ Keep each selected bundle immutable while operations use it.
 Use a separate bundle copy for a deployment operation when rebuilding development artifacts.
 There is no SDK auto-retry of ambiguous mutations and no background reconciliation loop.
 
-See [lifecycle behavior](usage.md) and [tests](testing.md).
+See [lifecycle behavior](usage.md) and [tests](contributing/testing.md).
 If an unfinished apply reports different intent, retry the original document with retained state before requesting another change.
 If destroy is unfinished, resume destroy; cancellation is not a rollback or a lost-state recovery mechanism.
 

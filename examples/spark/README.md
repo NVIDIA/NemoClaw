@@ -95,5 +95,5 @@ It does not reproduce the upstream performance configurations: speculative decod
 These are text-agent scenarios; the presence of a vision-capable model does not qualify multimodal agent input.
 
 Validation status: parser, schema, compiled resource topology, export round trips, and maintained adapter contracts are checked by the Rust tests, including this nested directory.
-The [Spark live test](../../docs/testing/live.md#spark-and-fabric) checks plan and apply on a GB10 host.
+The [Spark live test](../../docs/contributing/live-tests.md#spark-and-fabric) checks plan and apply on a GB10 host.
 Passing configuration checks alone does not establish model loading, tool use, or performance.

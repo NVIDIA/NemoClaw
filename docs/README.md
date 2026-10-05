@@ -55,12 +55,12 @@ TBD is not a support claim or a delivery commitment.
 
 | Task | Guide |
 |---|---|
-| Run workspace checks and collect coverage | [Tests](testing.md) |
-| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](testing/fixtures.md) |
-| Test explicitly owned live resources | [Run live tests](testing/live.md) |
-| Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
-| Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
-| Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |
+| Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
+| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](contributing/integration-tests.md) |
+| Test explicitly owned live resources | [Run live tests](contributing/live-tests.md) |
+| Write or reorganize documentation | [Contribute documentation](contributing/documentation.md) |
+| Validate, preview, or publish the v1 site | [Documentation build](contributing/documentation-build.md) |
+| Update the generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
 
 ## Understand the Design
 

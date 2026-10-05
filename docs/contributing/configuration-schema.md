@@ -3,11 +3,11 @@
 
 # Maintain the Configuration Schema
 
-The [YAML field reference](reference/configuration.md) and [JSON Schema](../schemas/nemoclaw-v1alpha1.schema.json) come from the SDK's configuration types and validation constraints.
+The [YAML field reference](../reference/configuration.md) and [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) come from the SDK's configuration types and validation constraints.
 Edit their Rust sources, then regenerate both artifacts.
 CI rejects stale output.
 
-For editing a deployment, use [editor schema assistance](usage.md#editor-schema-assistance).
+For editing a deployment, use [editor schema assistance](../usage.md#editor-schema-assistance).
 
 ```mermaid
 flowchart LR
@@ -23,13 +23,13 @@ flowchart LR
 
 ## Change a Field or Rule
 
-Complete the [build prerequisites](build.md).
+Complete the [build prerequisites](../build.md).
 From the repository root:
 
-1. Add a parser/schema test for the accepted or rejected input in [config_schema.rs](../crates/nemoclaw-sdk/tests/config_schema.rs).
-2. Change the [configuration types](../crates/nemoclaw-sdk/src/config/types.rs), [service configuration types](../crates/nemoclaw-sdk/src/services/installers/vllm/config.rs), [inline recipe types](../crates/nemoclaw-runtime/src/vllm/recipes/inline.rs), or their shared constraints.
+1. Add a parser/schema test for the accepted or rejected input in [config_schema.rs](../../crates/nemoclaw-sdk/tests/config_schema.rs).
+2. Change the [configuration types](../../crates/nemoclaw-sdk/src/config/types.rs), [service configuration types](../../crates/nemoclaw-sdk/src/services/installers/vllm/config.rs), [inline recipe types](../../crates/nemoclaw-runtime/src/vllm/recipes/inline.rs), or their shared constraints.
 3. Describe the field beside its Rust declaration, including units and conditional behavior.
-4. If needed, update the [conditional schema rules](../crates/nemoclaw-sdk/src/config/schema/validation.rs).
+4. If needed, update the [conditional schema rules](../../crates/nemoclaw-sdk/src/config/schema/validation.rs).
 5. Regenerate the artifacts:
 
 ```sh
@@ -57,7 +57,7 @@ Keep schema changes, descriptions, examples, tests, and regenerated files in the
 
 ## Preserve the Input Contract
 
-Reusable application objects follow the [definitions and references contract](configuration-references.md).
+Reusable application objects follow the [definitions and references contract](../configuration-references.md).
 Keep its coverage table accurate when adding a family or changing supported scopes.
 
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
@@ -92,11 +92,11 @@ The parser rejects all explicit YAML tags, including core tags such as `!!binary
 The reference generator renders presence-conditioned scalar bounds beside the containing field table, including the conditional `kvCacheGiB` limits.
 Keep other conditional behavior in the owning Rust field descriptions when the generator cannot express its schema shape.
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
-The [reference's validation limits](reference/configuration.md#validation-beyond-the-schema) list those boundaries.
+The [reference's validation limits](../reference/configuration.md#validation-beyond-the-schema) list those boundaries.
 
 ## Add a Reusable Configuration Family
 
-Follow the [definitions and references contract](configuration-references.md).
+Follow the [definitions and references contract](../configuration-references.md).
 Specify the definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
 Use the same typed definition and resolved behavior for inline and reference forms.
 Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply.
@@ -105,11 +105,11 @@ Add the family to the authoring guide's coverage table only when its runtime beh
 ## Keep Generation Reproducible
 
 The generator selects JSON Schema Draft 2020-12 explicitly, sorts object keys, and writes LF-terminated files.
-Schemars and the runtime validator have fixed versions in [Cargo.toml](../Cargo.toml), with resolved dependencies in [Cargo.lock](../Cargo.lock).
+Schemars and the runtime validator have fixed versions in [Cargo.toml](../../Cargo.toml), with resolved dependencies in [Cargo.lock](../../Cargo.lock).
 Review generated changes when updating those dependencies.
 
 The schema's API version identifies the document format; accepted fields can change between source revisions without changing that version.
 Use a schema from the same source revision as the SDK or CLI you run.
 Native bundles carry their matching schema at `schemas/nemoclaw-v1alpha1.schema.json`, covered by the bundle manifest's hash.
 The builder generates it from the compiled SDK and checks its source fingerprint before assembling CLI and provider binaries.
-See [bundle construction](build.md#build-a-native-bundle) for rebuild and verification behavior.
+See [bundle construction](../build.md#build-a-native-bundle) for rebuild and verification behavior.

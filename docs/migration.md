@@ -68,7 +68,7 @@ The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfer
 - **v1 (Development)** describes the desired-state product.
 - **Latest (main)** preserves the imported main guides and their release history; start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
 
-The main snapshot is pinned by the [documentation build](AUTOMATION.md#sources-and-outputs); its label does not qualify those procedures for v1.
+The main snapshot is pinned by the [documentation build](contributing/documentation-build.md#sources-and-outputs); its label does not qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Public combined-site cutover and a complete hosted legacy-route/redirect sweep remain **TBD**.
 The [documentation migration plan](design/documentation-migration.md) records the source revisions and publication work; it does not establish runtime migration support.

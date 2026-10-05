@@ -26,7 +26,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 ## Contribute
 
 Read the [accepted scope](docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
-Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
+Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/contributing/documentation.md) for documentation changes.
 Report potential vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
 
 ## Licenses

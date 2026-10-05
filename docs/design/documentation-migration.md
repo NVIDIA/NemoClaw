@@ -32,7 +32,7 @@ A held feature has no promised implementation date.
 The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), and [examples](../../examples/).
 Extend those owners and extract overloaded sections where needed.
 At the baseline revision, the branch had no Fern publishing or general link-checking job.
-The [documentation build](../AUTOMATION.md) now defines Cargo-generated Fern pages, source and route validation, isolated v1 previews, and guarded release publication.
+The [documentation build](../contributing/documentation-build.md) now defines Cargo-generated Fern pages, source and route validation, isolated v1 previews, and guarded release publication.
 Hosted output verification, old-version preservation, and final URL cutover remain D01/D09 release gates.
 
 ## Changes That Determine the Migration
@@ -77,7 +77,7 @@ Keep canonical prose in repository Markdown; select publication tooling in D00.
 | Use coding-agent documentation or find project resources | [resources.md](../resources.md); version-specific starter prompt and routing skill if retained | HTML, Markdown, search, prompts, and skills select the same product version |
 | Understand release changes | [release-notes.md](../release-notes.md); preserved previous-release history | State breaking changes, removed workflows, tested configurations, known limits, and migration route |
 
-Keep [design rationale](architecture.md), and [test procedures](../testing.md) distinct from getting-started instructions.
+Keep [design rationale](architecture.md), and [test procedures](../contributing/testing.md) distinct from getting-started instructions.
 Link support claims to implementations and test results; do not make users read internal qualification records to discover basic prerequisites.
 When extracting content, remove the duplicate procedure and update inbound links and consumed anchors.
 
@@ -195,11 +195,11 @@ Publishing the site belongs to the release step; this planning change publishes 
 
 ### Every Documentation Change
 
-Follow [documentation contribution requirements](../CONTRIBUTING.md).
+Follow [documentation contribution requirements](../contributing/documentation.md).
 Check local links and anchors, navigation ownership, generated reference freshness when applicable, and `git diff --check`.
 Run required workspace format, lint, and test checks; documentation-only changes need no new runtime tests or live resources.
 Record any checks that could not run and the reason in the handoff.
-Run `cargo run --locked -p nemoclaw-build -- fern check` for source and rendered-route validation; see [documentation build prerequisites](../AUTOMATION.md#validate-locally).
+Run `cargo run --locked -p nemoclaw-build -- fern check` for source and rendered-route validation; see [documentation build prerequisites](../contributing/documentation-build.md#validate-locally).
 The v1 build uses Cargo for generation and schema freshness, with the pinned Fern CLI for rendering and publication.
 
 ### Executable Examples and Claims
@@ -211,7 +211,7 @@ The v1 build uses Cargo for generation and schema freshness, with the pinned Fer
 - Operations: cover unchanged apply, export/reapply, drift, refused replacement, interrupted operations, retained storage, and deletion effects.
 - Runtime claims: separate native bundle validation, protocol fixtures, real inference, browser use, GPU capacity, kernel enforcement, and separate-host qualification.
 
-Use [integration tests](../testing/fixtures.md) and [live tests](../testing/live.md) to check the relevant behavior.
+Use [integration tests](../contributing/integration-tests.md) and [live tests](../contributing/live-tests.md) to check the relevant behavior.
 Live rehearsals require explicit configuration and owned resources.
 Fixture success does not turn every harness/provider/platform combination into a supported deployment.
 

@@ -72,7 +72,7 @@ cvillela accepted execution-target preparation and independent inference placeme
 The preparation preserved existing YAML, resource addresses, and binding encodings; optional service placement and publication subsequently extended configuration.
 These changes introduce neither a generic provider framework nor a remote observation agent.
 
-The [SSH service fixtures](../testing/fixtures.md#ssh-service-fixtures) and [live SSH transport tests](../testing/live.md#ssh-engine-transport) cover SSH identity, observation failures, recovery, export, and retained teardown.
+The [SSH service fixtures](../contributing/integration-tests.md#ssh-service-fixtures) and [live SSH transport tests](../contributing/live-tests.md#ssh-engine-transport) cover SSH identity, observation failures, recovery, export, and retained teardown.
 Separate-host capacity, WAN behavior, and other operating systems are unqualified; a separate-host GPU apply and agent response remain required before claiming that qualification.
 
 Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are unqualified.

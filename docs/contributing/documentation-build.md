@@ -13,25 +13,25 @@ Publication does not qualify the procedures or product configurations they descr
 
 | Input | Output or responsibility |
 |---|---|
-| [Page manifest](../fern/pages.json) | Selects published guides, navigation labels, and stable route slugs |
+| [Page manifest](../../fern/pages.json) | Selects published guides, navigation labels, and stable route slugs |
 | Repository `docs/*.md` and selected subdirectories | Generated `fern/_generated/pages/*.mdx` and `navigation.yml` |
-| [Pinned main revision](../fern/main-source.json) | Earlier guides, generated agent variants, changelog, components, and assets under ignored `fern/_main/` |
-| SDK types and constraints | [JSON Schema](../schemas/nemoclaw-v1alpha1.schema.json) and [configuration reference](reference/configuration.md); stale checked-in output fails validation |
-| [Fern configuration](../fern/docs.yml) | NVIDIA theme, both versions, existing instances, and retained legacy redirects |
-| [Fern CLI pin](../fern/fern.config.json) | The exact CLI used locally and in CI |
+| [Pinned main revision](../../fern/main-source.json) | Earlier guides, generated agent variants, changelog, components, and assets under ignored `fern/_main/` |
+| SDK types and constraints | [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) and [configuration reference](../reference/configuration.md); stale checked-in output fails validation |
+| [Fern configuration](../../fern/docs.yml) | NVIDIA theme, both versions, existing instances, and retained legacy redirects |
+| [Fern CLI pin](../../fern/fern.config.json) | The exact CLI used locally and in CI |
 
-The [Cargo renderer](../crates/nemoclaw-build/src/docs.rs) preserves code examples and license comments, removes the source H1 because Fern supplies the title, and converts file links to published routes.
+The [Cargo renderer](../../crates/nemoclaw-build/src/docs.rs) preserves code examples and license comments, removes the source H1 because Fern supplies the title, and converts file links to published routes.
 It checks local files and Markdown heading anchors before replacing generated output.
 Links to examples, code, notices, and unpublished design pages point to GitHub at the build's commit.
 External URLs are retained without network validation.
 Generated files are ignored by Git; do not edit them.
 
-The [upstream notice](../fern/NOTICE.md) records the main revision used for the publishing integration.
+The [upstream notice](../../fern/NOTICE.md) records the main revision used for the publishing integration.
 The publisher extracts main's documentation and generators at an immutable Git revision without changing another worktree.
-It installs only the [locked docs dependency](../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
+It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
 The imported installation prompt and agent variants appear only in Latest.
-V1 runtime guidance remains in [agents.md](agents.md), and [resources](resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
+V1 runtime guidance remains in [agents.md](../agents.md), and [resources](../resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
 A rehearsed installation prompt remains **TBD** until its procedure is verified.
 
 To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
@@ -41,7 +41,7 @@ To recover a damaged import, stop the preview server, remove only the generated 
 
 ## Validate Locally
 
-Complete the Rust and `protoc` prerequisites in [build.md](build.md).
+Complete the Rust and `protoc` prerequisites in [build.md](../build.md).
 Install Node.js 24.21.0 for the documentation tooling.
 Node runs main's imported generators and the pinned Fern CLI through `npx`; the application remains a Cargo workspace with no root npm package.
 The first Fern invocation downloads its npm dependencies.
@@ -109,7 +109,7 @@ cargo run --locked -p nemoclaw-build -- fern delete --id nemoclaw-v1-my-branch
 
 ## GitHub Actions
 
-The [v1 workflow](../.github/workflows/docs.yml) validates every PR targeting `v1` and every push to `v1`, including Rust changes that could stale the generated reference.
+The [v1 workflow](../../.github/workflows/docs.yml) validates every PR targeting `v1` and every push to `v1`, including Rust changes that could stale the generated reference.
 Manual runs perform validation only.
 
 | Event | Publication |

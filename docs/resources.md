@@ -24,7 +24,7 @@ The staging preview moves after successful pushes; inspect its revision-pinned s
 The site's unversioned `llms.txt` describes the default main version.
 Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
 Generic Markdown headers may point at the unversioned index or advertise an MCP server; those headers do not establish v1 search isolation or MCP availability.
-Docs search/MCP and version-scoped search results remain **TBD**; see [hosted output verification](AUTOMATION.md#hosted-outputs-and-release-verification).
+Docs search/MCP and version-scoped search results remain **TBD**; see [hosted output verification](contributing/documentation-build.md#hosted-outputs-and-release-verification).
 
 ### Give an Agent the Documentation Task
 
@@ -59,7 +59,7 @@ Automatic discovery and packaged installation across assistant clients, plus a r
 
 ## Contribute
 
-Follow [repository instructions](../AGENTS.md), [the writing guide](../WRITING.md), and [documentation contribution guidance](CONTRIBUTING.md).
+Follow [repository instructions](../AGENTS.md), [the writing guide](../WRITING.md), and [documentation contribution guidance](contributing/documentation.md).
 The [documentation migration plan](design/documentation-migration.md) defines page ownership and remaining publication work.
 
 Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation/documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.

@@ -35,7 +35,7 @@ The generated graphs manage these objects and observations:
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
-The [standalone HCL fixture](testing/fixtures.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
+The [standalone HCL fixture](contributing/integration-tests.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
 It does not qualify a complete standalone OpenShell deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
@@ -271,7 +271,7 @@ Its observation verifies the recorded container ID and name, running state, cred
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK no longer runs service readiness loops.
 
-The [standalone readiness fixture](testing/fixtures.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
+The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
 
@@ -299,7 +299,7 @@ SDK-generated graphs defer health until apply; export and teardown omit the obse
 Standalone configurations with known inputs may read during planning unless the trigger defers them.
 Existing sandbox resource refresh still verifies configuration.
 
-The [standalone sandbox fixture](testing/fixtures.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
+The [standalone sandbox fixture](contributing/integration-tests.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
 The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
 ## Combined Service Capacity
@@ -339,7 +339,7 @@ The NemoClaw provider uses a source-derived version to prevent stale reuse.
 The Docker provider has a fixed release version and checksum-pinned native archives, with its upstream license retained in the bundle.
 
 [Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
-[Fixture qualification](testing/fixtures.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
+[Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage
 

@@ -3,26 +3,26 @@
 
 # Contribute Documentation
 
-Follow [WRITING.md](../WRITING.md) for prose and [the design decision](design/scope.md) for accepted scope.
+Follow [WRITING.md](../../WRITING.md) for prose and [the design decision](../design/scope.md) for accepted scope.
 Documentation lives in repository Markdown files.
-The [documentation build](AUTOMATION.md) renders selected pages for Fern; edit the Markdown sources and [page manifest](../fern/pages.json), not generated MDX.
+The [documentation build](documentation-build.md) renders selected pages for Fern; edit the Markdown sources and [page manifest](../../fern/pages.json), not generated MDX.
 
 ## Choose the Page
 
-Use the [documentation index](README.md) to find the reader's task.
+Use the [documentation index](../README.md) to find the reader's task.
 Read the complete owning page and check its inbound links before editing.
 Keep each procedure or reference fact in one place and link to it elsewhere.
 
-The [YAML field reference](reference/configuration.md) is generated from Rust types and constraints.
+The [YAML field reference](../reference/configuration.md) is generated from Rust types and constraints.
 Follow [schema maintenance](configuration-schema.md) to update its sources and regenerate it.
 
 - Build, deployment, model, recipe, agent, SDK, and SSH instructions belong in their task guides.
 - Test commands belong in [testing.md](testing.md) and its fixture or live guides.
-- Architecture rationale belongs in [design/](design/architecture.md).
+- Architecture rationale belongs in [design/](../design/architecture.md).
 - Test results belong in CI results and the commit bodies that rely on them, not in documentation pages.
 - Source notices and fixture provenance stay beside their artifacts.
 
-The user-guide structure is scaffolded in the [documentation index](README.md).
+The user-guide structure is scaffolded in the [documentation index](../README.md).
 Use **TBD** when the implementation or procedure still needs verification, and briefly name the missing checks.
 Do not fill it from main's documentation alone or infer product support from parser acceptance.
 Replace a TBD only when the text can link to the implementation, tests, or scoped qualification that supports its claims.
@@ -46,12 +46,12 @@ When moving content, update inbound links and the index; retain old paths or anc
 ## Validate and Review
 
 Verify changed commands against their parser, script, or executable help, and check local links and anchors.
-Run `cargo run --locked -p nemoclaw-build -- fern check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](AUTOMATION.md#validate-locally) apply.
+Run `cargo run --locked -p nemoclaw-build -- fern check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](documentation-build.md#validate-locally) apply.
 The documentation build parses every `yaml` and `yml` fenced example on rendered pages and checks complete deployments with the SDK parser.
 Keep fragments syntactically valid; put settings for different YAML locations in separate fences.
 Fragment parsing checks syntax only; maintained complete examples have separate parser, schema, and adapter-contract tests.
 For structural changes, account for moved or removed content.
-Run the repository checks required by [AGENTS.md](../AGENTS.md) and `git diff --check`; report checks that could not run and why.
+Run the repository checks required by [AGENTS.md](../../AGENTS.md) and `git diff --check`; report checks that could not run and why.
 Documentation-only changes need no new runtime tests or live resources.
 
 Obtain an independent documentation review with the reader's task, changed content, validation results, and writing guide.

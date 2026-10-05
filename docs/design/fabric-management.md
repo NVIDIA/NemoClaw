@@ -130,7 +130,7 @@ Its successful dummy health results do not qualify a real adapter’s native hea
 The existing installed Fabric fixture adapter remains authored and packaged in Fabric.
 The separate dummy backend is authored in NemoClaw and exercises the image interface without Fabric.
 The [production-path test](../../crates/nemoclaw-e2e/tests/discovery.rs) consumes that installed discovery output, calls the real OpenTofu/provider planner, and sends the SDK's configuration through the generic host to the actual Fabric runner.
-[Bundle fixtures](../testing/fixtures.md#opentofu-and-bundle-lifecycle) separately exercise deployment recovery, export/reapply and ownership.
+[Bundle fixtures](../contributing/integration-tests.md#opentofu-and-bundle-lifecycle) separately exercise deployment recovery, export/reapply and ownership.
 
 ## Earlier Experiment
 

@@ -62,7 +62,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multiple_providers:: --ignored
 ```
 
-CI uses the [nextest lifecycle profile](../testing.md#test-runner) with four concurrent tests.
+CI uses the [nextest lifecycle profile](testing.md#test-runner) with four concurrent tests.
 Each Fabric harness is an independent ignored test with its own temporary state and gRPC fixture.
 To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with the same concurrency bound under Cargo, use `-- --ignored --test-threads=4`.
 
@@ -198,7 +198,7 @@ The executable test rejects invalid `NEMOCLAW_RUNTIME_SPEC` input and the remove
 Runtime contract tests check field/version diagnostics without configuration values or user-defined map keys; provider fixtures check read-only image compatibility and distinguish absence from authentication or transport failure.
 
 The recipe test checks declared serving arguments and capacity, and rejects model/backend/hardware combinations outside the declared compatibility requirements.
-The [live image-change test](live.md#spark-and-fabric) requires plan and apply to replace only the inference process.
+The [live image-change test](live-tests.md#spark-and-fabric) requires plan and apply to replace only the inference process.
 Managed-resource fixtures check storage identity and explicit recovery; the recipe tests verify prepared data before reuse.
 The fixture checks that the supervisor runs independently of the CLI; it does not test another real serving backend.
 
@@ -277,7 +277,7 @@ For Hermes, select `nc-fabric:hermes`, adapter ID `nvidia.fabric.hermes`, and se
 The script starts the installed native runtime, sends two turns to an isolated local inference fixture, and stops the runtime.
 Expect a JSON result with `result: passed`; the container is removed on exit.
 These checks use no live credentials or external model endpoints and do not qualify external search APIs.
-The [image source checks](../testing.md#image-source-checks) cover NemoClaw packaging and the generic host separately.
+The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging and the generic host separately.
 
 ## OpenClaw Agent Tool Policies
 
