@@ -11,9 +11,9 @@ import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const BRAVE_INTEGRITY =
-  "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
+  "sha512-dnXM0FGBqqYVDaEze8nzpcjXOLSc/xENGvfx9xt09JWFi45uBF8x9+e0E4i4l1H9pqFFI3zPI1TU4U6lYT8w0w==";
 const BRAVE_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.5.tgz";
 
 it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
@@ -29,7 +29,7 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     writeReviewedNpmFixture(npmFixture, log, [
       {
         integrity: BRAVE_INTEGRITY,
-        packageSpec: "@openclaw/brave-plugin@2026.9.2",
+        packageSpec: "@openclaw/brave-plugin@2026.9.5",
         tarballUrl: BRAVE_TARBALL,
       },
     ]);
@@ -59,14 +59,14 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
         NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
         NODE_OPTIONS: "",
-        OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY: BRAVE_INTEGRITY,
-        OPENCLAW_VERSION: "2026.9.2",
+        OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY: BRAVE_INTEGRITY,
+        OPENCLAW_VERSION: "2026.9.5",
       },
     });
     const calls = fs.readFileSync(log, "utf-8");
     expect(result.status, result.stderr).toBe(0);
-    expect(calls).toContain("npm view @openclaw/brave-plugin@2026.9.2 dist.integrity");
-    expect(calls).toContain("npm pack @openclaw/brave-plugin@2026.9.2 --pack-destination");
+    expect(calls).toContain("npm view @openclaw/brave-plugin@2026.9.5 dist.integrity");
+    expect(calls).toContain("npm pack @openclaw/brave-plugin@2026.9.5 --pack-destination");
     expect(calls).toContain("plugins install --force --accept-capabilities npm-pack:");
     expect(calls).toContain(
       "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
@@ -146,7 +146,7 @@ it.each([
       {
         env: {
           NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
-          OPENCLAW_VERSION: "2026.9.2",
+          OPENCLAW_VERSION: "2026.9.5",
         },
       },
     );

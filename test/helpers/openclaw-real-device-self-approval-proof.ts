@@ -54,7 +54,7 @@ function requireExactlyOneDistSource(
 function readDistSources(dist: string): DistSource[] {
   return fs
     .readdirSync(dist, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter((entry) => entry.isFile() && /\.m?js$/u.test(entry.name))
     .map((entry) => {
       const file = path.join(dist, entry.name);
       return { file, source: fs.readFileSync(file, "utf8") };
@@ -82,13 +82,17 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
     )
       ? "async function handleGatewayRequest(opts, diagnostics)"
       : "async function handleGatewayRequest(opts)";
+    const boundDispatch = "handleGatewayRequest(bindWebSocketRequestMutationAuthority({";
+    const dispatchCall = sources.some(({ source }) => source.includes(boundDispatch))
+      ? boundDispatch
+      : "handleGatewayRequest({";
     const producer = requireExactlyOneDistSource(sources, "SQLite device-token session producer", [
       'const loadGatewayServerMethods = createLazyPromise(() => import("./authenticated-request-dispatch.server-methods.runtime.js"))',
       "const nextClient = {",
       'isDeviceTokenAuth: authMethod === "device-token"',
       "if (!setClient(nextClient))",
       "const { handleGatewayRequest } = await loadGatewayServerMethods();",
-      "handleGatewayRequest({",
+      dispatchCall,
     ]);
     const dispatcher = requireExactlyOneDistSource(sources, "SQLite gateway request dispatcher", [
       "function createLazyCoreHandlers(params)",
@@ -109,7 +113,7 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
       producer.source,
       [
         "const { handleGatewayRequest } = await loadGatewayServerMethods();",
-        "handleGatewayRequest({",
+        dispatchCall,
         "client,",
       ],
       "SQLite authenticated request dispatch",
@@ -143,6 +147,37 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
       ],
       "SQLite device-handler-to-authz-resolver linkage",
     );
+    if (dispatchCall === boundDispatch) {
+      const authority = requireExactlyOneDistSource(sources, "WebSocket request authority binder", [
+        "function bindWebSocketRequestMutationAuthority(options, client, generationReader)",
+        "options.client !== client",
+        "requestMutationAuthorities.set(options, {",
+      ]);
+      requireOrderedMarkers(
+        producer.source,
+        [
+          `from "./${path.basename(authority.file)}"`,
+          boundDispatch,
+          "client,",
+          "}, client, getRequiredSharedGatewaySessionGeneration), diagnostics)",
+        ],
+        "WebSocket dispatch retains the authenticated client through the authority binder",
+      );
+      const start = authority.source.indexOf(
+        "function bindWebSocketRequestMutationAuthority(options, client, generationReader)",
+      );
+      const end = authority.source.indexOf("\n}", start);
+      const bindingFunction = authority.source.slice(start, end + 2);
+      requireOrderedMarkers(
+        bindingFunction,
+        [
+          "options.client !== client",
+          "requestMutationAuthorities.set(options, {",
+          "return options;",
+        ],
+        "WebSocket authority binder preserves the exact request options",
+      );
+    }
     return handler.file;
   }
 
@@ -1198,11 +1233,11 @@ const exactlyOne = (pattern, label, sourceMarker) => {
   if (files.length !== 1) throw new Error(label + ": expected one runtime, found " + files.length);
   return pathToFileURL(path.join(dist, files[0])).href;
 };
-const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
-const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)"));
-const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]js$/, "stored auth", "function loadDeviceAuth"));
-const { deviceHandlers } = await import(exactlyOne(/^devices-[^.]+[.]js$/, "device handlers", '"device.pair.approve": async'));
-const clientSource = fs.readFileSync(new URL(exactlyOne(/^client-[^.]+[.]js$/, "client authentication", "function buildGatewayConnectAuth(selected)")), "utf8");
+const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]m?js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
+const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]m?js$/, "approval", "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)"));
+const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]m?js$/, "stored auth", "function loadDeviceAuth"));
+const { deviceHandlers } = await import(exactlyOne(/^devices-[^.]+[.]m?js$/, "device handlers", '"device.pair.approve": async'));
+const clientSource = fs.readFileSync(new URL(exactlyOne(/^client-[^.]+[.]m?js$/, "client authentication", "function buildGatewayConnectAuth(selected)")), "utf8");
 const clientLines = clientSource.split(String.fromCharCode(10));
 const authFunctions = ["normalized", "selectGatewayConnectAuth", "buildGatewayConnectAuth"].map((name) => {
   const start = clientLines.findIndex((line) => line.startsWith("function " + name + "("));
@@ -1486,9 +1521,12 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
           events.push(call.method);
           if (outcome === "confirmation-denied") throw new Error("confirmation denied");
           const next = receiveToken(cached, adminScopes);
-          runtime
-            .storage(call.sharedStateMode)
-            .storeDeviceAuthToken({ token: next.storedToken, scopes: next.storedScopes });
+          runtime.storage(call.sharedStateMode).storeDeviceAuthToken({
+            deviceId: "calling-device",
+            role: "operator",
+            token: next.storedToken,
+            scopes: next.storedScopes,
+          });
         },
         isScopeUpgradePendingApproval: () => false,
         sanitizeForLog: (value: string) => value,
@@ -1522,7 +1560,12 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
         call: { scopes: string[] },
       ) => Promise<void>;
       storage: (mode?: string) => {
-        storeDeviceAuthToken: (value: { token: string; scopes: string[] }) => void;
+        storeDeviceAuthToken: (value: {
+          deviceId: string;
+          role: string;
+          token: string;
+          scopes: string[];
+        }) => void;
       };
     };
     let failure = "";
@@ -1544,7 +1587,6 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
                 "output",
                 "exit-0",
               ];
-    requireJsonEqual(events, expected, `explicit approval handoff ${outcome}`);
     requireLiveProof(
       outcome === "confirmation-denied"
         ? failure.includes("confirmation denied")
@@ -1554,6 +1596,7 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
           : failure === "",
       `explicit approval handoff ${outcome}: unexpected failure ${failure}`,
     );
+    requireJsonEqual(events, expected, `explicit approval handoff ${outcome}`);
     if (outcome === "admin") {
       requireJsonEqual(
         receiveToken(cached, ["operator.write"]).storedScopes,
@@ -1882,7 +1925,7 @@ const { nemoclawResolveApprovePairingScopesForRequest, nemoclawResolveSelfRepair
 const stateDir = process.env.NEMOCLAW_DEVICE_APPROVAL_STATE;
 const distDir = process.env.NEMOCLAW_OPENCLAW_DIST;
 const authPath = path.join(stateDir, "identity", "device-auth.json");
-const pairingFiles = fs.readdirSync(distDir).filter((name) => /^device-pairing-.*[.]js$/.test(name));
+const pairingFiles = fs.readdirSync(distDir).filter((name) => /^device-pairing-.*[.]m?js$/.test(name));
 if (pairingFiles.length !== 1) throw new Error(\`expected one device-pairing runtime, found \${pairingFiles.length}\`);
 const pairingRuntime = await import(pathToFileURL(path.join(distDir, pairingFiles[0])).href);
 if (typeof pairingRuntime.m !== "function" || typeof pairingRuntime.v !== "function") throw new Error("reviewed pairing concurrency exports missing");

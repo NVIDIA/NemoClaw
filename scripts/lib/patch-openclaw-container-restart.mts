@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "2026.9.2";
+const VERSION = "2026.9.5";
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -94,7 +94,7 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
   }
   const safeRestartFiles = fs
     .readdirSync(distDir)
-    .filter((name) => name.startsWith("lifecycle-") && name.endsWith(".js"))
+    .filter((name) => name.startsWith("lifecycle-") && /\.m?js$/u.test(name))
     .map((name) => path.join(distDir, name))
     .filter((file) =>
       fs.readFileSync(file, "utf8").includes("async function runSafeGatewayRestart("),

@@ -37,11 +37,11 @@ const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REVIEWED_NPM_AUDIT_HELPER = path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts");
-const UNPINNED_OPENCLAW_VERSION = "2026.9.3";
-const PINNED_OPENCLAW_VERSION = "2026.9.2";
+const UNPINNED_OPENCLAW_VERSION = "2026.9.6";
+const PINNED_OPENCLAW_VERSION = "2026.9.5";
 const PINNED_OPENCLAW_INTEGRITY =
-  "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==";
-const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz";
+  "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==";
+const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz";
 const OPENCLAW_RUNTIME_LOCKFILE = path.join(
   REPO_ROOT,
   "agents",
@@ -104,17 +104,17 @@ function requiredDockerArg(name: string): string {
 }
 
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
-  "sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==";
+  "sha512-ewmCbGFRteN1wXNQL+eN5FCPefIJHyx65Se9mTCrCiBrLHRybrlPwbydaPa/2xR0QX5ESSKxDM6XDkhp47cAUQ==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
-  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz";
+  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.5.tgz";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
-  "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
+  "sha512-dnXM0FGBqqYVDaEze8nzpcjXOLSc/xENGvfx9xt09JWFi45uBF8x9+e0E4i4l1H9pqFFI3zPI1TU4U6lYT8w0w==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.5.tgz";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
-  "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==";
+  "sha512-Q45q/ZW+zw6Gr5Fg8J8V8xMWYXegMVEn3q8TcRBJyuD0nP0PtuW9FdkPF82KJ/yCP0tj18VPCgLPOuhYaiwR7A==";
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
-  "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==";
+  "sha512-8zOP4qjEhaVxwT2NsmGKhwxDz2ZRBSBIjtwpkTcLnyHyj/u9e2RnM4yhYumdwHjpmwniIuDvkc91DCKBg9DHSA==";
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
 const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";
@@ -370,8 +370,8 @@ function runInstallBlock(
     `BASE_IMAGE=${JSON.stringify(baseImage)}`,
     `openclaw_provenance_path=${JSON.stringify(provenancePath)}`,
     `openclaw_provenance_metadata=${JSON.stringify(baseProvenanceMetadata)}`,
-    `OPENCLAW_2026_9_2_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
-    `OPENCLAW_2026_9_2_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
+    `OPENCLAW_2026_9_5_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
+    `OPENCLAW_2026_9_5_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
     `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=${allowLegacyFixture ? "1" : "0"}`,
     `OPENCLAW_2026_3_11_INTEGRITY=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_3_11_TARBALL=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_TARBALL)}`,
@@ -606,8 +606,8 @@ function runOptionalOpenClawPluginBlock(
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
-    `OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
+    `OPENCLAW_DIAGNOSTICS_OTEL_2026_9_5_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
+    `OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
     `NEMOCLAW_OPENCLAW_OTEL=${otel ? "1" : "0"}`,
     `NEMOCLAW_WEB_SEARCH_ENABLED=${webSearch ? "1" : "0"}`,
     `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
@@ -710,7 +710,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ).toBe(false);
       });
 
-      it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.9.2 integrity", () => {
+      it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.9.5 integrity", () => {
         const teamsManifest = createBuiltInChannelManifestRegistry().get("teams");
         const teamsPackage = teamsManifest?.agentPackages?.find(
           (agentPackage) =>
@@ -797,10 +797,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
     if (group === "plugin-install") {
       it("verifies optional non-messaging OpenClaw plugin integrity before install", () => {
-        expect(requiredDockerArg("OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY")).toBe(
+        expect(requiredDockerArg("OPENCLAW_DIAGNOSTICS_OTEL_2026_9_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY,
         );
-        expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY")).toBe(
+        expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
         );
         const { result, calls } = runOptionalOpenClawPluginBlock();
@@ -816,7 +816,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/diagnostics-otel-2026\.9\.2\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/diagnostics-otel-2026\.9\.5\.tgz\n/,
         );
         expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
@@ -829,7 +829,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/brave-plugin-2026\.9\.2\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/brave-plugin-2026\.9\.5\.tgz\n/,
         );
         expect(calls).toContain("openclaw-env true true");
       });
@@ -1345,7 +1345,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         );
         const optionalPlugin = runOptionalOpenClawPluginBlock({
-          pluginPackFilename: "../diagnostics-otel-2026.9.2.tgz",
+          pluginPackFilename: "../diagnostics-otel-2026.9.5.tgz",
         });
 
         for (const item of [
@@ -1358,7 +1358,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           {
             label: "optional OpenClaw plugin Dockerfile",
             outcome: optionalPlugin,
-            unsafeFilename: "../diagnostics-otel-2026.9.2.tgz",
+            unsafeFilename: "../diagnostics-otel-2026.9.5.tgz",
             blockedCommand: "openclaw plugins install",
           },
         ]) {
@@ -1573,10 +1573,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "OPENCLAW_2026_3_11_TARBALL",
           "OPENCLAW_2026_4_24_INTEGRITY",
           "OPENCLAW_2026_4_24_TARBALL",
-          "OPENCLAW_2026_9_2_INTEGRITY",
-          "OPENCLAW_2026_9_2_TARBALL",
-          "OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY",
-          "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY",
+          "OPENCLAW_2026_9_5_INTEGRITY",
+          "OPENCLAW_2026_9_5_TARBALL",
+          "OPENCLAW_BRAVE_PLUGIN_2026_9_5_INTEGRITY",
+          "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_5_INTEGRITY",
         ]);
 
         const futurePinArgNames = [

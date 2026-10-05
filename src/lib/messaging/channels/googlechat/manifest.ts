@@ -349,13 +349,13 @@ export const googlechatManifest = {
       spec: "npm:@openclaw/googlechat@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.9.2":
-          "sha512-LUO8Lg07IhzJfEzxn+GSij8WMS/uX3hTmv0SydTy/0fKSN7iZksf74TaZg50kOoBi8FzeqeXo/zoGVuk0Mj1Ig==",
+        "2026.9.5":
+          "sha512-8yX3i7u6044gyq+W4tMbJH5CRXLBsJSbdDMzysAxJYDgPimYB5DS+fTNU924tt8zhzkruqRjUzz7FjTtMTn0jA==",
         "2026.9.1":
           "sha512-Q5VTAJpfcrI7BSEw5Ugq3wf7JEg5QhTBwpi+BByGbfZsTTVjwZc7OIvNbKsVTh16I5/EWqHEnD+0WNeHqsteqw==",
       },
       tarballUrlByVersion: {
-        "2026.9.2": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.2.tgz",
+        "2026.9.5": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.5.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.1.tgz",
       },
       required: true,

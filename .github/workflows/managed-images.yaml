@@ -2353,14 +2353,14 @@ jobs:
             fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
           );
           const packages = {
-            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
-            brave: ["@openclaw/brave-plugin", "2026.9.2"],
-            discord: ["@openclaw/discord", "2026.9.2"],
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.5"],
+            brave: ["@openclaw/brave-plugin", "2026.9.5"],
+            discord: ["@openclaw/discord", "2026.9.5"],
             "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
-            slack: ["@openclaw/slack", "2026.9.2"],
-            whatsapp: ["@openclaw/whatsapp", "2026.9.2"],
-            msteams: ["@openclaw/msteams", "2026.9.2"],
-            googlechat: ["@openclaw/googlechat", "2026.9.2"],
+            slack: ["@openclaw/slack", "2026.9.5"],
+            whatsapp: ["@openclaw/whatsapp", "2026.9.5"],
+            msteams: ["@openclaw/msteams", "2026.9.5"],
+            googlechat: ["@openclaw/googlechat", "2026.9.5"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
           const projectRoots = fs

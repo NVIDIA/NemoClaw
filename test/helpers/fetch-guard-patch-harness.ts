@@ -14,7 +14,7 @@ const OPENCLAW_VERSION_EXTRACTOR = path.join(
   "extract-semver.sh",
 );
 
-export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.2";
+export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.5";
 
 export function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -89,7 +89,14 @@ export function runDockerfilePatchBlock(
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     endMarker,
-  ).replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist);
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts",
+      JSON.stringify(
+        path.join(import.meta.dirname, "../../scripts/lib/patch-openclaw-worker-proxy.mts"),
+      ),
+    );
   const scriptPath = path.join(tmp, "patch.sh");
   fs.writeFileSync(
     scriptPath,

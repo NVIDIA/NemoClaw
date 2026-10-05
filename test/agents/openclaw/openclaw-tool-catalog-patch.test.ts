@@ -306,71 +306,6 @@ describe("OpenClaw compact tool catalog patch", () => {
       fs.rmSync(native.root, { recursive: true, force: true });
     }
 
-    const currentNative = makeFixture({ version: "2026.9.1" });
-    try {
-      fs.rmSync(path.join(currentNative.dist, "selection-empty.js"));
-      fs.rmSync(currentNative.selectionPath);
-      const builtinPath = path.join(currentNative.dist, "builtin-openclaw-fixture.js");
-      const localModelPath = path.join(currentNative.dist, "local-model-lean-fixture.js");
-      fs.writeFileSync(builtinPath, currentNativeToolSearchFixtureSource());
-      fs.writeFileSync(localModelPath, currentNativeDirectToolFixtureSource());
-      const result = runPatch(currentNative.dist);
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("patched-native-llamacpp");
-      expect(result.stdout).toContain("local-model-lean-fixture.js");
-      expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
-      const patchedLocalModel = fs.readFileSync(localModelPath, "utf-8");
-      expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_MARKER);
-      expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_TOOL_CALL_MARKER);
-
-      const mod = await importSelection(localModelPath);
-      expect(mod.visible({ name: "read" })).toBe(true);
-      expect(mod.visible({ name: "read" }, { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" })).toBe(
-        false,
-      );
-      expect(
-        mod.visible({ name: "sessions_yield" }, { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" }, [
-          "sessions_yield",
-        ]),
-      ).toBe(true);
-      expect(mod.toolCallArgsSchema()).toMatchObject({
-        type: "object",
-        patternProperties: { "^.*$": {} },
-      });
-      expect(
-        mod.toolCallArgsSchema({
-          NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local",
-        }),
-      ).toEqual({
-        type: "string",
-        description: "JSON-encoded tool input object.",
-      });
-      expect(
-        mod.readCall(
-          { name: "exec", args: '{"command":"pwd"}' },
-          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
-        ),
-      ).toEqual({ id: "exec", input: { command: "pwd" } });
-      expect(() =>
-        mod.readCall(
-          { name: "exec", args: "[]" },
-          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
-        ),
-      ).toThrow("args must be a JSON-encoded object.");
-      expect(() =>
-        mod.readCall(
-          { name: "exec", args: "not-json" },
-          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
-        ),
-      ).toThrow("args must be a JSON-encoded object.");
-
-      const second = runPatch(currentNative.dist);
-      expect(second.status, `${second.stdout}${second.stderr}`).toBe(0);
-      expect(second.stdout).toContain("native-llamacpp-compat");
-    } finally {
-      fs.rmSync(currentNative.root, { recursive: true, force: true });
-    }
-
     const builtInCatalog = makeFixture({
       allCustomToolsLine: [
         "\t\tconst toolSearch = applyToolSearchCatalog({",
@@ -407,6 +342,91 @@ describe("OpenClaw compact tool catalog patch", () => {
       fs.rmSync(partial.root, { recursive: true, force: true });
     }
   });
+
+  it.each(["2026.9.1", "2026.9.5"])(
+    "preserves native catalog and llama.cpp arguments on %s",
+    async (version) => {
+      const currentNative = makeFixture({ version });
+      const extension = version === "2026.9.5" ? "mjs" : "js";
+      try {
+        fs.rmSync(path.join(currentNative.dist, "selection-empty.js"));
+        fs.rmSync(currentNative.selectionPath);
+        const builtinPath = path.join(currentNative.dist, `builtin-openclaw-fixture.${extension}`);
+        const localModelPath = path.join(
+          currentNative.dist,
+          `local-model-lean-fixture.${extension}`,
+        );
+        fs.writeFileSync(builtinPath, currentNativeToolSearchFixtureSource());
+        const source = currentNativeDirectToolFixtureSource();
+        fs.writeFileSync(
+          localModelPath,
+          version === "2026.9.5"
+            ? source.replace(
+                "\tif (nestedInput != null)",
+                "\tconst nestedInputIsEmpty = isRecord(nestedInput) && Object.keys(nestedInput).length === 0;\n\tif (nestedInput != null && !nestedInputIsEmpty)",
+              )
+            : source,
+        );
+        const result = runPatch(currentNative.dist);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain("patched-native-llamacpp");
+        expect(result.stdout).toContain(`local-model-lean-fixture.${extension}`);
+        expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
+        const patchedLocalModel = fs.readFileSync(localModelPath, "utf-8");
+        expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_MARKER);
+        expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_TOOL_CALL_MARKER);
+
+        const mod = await importSelection(localModelPath);
+        expect(mod.visible({ name: "read" })).toBe(true);
+        expect(
+          mod.visible({ name: "read" }, { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" }),
+        ).toBe(false);
+        expect(
+          mod.visible(
+            { name: "sessions_yield" },
+            { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+            ["sessions_yield"],
+          ),
+        ).toBe(true);
+        expect(mod.toolCallArgsSchema()).toMatchObject({
+          type: "object",
+          patternProperties: { "^.*$": {} },
+        });
+        expect(
+          mod.toolCallArgsSchema({
+            NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local",
+          }),
+        ).toEqual({
+          type: "string",
+          description: "JSON-encoded tool input object.",
+        });
+        expect(
+          mod.readCall(
+            { name: "exec", args: '{"command":"pwd"}' },
+            { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+          ),
+        ).toEqual({ id: "exec", input: { command: "pwd" } });
+        expect(() =>
+          mod.readCall(
+            { name: "exec", args: "[]" },
+            { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+          ),
+        ).toThrow("args must be a JSON-encoded object.");
+        expect(() =>
+          mod.readCall(
+            { name: "exec", args: "not-json" },
+            { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+          ),
+        ).toThrow("args must be a JSON-encoded object.");
+
+        const second = runPatch(currentNative.dist);
+        expect(second.status, `${second.stdout}${second.stderr}`).toBe(0);
+        expect(second.stdout).toContain("native-llamacpp-compat");
+      } finally {
+        fs.rmSync(currentNative.root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed before adding the llama.cpp tool-call guard without ToolInputError", () => {
     const fixture = makeFixture({ version: "2026.9.1" });

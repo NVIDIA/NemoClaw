@@ -91,17 +91,59 @@
       "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.9",
       "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz"
+    },
+    {
+      "label": "@openclaw/brave-plugin 2026.9.5",
+      "packageSpec": "@openclaw/brave-plugin@2026.9.5",
+      "integrity": "sha512-dnXM0FGBqqYVDaEze8nzpcjXOLSc/xENGvfx9xt09JWFi45uBF8x9+e0E4i4l1H9pqFFI3zPI1TU4U6lYT8w0w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/diagnostics-otel 2026.9.5",
+      "packageSpec": "@openclaw/diagnostics-otel@2026.9.5",
+      "integrity": "sha512-ewmCbGFRteN1wXNQL+eN5FCPefIJHyx65Se9mTCrCiBrLHRybrlPwbydaPa/2xR0QX5ESSKxDM6XDkhp47cAUQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/discord 2026.9.5",
+      "packageSpec": "@openclaw/discord@2026.9.5",
+      "integrity": "sha512-kPEbPiYAnJqxqLHqBnZCr3zowsxzboW0Q7ZdqX52X7IENLrU4CBdK4+ndqzQf+255ilffrYBTDrHBg8a137cgQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/msteams 2026.9.5",
+      "packageSpec": "@openclaw/msteams@2026.9.5",
+      "integrity": "sha512-8zOP4qjEhaVxwT2NsmGKhwxDz2ZRBSBIjtwpkTcLnyHyj/u9e2RnM4yhYumdwHjpmwniIuDvkc91DCKBg9DHSA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/slack 2026.9.5",
+      "packageSpec": "@openclaw/slack@2026.9.5",
+      "integrity": "sha512-Q45q/ZW+zw6Gr5Fg8J8V8xMWYXegMVEn3q8TcRBJyuD0nP0PtuW9FdkPF82KJ/yCP0tj18VPCgLPOuhYaiwR7A==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/whatsapp 2026.9.5",
+      "packageSpec": "@openclaw/whatsapp@2026.9.5",
+      "integrity": "sha512-V7o/ckrk0N0iN4fKk5jMBs4nqe4Ftc4/drJWY374fREY8gEMzmdvXMB2pfM2VrmptJfoPMMhI78C+1+mGUtwJw==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.5.tgz"
+    },
+    {
+      "label": "openclaw 2026.9.5",
+      "packageSpec": "openclaw@2026.9.5",
+      "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz"
     }
   ],
   "lockedGraphs": [
     {
       "id": "openclaw-runtime",
-      "label": "OpenClaw 2026.9.2 locked runtime graph",
-      "packageSpec": "openclaw@2026.9.2",
-      "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
-      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+      "label": "OpenClaw 2026.9.5 locked runtime graph",
+      "packageSpec": "openclaw@2026.9.5",
+      "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "cbcfdd15430b81f50ada9f39858a694815e570c8bb3e6b4bb9f1c0b53bf0ef4a"
+      "lockSha256": "aa9d20c62cce382c99b42a7c412d0683491f23f1706f897cab358d320cb71915"
     },
     {
       "id": "mcporter-runtime",
