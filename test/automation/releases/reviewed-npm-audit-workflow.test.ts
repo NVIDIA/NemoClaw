@@ -366,8 +366,8 @@ describe("trusted npm audit workflow (#5896)", () => {
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
     expect(fixture.lockedProvenance).toMatchObject({
       graph: {
-        label: "OpenClaw 2026.9.1 locked runtime graph",
-        packageSpecs: ["openclaw@2026.9.1"],
+        label: "OpenClaw 2026.9.5 locked runtime graph",
+        packageSpecs: ["openclaw@2026.9.5"],
       },
       scanner: {
         name: "npm audit",
@@ -377,10 +377,10 @@ describe("trusted npm audit workflow (#5896)", () => {
     });
     expect(fixture.lockedReceipt).toBeDefined();
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.integrity"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.integrity"]),
     );
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.tarball"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.tarball"]),
     );
     expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
   });

@@ -77,3 +77,25 @@ The lock records the exact version, registry URL, and integrity for every transi
   `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
+
+## OpenClaw 2026.9.5 staged transition
+
+[PR #12380](https://github.com/NVIDIA/NemoClaw/pull/12380) prepares trusted audit policy for
+[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which updates the runtime.
+The PR audit loads policy from the base commit and dependency inputs from the candidate.
+The trust stage must therefore authorize the replacement before the runtime stage can consume it.
+
+During the trust stage, production manifests, locks, lifecycle approvals, and image archives remain
+on OpenClaw 2026.9.2. The existing locked graph remains the primary audit identity.
+The replacement admits only the reviewed 2026.9.5 lock digest, package integrity, and registry URL.
+It does not select a second runtime or permit an arbitrary lock.
+The compressed 2026.9.5 lock fixture records the migration input without changing production selection.
+The replacement audit test consumes that fixture and the checked-in policy, then verifies the emitted
+provenance and npm identity requests.
+
+The runtime stage completes the transition by moving all production version owners to 2026.9.5,
+promoting its lock identity to primary, and removing the replacement and superseded archive records.
+Both stages require their own green CI and managed-image checks. The runtime stage additionally
+requires the actual-package patch proofs, PR Advisor clearance, and full E2E qualification.
+Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
+still selects them; remove this transition section when the runtime cutover is complete.
