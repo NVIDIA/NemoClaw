@@ -5,12 +5,12 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::observe_queries,
+    terminal::{ask_target, environment_probe, model_catalog_probe, observe_queries},
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
-    Capabilities, JourneyDefinition, PartialDocument, TargetPrerequisite, discovery_queries,
-    inference_request_for_document,
+    Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
+    discovery_queries, environment_queries, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken,
@@ -660,4 +660,82 @@ async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
         catalog.status,
         nemoclaw_sdk::discovery::ObservationStatus::Unknown
     );
+}
+
+/// A bundle that does not exist: the target cannot be reached, so every read is
+/// recorded as unknown, deterministically and without any process or network.
+fn unreachable_bundle() -> &'static std::path::Path {
+    std::path::Path::new("/definitely/missing/nemoclaw-bundle")
+}
+
+/// Ask the target without a terminal: nobody types during the read.
+async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
+    ask_target(
+        wizard,
+        unreachable_bundle(),
+        queries,
+        &CancellationToken::new(),
+        &mut std::collections::VecDeque::new(),
+        || Ok(None),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_new_questionnaire_asks_which_engines_this_machine_has_exactly_once() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    assert_eq!(environment_probe(&wizard), environment_queries());
+
+    let queries = environment_probe(&wizard);
+    assert!(ask(&mut wizard, queries).await);
+
+    // Each read is recorded, even though none could be made, so none is repeated.
+    assert!(environment_probe(&wizard).is_empty());
+    for query in environment_queries() {
+        assert!(wizard.observations.contains(&query));
+    }
+}
+
+#[tokio::test]
+async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    assert_eq!(model_catalog_probe(&wizard), None, "no model question yet");
+
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let document = wizard
+        .state
+        .resolve(&wizard.capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let request = inference_request_for_document(&document, wizard.state.current_route())
+        .unwrap()
+        .unwrap();
+    let query = model_catalog_probe(&wizard).expect("the model question needs its catalog");
+    assert_eq!(query, DiscoveryQuery::Inference(request.clone()));
+
+    assert!(ask(&mut wizard, vec![query]).await);
+
+    assert_eq!(
+        model_catalog_probe(&wizard),
+        None,
+        "the catalog is read once"
+    );
+    assert!(wizard.observations.inference(&request).is_some());
 }

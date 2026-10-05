@@ -76,54 +76,41 @@ pub(crate) async fn run(
         // Learn what this machine can run before the first question, so early
         // choices can use it. Each read is attempted once, even when it fails.
         if let Some(bundle) = bundle {
-            let queries = wizard.observations.missing(&environment_queries());
+            let queries = environment_probe(&wizard);
             if !queries.is_empty() {
                 terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
-                let discovery_cancel = cancel.child_token();
-                let Some(observed) = wait_for_discovery(
-                    observe_queries(bundle, queries, &discovery_cancel),
+                if !ask_target(
+                    &mut wizard,
+                    bundle,
+                    queries,
                     cancel,
-                    &discovery_cancel,
                     &mut queued_events,
                     poll_pending_event,
                 )
                 .await?
-                else {
+                {
                     return Ok(None);
-                };
-                wizard.observations.merge(observed);
+                }
                 needs_render = true;
             }
         }
         // Resolver failures are rendered by the view; keep the loop alive so
         // the user can go back instead of exiting the TUI.
         if let Some(bundle) = bundle
-            && wizard.question().is_ok_and(|question| {
-                question
-                    .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
-            })
-            && let Ok(resolution) = wizard.state.resolve(&wizard.capabilities)
-            && let Some(document) = resolution.assessment().document()
-            && let Ok(Some(request)) =
-                inference_request_for_document(document, wizard.state.current_route())
-            && !wizard
-                .observations
-                .contains(&DiscoveryQuery::Inference(request.clone()))
+            && let Some(query) = model_catalog_probe(&wizard)
         {
-            let query = DiscoveryQuery::Inference(request);
-            let discovery_cancel = cancel.child_token();
-            let Some(observed) = wait_for_discovery(
-                observe_queries(bundle, vec![query.clone()], &discovery_cancel),
+            if !ask_target(
+                &mut wizard,
+                bundle,
+                vec![query],
                 cancel,
-                &discovery_cancel,
                 &mut queued_events,
                 poll_pending_event,
             )
             .await?
-            else {
+            {
                 return Ok(None);
-            };
-            wizard.observations.merge(observed);
+            }
             needs_render = true;
         }
         if needs_render {
@@ -327,6 +314,52 @@ async fn wait_for_discovery<T>(
             }
         }
     }
+}
+
+/// This machine's engines, until each has been asked about once.
+pub(super) fn environment_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    wizard.observations.missing(&environment_queries())
+}
+
+/// The model catalog of the route being asked about, once the journey is at its
+/// model question and that catalog has not been read.
+pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQuery> {
+    if !wizard.question().is_ok_and(|question| {
+        question.is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+    }) {
+        return None;
+    }
+    let resolution = wizard.state.resolve(&wizard.capabilities).ok()?;
+    let document = resolution.assessment().document()?;
+    let request = inference_request_for_document(document, wizard.state.current_route()).ok()??;
+    let query = DiscoveryQuery::Inference(request);
+    (!wizard.observations.contains(&query)).then_some(query)
+}
+
+/// Ask the target and keep what it says. `false` means the user escaped while it
+/// was being read, which abandons the questionnaire.
+pub(super) async fn ask_target(
+    wizard: &mut JourneyWizard,
+    bundle: &std::path::Path,
+    queries: Vec<DiscoveryQuery>,
+    cancel: &CancellationToken,
+    queued_events: &mut VecDeque<Event>,
+    poll: impl FnMut() -> io::Result<Option<Event>>,
+) -> Result<bool, Error> {
+    let discovery_cancel = cancel.child_token();
+    let Some(observed) = wait_for_discovery(
+        observe_queries(bundle, queries, &discovery_cancel),
+        cancel,
+        &discovery_cancel,
+        queued_events,
+        poll,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    wizard.observations.merge(observed);
+    Ok(true)
 }
 
 /// Ask the target the given queries in one provider round. With no provider
