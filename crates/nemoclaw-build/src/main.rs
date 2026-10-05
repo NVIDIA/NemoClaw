@@ -55,7 +55,8 @@ enum Action {
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
-        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle.
+        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
+        /// or live-docker, which runs only when named.
         step: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
@@ -96,6 +97,9 @@ struct Pins {
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
+    /// Pinned OpenShell images; the Docker live tests pull these.
+    #[serde(default)]
+    images: std::collections::BTreeMap<String, String>,
 }
 fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))

@@ -26,3 +26,25 @@ test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 
 [profile.lifecycle.junit]
 path = "lifecycle.xml"
+
+# Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
+# images and owned inputs these tests read. One at a time: they share one engine.
+[profile.live-docker]
+inherits = "ci"
+test-threads = 1
+slow-timeout = { period = "60s", terminate-after = 10 }
+default-filter = '''
+(package(nemoclaw-runtime) & test(/^ollama_cache::/))
+| (package(nemoclaw-build) & (
+    test(runtime_archive_loads_with_its_exported_digest)
+    | test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache)
+))
+| (package(nemoclaw-e2e) & binary(=integration) & (
+    test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+))
+| (package(nemoclaw-sdk) & test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu))
+| (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
+'''
+
+[profile.live-docker.junit]
+path = "live-docker.xml"

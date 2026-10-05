@@ -19,6 +19,14 @@ The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and
 Each workflow step calls the same command, so the local result matches the platform's CI job.
 It does not run the image, documentation, or dependency workflows, or another platform's job.
 
+On Linux with a local Docker engine, `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
+Run `cargo ci build` and `cargo ci bundle` first.
+The step pulls the pinned OpenShell and Ollama images, builds a Pi agent image and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
+It then runs the `live-docker` nextest profile: the Ollama cache, runtime archive, offline runtime rebuild, standalone cache, Docker proxy, gateway recovery, gateway isolation, and profile revision tests, one at a time.
+Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
+It requests no inference and needs no GPU or credentials.
+A run on Linux ARM64 takes about five minutes after the build.
+
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
 
 ## CI Workflows
@@ -29,6 +37,7 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
+| Live / Docker | `Live / Docker / linux_arm64`, `Live / Docker / linux_amd64` on `v1` pushes, `run-live-docker/` branch pushes, and manual runs, through `cargo ci live-docker` |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.

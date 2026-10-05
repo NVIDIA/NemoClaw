@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Real Docker and OpenTofu tests that need only a Linux runner's Docker engine.
+# `cargo ci live-docker` runs the same thing locally; see docs/testing.md.
+name: Live / Docker
+on:
+  push:
+    # Dispatch needs this file on the default branch; push a
+    # run-live-docker/ branch to run it before merging.
+    branches: [v1, run-live-docker/**]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: live-docker-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  live-docker:
+    name: Live / Docker / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            platform: linux_arm64
+          - runner: ubuntu-24.04
+            platform: linux_amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_PLATFORM: ${{ matrix.platform }}
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ matrix.platform }}
+      - name: Build test executables
+        run: cargo ci build
+      - name: Build and verify native bundle
+        run: cargo ci bundle
+      - name: Run Docker live tests
+        run: cargo ci live-docker
+      - name: Upload live test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: live-docker-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: target/nextest/live-docker/live-docker.xml
+          if-no-files-found: ignore
+          retention-days: 14
