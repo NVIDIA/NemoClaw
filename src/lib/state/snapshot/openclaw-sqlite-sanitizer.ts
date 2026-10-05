@@ -25,7 +25,15 @@ const MACHINE_AUTHORITY_TABLES_TO_CLEAR = [
   "web_push_subscriptions",
 ] as const;
 
-const MACHINE_AUTHORITY_COLUMN_UPDATES = [
+const MACHINE_AUTHORITY_STATEMENTS = [
+  {
+    table: "state_leases",
+    // A replacement has a different host/process identity. The retired
+    // gateway's lease is not authority to exclude that replacement, and its
+    // foreign-host owner cannot be proven dead by OpenClaw's native reclaimer.
+    // This runs only on the archive copy; retain every other lease unchanged.
+    statement: "DELETE FROM state_leases WHERE scope = 'gateway-owner' AND lease_key = 'global'",
+  },
   {
     table: "channel_ingress_events",
     statement:
@@ -60,7 +68,7 @@ export function withoutOpenClawSqliteMachineAuthority(payload: Buffer): Buffer |
     for (const table of MACHINE_AUTHORITY_TABLES_TO_CLEAR) {
       if (tables.has(table)) database.exec(`DELETE FROM ${table}`);
     }
-    for (const { table, statement } of MACHINE_AUTHORITY_COLUMN_UPDATES) {
+    for (const { table, statement } of MACHINE_AUTHORITY_STATEMENTS) {
       if (tables.has(table)) database.exec(statement);
     }
     database.exec("COMMIT;");
