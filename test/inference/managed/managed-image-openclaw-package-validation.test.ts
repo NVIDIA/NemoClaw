@@ -17,6 +17,7 @@ import {
 const packageVersions = {
   "@openclaw/diagnostics-otel": "2026.9.2",
   "@openclaw/brave-plugin": "2026.9.2",
+  "@openclaw/tavily-plugin": "2026.9.2",
   "@openclaw/discord": "2026.9.2",
   "@tencent-weixin/openclaw-weixin": "2.4.9",
   "@openclaw/slack": "2026.9.2",
@@ -84,20 +85,19 @@ describe("managed OpenClaw image package validation", () => {
     expect(validateImagePackages).not.toThrow();
   });
 
-  it("rejects a missing Google Chat package", () => {
-    fs.rmSync(path.dirname(packageManifest("@openclaw/googlechat")), { recursive: true });
-    expect(validateImagePackages).toThrow(
-      "managed OpenClaw plugin googlechat is missing or duplicated",
-    );
+  it.each([
+    ["googlechat", "@openclaw/googlechat"],
+    ["tavily", "@openclaw/tavily-plugin"],
+  ])("rejects a missing %s package", (id, name) => {
+    fs.rmSync(path.dirname(packageManifest(name)), { recursive: true });
+    expect(validateImagePackages).toThrow(`managed OpenClaw plugin ${id} is missing or duplicated`);
   });
 
-  it("rejects a Google Chat package with the wrong version", () => {
-    fs.writeFileSync(
-      packageManifest("@openclaw/googlechat"),
-      JSON.stringify({ name: "@openclaw/googlechat", version: "2026.9.1" }),
-    );
-    expect(validateImagePackages).toThrow(
-      "managed OpenClaw plugin googlechat is missing or duplicated",
-    );
+  it.each([
+    ["googlechat", "@openclaw/googlechat"],
+    ["tavily", "@openclaw/tavily-plugin"],
+  ])("rejects a %s package with the wrong version", (id, name) => {
+    fs.writeFileSync(packageManifest(name), JSON.stringify({ name, version: "2026.9.1" }));
+    expect(validateImagePackages).toThrow(`managed OpenClaw plugin ${id} is missing or duplicated`);
   });
 });
