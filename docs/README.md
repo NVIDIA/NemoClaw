@@ -79,7 +79,6 @@ The design decision defines current invariants; historical test results apply on
 | Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
 | Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
-| Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 
 ## Sources and Fixtures
 
