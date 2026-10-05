@@ -8,7 +8,10 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
-import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
+import {
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
@@ -731,11 +734,13 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
+      nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
+        ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
+        : undefined,
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),
       ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
-      ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       gatewayName: route.gatewayName,
       gatewayPort:
         route.gatewayPort ??
