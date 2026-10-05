@@ -537,7 +537,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     );
   }
 
-  /** Register and select the exact endpoint whose listener identity was validated. */
+  /** Reuse or register the endpoint whose listener identity was validated. */
   async function attachGateway(
     owner: GatewayOwner,
     expectedProbe: GatewayAttachmentProbe,
@@ -550,7 +550,24 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
     prepareExternalGatewayClient(owner);
     const request = { target: { kind: "named" as const, gatewayName: owner.gatewayName } };
-    const removeAttemptedRegistration = async () => {
+    const observeRegistration = () =>
+      deps.observer.observeGatewayReuse({ ...request, expectedGatewayPort: owner.gatewayPort });
+    const existing = await observeRegistration();
+    if (existing.error) {
+      throw new GatewayOwnershipError("gateway_registration_failed", existing.error.message, owner);
+    }
+    const reusedRegistration = existing.namedMetadata;
+    if (reusedRegistration && (!existing.healthy || existing.endpointBinding !== "match")) {
+      throw new GatewayOwnershipError(
+        "gateway_registration_failed",
+        `OpenShell gateway registration '${owner.gatewayName}' does not match the healthy declared endpoint. ` +
+          "The registration was retained for inspection.",
+        owner,
+      );
+    }
+    let createdRegistration = false;
+    const removeCreatedRegistration = async () => {
+      if (!createdRegistration) return;
       const currentOwner = getGatewayOwner();
       if (!sameGatewayOwner(owner, currentOwner))
         throw new Error("Gateway authority changed; registration was retained.");
@@ -564,15 +581,24 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       }
       if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) delete process.env.OPENSHELL_GATEWAY;
     };
-    const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });
-    if (!added.ok) {
-      getGatewayOwner();
-      await deps.observer.observeGatewayReuse(request);
-      throw new GatewayOwnershipError("gateway_registration_failed", added.error.message, owner);
+    if (!reusedRegistration) {
+      const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });
+      if (!added.ok) {
+        getGatewayOwner();
+        await observeRegistration();
+        throw new GatewayOwnershipError("gateway_registration_failed", added.error.message, owner);
+      }
+      createdRegistration = true;
     }
     const selected = await deps.lifecycle.selectGateway(request);
-    const observed = await deps.observer.observeGatewayReuse(request);
-    if (!selected.ok || observed.error || !observed.healthy || !observed.namedMetadata) {
+    const observed = await observeRegistration();
+    if (
+      !selected.ok ||
+      observed.error ||
+      !observed.healthy ||
+      !observed.namedMetadata ||
+      observed.endpointBinding !== "match"
+    ) {
       getGatewayOwner();
       throw new GatewayOwnershipError(
         "gateway_registration_failed",
@@ -585,19 +611,22 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     try {
       currentProbe = await probeGatewayAttachment(owner);
     } catch (error) {
-      await removeAttemptedRegistration();
+      await removeCreatedRegistration();
       throw error;
     }
     const currentAttachment = evaluateGatewayAttachment(owner, currentProbe);
     if (!currentAttachment.ok || !sameAttachmentEvidence(expectedProbe, currentProbe)) {
-      await removeAttemptedRegistration();
+      await removeCreatedRegistration();
       if (!currentAttachment.ok) {
         throw new GatewayOwnershipError(currentAttachment.code, currentAttachment.message, owner);
       }
+      const registrationState = createdRegistration
+        ? "The new registration was removed"
+        : "The retained registration was preserved";
       throw new GatewayOwnershipError(
         "identity_mismatch",
         `The externally supervised gateway listener changed while '${owner.gatewayName}' was registered. ` +
-          "The registration was removed; stabilize the supervisor and re-run onboarding.",
+          `${registrationState}; stabilize the supervisor and re-run onboarding.`,
         owner,
       );
     }

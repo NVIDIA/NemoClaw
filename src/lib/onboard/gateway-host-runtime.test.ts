@@ -34,6 +34,24 @@ const DECLARATION = {
   requiredCapabilities: ["gateway.health"],
 };
 
+const MISSING_REGISTRATION = {
+  gatewayReuseState: "missing" as const,
+  healthy: false,
+  namedMetadata: false,
+  shouldSelect: false,
+  endpoints: [],
+  endpointBinding: "unknown" as const,
+};
+
+const MATCHING_REGISTRATION = {
+  gatewayReuseState: "healthy" as const,
+  healthy: true,
+  namedMetadata: true,
+  shouldSelect: false,
+  endpoints: [DECLARATION.endpoint],
+  endpointBinding: "match" as const,
+};
+
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
@@ -756,8 +774,10 @@ describe("gateway host runtime attachment probe", () => {
   it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {
     declareExternalSupervision();
     process.env.OPENSHELL_GATEWAY = "ambient-sibling";
-    const { lifecycle } = gatewayAdaptersForTest();
-    const runtime = createGatewayHostRuntime(createDeps({ lifecycle }));
+    const { lifecycle, observer } = gatewayAdaptersForTest(MISSING_REGISTRATION);
+    observer.observeGatewayReuse.mockResolvedValueOnce(MISSING_REGISTRATION);
+    observer.observeGatewayReuse.mockResolvedValue(MATCHING_REGISTRATION);
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
 
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
@@ -771,6 +791,70 @@ describe("gateway host runtime attachment probe", () => {
       target: { kind: "named", gatewayName: "nemoclaw" },
     });
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
+  });
+
+  it("reuses a healthy matching external registration without replacing it (#12622)", async () => {
+    declareExternalSupervision();
+    process.env.OPENSHELL_GATEWAY = "ambient-sibling";
+    const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    await runtime.attachGateway(owner, expectedProbe);
+
+    expect(observer.observeGatewayReuse).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      expectedGatewayPort: 8080,
+    });
+    expect(observer.observeGatewayReuse).toHaveBeenCalledTimes(2);
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+    expect(lifecycle.selectGateway).toHaveBeenCalledOnce();
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
+  });
+
+  it.each([
+    ["a conflicting endpoint", { ...MATCHING_REGISTRATION, endpointBinding: "mismatch" as const }],
+    [
+      "an unhealthy endpoint",
+      { ...MATCHING_REGISTRATION, gatewayReuseState: "stale" as const, healthy: false },
+    ],
+  ])("retains %s registration without another mutation (#12622)", async (_label, observation) => {
+    declareExternalSupervision();
+    const { lifecycle, observer } = gatewayAdaptersForTest(observation);
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "gateway_registration_failed",
+      message: expect.stringMatching(/retained for inspection/u),
+    });
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+  });
+
+  it("stops before mutation when external registration cannot be observed (#12622)", async () => {
+    declareExternalSupervision();
+    const { lifecycle, observer } = gatewayAdaptersForTest({
+      ...MISSING_REGISTRATION,
+      error: { kind: "timeout", message: "Gateway observation timed out." },
+    });
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "gateway_registration_failed",
+    });
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
   });
 
   it("rejects changed authority before gateway registration (#6576)", async () => {
@@ -799,7 +883,7 @@ describe("gateway host runtime attachment probe", () => {
 
   it("reobserves failed registration without replacing or retrying it (#11326)", async () => {
     declareExternalSupervision();
-    const { lifecycle, observer } = gatewayAdaptersForTest();
+    const { lifecycle, observer } = gatewayAdaptersForTest(MISSING_REGISTRATION);
     lifecycle.registerGateway.mockResolvedValue({
       ok: false,
       ambiguous: true,
@@ -813,7 +897,7 @@ describe("gateway host runtime attachment probe", () => {
       code: "gateway_registration_failed",
     });
     expect(lifecycle.registerGateway).toHaveBeenCalledOnce();
-    expect(observer.observeGatewayReuse).toHaveBeenCalled();
+    expect(observer.observeGatewayReuse).toHaveBeenCalledTimes(2);
     expect(lifecycle.removeGateway).not.toHaveBeenCalled();
     expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(lifecycle.selectGateway).not.toHaveBeenCalled();
@@ -821,7 +905,12 @@ describe("gateway host runtime attachment probe", () => {
 
   it("retains registration evidence when exact gateway selection is unhealthy (#11326)", async () => {
     declareExternalSupervision();
-    const { lifecycle, observer } = gatewayAdaptersForTest({ healthy: false });
+    const { lifecycle, observer } = gatewayAdaptersForTest({
+      ...MATCHING_REGISTRATION,
+      gatewayReuseState: "stale",
+      healthy: false,
+    });
+    observer.observeGatewayReuse.mockResolvedValueOnce(MISSING_REGISTRATION);
     const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
@@ -830,6 +919,7 @@ describe("gateway host runtime attachment probe", () => {
     });
     expect(lifecycle.removeGateway).not.toHaveBeenCalled();
     expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+    expect(observer.observeGatewayReuse).toHaveBeenCalledTimes(2);
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 
@@ -841,9 +931,10 @@ describe("gateway host runtime attachment probe", () => {
       .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
       .mockReturnValueOnce({ pids: [4343], complete: true })
       .mockReturnValueOnce({ pids: [4343], complete: true });
-    const { lifecycle } = gatewayAdaptersForTest();
+    const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
+    observer.observeGatewayReuse.mockResolvedValueOnce(MISSING_REGISTRATION);
     const runtime = createGatewayHostRuntime(
-      createDeps({ getGatewayPortListenerRawScan, lifecycle }),
+      createDeps({ getGatewayPortListenerRawScan, lifecycle, observer }),
     );
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
@@ -854,6 +945,30 @@ describe("gateway host runtime attachment probe", () => {
     expect(lifecycle.removeGateway).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
     });
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+  });
+
+  it("preserves a reused registration when the listener changes during attachment (#12622)", async () => {
+    declareExternalSupervision();
+    const getGatewayPortListenerRawScan = vi
+      .fn()
+      .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
+      .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
+      .mockReturnValueOnce({ pids: [4343], complete: true })
+      .mockReturnValueOnce({ pids: [4343], complete: true });
+    const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
+    const runtime = createGatewayHostRuntime(
+      createDeps({ getGatewayPortListenerRawScan, lifecycle, observer }),
+    );
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
     expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
@@ -870,8 +985,11 @@ describe("gateway host runtime attachment probe", () => {
       .mockReturnValueOnce("710025")
       .mockReturnValueOnce("710025")
       .mockReturnValueOnce("710025");
-    const { lifecycle } = gatewayAdaptersForTest();
-    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime, lifecycle }));
+    const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
+    observer.observeGatewayReuse.mockResolvedValueOnce(MISSING_REGISTRATION);
+    const runtime = createGatewayHostRuntime(
+      createDeps({ readProcStartTime, lifecycle, observer }),
+    );
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
 
