@@ -47,6 +47,7 @@ describe("onboard inference smoke guard (#3253)", () => {
         path.join(fakeBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          `printf '%s\\n' "$*" >> ${JSON.stringify(commandLogPath)}`,
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
           "  echo 'Gateway inference:'",
           "  echo '  Provider: compatible-endpoint'",
@@ -184,7 +185,10 @@ const setupInference = createSetupInference({
             hasTokenSequence(command, ["--provider", "compatible-endpoint"]),
         );
         assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
-        assert.ok(inferenceSetIndex >= 0, "setupInference did not configure inference");
+        assert.ok(
+          inferenceSetIndex >= 0,
+          `setupInference did not configure inference; commands:\n${commands.join("\n")}\noutput:\n${output}`,
+        );
         assert.ok(
           providerCreateIndex < inferenceSetIndex,
           "setupInference configured inference before creating compatible-endpoint",

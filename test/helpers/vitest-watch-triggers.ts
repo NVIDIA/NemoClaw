@@ -43,7 +43,7 @@ function runTests(...tests: string[]): () => string[] {
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
-      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py|seed-dashboard-config\.py))$/,
+      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
     testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
   },
 
@@ -180,6 +180,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       if (match[1] === "agents/hermes/") {
         return [
           "test/generation/providerless-agent-config.test.ts",
+          "test/agents/hermes/hermes-image-build-probes.test.ts",
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",

@@ -212,6 +212,20 @@ export function buildOpenShellSubprocessEnv(
   };
 }
 
+/** Build the allowlisted environment for OpenShell diagnostic children. */
+export function buildOpenShellDiagnosticEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = buildOpenShellSubprocessEnv(source);
+  for (const name of [
+    "OPENSHELL_GATEWAY",
+    "OPENSHELL_WORKSPACE",
+    "OPENSHELL_LOCAL_TLS_DIR",
+  ] as const) {
+    const value = source[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+}
+
 /** Resolve OpenShell without exiting when it is unavailable. */
 export function resolveOpenshellBinaryOrNull(env?: NodeJS.ProcessEnv): string | null {
   return resolveOpenshell(env ? { env } : undefined);

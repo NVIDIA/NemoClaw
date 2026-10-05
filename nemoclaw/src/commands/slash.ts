@@ -12,12 +12,14 @@
  */
 
 import { loadState } from "../blueprint/state.js";
-import type { OpenClawPluginApi, PluginCommandContext, PluginCommandResult } from "../index.js";
-import {
-  describeOnboardEndpoint,
-  describeOnboardProvider,
-  loadOnboardConfig,
-} from "../onboard/config.js";
+import type {
+  OpenClawConfig,
+  OpenClawPluginApi,
+  PluginCommandContext,
+  PluginCommandResult,
+} from "../index.js";
+import { loadOnboardConfig } from "../onboard/config.js";
+import { readNativeRoute } from "../onboard/native-route.js";
 import { getPluginConfig } from "../plugin-config.js";
 import { slashConfigShow } from "./config-show.js";
 
@@ -30,13 +32,13 @@ export function handleSlashCommand(
 
   switch (subcommand) {
     case "status":
-      return slashStatus(api);
+      return slashStatus(api, ctx.config);
     case "eject":
       return slashEject();
     case "onboard":
-      return slashOnboard();
+      return slashOnboard(ctx.config);
     case "config":
-      return slashConfigShow();
+      return slashConfigShow(ctx.config);
     default:
       return slashHelp();
   }
@@ -65,24 +67,20 @@ function slashHelp(): PluginCommandResult {
   };
 }
 
-function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
+function slashStatus(api: OpenClawPluginApi, nativeConfig: OpenClawConfig): PluginCommandResult {
   const onboardConfig = loadOnboardConfig();
   const { sandboxName } = getPluginConfig(api);
 
-  if (!onboardConfig) {
-    return {
-      text: "**NemoClaw**: No onboard configuration found. Run `nemoclaw onboard` to get started.",
-    };
-  }
+  const route = readNativeRoute(nativeConfig);
 
   const lines = [
     "**NemoClaw Status**",
     "",
     `Sandbox: ${sandboxName}`,
-    `Endpoint: ${describeOnboardEndpoint(onboardConfig)}`,
-    `Provider: ${describeOnboardProvider(onboardConfig)}`,
-    `Model: ${onboardConfig.model}`,
-    `Onboarded: ${onboardConfig.onboardedAt}`,
+    `Endpoint: ${route.endpoint}`,
+    `Provider: ${route.provider}`,
+    `Model: ${route.model}`,
+    `Onboarded: ${onboardConfig?.onboardedAt ?? "(not recorded)"}`,
   ];
 
   const state = loadState();
@@ -100,36 +98,21 @@ function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
   return { text: lines.join("\n") };
 }
 
-function slashOnboard(): PluginCommandResult {
+function slashOnboard(nativeConfig: OpenClawConfig): PluginCommandResult {
   const config = loadOnboardConfig();
-  if (config) {
-    return {
-      text: [
-        "**NemoClaw Onboard Status**",
-        "",
-        `Endpoint: ${describeOnboardEndpoint(config)}`,
-        `Provider: ${describeOnboardProvider(config)}`,
-        config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
-        `Model: ${config.model}`,
-        `Credential: $${config.credentialEnv}`,
-        `Profile: ${config.profile}`,
-        `Onboarded: ${config.onboardedAt}`,
-        "",
-        "To reconfigure, run: `nemoclaw onboard`",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    };
-  }
+  const route = readNativeRoute(nativeConfig);
   return {
     text: [
-      "**NemoClaw Onboarding**",
+      "**NemoClaw Onboard Status**",
       "",
-      "No configuration found. Run the onboard command to set up inference:",
+      `Endpoint: ${route.endpoint}`,
+      `Provider: ${route.provider}`,
+      `Model: ${route.model}`,
+      `Credential: ${route.credential}`,
+      `Profile: ${config?.profile ?? "(not recorded)"}`,
+      `Onboarded: ${config?.onboardedAt ?? "(not recorded)"}`,
       "",
-      "```",
-      "nemoclaw onboard",
-      "```",
+      "To configure, run: `nemoclaw onboard`",
     ].join("\n"),
   };
 }

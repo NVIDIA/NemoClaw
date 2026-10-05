@@ -1,30 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { execTimeout, testTimeoutOptions } from "../../../../test/helpers/timeouts";
-
-import {
-  withMcpLifecycleLock,
-  withMcpLifecycleLockSync,
-  isMcpLifecycleLockHeld,
-} from "../../state/mcp-lifecycle-lock-acquisition";
-import {
-  withPortableHostFence,
-  portableHostFencePath,
-} from "../../state/portable-uninstall-retirement";
-import {
-  execSandbox,
-  startSandboxExec,
-  type SandboxExecCleanupDeps,
-  workdirMissingMessage,
-} from "./exec";
+import { execSandbox, startSandboxExec, workdirMissingMessage } from "./exec";
 
 describe("workdirMissingMessage", () => {
   it("renders a user-facing CLI error with the offending path", () => {
@@ -38,22 +17,12 @@ describe("workdirMissingMessage", () => {
 // (#5978): proves the breadcrumb fires for a denied failure while the command's
 // exit code is preserved, and stays silent on success and unrelated failures.
 // All host seams are injected so the test never spawns openshell or touches the
-// registry (getSandbox returns null, so cleanup is a no-op).
+// registry.
 describe("execSandbox policy-denial hint wiring (#5978)", () => {
   const START_MS = 1_000_000;
   // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
   const DENIAL_LINE =
     "[1000.500] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
-
-  const cleanupSkipped: SandboxExecCleanupDeps = {
-    getSandbox: () => null,
-    inspectMutableConfigPerms: vi.fn(() => {
-      throw new Error("cleanup should be skipped for an unregistered sandbox");
-    }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
-    repairMutableConfigPerms: vi.fn(() => {
-      throw new Error("cleanup should be skipped for an unregistered sandbox");
-    }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
-  };
 
   const runExec = async (
     status: number | null,
@@ -63,7 +32,6 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       now?: () => number;
       onRun?: () => void;
       probeError?: Error;
-      cleanupDeps?: SandboxExecCleanupDeps;
       writeStderr?: (line: string) => void;
     } = {},
   ) => {
@@ -104,7 +72,6 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
             };
           },
         },
-        cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
         exit,
         policyHint: {
           now: options.now ?? (() => START_MS),
@@ -180,32 +147,6 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     expect(stderr).toHaveLength(0);
   });
 
-  it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
-    const inspectMutableConfigPerms = vi
-      .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
-      .mockReturnValueOnce({
-        applies: true,
-        ok: false,
-        issues: ["config mode differs from runtime contract"],
-      });
-    const repairMutableConfigPerms = vi.fn(() => ({
-      applied: true as const,
-      verified: true as const,
-      errors: [],
-    }));
-    const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
-      cleanupDeps: {
-        getSandbox: () => ({ agent: "openclaw" }),
-        inspectMutableConfigPerms,
-        repairMutableConfigPerms,
-      },
-    });
-    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
-    expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
-    expect(exitCode).toBe(56);
-    expect(stderr.join("\n")).toContain("recent network policy denial detected");
-  });
-
   it("captures the denial cutoff before dispatch and rejects an older denial", async () => {
     let dispatched = false;
     const now = vi.fn(() => {
@@ -227,283 +168,71 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 });
 
-describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
-  const cleanupSkipped: SandboxExecCleanupDeps = {
-    getSandbox: () => null,
-    inspectMutableConfigPerms: vi.fn(() => {
-      throw new Error("cleanup should be skipped for an unregistered sandbox");
-    }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
-    repairMutableConfigPerms: vi.fn(() => {
-      throw new Error("cleanup should be skipped for an unregistered sandbox");
-    }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
-  };
-
-  const UNRELATED_ADMIN_PENDING = JSON.stringify({
-    pending: [
-      {
-        requestId: "c0ffee00-dead-4beef-b0bb-000000000001",
-        device: "unrelated-device-fingerprint",
-        scopes: ["operator.admin"],
-      },
-    ],
+describe("startSandboxExec native stream preservation (#11763)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  const runOpenClawExec = async (status: number, devicesJson: string) => {
-    const stderr: string[] = [];
-    const probePendingDevices = vi.fn(() => devicesJson);
+  it.each([
+    ["successful", 0],
+    ["failed", 23],
+  ])("preserves native stdout, stderr, and exit status for a %s command", async (_label, code) => {
+    const stdoutText = `native stdout ${code}\n`;
+    const stderrText = `native stderr ${code}\n`;
+    let observedStdout = "";
+    let observedStderr = "";
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      observedStdout += String(chunk);
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      observedStderr += String(chunk);
+      return true;
+    });
+    const runStreaming = vi.fn(async () => {
+      process.stdout.write(stdoutText);
+      process.stderr.write(stderrText);
+      return {
+        outcome: { kind: "completed" as const, exitCode: code },
+        release: vi.fn(),
+      };
+    });
+    const probeLogs = vi.fn(() => "");
     let exitCode = Number.NaN;
-    const exit = ((code?: number) => {
-      exitCode = code ?? 0;
+    const exit = ((value?: number) => {
+      exitCode = value ?? 0;
       throw new Error("__exec_exit__");
-    }) as (code: number) => never;
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await execSandbox(
-      "wire-sbx",
-      ["openclaw", "cron", "add"],
+    }) as (value: number) => never;
+
+    const finish = await startSandboxExec(
+      "native-stream-sandbox",
+      ["sh", "-c", "printf native"],
       {},
       {
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
         commandExecutor: {
           probeDirectory: async () => ({ state: "present" }),
-          runStreaming: async () => ({
-            outcome: { kind: "completed", exitCode: status },
-            release: () => {},
-          }),
+          runStreaming,
         },
-        cleanupDeps: cleanupSkipped,
-        exit,
         policyHint: {
-          now: () => 0,
-          env: {},
-          probeLogs: () => "",
-          enableAudit: () => {},
-          sleep: async () => {},
           attempts: 1,
-          probePendingDevices,
-          writeStderr: (line) => stderr.push(line),
+          enableAudit: vi.fn(),
+          env: {},
+          probeLogs,
+          sleep: async () => {},
         },
+        exit,
       },
-    ).catch(() => {});
-    errSpy.mockRestore();
-    return { exitCode, probePendingDevices, stderr: stderr.join("\n") };
-  };
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("names the prepared review shell and preserves the exit code when a request is pending", async () => {
-    const { exitCode, stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("nemoclaw wire-sbx connect");
-    expect(stderr).toContain("openclaw devices list --json");
-  });
-
-  it.each([
-    ["the uncorrelated request id", "c0ffee00-dead-4beef-b0bb-000000000001"],
-    ["the requested scopes", "operator.admin"],
-    ["the requesting device", "unrelated-device-fingerprint"],
-  ])("never presents %s as this command's remedy", async (_label, leaked) => {
-    const { stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
-    expect(stderr).toContain("openclaw devices approve <requestId>");
-    expect(stderr).not.toContain("exec -- openclaw devices approve");
-    expect(stderr).not.toContain(leaked);
-  });
-
-  it("skips the probe entirely when the openclaw command succeeds", async () => {
-    const { exitCode, probePendingDevices, stderr } = await runOpenClawExec(
-      0,
-      UNRELATED_ADMIN_PENDING,
     );
-    expect(exitCode).toBe(0);
-    expect(probePendingDevices).not.toHaveBeenCalled();
-    expect(stderr).toBe("");
-  });
 
-  it("stays silent when the failure leaves no pending request", async () => {
-    const { exitCode, stderr } = await runOpenClawExec(1, JSON.stringify({ pending: [] }));
-    expect(exitCode).toBe(1);
-    expect(stderr).toBe("");
+    await expect(finish()).rejects.toThrow("__exec_exit__");
+
+    expect(runStreaming).toHaveBeenCalledOnce();
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(stdoutText);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(stderrText);
+    expect(observedStdout).toBe(stdoutText);
+    expect(observedStderr).toBe(stderrText);
+    expect(exitCode).toBe(code);
+    expect(probeLogs).toHaveBeenCalledTimes(code === 0 ? 0 : 1);
   });
 });
-
-it.each([
-  { mode: "sync", error: new Error("lock timed out"), commandCode: 0, invocationFailed: false },
-  {
-    mode: "async",
-    error: new Error("migration blocked"),
-    commandCode: 23,
-    invocationFailed: false,
-  },
-  { mode: "async", error: "registry unavailable", commandCode: 1, invocationFailed: true },
-])(
-  "reports $mode cleanup authority failure after command status $commandCode (#11647)",
-  async ({ mode, error, commandCode, invocationFailed }) => {
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
-    const release = vi.fn();
-    const inspect = vi.fn(() => ({ applies: true as const, ok: true, issues: [] }));
-    const exit = vi.fn((code: number): never => {
-      throw new Error(`exit:${code}`);
-    });
-    try {
-      const finish = await startSandboxExec(
-        "alpha",
-        ["true"],
-        {},
-        {
-          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-          commandExecutor: {
-            probeDirectory: async () => ({ state: "present" }),
-            runStreaming: async () => ({
-              outcome: invocationFailed
-                ? { kind: "failed", error: { kind: "invocation", message: "transport failed" } }
-                : { kind: "completed", exitCode: commandCode },
-              release,
-            }),
-          },
-          withCleanupAuthority:
-            mode === "sync"
-              ? () => {
-                  throw error;
-                }
-              : () => Promise.reject(error),
-          cleanupDeps: {
-            getSandbox: () => ({ agent: "openclaw" }),
-            inspectMutableConfigPerms: inspect,
-            repairMutableConfigPerms: () => ({ applied: true, verified: true, errors: [] }),
-          },
-          policyHint: {
-            env: {},
-            probeLogs: () => "",
-            enableAudit: () => {},
-            sleep: async () => {},
-            attempts: 1,
-          },
-          exit,
-        },
-      );
-      await expect(finish()).rejects.toThrow("exit:1");
-      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
-      expect(stderr).toHaveBeenCalledWith(
-        `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): cleanup authority unavailable: ${error instanceof Error ? error.message : error}`,
-      );
-      expect(
-        stderr.mock.calls.filter(([line]) => String(line).includes("Failed to invoke openshell")),
-      ).toHaveLength(invocationFailed ? 1 : 0);
-      expect(inspect).not.toHaveBeenCalled();
-      expect(release).toHaveBeenCalledOnce();
-    } finally {
-      stderr.mockRestore();
-    }
-  },
-);
-
-it(
-  "releases authority to another process before interactive completion (#11647)",
-  testTimeoutOptions(15_000),
-  async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-exec-"));
-    const stateDir = path.join(home, "state");
-    const lockOptions = { stateDir };
-    const sandboxName = "launch-exec";
-    let endSession: () => void = () => {};
-    const ended = new Promise<void>((resolve) => {
-      endSession = resolve;
-    });
-    const release = vi.fn();
-    const cleanup = vi.fn(() =>
-      withMcpLifecycleLockSync(
-        sandboxName,
-        () => {
-          expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
-          return { applies: true as const, ok: true, issues: [] };
-        },
-        lockOptions,
-      ),
-    );
-    let dispatched = false;
-    let lockHeldDuringCleanup: boolean | null = null;
-    let fenceHeldDuringCleanup: boolean | null = null;
-    try {
-      const finish = await withPortableHostFence(home, () =>
-        withMcpLifecycleLock(
-          sandboxName,
-          () =>
-            startSandboxExec(
-              sandboxName,
-              ["bash", "-lc", "openclaw tui"],
-              { tty: true, stdin: true, timeoutSeconds: 0 },
-              {
-                selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-                commandExecutor: {
-                  probeDirectory: async () => ({ state: "present" }),
-                  runStreaming: async () => {
-                    expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
-                    expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
-                    dispatched = true;
-                    await ended;
-                    return { outcome: { kind: "completed", exitCode: 0 }, release };
-                  },
-                },
-                cleanupDeps: {
-                  getSandbox: () => {
-                    lockHeldDuringCleanup = isMcpLifecycleLockHeld(sandboxName, stateDir);
-                    fenceHeldDuringCleanup = fs.existsSync(portableHostFencePath(home));
-                    return { agent: "openclaw" };
-                  },
-                  inspectMutableConfigPerms: cleanup,
-                  repairMutableConfigPerms: () => {
-                    throw new Error("healthy config needs no repair");
-                  },
-                },
-                exit: (code) => {
-                  throw new Error(`exit:${code}`);
-                },
-              },
-            ),
-          lockOptions,
-        ),
-      );
-      expect(dispatched).toBe(true);
-      expect(cleanup).not.toHaveBeenCalled();
-      const contender = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--import",
-          "tsx",
-          "--input-type=module",
-          "-e",
-          `
-        const retirement = (await import(process.argv[1])).default;
-        const lifecycle = (await import(process.argv[2])).default;
-        await retirement.withPortableHostFence(process.argv[3], () =>
-          lifecycle.withMcpLifecycleLock(process.argv[4], () => {
-            console.log("contender-entered");
-          }, { stateDir: process.argv[5] }),
-        );
-      `,
-          new URL("../../state/portable-uninstall-retirement.ts", import.meta.url).href,
-          new URL("../../state/mcp-lifecycle-lock-acquisition.ts", import.meta.url).href,
-          home,
-          sandboxName,
-          stateDir,
-        ],
-        { encoding: "utf8", timeout: execTimeout() },
-      );
-      expect(contender.status, contender.stderr || String(contender.error ?? "")).toBe(0);
-      expect(contender.stdout.trim()).toBe("contender-entered");
-      expect(cleanup).not.toHaveBeenCalled();
-      expect(release).not.toHaveBeenCalled();
-      endSession();
-      await expect(finish()).rejects.toThrow("exit:0");
-      expect(lockHeldDuringCleanup).toBe(false);
-      expect(fenceHeldDuringCleanup).toBe(false);
-      expect(cleanup).toHaveBeenCalledOnce();
-      expect(release).toHaveBeenCalledOnce();
-    } finally {
-      endSession();
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  },
-);

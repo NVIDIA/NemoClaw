@@ -277,7 +277,7 @@ navigation:
                   - page: "Understand Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
                     slug: understand-sandbox-state
-                  - page: "Create and Restore Snapshots"
+                  - page: "Persist Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/backup-restore.openclaw.generated.mdx
                     slug: create-and-restore-snapshots
                   - page: "Transfer State Manually"
@@ -680,7 +680,7 @@ navigation:
                   - page: "Understand Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/workspace-files.deepagents.generated.mdx
                     slug: understand-sandbox-state
-                  - page: "Create and Restore Snapshots"
+                  - page: "Persist Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/backup-restore.deepagents.generated.mdx
                     slug: create-and-restore-snapshots
                   - page: "Transfer State Manually"
@@ -1074,7 +1074,7 @@ navigation:
                   - page: "Understand Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
                     slug: understand-sandbox-state
-                  - page: "Create and Restore Snapshots"
+                  - page: "Persist Sandbox State"
                     path: _build/agent-variants/manage-sandboxes/backup-restore.hermes.generated.mdx
                     slug: create-and-restore-snapshots
                   - page: "Transfer State Manually"

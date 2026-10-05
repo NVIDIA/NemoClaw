@@ -12,7 +12,7 @@ import type {
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
-import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../inference/web-search/provider-profile";
 import type { OnboardMachineState } from "./machine/types";
 import { ONBOARD_MACHINE_STATES } from "./machine/types";
 import {

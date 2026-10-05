@@ -249,7 +249,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 15,
       description: "Stop NIM + delete sandbox",
-      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
+      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]",
     },
   ],
   "sandbox:download": [
@@ -472,26 +472,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Skills",
       order: 16.2,
-    },
-  ],
-  "sandbox:snapshot:create": [
-    {
-      group: "Sandbox Management",
-      order: 7,
-      flags: "[--name <name>]",
-    },
-  ],
-  "sandbox:snapshot:list": [
-    {
-      group: "Sandbox Management",
-      order: 8,
-    },
-  ],
-  "sandbox:snapshot:restore": [
-    {
-      group: "Sandbox Management",
-      order: 9,
-      flags: "[selector] [--to <dst>] [--force] [--yes|-y]",
     },
   ],
   "sandbox:status": [

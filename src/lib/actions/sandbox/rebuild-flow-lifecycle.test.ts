@@ -262,7 +262,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+  it("recreates with the provider-captured exact GPU before rebuild restore (#10758)", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         sandboxGpuMode: "auto",
@@ -369,17 +369,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ captureStateFile: expect.any(Function) }),
-    );
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+    });
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
       "alpha",
       { gatewayName: "nemoclaw", workspace: "default" },
       [mcpEntry],
-    );
-    expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
@@ -445,7 +441,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
       sandboxName: "alpha",
       kind: "backup",
       runtimeSelection: {
@@ -482,27 +478,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(harness.getSandboxEntry().stopped).toBe(true);
-  });
-
-  it("retains removed immutability state when mutable config verification fails", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["permission verification failed"],
-      }),
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
-      stateRecord: "/tmp/shields-alpha.json",
-      recoveryArtifacts: [],
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/state was retained.*mutable config posture was not verified/u);
-
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
   });
 
   it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {

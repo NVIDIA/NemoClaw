@@ -74,7 +74,6 @@ const commands = [
   "cron-create",
   "cron-reopen",
   "cron-runtime-source",
-  "dashboard-policy",
   "discord-backup",
   "discord-create",
   "discord-recovery-source",
@@ -776,12 +775,20 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     const sessionStateLayers = runInstructions.filter(({ text }) =>
       text.includes(`${imageProbePath} session-state-`),
     );
+    const agentHomeLayer = runInstructions.find(({ text }) =>
+      text.includes(`${imageProbePath} agent-home`),
+    );
+    const ledgerLayoutLayer = runInstructions.find(({ text }) =>
+      text.includes('ln -s "runtime/${name}" "/sandbox/.hermes/${name}"'),
+    );
 
     expect({
       cron: layersFor("cron").length,
       discord: layersFor("discord").length,
       sessionState: sessionStateLayers.length,
     }).toEqual({ cron: 2, discord: 2, sessionState: 1 });
+    expect(agentHomeLayer?.start).toBeGreaterThan(ledgerLayoutLayer?.start ?? Infinity);
+    expect(agentHomeLayer?.start).toBe(sessionStateLayers[0]?.start);
     expect(sessionStateLayers[0]?.start).toBe(
       layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
     );

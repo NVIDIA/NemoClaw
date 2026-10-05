@@ -303,6 +303,55 @@ export interface SandboxRecreateObservation {
   readonly liveIdentityFingerprint: string | null;
 }
 
+export function createRegisteredSandboxIdentityRevalidation(
+  expected: SandboxEntry | null,
+  deps: {
+    readRegistration(sandboxName: string): SandboxEntry | null;
+    observe(sandboxName: string, gatewayName: string): SandboxRecreateObservation;
+  },
+): ((operation: string) => void) | undefined {
+  if (
+    !expected ||
+    typeof expected.gatewayName !== "string" ||
+    typeof expected.lifecycleGeneration !== "string" ||
+    typeof expected.lifecycleLiveIdentityFingerprint !== "string"
+  ) {
+    return undefined;
+  }
+  const authority = {
+    name: expected.name,
+    gatewayName: expected.gatewayName,
+    lifecycleGeneration: expected.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: expected.lifecycleLiveIdentityFingerprint,
+  };
+  const assertRegistration = (operation: string): void => {
+    const current = deps.readRegistration(authority.name);
+    if (
+      current?.gatewayName !== authority.gatewayName ||
+      current.lifecycleGeneration !== authority.lifecycleGeneration ||
+      current.lifecycleLiveIdentityFingerprint !== authority.lifecycleLiveIdentityFingerprint
+    ) {
+      throw new Error(
+        `Cannot ${operation}: registered identity for sandbox '${authority.name}' changed.`,
+      );
+    }
+  };
+
+  return (operation: string): void => {
+    assertRegistration(operation);
+    const observation = deps.observe(authority.name, authority.gatewayName);
+    if (
+      observation.state === "missing" ||
+      observation.liveIdentityFingerprint !== authority.lifecycleLiveIdentityFingerprint
+    ) {
+      throw new Error(
+        `Cannot ${operation}: live identity for sandbox '${authority.name}' changed.`,
+      );
+    }
+    assertRegistration(operation);
+  };
+}
+
 export type CreatedSandboxLifecycleRegistration = Required<
   Pick<SandboxEntry, "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint">
 >;
