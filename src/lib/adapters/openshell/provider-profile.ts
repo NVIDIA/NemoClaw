@@ -11,6 +11,7 @@ type ProviderProfileBoundary = Readonly<{
   endpoints: readonly unknown[];
   binaries: readonly string[];
   inference_capable: boolean;
+  discovery: { credentials: readonly string[] };
 }>;
 
 export type CheckedInProviderProfileContract = Readonly<{
@@ -37,6 +38,14 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
   ) {
     return null;
   }
+  const discovery = profile.discovery === undefined ? {} : recordValue(profile.discovery);
+  if (
+    !discovery ||
+    (discovery.credentials !== undefined &&
+      (!Array.isArray(discovery.credentials) ||
+        discovery.credentials.some((value) => typeof value !== "string")))
+  )
+    return null;
   const credentials = profile.credentials.map((value) => {
     const credential = recordValue(value);
     if (
@@ -74,6 +83,7 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
     endpoints: profile.endpoints,
     binaries: profile.binaries as string[],
     inference_capable: profile.inference_capable,
+    discovery: { credentials: (discovery.credentials ?? []) as string[] },
   };
 }
 
