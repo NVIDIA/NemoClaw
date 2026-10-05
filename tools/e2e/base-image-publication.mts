@@ -381,13 +381,14 @@ export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
   runGit: (args: string[]) => string = defaultGit,
-  options: { readonly requireCheckedOutCommit?: boolean } = {},
+  options: { readonly allowCheckedOutDescendant?: boolean } = {},
 ): FirstParentHistory {
   sha(expectedSha, "expected SHA");
   if (paths.length === 0) throw new Error("at least one base-image path is required");
 
   const checkedOutSha = runGit(["rev-parse", "--verify", "HEAD^{commit}"]);
-  if (options.requireCheckedOutCommit !== false && checkedOutSha !== expectedSha) {
+  sha(checkedOutSha, "checked-out commit");
+  if (options.allowCheckedOutDescendant !== true && checkedOutSha !== expectedSha) {
     throw new Error(
       `checked-out commit ${checkedOutSha || "missing"} does not match ${expectedSha}`,
     );
@@ -412,17 +413,22 @@ export function resolveFirstParentHistory(
   ]);
   sha(relevantSha, "latest applicable base-image commit");
 
-  const firstParentShas = runGit(["rev-list", "--first-parent", expectedSha])
+  const historyHeadSha = options.allowCheckedOutDescendant === true ? checkedOutSha : expectedSha;
+  const firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
     .split(/\r?\n/u)
     .filter(Boolean);
-  if (firstParentShas.length === 0 || firstParentShas[0] !== expectedSha) {
-    throw new Error("first-parent history must begin at the expected SHA");
+  if (firstParentShas.length === 0 || firstParentShas[0] !== historyHeadSha) {
+    throw new Error("first-parent history must begin at the selected history commit");
   }
   if (new Set(firstParentShas).size !== firstParentShas.length) {
     throw new Error("first-parent history must not contain duplicate commits");
   }
   for (const [index, value] of firstParentShas.entries())
     sha(value, `first-parent commit ${index}`);
+
+  if (!firstParentShas.includes(expectedSha)) {
+    throw new Error("expected SHA is not on the checked-out first-parent history");
+  }
 
   const relevantDistance = firstParentShas.indexOf(relevantSha);
   if (relevantDistance < 0) {
@@ -1096,7 +1102,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       : readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
   const history = resolveFirstParentHistory(expectedSha, paths, defaultGit, {
-    requireCheckedOutCommit: allowNonHeadHistory !== "1",
+    allowCheckedOutDescendant: allowNonHeadHistory === "1",
   });
   const run = await waitForBaseImagePublication({
     history,

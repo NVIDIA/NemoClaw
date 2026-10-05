@@ -256,7 +256,7 @@ It stops without writing output when required identity, policy, inference, or wo
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
-For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
+For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
 If OpenShell cannot supply the required evidence, the command stops without writing output.
 
@@ -283,7 +283,21 @@ Exports never contain credential values. They include credential environment-var
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
-Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
+When retained CA state is present, a successful export reports that omission on standard error.
+Export does not change the source sandbox's trust.
+
+Before deploying the YAML, prepare the destination:
+
+- Supply values for `credential.env` references through the destination command's environment.
+  Keep credential values out of YAML.
+  Unset exported credentials after the destination command finishes.
+- If `network.proxy` is present, ensure its host and port are reachable from the destination sandbox.
+  Export does not install the proxy.
+- Review destination CA trust requirements before deployment.
+
+The exporter refuses sources that require host proxy credential replay.
+Experimental runtime identity is not supported by this export command.
+For its separate OpenClaw workflow, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
 Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
@@ -303,6 +317,11 @@ Deep Agents export requires hosted OpenAI Completions inference and explicitly d
 It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
+Managed OpenClaw and Hermes sources can also export Tavily with a `tavily-search` integration, the `TAVILY_API_KEY` reference, and a grant for the primary agent.
+Export verifies the source's provider and profile binding, including the Hermes-specific `tavily-hermes-v1` profile.
+Missing or mismatched search evidence prevents publication.
+Disabled search remains ungranted.
+Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
@@ -1103,7 +1122,10 @@ During that lease, another `launch` still verifies these conditions:
 
 <AgentOnly variant="openclaw,hermes">
 
-- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+- The recorded inference selection matches its provider path, and that path returns HTTP 2xx from its semantic probe when inference is configured.
+  Shared-route providers use `inference.local`.
+  NVIDIA Endpoints verifies the recorded sandbox-attached provider and sends the request to `https://integrate.api.nvidia.com/v1`.
+  This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -1174,15 +1196,19 @@ Without `--probe-only`, `connect` does not pull a model itself, but it does insp
 
 
 
-Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
-When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
+For a shared-route provider, before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
+When the live shared route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
 Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow.
-Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
-HTTP `200` through `499` confirms that the route is reachable.
-When the probe returns a recognized broken result, `connect` attempts DNS or route repair and verifies the route again.
-When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
+Before it opens SSH for a shared-route provider, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
+HTTP `200` through `499` confirms that the shared route is reachable.
+A recognized broken shared-route result lets `connect` attempt DNS or route repair and verify the route again.
+When the initial shared-route probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
+
+For NVIDIA Endpoints, `connect` does not inspect or change the unrelated shared route.
+It verifies the recorded sandbox-attached provider and sends a native inference request for the selected model.
+The request must return a structurally valid successful inference result before `connect` opens SSH.
 <AgentOnly variant="deepagents">
 After route discovery succeeds, every configured Deep Agents Code route must also serve a valid response to a bounded request for the recorded model.
 A failed model request or missing provider or model metadata stops `connect` before SSH opens.
@@ -1612,7 +1638,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through `https://inference.local` using the sandbox's recorded provider and model. A gateway that answers the `/v1/models` probe can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the route returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted route. When the sandbox records no provider or no model, `start` skips the request and exits `0`. `doctor` still classifies an HTTP `401` or `403` route response as reachable, so correct the provider credential when `start` reports one of those statuses.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Most providers use `https://inference.local`; NVIDIA Endpoints uses the sandbox-attached OpenShell provider for `https://integrate.api.nvidia.com/v1`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. `doctor` still classifies an HTTP `401` or `403` route response as reachable, so correct the provider credential when `start` reports one of those statuses.
 
 ### `$$nemoclaw <name> status`
 
@@ -1628,7 +1654,7 @@ nonzero. A stopped runtime without recorded stop intent remains a
 
 For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`. The line is omitted for another provider or API family.
 
-Pass `--json` to emit a structured per-sandbox report instead of the text renderer. The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `policiesAvailable`, `llamaCpp`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`. `policies` is derived from the current OpenShell policy; NemoClaw does not persist a second preset list or baseline-exclusion ledger. `policiesAvailable` is `false` when that live policy cannot be read or parsed, distinguishing an unavailable result from a verified empty `policies` array; text status prints `Policies: unavailable` for the same state. When the live gateway route matches the sandbox's recorded llama.cpp route, `llamaCpp.kind` is `attached`, `managed`, or `unavailable`. An attached route also includes its fixed loopback `llamaCpp.endpointUrl`. An unavailable result means NemoClaw could not safely verify the managed ownership receipt; it does not include an endpoint and provides a secret-free diagnostic and recovery action. During route drift, `status` omits the `llamaCpp` route attribution; inspect `routeDrift` before acting on endpoint information. Text status can still show managed-runtime details from the sandbox-owned receipt. The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable. Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route. When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`. When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the route-sharing workflow. `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks. `agent` is always a string and reports `openclaw` when the registry records no agent for the sandbox. `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage. `inferenceHealth.ok` reports whether the inference route returned a structurally valid result for one request sent from inside the sandbox. The result must match Chat Completions, Responses, or Anthropic Messages for the selected route. An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status. The probe captures at most 64 KiB and does not include the response body in diagnostics. The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up. The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable. When the live provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs. This includes `openai-responses`. When the live provider differs, NemoClaw does not carry the recorded API family to the live provider. Each attempt requests 16 reply tokens for ordinary providers or 256 for Gemini. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Hosted routes consume provider tokens on every attempt. When the inference request returns HTTP `429`, `502`, `503`, or `504`, `status` retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts, because those statuses are transient gateway and availability answers rather than evidence that the route is broken. Before each retry, it writes the failed probe boundary, an HTTP status when one is available, the next attempt, total attempts, and delay to stderr; `--json` keeps stdout machine-readable. On an ordinary run, every other failure is final on the first attempt with no delay: HTTP `401`, `403`, `404`, and `500`, an invalid 2xx response body, a request that returned no HTTP status, and a failing `/v1/models` route probe. When the same run recovers a managed gateway, `status` retries any failed route or inference probe on that schedule instead, while the restarted delivery chain settles. Each route probe has a 10-second timeout. Three complete route probes plus their 95-second inference wrappers and two delays can take about 319 seconds. When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered. `inferenceHealth.failureLabel` reports why the inference request failed:
+Pass `--json` to emit a structured per-sandbox report instead of the text renderer. The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `policiesAvailable`, `llamaCpp`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`. `policies` is derived from the current OpenShell policy; NemoClaw does not persist a second preset list or baseline-exclusion ledger. `policiesAvailable` is `false` when that live policy cannot be read or parsed, distinguishing an unavailable result from a verified empty `policies` array; text status prints `Policies: unavailable` for the same state. When the live gateway route matches the sandbox's recorded llama.cpp route, `llamaCpp.kind` is `attached`, `managed`, or `unavailable`. An attached route also includes its fixed loopback `llamaCpp.endpointUrl`. An unavailable result means NemoClaw could not safely verify the managed ownership receipt; it does not include an endpoint and provides a secret-free diagnostic and recovery action. During route drift, `status` omits the `llamaCpp` route attribution; inspect `routeDrift` before acting on endpoint information. Text status can still show managed-runtime details from the sandbox-owned receipt. The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable, except that a native NVIDIA sandbox reports its recorded sandbox-scoped route because the shared route is unrelated. Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route. When the live shared route differs for a shared-route provider, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`. Native NVIDIA attachments do not report shared-route drift. When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the route-sharing workflow. `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks. `agent` is always a string and reports `openclaw` when the registry records no agent for the sandbox. `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage. `inferenceHealth.ok` reports whether the selected provider path returned a structurally valid result for one request sent from inside the sandbox. The result must match Chat Completions, Responses, or Anthropic Messages for the selected route. An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status. The probe captures at most 64 KiB and does not include the response body in diagnostics. The path probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the path is up. Shared-route requests use the live gateway route's provider and model, then fall back to the recorded values when the live route is unreadable. Native NVIDIA requests always use the sandbox's recorded provider and model. When the live shared provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs. This includes `openai-responses`. When the live shared provider differs, NemoClaw does not carry the recorded API family to that provider. Each attempt requests 16 reply tokens for ordinary providers or 256 for Gemini. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Hosted requests consume provider tokens on every attempt. When the inference request returns HTTP `429`, `502`, `503`, or `504`, `status` retries the provider path and inference request together up to three total attempts, with a two-second delay between failed attempts, because those statuses are transient gateway and availability answers rather than evidence that the path is broken. Before each retry, it writes the failed probe boundary, an HTTP status when one is available, the next attempt, total attempts, and delay to stderr; `--json` keeps stdout machine-readable. On an ordinary run, every other failure is final on the first attempt with no delay: HTTP `401`, `403`, `404`, and `500`, an invalid 2xx response body, a request that returned no HTTP status, and a failing provider-path probe. When the same run recovers a managed gateway, `status` retries any failed route or inference probe on that schedule instead, while the restarted delivery chain settles. Each route probe has a 10-second timeout. Three complete route probes plus their 95-second inference wrappers and two delays can take about 319 seconds. When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the provider-path result as the `route reachability` hop, so a failing verdict still shows that the path itself answered. `inferenceHealth.failureLabel` reports why the inference request failed:
 
 - `unauthorized` when the route rejected it with HTTP `401` or `403`.
 - `unhealthy` when the route returned another failing HTTP status or an invalid 2xx response body.
@@ -1661,7 +1687,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes `https://inference.local/v1/models` from inside the sandbox, and when that probe reports the route reachable it sends an inference request over the same route. That inference request is the authoritative inference health check, and both checks exercise the route that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. Most providers use `https://inference.local/v1`; NVIDIA Endpoints uses the sandbox-attached provider for `https://integrate.api.nvidia.com/v1`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State | Meaning |
 | --- | --- |
@@ -1673,9 +1699,9 @@ The command probes `https://inference.local/v1/models` from inside the sandbox, 
 | `not probed` | NemoClaw could not run the authoritative route probe from a reachable sandbox. |
 | `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing. |
 
-An authentication response on the route probe alone confirms that the route is reachable, not that provider credentials are valid. `$$nemoclaw <name> doctor` sends no inference request, so it reports an HTTP `401` or `403` route response as reachable and exits `0` where `status` reports `unauthorized`. The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes. For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response. It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit. If the request reaches the time limit, NemoClaw reports the provider as `not probed` and leaves model health unverified instead of reporting it as unhealthy. These checks are diagnostic only and do not override the authoritative `inference.local` result or determine the command exit status.
+An authentication response on the route probe alone confirms that the route is reachable, not that provider credentials are valid. `$$nemoclaw <name> doctor` sends no inference request, so it reports an HTTP `401` or `403` route response as reachable and exits `0` where `status` reports `unauthorized`. The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes. For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response. It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit. If the request reaches the time limit, NemoClaw reports the provider as `not probed` and leaves model health unverified instead of reporting it as unhealthy. These checks are diagnostic only and do not override the authoritative selected-provider result or determine the command exit status.
 
-The `Inference (upstream)` check authenticates with the host credential that NemoClaw resolves for the provider, such as `NVIDIA_INFERENCE_API_KEY`. The gateway stores the provider credential that the sandbox route uses. The CLI cannot read the stored value back, so the two credentials can hold different secrets. When the `inference.local` route has already served the inference request, an `unauthorized` result on `Inference (upstream)` describes the host credential. NemoClaw then reports that check as `not probed` and names both credential sources. An `Inference (upstream)` check that fails for another reason, such as `unreachable`, still reports its own state. Local backend and auth proxy checks, such as `Inference (auth proxy)`, always report their own state and their own repair step. `$$nemoclaw <name> doctor` sends no inference request, so it always reports the `Inference (upstream)` state that it measured.
+The `Inference (upstream)` check authenticates with the host credential that NemoClaw resolves for the provider, such as `NVIDIA_INFERENCE_API_KEY`. OpenShell stores the credential that the sandbox's selected provider path uses. The CLI cannot read the stored value back, so the two credentials can hold different secrets. When the managed sandbox path has already served the inference request, an `unauthorized` result on `Inference (upstream)` describes the host credential. NemoClaw then reports that check as `not probed` and names both credential sources. An `Inference (upstream)` check that fails for another reason, such as `unreachable`, still reports its own state. Local backend and auth proxy checks, such as `Inference (auth proxy)`, always report their own state and their own repair step. `$$nemoclaw <name> doctor` sends no inference request, so it always reports the `Inference (upstream)` state that it measured.
 
 Local providers add host-side backend diagnostics. For Local Ollama, the command can also print an `Inference (auth proxy)` diagnostic when a proxy token is available. Use these diagnostics to identify a failing auxiliary hop after checking the main `Inference` line.
 
@@ -1817,7 +1843,7 @@ The `Registered gateway binding` result depends on the sandbox registry:
 - For an unregistered sandbox name, `doctor` uses the gateway selected by `NEMOCLAW_GATEWAY_PORT` for its other gateway checks and omits the `Registered gateway binding` check.
 
 
-For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative. HTTP responses from `200` through `499`, including `401` and `403`, pass this check. HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. Direct provider and upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox route is reachable. For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process. This result does not fail the readiness check. Terminal runtimes omit it because they have no long-running gateway process. The `Inference` `Route` check warns when either the provider or model is unknown. After the gateway is healthy, run `$$nemoclaw <name> status` to refresh the route information.
+For inference health, `doctor` treats the selected provider path inside the sandbox as authoritative. Most providers probe `https://inference.local/v1/models`; NVIDIA Endpoints probes its sandbox-attached provider at `https://integrate.api.nvidia.com/v1/models`. HTTP responses from `200` through `499`, including `401` and `403`, pass this check. HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. Host-side upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox path is reachable. For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process. This result does not fail the readiness check. Terminal runtimes omit it because they have no long-running gateway process. The `Inference` `Route` check warns when either the provider or model is unknown. After the gateway is healthy, run `$$nemoclaw <name> status` to refresh the route information.
 
 Warnings do not make the command fail. Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate. Use `--json` for machine-readable output. For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`. The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials. Because the check has `info` status, it does not change the command's exit status.
 
@@ -2013,7 +2039,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Model traffic uses the OpenShell-managed `inference.local` route configured by NemoClaw.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`.
 
 </AgentOnly>
 
@@ -3183,7 +3209,7 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. Most providers use `inference.local`; NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 
@@ -3477,7 +3503,7 @@ Switch the active inference provider or model for a NemoClaw-managed Hermes sand
 
 By default, the command syncs the default registered sandbox.
 
-Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
+For providers other than NVIDIA Endpoints, each OpenShell gateway exposes one shared inference route to every sandbox registered on that gateway. NVIDIA Endpoints instead uses a sandbox-attached provider and does not change the shared route.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
@@ -3532,7 +3558,12 @@ When the switch changes the API family and that request returns HTTP `400` or `4
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
 Each retry uses the same output limit for the selected provider.
 Other HTTP failures are not retried.
-If provider verification or that request fails, the command leaves or restores the previous OpenShell selection and removes the provider only when it can verify the revision created by this switch.
+If OpenShell rejects provider verification before it persists the route or confirms that it did not apply the route, NemoClaw leaves the inference selection unchanged.
+Sandbox-side verification occurs after route application.
+If that verification fails, NemoClaw tries to restore the previous selection and reports whether restoration succeeded.
+If OpenShell cannot confirm whether it changed the route, NemoClaw stops and reports an unknown result.
+Run `$$nemoclaw <name> inference get` to inspect the selected sandbox's gateway before you use the route or retry.
+NemoClaw removes the provider only when it can verify the revision created by this switch.
 If removal was not attempted or could not be confirmed, rerun onboarding before using that provider route or retrying the switch.
 Provider updates for DNS-backed HTTPS routes occur after route selection.
 If sandbox verification fails after an existing provider update succeeds, NemoClaw restores the previous inference selection but leaves the updated provider binding in place.
@@ -3700,6 +3731,10 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
 Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
+
+When the native NVIDIA provider is attached to a sandbox, reset stops without detaching or deleting it.
+Rotate its credential in place by setting `NVIDIA_INFERENCE_API_KEY` and rerunning `$$nemoclaw onboard --name <sandbox>`.
+To remove it completely, preserve required sandbox state, destroy every attached sandbox, and then retry reset.
 
 ```bash
 $$nemoclaw credentials reset nvidia-prod

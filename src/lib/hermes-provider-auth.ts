@@ -77,6 +77,7 @@ export type HermesProviderCredentialState = {
   credential_env: string;
   inference_base_url: string;
   agent_key_expires_at?: string | null;
+  nativeHostedProviderAttachment: NativeHostedProviderAttachment;
 };
 
 function nonEmptyString(value: unknown): string | null {
@@ -128,7 +129,7 @@ export async function registerHermesInferenceProvider(
   credentialEnv = HERMES_INFERENCE_CREDENTIAL_ENV,
   baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
   expected?: NativeHostedProviderAttachment,
-): Promise<void> {
+): Promise<NativeHostedProviderAttachment> {
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) {
     throw new Error("Hermes Provider credential is empty");
@@ -145,7 +146,7 @@ export async function registerHermesInferenceProvider(
   ) {
     throw new Error("Unsupported Hermes Provider credential binding");
   }
-  await ensureNativeHostedProvider({
+  return ensureNativeHostedProvider({
     adapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
     target: { kind: "selected" },
     profile,
@@ -189,7 +190,7 @@ export async function ensureHermesProviderOAuthCredentials(
     minTtlSeconds: AGENT_KEY_MIN_TTL_SECONDS,
   });
   const inferenceBaseUrl = minted.inference_base_url || baseUrl;
-  await registerHermesInferenceProvider(
+  const nativeHostedProviderAttachment = await registerHermesInferenceProvider(
     minted.api_key,
     runOpenshell,
     HERMES_INFERENCE_CREDENTIAL_ENV,
@@ -208,6 +209,7 @@ export async function ensureHermesProviderOAuthCredentials(
     }
   }
   return {
+    nativeHostedProviderAttachment,
     auth_method: "oauth",
     provider: HERMES_PROVIDER_NAME,
     credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
@@ -236,7 +238,7 @@ export async function ensureHermesProviderApiKeyCredentials(
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) return null;
 
-  await registerHermesInferenceProvider(
+  const nativeHostedProviderAttachment = await registerHermesInferenceProvider(
     normalizedApiKey,
     runOpenshell,
     HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
@@ -244,6 +246,7 @@ export async function ensureHermesProviderApiKeyCredentials(
     expected,
   );
   return {
+    nativeHostedProviderAttachment,
     auth_method: "api_key",
     provider: HERMES_PROVIDER_NAME,
     credential_env: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,

@@ -110,7 +110,7 @@ export function dcodeProfileInput(
       routeProvider: route.providerKey,
       upstreamProvider: "openai-api",
       model: "gpt-5",
-      routedBaseUrl: route.inferenceBaseUrl,
+      routedBaseUrl: "https://inference.local/v1",
       upstreamEndpointUrl: endpoint,
       api: "openai-completions",
       primaryModelRef: null,
@@ -269,6 +269,37 @@ export function hermesSnapshot(
     }),
     sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
   });
+}
+
+export function tavilySnapshot(agent: "openclaw" | "hermes" = "openclaw"): ObservedExportSnapshot {
+  const value = agent === "hermes" ? hermesSnapshot() : snapshot();
+  const input = agent === "hermes" ? hermesProfileInput() : profileInput();
+  const profileId = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+  return {
+    ...value,
+    registry: {
+      ...value.registry,
+      webSearchEnabled: true,
+      webSearchProvider: "tavily",
+      workload: managedWorkload(
+        { ...input, webSearch: { fetchEnabled: true, provider: "tavily" } },
+        agent === "hermes" ? hermesImageRef : imageRef,
+      ),
+    },
+    sandbox: { ...value.sandbox, providerNames: ["alpha-tavily-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-tavily-search",
+      id: "tavily-provider-id",
+      resourceVersion: "4",
+      type: profileId,
+      profileWorkspace: "default",
+      profile: { id: profileId, source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["TAVILY_API_KEY"],
+      configKeys: [],
+    },
+  };
 }
 
 export function dcodeSnapshot(

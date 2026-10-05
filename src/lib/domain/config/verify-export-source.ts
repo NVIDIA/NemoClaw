@@ -8,6 +8,12 @@ import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/rou
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+} from "../../inference/native-nvidia/contract";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import {
   buildManagedStartupProfile,
@@ -37,7 +43,11 @@ import {
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
-import { ExportSourceValuesSchema } from "./export-evidence";
+import {
+  ExportSourceValuesSchema,
+  exportWebSearchBinding,
+  exportNativeNvidiaReceipt,
+} from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
@@ -150,10 +160,6 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
-}
-
-function hasBraveSearch(entry: ObservedExportRegistry): boolean {
-  return entry.webSearchEnabled === true && entry.webSearchProvider === "brave";
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -351,7 +357,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ["spec.sandboxes[].observability", entry.observabilityEnabled, "observability"],
     [
       "spec.sandboxes[].integrations.webSearch",
-      !hasBraveSearch(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
+      !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
@@ -564,6 +570,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   );
   preserveLegacyExportEndpoint(entry, inference);
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
+  const search = exportWebSearchBinding(entry);
   return buildManagedStartupProfile({
     agent,
     inference: {
@@ -577,7 +584,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       compatibility: projection.compatibility,
     },
     dashboard: projection.dashboard,
-    webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
+    webSearch: search ? { fetchEnabled: true, provider: search.provider } : null,
     toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
@@ -825,9 +832,38 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
-function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
+function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
+  if (evidence.source.kind === "managed-profile") {
+    const receipt = exportNativeNvidiaReceipt(snapshot.registry);
+    return (
+      receipt !== undefined &&
+      isDeepStrictEqual(
+        [
+          evidence.source.profileId,
+          evidence.provider.name,
+          evidence.provider.id,
+          inference.provider,
+          inference.api,
+          inference.endpoint,
+          evidence.endpoint,
+          inference.credentialEnv,
+        ],
+        [
+          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          receipt.providerName,
+          receipt.providerId,
+          NVIDIA_HOSTED_LOGICAL_PROVIDER,
+          "openai-completions",
+          NVIDIA_HOSTED_NATIVE_ENDPOINT,
+          NVIDIA_HOSTED_NATIVE_ENDPOINT,
+          NVIDIA_HOSTED_CREDENTIAL_ENV,
+        ],
+      )
+    );
+  }
   if (evidence.source.kind === "builtin-profile") {
     return (
       inference.credentialEnv !== null &&
@@ -899,8 +935,22 @@ function validateSandboxIdentity(
   return findings;
 }
 
-function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
+  const nativeReceipt = exportNativeNvidiaReceipt(entry);
+  const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
+  const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
+  const webSearch = exportWebSearchBinding(entry);
+  const expectedAdditionalProviders = webSearch ? [webSearch.name] : [];
+  return (
+    !(nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) &&
+    isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) &&
+    new Set(sandbox.providerNames).size === sandbox.providerNames.length
+  );
+}
+
+function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry: entry, sandbox } = snapshot;
   const findings: ExportFinding[] = [];
   if (sandbox.workspace !== "default")
     findings.push(
@@ -926,12 +976,7 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "Registry and live sandbox images differ.",
       ),
     );
-  const additionalProviders = sandbox.providerNames.filter((name) => name !== inference.provider);
-  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
-  if (
-    !isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) ||
-    new Set(sandbox.providerNames).size !== sandbox.providerNames.length
-  )
+  if (!sandboxProviderAttachmentsMatch(snapshot))
     findings.push(
       finding(
         "source.sandbox.providers",
@@ -942,11 +987,12 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
   return findings;
 }
 
-function validBraveProfile(
+function validSearchProfile(
   provider: NonNullable<QualifiedExportSnapshot["webSearchProvider"]>,
+  profileId: string,
 ): boolean {
   const { profile, profileWorkspace } = provider;
-  if (!profile || profile.id !== "brave" || !isValidNemoClawBoundedText(profile.resourceVersion))
+  if (!profile || profile.id !== profileId || !isValidNemoClawBoundedText(profile.resourceVersion))
     return false;
   if (profile.source === "builtin") {
     return isDeepStrictEqual(
@@ -964,22 +1010,24 @@ function validBraveProfile(
 
 function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
-  if (!hasBraveSearch(registry)) {
+  const search = exportWebSearchBinding(registry);
+  if (!search) {
     return provider === undefined
       ? []
       : [finding("source.webSearch", "ambiguous", "Unexpected web-search provider evidence.")];
   }
+  const label = search.provider === "brave" ? "Brave" : "Tavily";
   if (!provider) {
     return [
       finding(
         "source.webSearch",
         "missing-provenance",
-        "Live Brave provider evidence is required.",
+        `Live ${label} provider evidence is required.`,
       ),
     ];
   }
   if (
-    !validBraveProfile(provider) ||
+    !validSearchProfile(provider, search.profileId) ||
     !isValidNemoClawBoundedText(provider.id) ||
     !isValidNemoClawBoundedText(provider.resourceVersion) ||
     !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||
@@ -992,21 +1040,14 @@ function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFin
         provider.credentialKeys,
         provider.configKeys,
       ],
-      [
-        gateway.name,
-        sandbox.workspace,
-        `${registry.name}-brave-search`,
-        "brave",
-        ["BRAVE_API_KEY"],
-        [],
-      ],
+      [gateway.name, sandbox.workspace, search.name, search.profileId, [search.credentialEnv], []],
     )
   ) {
     return [
       finding(
         "source.webSearch",
         "drifted",
-        "The live Brave provider does not match its managed binding.",
+        `The live ${label} provider does not match its managed binding.`,
       ),
     ];
   }
@@ -1206,6 +1247,10 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
   return validateHostedInferenceRepresentation(snapshot);
 }
 
+function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
+  return exportNativeNvidiaReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider;
+}
+
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference, sandbox, gateway } = snapshot;
   const evidence = inference.endpointEvidence;
@@ -1243,10 +1288,10 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   if (
     !evidence.provider.id ||
     !evidence.provider.resourceVersion ||
-    !endpointEvidenceMatchesRoute(inference) ||
+    !endpointEvidenceMatchesRoute(snapshot) ||
     !isDeepStrictEqual(
       [evidence.provider.workspace, evidence.provider.gatewayName, evidence.provider.name],
-      [sandbox.workspace, gateway.name, inference.provider],
+      [sandbox.workspace, gateway.name, expectedEndpointProviderName(snapshot)],
     )
   )
     findings.push(
@@ -1432,12 +1477,13 @@ function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettin
 }
 
 function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
-  if (!hasBraveSearch(entry)) return {};
+  const search = exportWebSearchBinding(entry);
+  if (!search) return {};
   return {
     webSearch: {
-      provider: "brave" as const,
+      provider: search.provider,
       agentRefs: ["primary"],
-      credential: { env: "BRAVE_API_KEY" },
+      credential: { env: search.credentialEnv },
     },
   };
 }
@@ -1511,6 +1557,7 @@ function completeVerifiedSource(
   return {
     kind: "verified",
     source,
+    ...(authority?.corporateCa ? { corporateCaOmitted: true as const } : {}),
   };
 }
 

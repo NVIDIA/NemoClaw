@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InferenceSelection } from "../../inference/selection";
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import type { NativeHostedProviderAttachment } from "../../inference/native-hosted";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
@@ -135,10 +136,15 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
   nativeHostedProviderAttachment?: NativeHostedProviderAttachment;
+  /** Gateway-scoped ownership retained across provider switches. */
+  nativeHostedProviderAuthorities?: NativeHostedProviderAttachment[];
   /** Previous native access retained until provider-switch cleanup is confirmed. */
   pendingNativeHostedProviderDetach?: NativeHostedProviderAttachment;
   /** Legacy Slice 1 receipt; normalized when loaded. */
-  nativeNvidiaProviderAttachment?: NativeHostedProviderAttachment;
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  /** Durable NVIDIA authority retained for Slice 1 interoperability. */
+  nativeNvidiaProviderAuthority?: NativeNvidiaProviderAttachment;
+
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

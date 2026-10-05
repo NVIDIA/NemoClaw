@@ -1,6 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+
+export function exportNativeNvidiaReceipt(entry: {
+  provider?: string | null;
+  nativeNvidiaProviderAttachment?: unknown;
+  nativeHostedProviderAttachment?: unknown;
+}) {
+  if (entry.provider?.trim() !== "nvidia-prod") return undefined;
+  return normalizeNativeNvidiaProviderAttachment(
+    entry.nativeNvidiaProviderAttachment ?? entry.nativeHostedProviderAttachment,
+  );
+}
+
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import {
   BoundedTextSchema,
@@ -30,6 +43,8 @@ import {
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
+import { webSearchEnvFor } from "../../inference/web-search";
+import { webSearchProviderProfileId } from "../../inference/web-search/provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -72,6 +87,8 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "model",
   "name",
   "nativeHostedProviderAttachment",
+  "nativeNvidiaProviderAttachment",
+
   "nimContainer",
   "observabilityEnabled",
   "openshellDriver",
@@ -90,6 +107,25 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
 type ObservedExportRegistryKey = (typeof EXPORT_REGISTRY_EVIDENCE_KEYS)[number];
 
 export type ObservedExportRegistry = DeepReadonly<Pick<SandboxEntry, ObservedExportRegistryKey>>;
+
+export function exportWebSearchBinding(
+  entry: Pick<ObservedExportRegistry, "name" | "agent" | "webSearchEnabled" | "webSearchProvider">,
+) {
+  const provider = entry.webSearchProvider;
+  if (
+    entry.webSearchEnabled !== true ||
+    (provider !== "brave" && provider !== "tavily") ||
+    (entry.agent !== "openclaw" && entry.agent !== "hermes") ||
+    (entry.agent === "hermes" && provider !== "tavily")
+  )
+    return undefined;
+  return {
+    provider,
+    name: `${entry.name}-${provider}-search`,
+    profileId: webSearchProviderProfileId(provider, entry.agent),
+    credentialEnv: webSearchEnvFor(provider),
+  } as const;
+}
 
 declare const CANONICAL_EXPORT_POLICY: unique symbol;
 export type CanonicalExportPolicy = Readonly<Record<string, unknown>> & {
@@ -113,7 +149,12 @@ export interface ObservedExportEndpointEvidence {
     readonly profileWorkspace?: string;
     /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id: "brave" | "openai";
+      readonly id:
+        | "brave"
+        | "openai"
+        | "tavily"
+        | "tavily-hermes-v1"
+        | "nemoclaw-nvidia-inference-v1";
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
@@ -125,7 +166,11 @@ export interface ObservedExportEndpointEvidence {
         readonly kind: "provider-config";
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
-    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
+    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
+    | {
+        readonly kind: "managed-profile";
+        readonly profileId: "nemoclaw-nvidia-inference-v1";
+      };
 }
 
 export interface ObservedExportWebSearchProvider {
@@ -283,6 +328,14 @@ const ExportInferenceSchema = Type.Union([
   ),
 ]);
 
+const ExportWebSearchSchema = Type.Object(
+  {
+    ...NemoClawBraveSearchConfigSchema.properties,
+    provider: Type.Union([Type.Literal("brave"), Type.Literal("tavily")]),
+  },
+  { additionalProperties: false },
+);
+
 /** Representable values only; provenance and policy qualification remain separate. */
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
@@ -297,7 +350,7 @@ const exportSourceFields = {
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
-  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+  webSearch: Type.Optional(ExportWebSearchSchema),
 };
 
 export const ExportSourceValuesSchema = Type.Refine(
@@ -326,10 +379,9 @@ export const ExportSourceValuesSchema = Type.Refine(
       value.observability !== undefined
     )
       return false;
-    return (
-      value.agent === "hermes" ||
-      (value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined)
-    );
+    return value.agent === "hermes"
+      ? value.webSearch === undefined || value.webSearch.provider === "tavily"
+      : value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined;
   },
 );
 
@@ -346,7 +398,11 @@ export type VerifiedExportSource = ExportSourceValues & {
 };
 
 export type ExportSourceVerificationResult =
-  | Readonly<{ kind: "verified"; source: VerifiedExportSource }>
+  | Readonly<{
+      kind: "verified";
+      source: VerifiedExportSource;
+      corporateCaOmitted?: true;
+    }>
   | Readonly<{ kind: "rejected"; findings: NonEmptyExportFindings }>;
 
 /** The only observation port. Each call reads one complete source snapshot. */

@@ -11,7 +11,8 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { verifyNativeHostedProviderAttachment } from "../../inference/native-hosted";
+import { ensureNativeHostedProviderAttached } from "../../inference/native-hosted";
+
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -79,7 +80,7 @@ export async function verifyNativeHostedAttachmentAfterCreate(input: {
       `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
     );
   }
-  await verifyNativeHostedProviderAttachment({
+  await ensureNativeHostedProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,

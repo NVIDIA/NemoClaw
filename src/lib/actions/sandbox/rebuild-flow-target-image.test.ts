@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createNativeProviderCommandRuntime } from "../../../../test/support/native-provider-command-runtime";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,12 +32,6 @@ type RetainedContextMutation = {
 };
 
 const FIXED_CONTEXT_TIME = new Date("2026-01-01T00:00:00.000Z");
-const NVIDIA_PROVIDER_OUTPUT = [
-  "Name: nvidia-prod",
-  "Type: openai",
-  "Credential keys: NVIDIA_INFERENCE_API_KEY",
-  "Config keys: OPENAI_BASE_URL",
-].join("\n");
 const retainedContextMetadataMutations: RetainedContextMutation[] = [
   {
     label: "file special bits change",
@@ -333,17 +329,15 @@ describe("rebuildSandbox flow: target image", () => {
           provider: "nvidia-prod",
           model: "nvidia/nemotron",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-nvidia-inference-v1",
+            providerName: "nemoclaw-nvidia-prod-v1",
+            providerId: "11111111-2222-4333-8444-555555555555",
+          },
         },
         sessionSandboxName: "some-other-sandbox",
-        runOpenshell: (args) =>
-          args[0] === "provider" && args[1] === "get"
-            ? {
-                status: 0,
-                output: NVIDIA_PROVIDER_OUTPUT,
-                stdout: NVIDIA_PROVIDER_OUTPUT,
-                stderr: "",
-              }
-            : undefined,
+        runOpenshell: createNativeProviderCommandRuntime("nvidia-prod", true).run,
       });
       const staleEndpoint = "https://stale.example.test/v1";
       harness.session.endpointUrl = staleEndpoint;

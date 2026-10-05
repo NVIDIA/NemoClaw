@@ -111,11 +111,12 @@ export interface VerifyDeploymentDeps {
   providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
-   * Send one bounded inference request over the gateway route from inside the
-   * sandbox. Only consulted for the Deep Agents Code OpenRouter models route,
-   * whose HTTP 404 is expected (#9834) and can only be accepted on the
-   * evidence of a served request. Optional: when it is absent that 404 fails
-   * closed, because nothing validated the selected model (#10543).
+   * Send one bounded inference request over the sandbox's configured route.
+   * This is authoritative for native NVIDIA, which has no shared
+   * `inference.local` route, and for the Deep Agents Code OpenRouter models
+   * route whose HTTP 404 is expected (#9834). Optional: when it is absent,
+   * either exceptional path fails closed because nothing validated the
+   * selected model (#10543).
    */
   probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
@@ -394,6 +395,32 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
+  if (isNativeHostedProvider(context.provider)) {
+    const invocation = await retryUntilAsync(
+      async () => (await deps.probeInferenceInvocation?.()) ?? null,
+      {
+        accept: (result) => result?.ok === true,
+        retryDelaysMs,
+        sleep,
+      },
+    );
+    if (invocation?.ok) {
+      return {
+        status: "ok",
+        detail: "native hosted inference served an agent request",
+        httpCode: 200,
+      };
+    }
+    const reason = invocation?.detail ?? "no inference request confirmed the selected model";
+    return {
+      status: "unhealthy",
+      detail: `native hosted inference did not serve an agent request: ${reason}`,
+      httpCode: 0,
+      hint:
+        "The sandbox-attached hosted provider could not serve the selected model. Confirm the " +
+        "NVIDIA credential and model, then re-run: nemoclaw <sandbox> status.",
+    };
+  }
   const routeContext = toRouteHealthContext(context);
   const isExpected404 = (result: InferenceRouteProbe) =>
     isDcodeOpenRouterModelsRoute404(routeContext, result.httpCode);

@@ -51,6 +51,7 @@ import {
   strictHashPerms,
 } from "./hermes-inference-switch-helpers.ts";
 import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   readPublicNvidiaSwitchAttachmentEvidence,
   requirePublicNvidiaSwitchKey,
@@ -326,7 +327,7 @@ test(
       [
         "hermes",
         SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-          ? "inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1;provider-id=present"
+          ? PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE
           : null,
         SWITCH_MODEL,
         SWITCH_PROVIDER,

@@ -187,12 +187,14 @@ describe("native NVIDIA onboarding", () => {
   it.each(
     NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "hermes-provider"),
   )("records $label native inference without shared route mutation", async (profile) => {
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
-      ok: true,
-    }));
-    const providerAdapter = {
-      importProviderProfile: vi.fn(async () => ({ ok: true })),
-      getProvider: vi.fn(async () => ({
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "not found" },
+      })
+      .mockResolvedValueOnce({
         ok: true,
         value: {
           name: profile.providerName,
@@ -201,8 +203,14 @@ describe("native NVIDIA onboarding", () => {
           configKeys: [],
           revision: { id: "provider-id", resourceVersion: 4 },
         },
-      })),
-      updateProvider,
+      });
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
+      ok: true,
+    }));
+    const providerAdapter = {
+      importProviderProfile,
+      getProvider,
+      createProvider,
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
     const updateSandbox = vi.fn(() => true);
@@ -215,7 +223,7 @@ describe("native NVIDIA onboarding", () => {
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
       step: vi.fn(),
-      getGatewayName: () => "nemoclaw",
+      getGatewayName: () => "onboarding-gateway",
       runOpenshell,
       updateSandbox,
       getSandbox: () => null,
@@ -248,10 +256,21 @@ describe("native NVIDIA onboarding", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(updateProvider).toHaveBeenCalledWith(
+    expect(importProviderProfile).toHaveBeenCalledWith(
       expect.objectContaining({
-        providerName: profile.providerName,
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+      }),
+    );
+    expect(getProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "onboarding-gateway" },
+      providerName: profile.providerName,
+    });
+    expect(createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+        name: profile.providerName,
         credentials: [{ name: profile.credentialEnv, value: "host-only-inference-credential" }],
+
         config: [],
       }),
     );
@@ -271,6 +290,95 @@ describe("native NVIDIA onboarding", () => {
           providerName: profile.providerName,
           providerId: "provider-id",
         },
+      }),
+    );
+  });
+
+  it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: true,
+      value: {
+        name: "nemoclaw-nvidia-prod-v1",
+        type: "nemoclaw-nvidia-inference-v1",
+        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: "provider-id", resourceVersion: 4 },
+      },
+    }));
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => null,
+      listSandboxes: () => ({
+        defaultSandbox: "first",
+        sandboxes: [
+          {
+            name: "first",
+            gatewayName: "onboarding-gateway",
+            provider: "nvidia-prod",
+            nativeNvidiaProviderAttachment: {
+              schemaVersion: 1,
+              profileId: "nemoclaw-nvidia-inference-v1",
+              providerName: "nemoclaw-nvidia-prod-v1",
+              providerId: "provider-id",
+            },
+          },
+        ],
+      }),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter: {
+        importProviderProfile,
+        getProvider,
+        createProvider,
+        updateProvider,
+      } as unknown as OpenShellProviderAdapter,
+      hydrateCredentialEnv: vi.fn(() => null),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "second",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        {
+          revalidateSandboxIdentity: () => undefined,
+          reuseGatewayCredentialWithoutLocalKey: true,
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(createProvider).not.toHaveBeenCalled();
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "second",
+      expect.objectContaining({
+        nativeHostedProviderAttachment: expect.objectContaining({ providerId: "provider-id" }),
       }),
     );
   });

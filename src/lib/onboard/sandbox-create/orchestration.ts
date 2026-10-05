@@ -1436,8 +1436,9 @@ export function createProviderEffectBoundary(input: {
     );
   const verifyNativeHostedAttachment = async (context: VerifiedSandboxCreateEffectsContext) => {
     if (!usesNativeHostedProvider(input.preparationInput.inferenceProvider)) return;
+
     context.revalidateSandboxIdentity(
-      `verifying native NVIDIA provider attachment for sandbox '${input.sandboxName}'`,
+      `attaching and verifying native NVIDIA provider for sandbox '${input.sandboxName}'`,
     );
     await verifyNativeHostedAttachmentAfterCreate({
       sandboxName: input.sandboxName,
@@ -1478,6 +1479,7 @@ export function createProviderEffectBoundary(input: {
       );
       await publish();
       await verifyNativeHostedAttachment(context);
+
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );

@@ -47,4 +47,38 @@ describe("inference-switch catalogue boundary", () => {
       expect(target.environment).not.toHaveProperty("NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
     },
   );
+
+  it("keeps canonical compatible Anthropic switch targets for both agents", () => {
+    expect(catalogueTarget("openclaw-compatible-anthropic-inference-switch")).toMatchObject({
+      targetId: "openclaw-inference-switch",
+      profile: "standard",
+      testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+      runnerKey: "",
+      shard: "anthropic",
+      environment: {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_E2E_SHARD: "anthropic",
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      },
+    });
+    expect(catalogueTarget("hermes-compatible-anthropic-inference-switch")).toMatchObject({
+      targetId: "hermes-inference-switch",
+      profile: "standard",
+      testFile: "test/e2e/live/hermes-inference-switch.test.ts",
+      runnerKey: "hermes-inference-switch",
+      hostPreparation: "hermes-swap",
+      runnerComparison: true,
+      shard: "anthropic",
+      environment: {
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      },
+    });
+  });
 });

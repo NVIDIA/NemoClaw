@@ -31,8 +31,18 @@ export {
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
 } from "./native-hosted";
-export { NVIDIA_HOSTED_CREDENTIAL_ENV, NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 export type { NativeHostedProviderAttachment } from "./native-hosted";
+export {
+  detachNativeNvidiaProvider,
+  ensureNativeNvidiaProvider,
+  ensureNativeNvidiaProviderAttached,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  normalizeNativeNvidiaProviderAttachment,
+  resolveGatewayNativeNvidiaProviderAuthority,
+} from "./native-nvidia";
+export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -509,3 +519,8 @@ export function formatInferenceRouteDriftForDisplay(
     warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
   };
 }
+
+export {
+  resolveGatewayNativeHostedProviderAuthority,
+  retainNativeHostedProviderAuthority,
+} from "./native-hosted/authority";

@@ -13,19 +13,16 @@ import { REPOSITORY_ROOT } from "../../core/repository-root";
 
 import { NATIVE_HOSTED_PROFILES, nativeHostedProfile, type NativeHostedProfile } from "./profiles";
 
-export type NativeHostedProviderAttachment = Readonly<{
-  schemaVersion: 1;
-  profileId: string;
-  providerName: string;
-  providerId: string;
-}>;
-
-export class NativeHostedProviderError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NativeHostedProviderError";
-  }
-}
+import { NativeHostedProviderError, type NativeHostedProviderAttachment } from "./contract";
+export {
+  NativeHostedProviderError,
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "./contract";
+export {
+  resolveGatewayNativeHostedProviderAuthority,
+  retainNativeHostedProviderAuthority,
+} from "./authority";
 
 export function nativeHostedProviderProfilePath(
   profile: NativeHostedProfile,
@@ -43,32 +40,6 @@ export function nativeInferenceProviderForSandbox(
 ): string | null {
   const normalized = provider?.trim() || null;
   return nativeHostedProfile(normalized)?.providerName ?? normalized;
-}
-
-export function normalizeNativeHostedProviderAttachment(
-  value: unknown,
-): NativeHostedProviderAttachment | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const receipt = value as Record<string, unknown>;
-  const profile = NATIVE_HOSTED_PROFILES.find(
-    (entry) => entry.profileId === receipt.profileId && entry.providerName === receipt.providerName,
-  );
-  if (!profile) return undefined;
-  if (
-    receipt.schemaVersion !== 1 ||
-    receipt.profileId !== profile.profileId ||
-    receipt.providerName !== profile.providerName ||
-    typeof receipt.providerId !== "string" ||
-    !receipt.providerId.trim()
-  ) {
-    return undefined;
-  }
-  return {
-    schemaVersion: 1,
-    profileId: profile.profileId,
-    providerName: profile.providerName,
-    providerId: receipt.providerId,
-  };
 }
 
 function assertExpectedProfile(
@@ -174,6 +145,11 @@ export async function ensureNativeHostedProvider(input: {
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
     const receipt = attachmentFromMetadata(before, profile);
+    if (!input.expected) {
+      throw new NativeHostedProviderError(
+        `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+      );
+    }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeHostedProviderError(
         `OpenShell provider '${profile.providerName}' changed identity. Recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
@@ -186,7 +162,12 @@ export async function ensureNativeHostedProvider(input: {
       credentials: [{ name: profile.credentialEnv, value: input.credentialValue }],
       config: [],
     });
-    if (!updated.ok && !mutationOutcomeMayBeAmbiguous(updated.error)) {
+    if (!updated.ok && mutationOutcomeMayBeAmbiguous(updated.error)) {
+      throw new NativeHostedProviderError(
+        `OpenShell did not confirm whether provider '${profile.providerName}' accepted its credential update. No provider receipt was recorded.`,
+      );
+    }
+    if (!updated.ok) {
       throw new NativeHostedProviderError(
         `Could not update OpenShell provider '${profile.providerName}': ${providerErrorDetail(updated.error)}`,
       );

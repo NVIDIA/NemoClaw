@@ -30,6 +30,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -71,6 +72,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -115,6 +117,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -141,6 +144,7 @@ describe("runInferenceSet Hermes routing", () => {
     );
 
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+
     expect(config).toEqual({
       _nemoclaw_upstream: {
         provider: "hermes-provider",
@@ -227,6 +231,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -266,6 +271,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -319,6 +325,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -379,6 +386,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -507,6 +515,7 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        gatewayName: "nemoclaw",
         nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-hermes-inference-v1",
@@ -609,6 +618,7 @@ describe("runInferenceSet Hermes routing", () => {
         {
           name: "hermes-one",
           agent: "hermes",
+          gatewayName: "nemoclaw",
           nativeHostedProviderAttachment: {
             schemaVersion: 1,
             profileId: "nemoclaw-hermes-inference-v1",

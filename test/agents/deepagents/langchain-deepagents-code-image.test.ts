@@ -235,6 +235,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
     );
+    expect(dockerfile).toContain(
+      "COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts",
+    );
     expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
@@ -385,6 +388,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=1`);
       expect(envFileLines).toContain(`export ${name}=1`);
     }
+    expect(envFileLines).toContain(
+      "export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider",
+    );
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),

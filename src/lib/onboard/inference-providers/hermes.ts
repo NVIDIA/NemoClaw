@@ -4,7 +4,10 @@
 // Hermes Provider inference setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
-import type { NativeHostedProviderAttachment } from "../../inference/native-hosted";
+import {
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../../inference/native-hosted";
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
 import type { HermesAuthMethod } from "../hermes-auth";
@@ -81,6 +84,8 @@ export async function setupHermesProviderInference(
   }
   const {
     runOpenshell,
+    inferenceRouteMutator,
+    gatewayName,
     upsertProvider: _upsertProvider, // intentionally unused; matches inline branch
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
@@ -102,8 +107,6 @@ export async function setupHermesProviderInference(
       HERMES_AUTH_METHOD_OAUTH,
     },
     requireValue,
-    redact,
-    compactText,
   } = deps;
   void _upsertProvider;
 
@@ -135,6 +138,7 @@ export async function setupHermesProviderInference(
     !toolGatewayProviderRegistered ||
     hasFreshNousApiKey ||
     (resolvedHermesAuthMethod === HERMES_AUTH_METHOD_OAUTH && !isNonInteractive());
+  let preparedAttachment = args.expectedNativeProviderAttachment;
   if (shouldPrepareHermesCredentials) {
     let state: unknown;
     try {
@@ -166,6 +170,12 @@ export async function setupHermesProviderInference(
       if (isNonInteractive()) return exitProcess(1);
       return { retry: "selection" };
     }
+    if (state && typeof state === "object") {
+      preparedAttachment =
+        normalizeNativeHostedProviderAttachment(
+          (state as { nativeHostedProviderAttachment?: unknown }).nativeHostedProviderAttachment,
+        ) ?? preparedAttachment;
+    }
     if (!state) {
       const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
       error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
@@ -174,18 +184,27 @@ export async function setupHermesProviderInference(
     }
   }
 
-  if (args.nativeProvider) return { ok: true };
+  if (args.nativeProvider) return { ok: true, nativeHostedProviderAttachment: preparedAttachment };
 
-  const applyResult = runOpenshell(
-    ["inference", "set", "--no-verify", "--provider", provider, "--model", model],
-    { ignoreError: true },
-  );
-  if (applyResult.status !== 0) {
-    const message =
-      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
-      `Failed to configure inference provider '${provider}'.`;
-    error(`  ${message}`);
-    if (isNonInteractive()) return exitProcess(applyResult.status || 1);
+  const applyResult = await inferenceRouteMutator.setInferenceRoute({
+    target: { kind: "named", gatewayName },
+    route: { provider, model },
+    verification: "skip",
+  });
+  if (!applyResult.ok) {
+    error(`  ${applyResult.error.message}`);
+    if (applyResult.ambiguous) {
+      error(
+        `  The route update result is unknown. Inspect gateway '${gatewayName}' before retrying onboarding.`,
+      );
+      return exitProcess(1);
+    }
+    if (isNonInteractive()) {
+      return exitProcess(
+        applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+      );
+    }
+
     return { retry: "selection" };
   }
 

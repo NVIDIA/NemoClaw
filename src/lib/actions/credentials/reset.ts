@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
+import { NATIVE_HOSTED_PROFILES } from "../../inference/native-hosted/profiles";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -15,6 +15,10 @@ import {
   PROVIDER_NAME_VALID_PATTERN,
 } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+} from "../../inference/native-nvidia";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
@@ -91,7 +95,12 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
-  const providerName = nativeHostedProfile(key)?.providerName ?? key;
+  const nativeProfile = NATIVE_HOSTED_PROFILES.find(
+    (profile) => profile.logicalProvider === key || profile.providerName === key,
+  );
+  const providerName = nativeProfile?.providerName ?? key;
+  const publicKey = nativeProfile?.logicalProvider ?? key;
+
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
     return fail([
       "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
@@ -122,7 +131,9 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+    detachAttached: !nativeProfile,
+  });
 
   if (
     !recovery.ok &&
@@ -140,10 +151,10 @@ export async function runCredentialsResetAction(
     ]);
   }
 
-  const outcome = formatResetOutcome(key, recovery, target.gatewayName);
+  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
-  forgetExtraProvider(key);
+  forgetExtraProvider(publicKey);
   return ok(outcome.lines);
 }
 
@@ -181,6 +192,19 @@ export function formatResetOutcome(
       ...validatedAttachedSandboxes(recovery.error),
     ]),
   ];
+  if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER && stuckSandboxes.length > 0) {
+    lines.push(
+      "",
+      `  '${key}' remains attached to sandbox(es): ${stuckSandboxes.join(", ")}.`,
+      "  No provider attachment was changed.",
+      `  To rotate the credential in place, set ${NVIDIA_HOSTED_CREDENTIAL_ENV} and rerun '${CLI_NAME} onboard --name <sandbox>'.`,
+      "  To remove the provider completely, preserve any required sandbox state, destroy every attached sandbox,",
+      `  then rerun '${CLI_NAME} credentials reset ${key}'.`,
+      ...stuckSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} destroy`),
+    );
+    if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
+    return { ok: false, lines };
+  }
   if (stuckSandboxes.length > 0) {
     const stuck = stuckSandboxes.join(", ");
     lines.push(
@@ -215,6 +239,7 @@ async function deleteProviderWithRecovery(
   providerName: string,
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
+  options: Readonly<{ detachAttached: boolean }> = { detachAttached: true },
 ): Promise<CredentialsProviderDeleteWithRecoveryResult> {
   const request = {
     target,
@@ -232,6 +257,9 @@ async function deleteProviderWithRecovery(
 
   const attachedSandboxes = validatedAttachedSandboxes(result.error);
   if (attachedSandboxes.length === 0) {
+    return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
+  }
+  if (!options.detachAttached) {
     return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { createNativeProviderCommandRuntime } from "../../../../test/support/native-provider-command-runtime";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
@@ -79,8 +80,15 @@ describe("rebuildSandbox flow: target credentials", () => {
         webSearchEnabled: true,
         fromDockerfile: dockerfile,
         hermesAuthMethod: "api_key",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        },
       },
-      hermesCredentialKeys: ["NOUS_API_KEY"],
+      runOpenshell: createNativeProviderCommandRuntime("hermes-provider", true).run,
+      hermesCredentialKeys: ["OPENAI_API_KEY"],
     });
     harness.session.webSearchConfig = null;
     harness.session.hermesAuthMethod = "oauth";
@@ -118,7 +126,14 @@ describe("rebuildSandbox flow: target credentials", () => {
         provider: "hermes-provider",
         model: "hermes-model",
         hermesAuthMethod: "oauth",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        },
       },
+      runOpenshell: createNativeProviderCommandRuntime("hermes-provider", true).run,
     });
 
     await expect(
@@ -136,7 +151,7 @@ describe("rebuildSandbox flow: target credentials", () => {
         model: "hermes-model",
         hermesAuthMethod: "api_key",
       },
-      hermesCredentialKeys: ["OPENAI_API_KEY"],
+      hermesCredentialKeys: ["NOUS_API_KEY"],
     });
 
     await expect(

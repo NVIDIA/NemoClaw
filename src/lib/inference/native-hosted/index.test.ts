@@ -145,8 +145,54 @@ describe.each(
         adapter: adapter({ getProvider }),
         target,
         credentialValue: "opaque-test-secret",
+        expected: {
+          schemaVersion: 1,
+          profileId: profile.profileId,
+          providerName: profile.providerName,
+          providerId: "provider-id",
+        },
       }),
     ).rejects.toThrow("changed identity during its credential update");
+  });
+
+  it("refuses an existing provider without recorded ownership (#12589)", async () => {
+    const providerAdapter = adapter();
+    await expect(
+      ensureNativeHostedProvider({
+        profile,
+        adapter: providerAdapter,
+        target,
+        credentialValue: "opaque-test-secret",
+      }),
+    ).rejects.toThrow("without a matching NemoClaw ownership receipt");
+    expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
+    expect(providerAdapter.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("does not claim an ambiguous credential update succeeded (#12589)", async () => {
+    const providerAdapter = adapter({
+      updateProvider: vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
+        ok: false,
+        error: { kind: "timeout", message: "timed out" },
+      })),
+    });
+    await expect(
+      ensureNativeHostedProvider({
+        profile,
+        adapter: providerAdapter,
+        target,
+        credentialValue: "opaque-test-secret",
+        expected: {
+          schemaVersion: 1,
+          profileId: profile.profileId,
+          providerName: profile.providerName,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow("accepted its credential update");
+    expect(providerAdapter.updateProvider).toHaveBeenCalledOnce();
+    expect(providerAdapter.getProvider).toHaveBeenCalledOnce();
+    expect(providerAdapter.attachProvider).not.toHaveBeenCalled();
   });
 
   it("creates the internal provider once and records its immutable identity (#12589)", async () => {

@@ -2,6 +2,7 @@ import { normalizeNativeHostedProviderAttachment } from "../../inference/native-
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retainNativeHostedProviderAuthority } from "../../inference/native-hosted/authority";
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -174,6 +175,13 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
+  const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
+    retainNativeHostedProviderAuthority(
+      entry.nativeHostedProviderAuthorities,
+      normalizeNativeHostedProviderAttachment(entry.nativeNvidiaProviderAuthority),
+    ),
+    nativeHostedProviderAttachment,
+  );
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
     entry.pendingNativeHostedProviderDetach,
   );
@@ -199,6 +207,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const {
     nativeNvidiaProviderAttachment: _legacyNativeNvidiaAttachment,
     nativeHostedProviderAttachment: _nativeHostedAttachment,
+    nativeHostedProviderAuthorities: _nativeHostedProviderAuthorities,
     pendingNativeHostedProviderDetach: _pendingNativeHostedProviderDetach,
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -213,6 +222,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+    ...(nativeHostedProviderAuthorities.length ? { nativeHostedProviderAuthorities } : {}),
     ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
@@ -248,6 +258,13 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
+  const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
+    retainNativeHostedProviderAuthority(
+      durable.nativeHostedProviderAuthorities,
+      normalizeNativeHostedProviderAttachment(durable.nativeNvidiaProviderAuthority),
+    ),
+    nativeHostedProviderAttachment,
+  );
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
     durable.pendingNativeHostedProviderDetach,
   );
@@ -273,6 +290,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const {
     nativeNvidiaProviderAttachment: _legacyNativeNvidiaAttachment,
     nativeHostedProviderAttachment: _nativeHostedAttachment,
+    nativeHostedProviderAuthorities: _nativeHostedProviderAuthorities,
     pendingNativeHostedProviderDetach: _pendingNativeHostedProviderDetach,
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -287,6 +305,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+    ...(nativeHostedProviderAuthorities.length ? { nativeHostedProviderAuthorities } : {}),
     ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),

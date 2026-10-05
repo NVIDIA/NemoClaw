@@ -351,7 +351,9 @@ Use these details when your first-run path needs more control.
     API-key mode is inference-only and does not enable managed tool gateways.
 
     After you select a provider and model, review the summary and apply the configuration.
-    NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+    NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
+    NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the least-privilege sandbox-attached OpenShell provider.
+    Other managed inference providers continue to use `inference.local`.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
 

@@ -185,6 +185,48 @@ describe("native NVIDIA OpenShell provider", () => {
     expect(updateProvider).not.toHaveBeenCalled();
   });
 
+  it("refuses an existing provider without an ownership receipt before mutation (#12558)", async () => {
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
+    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
+
+    await expect(
+      ensureNativeNvidiaProvider({
+        adapter: adapter({ updateProvider, attachProvider }),
+        target,
+        credentialValue: "opaque-test-secret",
+      }),
+    ).rejects.toThrow(/already exists without a matching NemoClaw ownership receipt/u);
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(attachProvider).not.toHaveBeenCalled();
+  });
+
+  it("does not record a receipt after an ambiguous credential update (#12558)", async () => {
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: true,
+      value: metadata(),
+    }));
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
+      ok: false,
+      error: { kind: "timeout", message: "timed out" },
+    }));
+
+    await expect(
+      ensureNativeNvidiaProvider({
+        adapter: adapter({ getProvider, updateProvider }),
+        target,
+        credentialValue: "replacement-secret",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow(/did not confirm.*credential update.*No provider receipt was recorded/u);
+    expect(updateProvider).toHaveBeenCalledOnce();
+    expect(getProvider).toHaveBeenCalledOnce();
+  });
+
   it("refuses to replace a recorded provider that is missing (#12558)", async () => {
     const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
 

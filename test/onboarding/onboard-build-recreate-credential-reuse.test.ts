@@ -30,6 +30,9 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       const scriptPath = path.join(tmpDir, "build-recreate.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+      const registryPath = JSON.stringify(
+        path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });
@@ -51,13 +54,15 @@ Gateway inference:
 EOF
   exit 0
 fi
-if [ "$1" = "provider" ] && [ "$2" = "profile" ] && [ "$3" = "export" ]; then
+if [ "$1" = "provider" ] && [ "$2" = "profile" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "export" ]; then
+
   cat <<'EOF'
 {"id":"nemoclaw-nvidia-inference-v1","credentials":[{"name":"api_key","env_vars":["NVIDIA_INFERENCE_API_KEY"],"required":true,"auth_style":"bearer","header_name":"authorization","query_param":""}],"endpoints":[{"host":"integrate.api.nvidia.com","port":443,"protocol":"rest","enforcement":"enforce","rules":[{"allow":{"method":"GET","path":"/v1/models"}},{"allow":{"method":"POST","path":"/v1/chat/completions"}}]}],"binaries":["/usr/local/bin/node","/usr/bin/node","/opt/hermes/.venv/bin/python","/opt/hermes/.venv/bin/python3","/opt/venv/bin/python3","/usr/local/bin/curl","/usr/bin/curl"],"inference_capable":true}
 EOF
   exit 0
 fi
-if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$3" = "nemoclaw-nvidia-prod-v1" ]; then
+if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "nemoclaw-nvidia-prod-v1" ]; then
+
   cat <<'EOF'
 Name: nemoclaw-nvidia-prod-v1
 Id: provider-id
@@ -112,6 +117,22 @@ delete process.env.NEMOCLAW_PROVIDER_KEY;
 delete process.env.NEMOCLAW_PROVIDER;
 
 const { setupNim, setupInference } = require(${onboardPath});
+const registry = require(${registryPath});
+
+// Recreate preserves the registry receipt that proves this named native
+// provider belongs to the selected sandbox. Gateway metadata alone is not
+// ownership evidence because another sandbox can use the same provider name.
+registry.registerSandbox({
+  name: "rg-test-noninter",
+  provider: "nvidia-prod",
+  model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+  nativeNvidiaProviderAttachment: {
+    schemaVersion: 1,
+    profileId: "nemoclaw-nvidia-inference-v1",
+    providerName: "nemoclaw-nvidia-prod-v1",
+    providerId: "provider-id",
+  },
+});
 
 (async () => {
   const result = await setupNim(null, "rg-test-noninter", null);

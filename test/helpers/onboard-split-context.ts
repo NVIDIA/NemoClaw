@@ -105,7 +105,11 @@ export const onboardScriptMocksPath = JSON.stringify(
 );
 
 /** Stateful native provider transport, isolated from the developer gateway. */
-export function createNativeSetupProviderAdapter(provider: string, initiallyPresent = true) {
+export function createNativeSetupProviderAdapter(
+  provider: string,
+  initiallyPresent = true,
+  providerId = "fixture-native-id",
+) {
   const profile = nativeHostedProfile(provider)!;
   let present = initiallyPresent;
   const unexpected = async (): Promise<never> => {
@@ -125,7 +129,7 @@ export function createNativeSetupProviderAdapter(provider: string, initiallyPres
               type: profile.profileId,
               credentialKeys: [profile.credentialEnv],
               configKeys: [],
-              revision: { id: "fixture-native-id", resourceVersion: 1 },
+              revision: { id: providerId, resourceVersion: 1 },
             },
           }
         : { ok: false, error: { kind: "command", reason: "not_found", message: "not found" } };

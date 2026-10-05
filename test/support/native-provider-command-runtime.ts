@@ -36,13 +36,25 @@ export function createNativeProviderCommandRuntime(
   let exists = initiallyExists;
   const run = (args: string[]) => {
     if (args[0] !== "provider") return undefined;
-    if (args[1] === "profile") return { status: 0, stdout: profileJson, stderr: "" };
+    if (args[1] === "profile")
+      return { status: 0, output: profileJson, stdout: profileJson, stderr: "" };
+    if (args[1] === "list")
+      return {
+        status: 0,
+        output: JSON.stringify(
+          exists ? [{ name: profile.providerName, credential_keys: [profile.credentialEnv] }] : [],
+        ),
+        stdout: JSON.stringify(
+          exists ? [{ name: profile.providerName, credential_keys: [profile.credentialEnv] }] : [],
+        ),
+        stderr: "",
+      };
     if (args[1] === "get")
       return exists
-        ? { status: 0, stdout: metadata, stderr: "" }
-        : { status: 1, stdout: "", stderr: "provider not found" };
+        ? { status: 0, output: metadata, stdout: metadata, stderr: "" }
+        : { status: 1, output: "provider not found", stdout: "", stderr: "provider not found" };
     if (args[1] === "create") exists = true;
-    return { status: 0, stdout: "", stderr: "" };
+    return { status: 0, output: "", stdout: "", stderr: "" };
   };
   return { run, profileJson, metadata };
 }

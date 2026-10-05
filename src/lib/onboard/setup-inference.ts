@@ -25,8 +25,10 @@ import {
   ensureNativeHostedProvider,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
+  resolveGatewayNativeHostedProviderAuthority,
   type NativeHostedProviderAttachment,
 } from "../inference/native-hosted";
+
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -135,6 +137,10 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
+import type {
+  OpenShellInferenceRouteMutator,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -212,6 +218,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
+  inferenceRouteMutator: OpenShellInferenceRouteMutator;
+  inferenceRouteObserver: OpenShellInferenceRouteObserver;
   upsertProvider: (
     name: string,
     type: string,
@@ -315,13 +323,16 @@ export async function selectGatewayForFollowupOrExit(
 
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
-  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  inferenceRouteMutator: OpenShellInferenceRouteMutator,
+  gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
+  exitAmbiguousRouteResult?: (code: number) => never,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
-      runOpenshell,
+      inferenceRouteMutator,
+      gatewayName,
       isNonInteractive: deps.isNonInteractive,
       promptValidationRecovery: (label, recovery, credentialEnv, helpUrl) =>
         deps.promptValidationRecovery(
@@ -332,11 +343,10 @@ function resolveLocalInferenceRouteApplier(
           revalidateSandboxIdentity,
         ),
       classifyApplyFailure: deps.classifyApplyFailure,
-      compactText: deps.compactText,
-      redact: deps.redact,
       localInferenceTimeoutSecs: deps.localInferenceTimeoutSecs,
       error: deps.error,
       exitProcess: deps.exitProcess,
+      exitAmbiguousRouteResult,
     })
   );
 }
@@ -345,7 +355,10 @@ const HOST_LOCAL_INFERENCE_DIAGNOSTIC_LIMIT = 240;
 const RUNTIME_PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 
 class HostLocalInferenceBranchExit extends Error {
-  constructor(readonly code: number) {
+  constructor(
+    readonly code: number,
+    readonly routeMutationAmbiguous = false,
+  ) {
     super(`Host-local inference provider branch requested exit ${String(code)}.`);
   }
 }
@@ -625,6 +638,7 @@ export function createSetupInference(
   overrides: Partial<SetupInferenceDeps> = {},
 ): SetupInference {
   const deps: SetupInferenceDeps = { ...defaults, ...overrides };
+  const { inferenceRouteMutator } = deps;
 
   return async function setupInferenceWithDeps(
     sandboxName: string | null,
@@ -666,6 +680,16 @@ export function createSetupInference(
           return deps.exitProcess(1);
         }
         if (!isNativeHostedProvider(provider)) {
+          const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
+            target: { kind: "named", gatewayName },
+          });
+          if (!observedRoute.ok) {
+            deps.error(
+              `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
+            );
+            return deps.exitProcess(1);
+          }
+
           const compatibility = deps.checkGatewayRouteCompatibility({
             gatewayName,
             sandboxName,
@@ -732,6 +756,12 @@ export function createSetupInference(
           revalidateSandboxIdentity?.("change the OpenShell inference provider route");
           return runExactGatewayOpenshell(...args);
         };
+        const revalidatingInferenceRouteMutator: OpenShellInferenceRouteMutator = {
+          setInferenceRoute: (request) => {
+            revalidateSandboxIdentity?.("change the OpenShell inference provider route");
+            return inferenceRouteMutator.setInferenceRoute(request);
+          },
+        };
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
         let hostLocalRollbackAttempted = false;
@@ -790,6 +820,11 @@ export function createSetupInference(
               throw new HostLocalInferenceBranchExit(code);
             }
           : deps.exitProcess;
+        const ambiguousRouteExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
+          ? (code: number): never => {
+              throw new HostLocalInferenceBranchExit(code, true);
+            }
+          : deps.exitProcess;
         const providerError: CommonDeps["error"] = hostLocalSelection
           ? (message: string) => {
               hostLocalProviderErrors.push(message);
@@ -802,6 +837,8 @@ export function createSetupInference(
         };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
+          inferenceRouteMutator: revalidatingInferenceRouteMutator,
+          gatewayName,
           upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
@@ -822,10 +859,15 @@ export function createSetupInference(
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
           },
+          reserveSandboxInferenceRoute: (name: string) => reserveRoute(name, provider, model),
           exitProcess: providerExitProcess,
           error: providerError,
           log: deps.log,
-        } satisfies CommonDeps;
+        } satisfies CommonDeps &
+          Pick<
+            RemoteProviderDeps,
+            "inferenceRouteMutator" | "gatewayName" | "reserveSandboxInferenceRoute"
+          >;
 
         if (options.hostLocalInference) {
           try {
@@ -893,7 +935,8 @@ export function createSetupInference(
         const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
           const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
           const recordedAttachment = normalizeNativeHostedProviderAttachment(
-            recordedSandbox?.nativeHostedProviderAttachment,
+            recordedSandbox?.nativeHostedProviderAttachment ??
+              recordedSandbox?.nativeNvidiaProviderAttachment,
           );
           if (
             recordedSandbox &&
@@ -904,6 +947,17 @@ export function createSetupInference(
               `Sandbox '${sandboxName}' predates native hosted provider attachments. Recreate this beta sandbox before using native hosted inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
             );
           }
+          const selectedNativeProfile = nativeHostedProfile(provider);
+          let providerAuthority = selectedNativeProfile
+            ? resolveGatewayNativeHostedProviderAuthority({
+                profile: selectedNativeProfile,
+                gatewayName,
+                recordedGatewayName: recordedSandbox?.gatewayName,
+                recordedAttachment,
+                recordedAuthorities: recordedSandbox?.nativeHostedProviderAuthorities,
+                sandboxes: deps.listSandboxes?.().sandboxes ?? [],
+              })
+            : undefined;
           if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
             const prepared = await inferenceProviders.setupHermesProviderInference(
               {
@@ -915,10 +969,7 @@ export function createSetupInference(
                 hermesAuthMethod,
                 hermesToolGateways,
                 nativeProvider: true,
-                expectedNativeProviderAttachment:
-                  recordedAttachment?.profileId === nativeHostedProfile(provider)?.profileId
-                    ? recordedAttachment
-                    : undefined,
+                expectedNativeProviderAttachment: providerAuthority,
               },
               {
                 ...commonDeps,
@@ -938,6 +989,7 @@ export function createSetupInference(
               },
             );
             if (!("ok" in prepared) || !prepared.ok) return prepared;
+            providerAuthority = prepared.nativeHostedProviderAttachment ?? providerAuthority;
           }
 
           if (isNativeHostedProvider(provider)) {
@@ -953,13 +1005,12 @@ export function createSetupInference(
             }
             nativeHostedProviderAttachment = await ensureNativeHostedProvider({
               profile,
+
               adapter: providerAdapter,
               target: { kind: "named", gatewayName },
               credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
-              ...(recordedAttachment?.profileId === profile.profileId
-                ? { expected: recordedAttachment }
-                : {}),
+              ...(providerAuthority ? { expected: providerAuthority } : {}),
             });
             return null;
           }
@@ -1025,8 +1076,10 @@ export function createSetupInference(
                         error: commonDeps.error,
                       }
                     : deps,
-                  runGatewayOpenshell,
+                  revalidatingInferenceRouteMutator,
+                  gatewayName,
                   revalidateSandboxIdentity,
+                  ambiguousRouteExitProcess,
                 ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
@@ -1081,8 +1134,10 @@ export function createSetupInference(
                           error: commonDeps.error,
                         }
                       : deps,
-                    runGatewayOpenshell,
+                    revalidatingInferenceRouteMutator,
+                    gatewayName,
                     revalidateSandboxIdentity,
+                    ambiguousRouteExitProcess,
                   ),
                   run: deps.run,
                   shouldFrontOllamaWithProxy: hostLocalRoute
@@ -1242,7 +1297,8 @@ export function createSetupInference(
           if (
             publicationState === "unpublished" &&
             !hostLocalRegistryPublicationEntered &&
-            !hostLocalRollbackAttempted
+            !hostLocalRollbackAttempted &&
+            !(error instanceof HostLocalInferenceBranchExit && error.routeMutationAmbiguous)
           ) {
             try {
               await rollbackHostLocalInferenceStartup(

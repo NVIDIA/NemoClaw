@@ -185,12 +185,12 @@ if (args[0] === "inference" && args[1] === "get") {
 }
 
 if (args[0] === "provider" && args[1] === "get") {
-  process.stdout.write("Name: nvidia-prod\\nType: nvidia\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: <none>\\n");
+  process.stdout.write("Name: nemoclaw-nvidia-prod-v1\\nType: nemoclaw-nvidia-inference-v1\\nId: 11111111-2222-4333-8444-555555555555\\nResource version: 1\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: <none>\\n");
   process.exit(0);
 }
 
 if (args[0] === "provider" && args[1] === "list") {
-  process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.stdout.write('[{"name":"nemoclaw-nvidia-prod-v1","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
   process.exit(0);
 }
 

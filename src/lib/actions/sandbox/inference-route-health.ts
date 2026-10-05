@@ -3,11 +3,21 @@
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
-import { isNativeHostedProvider } from "../../inference/native-hosted";
+import {
+  isNativeHostedProvider,
+  verifyNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../../inference/native-hosted";
+import {
+  verifyNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
+
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
@@ -26,6 +36,51 @@ import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
+
+export type VerifyNativeNvidiaStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeNvidiaStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+  verify?: VerifyNativeNvidiaStatusAttachment;
+}): Promise<void> {
+  if (input.verify) {
+    await input.verify(input);
+    return;
+  }
+  await verifyNativeNvidiaProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export type VerifyNativeHostedStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeHostedProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeHostedStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeHostedProviderAttachment;
+  verify?: VerifyNativeHostedStatusAttachment;
+}): Promise<void> {
+  if (input.verify) return input.verify(input);
+  await verifyNativeHostedProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;

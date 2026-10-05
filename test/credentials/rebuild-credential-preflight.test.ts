@@ -15,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { nativeHostedProfile } from "../../src/lib/inference/native-hosted/profiles";
 import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -51,6 +52,8 @@ function createFixture(opts: {
     providerRegistered = true,
     inferenceProbeHttpStatus = null,
   } = opts;
+  const native = nativeHostedProfile(provider);
+  const observedProvider = native?.providerName ?? provider;
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -218,11 +221,11 @@ if (a[0] === "provider" && a[1] === "get") {
     process.stderr.write("Error: provider '${provider}' not found\\n");
     process.exit(1);
   }
-  process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
+  process.stdout.write("Name: ${observedProvider}\\nType: ${native?.profileId ?? "openai"}\\nId: 11111111-2222-4333-8444-555555555555\\nResource version: 1\\nCredential keys: ${credentialEnv}\\nConfig keys: ${native ? "<none>" : "OPENAI_BASE_URL"}\\n");
   process.exit(0);
 }
 if (a[0] === "provider" && a[1] === "list") {
-  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
+  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: observedProvider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
