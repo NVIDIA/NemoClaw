@@ -173,9 +173,9 @@ $$nemoclaw tunnel start
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 `$$nemoclaw tunnel status` reads the same host tunnel state regardless of which sandbox is selected.
-After an upgrade, if exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves it into gateway-scoped state.
+After an upgrade, when no live gateway-scoped PID record exists and exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves that record into gateway-scoped state.
 If NemoClaw cannot inspect that PID's process identity, it preserves the record and refuses to start a second tunnel.
-If multiple tunnel records are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
 On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
 It reports an unrecorded `cloudflared` executable as a conflict.
 On Windows, or when process listing fails, this scan reports no conflict.
@@ -200,9 +200,9 @@ $$nemoclaw tunnel start
 
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
 `$$nemoclaw tunnel status` reads the same host tunnel state regardless of which sandbox is selected.
-After an upgrade, if exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves it into gateway-scoped state.
+After an upgrade, when no live gateway-scoped PID record exists and exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves that record into gateway-scoped state.
 If NemoClaw cannot inspect that PID's process identity, it preserves the record and refuses to start a second tunnel.
-If multiple tunnel records are running, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
 On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
 It reports an unrecorded `cloudflared` executable as a conflict.
 On Windows, or when process listing fails, this scan reports no conflict.

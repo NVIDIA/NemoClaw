@@ -1090,8 +1090,8 @@ Sandboxes with an active SSH session are marked with a `●` indicator so you ca
   Otherwise, a recorded dashboard port produces the loopback URL `http://127.0.0.1:<port>/`.
 </AgentOnly>
 The default sandbox in text and JSON output honors the same environment override order as host-level
-status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`,
-then the registry default.
+status: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry
+default. Tunnel commands instead use `NEMOCLAW_GATEWAY_PORT` to select gateway-scoped tunnel state.
 
 ```bash
 $$nemoclaw list [--json]
@@ -3388,7 +3388,7 @@ If the recorded cloudflared PID is live but its process identity cannot be inspe
 
 ### `$$nemoclaw tunnel status`
 
-Show the cloudflared public-URL tunnel status for the OpenShell gateway port that `NEMOCLAW_GATEWAY_PORT` selects. Before reporting status, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be inspected. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel; restore process-inspection access and retry. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
+Show the cloudflared public-URL tunnel status for the OpenShell gateway port that `NEMOCLAW_GATEWAY_PORT` selects. Before reporting status, when no live gateway-scoped PID record exists, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be inspected. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel; restore process-inspection access and retry. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
 
 When no live managed tunnel record exists, non-Windows hosts scan the current user's process list and report an unrecorded `cloudflared` executable as a conflict. On Windows, or when process listing fails, this scan reports no conflict.
 
@@ -3441,7 +3441,8 @@ When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text 
 The port suffix beside the sandbox name remains the recorded local forwarding port.
 For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
 Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
-Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+Cloudflared PID and log lookup use the gateway-scoped state that `NEMOCLAW_GATEWAY_PORT` selects, independent of sandbox selection.
+Before reporting auxiliary services in text or JSON, root status can perform the same bounded legacy tunnel-state migration as `$$nemoclaw tunnel status`.
 
 ```bash
 $$nemoclaw status
