@@ -23,6 +23,7 @@ import {
 import { DockerPrerequisite, DockerProbe } from "./docker-probe.ts";
 import { createE2EInferenceAdapter, type E2EInferenceAdapter } from "./inference-adapter.ts";
 import {
+  ConfigExportValidationPhaseFixture,
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
   OnboardingPhaseFixture,
@@ -66,6 +67,7 @@ export interface E2ETargetFixtures {
   lifecycle: LifecyclePhaseFixture;
   runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
+  configExportValidation: ConfigExportValidationPhaseFixture;
   progress: TestProgress;
 }
 
@@ -288,8 +290,13 @@ export const test = base.extend<E2ETargetFixtures>({
   environment: async ({ artifacts, host, runtimeProvider }, use) => {
     await use(new EnvironmentPhaseFixture(host, artifacts, runtimeProvider));
   },
-  onboard: async ({ artifacts, cleanup, host, secrets }, use) => {
-    await use(new OnboardingPhaseFixture(host, secrets, cleanup, artifacts));
+  onboard: async ({ artifacts, cleanup, host, runtimeProvider, sandbox, secrets }, use) => {
+    await use(
+      new OnboardingPhaseFixture(host, secrets, cleanup, artifacts, {
+        sandbox,
+        runtime: runtimeProvider,
+      }),
+    );
   },
   lifecycle: async ({ cleanup, gateway, host, runtimeProvider, sandbox }, use) => {
     await use(new LifecyclePhaseFixture(host, sandbox, cleanup, gateway, runtimeProvider));
@@ -299,6 +306,9 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   stateValidation: async ({ artifacts, host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox, {}, artifacts));
+  },
+  configExportValidation: async ({ artifacts, cleanup, host, secrets }, use) => {
+    await use(new ConfigExportValidationPhaseFixture(host, secrets, cleanup, artifacts));
   },
 });
 

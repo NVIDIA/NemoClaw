@@ -65,6 +65,8 @@ import {
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
@@ -181,6 +183,7 @@ function sameCancellationRecovery(
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   hostMounts?: SandboxHostMount[];
 }
 
@@ -301,6 +304,8 @@ export interface Session {
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
   routerPid: number | null;
+  /** Host port last used by the managed Model Router; retained for exact cleanup. */
+  routerPort: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
@@ -372,6 +377,7 @@ export interface SessionUpdates {
   compatibleEndpointReasoningEffort?: ReasoningEffort | null;
   nimContainer?: string | null;
   routerPid?: number;
+  routerPort?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
@@ -383,7 +389,11 @@ export interface SessionUpdates {
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   externalComponentActivation?: ExternalComponentActivationIncomplete | null;
-  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  metadata?: {
+    gatewayName?: string;
+    fromDockerfile?: string | null;
+    fromImage?: string | null;
+  };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
 }
@@ -563,6 +573,11 @@ function readPositiveInteger(value: SessionJsonValue | undefined): number | null
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function readTcpPort(value: SessionJsonValue | undefined): number | null {
+  const port = readPositiveInteger(value);
+  return port !== null && port <= 65535 ? port : null;
+}
+
 function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
@@ -702,6 +717,7 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    fromImage: readString(value.fromImage),
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }
@@ -1014,6 +1030,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
+    routerPort: readTcpPort(overrides.routerPort),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(
@@ -1037,6 +1054,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      fromImage: overrides.metadata?.fromImage ?? null,
       ...(overrides.metadata?.hostMounts?.length
         ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
         : {}),
@@ -1152,6 +1170,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     compatibleEndpointReasoningEffort,
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
+    routerPort: readTcpPort(data.routerPort),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
@@ -1253,6 +1272,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
+  return loadSessionFile(SESSION_FILE);
+}
+
+function loadSessionFile(filePath: string): Session | null {
   const lockOwned = heldLockHandle !== null;
   let descriptor: number | null = null;
   try {
@@ -1261,22 +1284,22 @@ export function loadSession(): Session | null {
     if (lockOwned) {
       try {
         descriptor = fs.openSync(
-          SESSION_FILE,
-          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+          filePath,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
-          assertOnboardLockOwned();
+          if (lockOwned) assertOnboardLockOwned();
           return null;
         }
         throw error;
       }
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
       contents = String(fs.readFileSync(descriptor, "utf-8"));
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
     } else {
-      if (!fs.existsSync(SESSION_FILE)) return null;
-      contents = fs.readFileSync(SESSION_FILE, "utf-8");
+      if (!fs.existsSync(filePath)) return null;
+      contents = fs.readFileSync(filePath, "utf-8");
     }
     const parsed = JSON.parse(contents);
     const normalized = normalizeSession(parsed);
@@ -1293,6 +1316,102 @@ export function loadSession(): Session | null {
     return null;
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function rebuildSessionFile(sandboxName: string): string {
+  return path.join(SESSION_DIR, retainedRebuildSessionFileName(sandboxName));
+}
+
+function loadRetainedRebuildSession(sandboxName: string): Session | null {
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  const value = readRetainedRebuildSession(SESSION_DIR, sandboxName);
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  if (value === null) return null;
+  const retained = normalizeSession(value);
+  if (!retained) {
+    throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
+  }
+  return retained;
+}
+
+/** Read the target's recovery before preflight acquires the onboarding lock. */
+export function loadRebuildSession(sandboxName: string): Session | null {
+  const current = loadSession();
+  return current?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName
+    ? current
+    : (loadRetainedRebuildSession(sandboxName) ?? current);
+}
+
+function moveSessionFile(source: string, target: string): void {
+  assertOnboardLockOwned();
+  const descriptor = fs.openSync(
+    source,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    assertSessionFileIdentity(descriptor, source);
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    assertOnboardLockOwned();
+    fs.renameSync(source, target);
+    assertOnboardLockOwned();
+    assertSessionFileIdentity(descriptor, target);
+    fs.fsyncSync(heldLockHandle!.directoryDescriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Select one rebuild's session without discarding another sandbox's recovery. */
+export function selectRebuildSession(sandboxName: string): void {
+  assertOnboardLockOwned();
+  const targetFile = rebuildSessionFile(sandboxName);
+  const current = loadSession();
+  if (current?.externalComponentActivation) {
+    throw new Error(
+      "Cannot select rebuild recovery while external component activation is incomplete. " +
+        "Preserve the current session, sandbox registry, and sandbox.",
+    );
+  }
+  if (!current && fs.existsSync(SESSION_FILE)) {
+    throw new Error("Cannot select rebuild recovery: the current onboarding session is invalid.");
+  }
+  const retained = loadRetainedRebuildSession(sandboxName);
+  const transaction = current?.checkpoint?.sandboxRecreate;
+  if (retained && !transaction && current?.resumable) {
+    throw new Error(
+      `Cannot select rebuild recovery for '${sandboxName}': ` +
+        `onboarding for ${JSON.stringify(current.sandboxName ?? "(unnamed)")} is unfinished. ` +
+        "Resume or clear that onboarding session before retrying.",
+    );
+  }
+  if (transaction?.sandboxName === sandboxName) {
+    if (retained) {
+      throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
+    }
+    return;
+  }
+  if (transaction) {
+    const sourceFile = rebuildSessionFile(transaction.sandboxName);
+    // Refuse an existing destination, including a dangling symlink.
+    try {
+      fs.lstatSync(sourceFile);
+      throw new Error(
+        `Sandbox '${transaction.sandboxName}' already has retained rebuild recovery.`,
+      );
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    // Renaming leaves one owner. If the process stops before selection finishes,
+    // the next rebuild can recover this session from its sandbox's file.
+    moveSessionFile(SESSION_FILE, sourceFile);
+  }
+  if (retained) {
+    moveSessionFile(targetFile, SESSION_FILE);
+  } else if (transaction || !current) {
+    // Preflight has not started onboarding or recorded a rebuild transaction yet.
+    saveSession({ ...createSession({ sandboxName }), resumable: false });
   }
 }
 
@@ -1420,14 +1539,41 @@ export function assertOnboardLockOwned(): void {
   assertOnboardStateLockOwned(heldLockHandle);
 }
 
+const ONBOARD_LOCK_CONTENTION_LEAD =
+  "Cannot update onboarding recovery because the onboarding lock is unavailable.";
+
+type OnboardLockContentionDetails = Pick<
+  OnboardLockResult,
+  "stale" | "holderPid" | "holderStartedAt" | "holderCommand"
+>;
+
+/**
+ * Format recorded ownership details without assuming the identity was verified.
+ *
+ * The caller's lead sentence stays first so the original internal wording is
+ * preserved, then the recorded holder details and a remediation step follow.
+ */
+function onboardLockContentionGuidance(
+  lock: OnboardLockContentionDetails,
+  lead: string = ONBOARD_LOCK_CONTENTION_LEAD,
+): string {
+  const holderDetails = [
+    lock.holderPid ? `Recorded lock PID: ${lock.holderPid}.` : "",
+    lock.holderStartedAt ? `Started: ${lock.holderStartedAt}.` : "",
+    lock.holderCommand ? `Recorded lock command: ${lock.holderCommand}.` : "",
+  ].filter((detail) => detail.length > 0);
+  const remediation = lock.stale
+    ? "Wait briefly, then rerun to retry lock acquisition."
+    : "Wait for any active onboarding run to finish, then rerun.";
+  return [lead, ...holderDetails, remediation].join(" ");
+}
+
 function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
-      throw new Error(
-        "Cannot update onboarding recovery while another onboarding run owns the lock.",
-      );
+      throw new Error(onboardLockContentionGuidance(lock));
     }
   }
   try {
@@ -1594,6 +1740,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   ) {
     safe.routerPid = updates.routerPid;
   }
+  if (
+    typeof updates.routerPort === "number" &&
+    Number.isInteger(updates.routerPort) &&
+    updates.routerPort > 0 &&
+    updates.routerPort <= 65535
+  ) {
+    safe.routerPort = updates.routerPort;
+  }
   if (typeof updates.routerCredentialHash === "string") {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
@@ -1660,6 +1814,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
         typeof updates.metadata.fromDockerfile === "string"
           ? updates.metadata.fromDockerfile
           : null,
+      fromImage: typeof updates.metadata.fromImage === "string" ? updates.metadata.fromImage : null,
     };
   }
   return safe;
@@ -2325,7 +2480,10 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
     const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
     if (!lock.acquired) {
       throw new Error(
-        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+        onboardLockContentionGuidance(
+          lock,
+          "Cannot reconcile DGX Station Express receipt retirement because the onboarding lock is unavailable.",
+        ),
       );
     }
   }

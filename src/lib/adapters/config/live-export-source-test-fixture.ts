@@ -132,7 +132,7 @@ export function configuration(revision = 3) {
   };
 }
 
-export function ollamaSource(model: string = "qwen3.5:9b") {
+export function ollamaSource(model: string = "qwen3.5:9b", environment: NodeJS.ProcessEnv = {}) {
   const route = resolveManagedStartupInferenceRoute(
     "openclaw",
     "ollama-local",
@@ -141,6 +141,7 @@ export function ollamaSource(model: string = "qwen3.5:9b") {
   );
   const built = buildManagedStartupProfile({
     ...startupInput,
+    environment,
     inference: {
       routeProvider: route.providerKey,
       upstreamProvider: "ollama-local",

@@ -4,9 +4,10 @@
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
 # Checked: allowlisted OpenShell installer and Brev release assets.
 # Reports the required network-backed drift check on every PR, every push to
-# main, and weekly. Pull requests execute checker code from their base commit.
-# A new release-manifest allowlist entry must land on main in a prerequisite PR
-# before a later PR changes runtime selectors to that release.
+# main, and weekly. Pull requests normally execute their base's verifier.
+# The exact pre-admission base below uses a reviewed immutable revision containing
+# the bounded-curl fingerprint. Later bases use their own verifier, so future
+# trust additions and revocations are not frozen to this rollout revision.
 
 name: Security / Verify Installer Hashes
 
@@ -37,7 +38,7 @@ jobs:
     timeout-minutes: 5
     steps:
       # The checkout of the latest PR commit supplies data only. The checker and
-      # pin parser execute from the checkout of the PR base SHA below.
+      # pin parser execute from the base or exact reviewed rollout revision below.
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,11 +53,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout base-trusted installer hash action
+      - name: Checkout reviewed installer hash action
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          repository: NVIDIA/NemoClaw
+          # This revision retains every trust record from the named base and
+          # admits only the exact bounded-curl template from #12374.
+          ref: >-
+            ${{ github.event.pull_request.base.sha == '241fcd199275fa1d1ac6bf9beddd991117398536' &&
+            '9daa989354dcdf3756165337877bf659d9d27dc6' || github.event.pull_request.base.sha }}
           path: .trusted-installer-hash
           persist-credentials: false
           sparse-checkout: |
@@ -78,7 +84,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: ./.github/actions/setup-reviewed-npm
 
-      - name: Verify pull request installer hashes from base-trusted code
+      - name: Verify pull request installer hashes from reviewed code
         if: github.event_name == 'pull_request'
         uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
         with:

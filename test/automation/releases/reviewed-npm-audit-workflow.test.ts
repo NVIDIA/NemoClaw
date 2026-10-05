@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -304,6 +305,16 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
+  it("runs the PR audit from its exact head commit", () => {
+    const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
+    expect(step(job, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "persist-credentials": false,
+    });
+    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
+      "./.github/actions/ci-reviewed-npm-audit",
+    );
+  });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -517,7 +528,7 @@ describe("trusted npm audit workflow (#5896)", () => {
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.3",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -525,7 +536,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
+        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

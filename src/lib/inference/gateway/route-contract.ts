@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  getSandboxInferenceConfig,
-  parseGatewayInference,
-  resolveAgentInferenceApi,
-} from "../config";
-
-export { buildGatewayInferenceGetArgs } from "./command-args";
-export { parseGatewayInference };
+import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../config";
 
 /** Resolve the provider route recorded in one managed startup profile. */
 export function resolveManagedStartupInferenceRoute(

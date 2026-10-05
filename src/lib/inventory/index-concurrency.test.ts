@@ -98,7 +98,12 @@ describe("inventory row behavior", () => {
       showServiceStatus: vi.fn(),
     });
 
-    expect(inventory.sandboxes[0]).toMatchObject(status.sandboxes[0]!);
+    const { configuredInference, ...statusPublicFields } = status.sandboxes[0]!;
+    expect(inventory.sandboxes[0]).toMatchObject(statusPublicFields);
+    expect(configuredInference).toEqual({
+      provider: 'nvidia-prod api_key="<REDACTED>"',
+      model: 'nvidia/test api_key="<REDACTED>"',
+    });
     expect(inventory.defaultSandbox).toBe(status.defaultSandbox);
     expect(JSON.stringify(inventory)).not.toContain("example-not-a-real-value-1");
     expect(JSON.stringify({ inventory, status })).not.toMatch(/agent-(?:user|password)/);

@@ -51,7 +51,6 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
       primaryModelRef: "inference/nvidia/model-a",
       providerKey: "inference",
       configChanged: true,
-      sessionUpdated: false,
     });
   });
 

@@ -454,6 +454,7 @@ export function downloadAdvisorArtifacts(
     {
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
       source: `${SANDBOX_RUNTIME_DIR}/artifacts/${artifactDirectory}`,
+      timeoutMs: 60_000,
       destination,
     },
     tools,

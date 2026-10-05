@@ -105,7 +105,20 @@ export function load(): SandboxRegistry {
 }
 
 export function save(data: SandboxRegistry): void {
-  writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
+  const serialized = serializeRegistryForDisk(data);
+  const previous = readConfigFile<unknown>(REGISTRY_FILE, {});
+  // Legacy MCP ownership is disk-only compatibility evidence, not runtime
+  // authority. Ordinary writes must retain it until an explicit migration or
+  // verified removal retires it. Never accept a caller-supplied replacement.
+  if (isObjectRecord(previous) && isObjectRecord(previous.sandboxes)) {
+    for (const [name, entry] of Object.entries(serialized.sandboxes)) {
+      const prior = previous.sandboxes[name];
+      if (isObjectRecord(prior) && Object.hasOwn(prior, "mcp")) {
+        Object.assign(entry, { mcp: prior.mcp });
+      }
+    }
+  }
+  writeConfigFile(REGISTRY_FILE, serialized);
 }
 
 function normalizeRegistry(value: unknown): SandboxRegistry {

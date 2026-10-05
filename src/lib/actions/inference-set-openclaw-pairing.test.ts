@@ -179,8 +179,6 @@ describe("settleInferenceSetOpenClawPairing", () => {
       {
         agentName: "openclaw",
         configChanged: true,
-        nextApi: "openai-completions",
-        previousApi: "openai-completions",
         result: {
           sandboxName: "alpha",
           provider: "nvidia-prod",
@@ -214,7 +212,8 @@ describe("settleInferenceSetOpenClawPairing", () => {
       expect.objectContaining({
         action: "inference_set",
         sandbox: "alpha",
-        reason: "inference set openclaw:nvidia-prod:nvidia/model-b (pairing convergence pending)",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/model-b (gateway restart and pairing convergence pending)",
       }),
     );
     expect(JSON.stringify(appendAuditEntry.mock.calls)).not.toContain("credential=");

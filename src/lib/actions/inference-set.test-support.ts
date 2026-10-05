@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import type {
+  OpenShellInferenceRouteMutator,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
+import { createCliOpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { AgentConfigTarget } from "../sandbox/config";
@@ -10,6 +16,7 @@ import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import type { InferenceSetDeps } from "./inference-set";
 import type { EnsureHttpsPinRuntimeAdapterFn } from "./inference-set-route-containment";
+import { redactInferenceSetRouteDiagnostic } from "./inference-set-provider-diagnostics";
 
 type LocalValidationResult = ReturnType<InferenceSetDeps["validateLocalProvider"]>;
 
@@ -19,7 +26,7 @@ export const OPENCLAW_TARGET: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  sensitiveFiles: [],
 };
 
 export const HERMES_TARGET: AgentConfigTarget = {
@@ -107,7 +114,7 @@ export function createCompatibleProviderCapture(options: {
   credentialEnv: string;
   configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
   initiallyPresent?: boolean;
-}): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
+}): CaptureOpenshell & ReturnType<typeof vi.fn> {
   let providerPresent = options.initiallyPresent ?? true;
   let providerVersion = providerPresent ? 1 : 0;
   return vi.fn((args: string[]) => {
@@ -156,6 +163,11 @@ export function createCompatibleProviderCapture(options: {
   });
 }
 
+export type CaptureOpenshell = (
+  args: string[],
+  options?: CaptureOpenshellOptions,
+) => CaptureOpenshellResult;
+
 export function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
@@ -165,7 +177,9 @@ export function createDeps(options: {
   target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
-  captureOpenshell?: InferenceSetDeps["captureOpenshell"];
+  captureOpenshell?: CaptureOpenshell;
+  inferenceRouteMutator?: OpenShellInferenceRouteMutator;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   providerAdapter?: OpenShellProviderAdapter;
   localValidation?: LocalValidationResult;
   localReachable?: boolean;
@@ -179,14 +193,13 @@ export function createDeps(options: {
   updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
-  seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
+    setOpenClawConfigValues: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
-    seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
@@ -221,9 +234,9 @@ export function createDeps(options: {
       options.captureOpenshell ??
         ((args: string[]) => defaultCaptureOpenshell(args, options.openshellStatus ?? 0)),
     ),
+    setOpenClawConfigValues: vi.fn(),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
-    seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
     updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -294,9 +307,31 @@ export function createDeps(options: {
           stdout: result.stdout || result.stderr ? result.stdout : result.output,
           stderr: result.stderr,
           ...("error" in result && result.error ? { error: result.error } : {}),
+          ...("signal" in result && result.signal ? { signal: result.signal } : {}),
         };
       },
     });
+  const inferenceRouteMutator =
+    options.inferenceRouteMutator ??
+    createCliOpenShellInferenceRouteMutator(
+      async (args, runOptions) => {
+        const result = calls.captureOpenshell(args, {
+          ignoreError: true,
+          includeStderr: true,
+          includeStreams: true,
+          maxBuffer: runOptions.outputLimitBytes,
+          timeout: runOptions.timeout,
+        });
+        return {
+          status: result.status,
+          output: result.output,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ...("error" in result && result.error ? { error: result.error } : {}),
+        };
+      },
+      { redactDiagnostic: redactInferenceSetRouteDiagnostic },
+    );
   return {
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
@@ -307,11 +342,25 @@ export function createDeps(options: {
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
     readSandboxConfig: calls.readSandboxConfig,
+    setOpenClawConfigValues: calls.setOpenClawConfigValues,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
-    seedHermesDashboardConfig: calls.seedHermesDashboardConfig,
     prepareRunOpenshell: calls.prepareRunOpenshell,
-    captureOpenshell: calls.captureOpenshell,
+    inferenceRouteMutator,
+    inferenceRouteObserver:
+      options.inferenceRouteObserver ??
+      ({
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value:
+            entries[0]?.provider && entries[0]?.model
+              ? {
+                  state: "configured" as const,
+                  route: { provider: entries[0].provider, model: entries[0].model },
+                }
+              : { state: "unconfigured" as const },
+        })),
+      } satisfies OpenShellInferenceRouteObserver),
     providerAdapter,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,

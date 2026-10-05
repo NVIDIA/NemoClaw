@@ -4,7 +4,7 @@
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import {
   getHermesDashboardRegistryFields,
   resolveHermesDashboardOnboardState,
@@ -55,15 +55,15 @@ function hermesInterfacesSnapshot(port = 19000, internalPort = 19120, tui = true
 }
 
 describe("Hermes retained interface export", () => {
-  it("exports dashboard, TUI and allocated API intent through the complete action (#11433)", async () => {
+  it("exports dashboard and allocated API intent through the complete action (#11433, #12132)", async () => {
     const source = hermesInterfacesSnapshot();
     const exported = await exportSnapshots([source]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      type: "hermes",
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      kind: "hermes",
       interfaces: {
-        dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+        dashboard: { enabled: true, port: 19000, internalPort: 19120 },
         api: { port: 8643 },
       },
     });
@@ -72,31 +72,35 @@ describe("Hermes retained interface export", () => {
     expect(source.registry.hermesApiPort).toBe(8643);
   });
 
-  it("omits managed default leaves while preserving dashboard enablement (#11433)", async () => {
+  it("preserves an explicitly disabled TUI against the target default (#12132)", async () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]!.interfaces).toEqual({
-      dashboard: { enabled: true },
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+      dashboard: { enabled: true, tui: { enabled: false } },
     });
   });
 
   it.each([undefined, null, 8642])(
-    "preserves canonical disabled-dashboard output with legacy API %s (#11433)",
+    "preserves canonical disabled-dashboard output with legacy API %s (#11433, #12132)",
     async (hermesApiPort) => {
       const current = await exportSnapshots([hermesSnapshot()]);
       const legacy = await exportSnapshots([hermesSnapshot({ hermesApiPort })]);
       expect(legacy.outcome.ok).toBe(true);
       expect(legacy.writeStdout.mock.calls).toEqual(current.writeStdout.mock.calls);
+      const document = asExportedConfig(YAML.parse(legacy.writeStdout.mock.calls[0]![0]));
+      expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+        dashboard: { enabled: false },
+      });
     },
   );
 
   it("exports a published nondefault API allocation with the dashboard disabled (#11433)", async () => {
     const exported = await exportSnapshots([hermesSnapshot({ hermesApiPort: 8643 })]);
     expect(exported.outcome.ok).toBe(true);
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      interfaces: { api: { port: 8643 } },
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      interfaces: { dashboard: { enabled: false }, api: { port: 8643 } },
     });
   });
 

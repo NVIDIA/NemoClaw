@@ -34,6 +34,7 @@ describe("CLI dispatch", () => {
                 model: "test-model",
                 provider: "nvidia-prod",
                 gpuEnabled: false,
+                agent: "langchain-deepagents-code",
               },
             },
             defaultSandbox: "alpha",
@@ -49,6 +50,11 @@ describe("CLI dispatch", () => {
             '  printf "NAME STATUS\\n" >> "$log_file"',
             "  exit 0",
             "fi",
+            'if [ "$1 $2 $3 $4 $5" = "sandbox get -g nemoclaw alpha" ]; then',
+            '  printf \'%s\\n\' "$*" >> "$log_file"',
+            '  printf "Error: code: \'Some requested entity was not found\', message: \\"sandbox not found\\"\\n" >&2',
+            "  exit 1",
+            "fi",
             'printf \'%s\\n\' "$*" >> "$log_file"',
             "exit 0",
           ].join("\n"),
@@ -57,14 +63,17 @@ describe("CLI dispatch", () => {
         fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
           mode: 0o755,
         });
+        fs.writeFileSync(path.join(localBin, "brew"), ["#!/bin/sh", "exit 127"].join("\n"), {
+          mode: 0o755,
+        });
 
         const r = runWithEnv("alpha destroy -y", {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
-        expect(r.code, r.out).toBe(0);
         const log = fs.readFileSync(openshellLog, "utf8");
+        expect(r.code, `${r.out}\nOpenShell log:\n${log}`).toBe(0);
         const deleteIdx = indexOfArg(log, "sandbox delete -g nemoclaw alpha");
         expect(deleteIdx).toBeGreaterThan(-1);
 

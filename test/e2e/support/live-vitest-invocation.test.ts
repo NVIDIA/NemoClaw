@@ -22,6 +22,7 @@ import {
 
 const LIVE_VITEST_TOOL = path.resolve("tools/e2e/live-vitest-invocation.mts");
 const TSX = path.resolve("node_modules", ".bin", "tsx");
+const FULL_E2E_TEST_PATH = "test/e2e/live/full-e2e.test.ts";
 
 describe("validateLiveProject (#6961)", () => {
   it("accepts the live project and defaults to it", () => {
@@ -141,7 +142,7 @@ describe("resolveLiveSelector (#6901)", () => {
 
   it("does not infer selectors for unrelated live tests", () => {
     expect(
-      resolveLiveSelector("test/e2e/live/cloud-inference.test.ts", undefined, {
+      resolveLiveSelector(FULL_E2E_TEST_PATH, undefined, {
         NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
       }),
     ).toBeUndefined();
@@ -172,14 +173,14 @@ describe("buildLiveVitestArgs (#6961)", () => {
   it("omits the selector arguments for a single-file target", () => {
     expect(
       buildLiveVitestArgs({
-        testPath: "test/e2e/live/cloud-inference.test.ts",
+        testPath: FULL_E2E_TEST_PATH,
       }),
     ).toEqual([
       "vitest",
       "run",
       "--project",
       "e2e-live",
-      "test/e2e/live/cloud-inference.test.ts",
+      FULL_E2E_TEST_PATH,
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -211,7 +212,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
 });
 
 describe("runLiveVitestCommand (#6961)", () => {
-  const validArgs = ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts"];
+  const validArgs = ["run", "--test-path", FULL_E2E_TEST_PATH];
 
   it.each([
     ["child status", { status: 7, signal: null }, 7],
@@ -232,7 +233,7 @@ describe("runLiveVitestCommand (#6961)", () => {
         "run",
         "--project",
         "e2e-live",
-        "test/e2e/live/cloud-inference.test.ts",
+        FULL_E2E_TEST_PATH,
         "--silent=false",
         "--reporter=default",
         `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -269,10 +270,7 @@ describe("runLiveVitestCommand (#6961)", () => {
   });
 
   it.each([
-    [
-      "unknown option",
-      ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts", "--selctor", "^x$"],
-    ],
+    ["unknown option", ["run", "--test-path", FULL_E2E_TEST_PATH, "--selctor", "^x$"]],
     ["bare selector", [...validArgs, "--selector"]],
   ])("rejects an %s before spawning Vitest", (_label, args) => {
     let spawned = false;

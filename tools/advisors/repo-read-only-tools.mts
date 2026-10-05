@@ -21,6 +21,7 @@ const PI_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 export const MAX_ADVISOR_TOOL_RESULT_JSON_BYTES = 16 * 1024;
 
 type RepoPathGuard = {
+  lexical(candidate: string): string;
   resolveExisting(candidate: string): Promise<string>;
 };
 
@@ -152,17 +153,22 @@ function createRepoPathGuard(cwd: string, additionalRoots: string[] = []): RepoP
     real: fs.realpathSync(root),
   }));
 
+  const lexical = (candidate: string): string => {
+    const withoutAtPrefix = candidate.startsWith("@") ? candidate.slice(1) : candidate;
+    const normalizedCandidate = withoutAtPrefix.replace(PI_UNICODE_SPACES, " ");
+    const expandedCandidate =
+      normalizedCandidate === "~"
+        ? os.homedir()
+        : normalizedCandidate.startsWith("~/")
+          ? path.join(os.homedir(), normalizedCandidate.slice(2))
+          : normalizedCandidate;
+    return path.resolve(lexicalRoot, expandedCandidate);
+  };
+
   return {
+    lexical,
     async resolveExisting(candidate) {
-      const withoutAtPrefix = candidate.startsWith("@") ? candidate.slice(1) : candidate;
-      const normalizedCandidate = withoutAtPrefix.replace(PI_UNICODE_SPACES, " ");
-      const expandedCandidate =
-        normalizedCandidate === "~"
-          ? os.homedir()
-          : normalizedCandidate.startsWith("~/")
-            ? path.join(os.homedir(), normalizedCandidate.slice(2))
-            : normalizedCandidate;
-      const lexicalPath = path.resolve(lexicalRoot, expandedCandidate);
+      const lexicalPath = lexical(candidate);
       const matchingRoot = roots.find(
         (root) =>
           isContainedPath(root.lexical, lexicalPath) || isContainedPath(root.real, lexicalPath),
@@ -227,6 +233,7 @@ export function createRepoConfinedReadOnlyTools(
   const read = createReadToolDefinition(cwd);
   const executeRead = read.execute;
   read.execute = async (toolCallId, input, signal, onUpdate, context) => {
+    const lexicalPath = guard.lexical(input.path);
     const resolvedPath = await guard.resolveExisting(input.path);
     const result = await executeRead(
       toolCallId,
@@ -244,7 +251,11 @@ export function createRepoConfinedReadOnlyTools(
     const truncation = boundedResult.details?.truncation;
     const returnedLines = truncation?.outputLines ?? input.limit;
     onRead?.({
-      path: resolvedPath,
+      // Preserve the validated path the specialist was required to read. The
+      // real path may differ when an additional evidence root is symlinked
+      // into the sandbox, but that implementation detail must not invalidate
+      // an otherwise exact required-path read.
+      path: lexicalPath,
       offset,
       endOffset: returnedLines === undefined ? null : offset + returnedLines - 1,
       fileSize: (await fs.promises.stat(resolvedPath)).size,

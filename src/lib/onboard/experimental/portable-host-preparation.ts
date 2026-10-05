@@ -708,7 +708,6 @@ function registryInspectionArgs(networkName: string): readonly string[] {
   ];
 }
 
-/** Reconcile only an owned registry; preserve running instances and reject foreign network identity. */
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,

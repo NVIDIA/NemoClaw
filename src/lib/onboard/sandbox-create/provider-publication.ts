@@ -160,12 +160,7 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   deps: ProviderPreparationDeps,
 ): Promise<void> {
   const runtimeProvider = resolveRegisteredRuntimeProvider(input.openshellDriver);
-  if (
-    !runtimeProvider ||
-    runtimeProvider.gateway.launcher !== "nemoclaw" ||
-    runtimeProvider.bootstrap.supported !== true
-  )
-    return;
+  if (!runtimeProvider || runtimeProvider.gateway.launcher !== "nemoclaw") return;
 
   const expectedBindings = expectedMessagingBindings(input);
   const inferenceProvider =

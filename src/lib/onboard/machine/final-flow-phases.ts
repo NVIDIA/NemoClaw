@@ -40,6 +40,7 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
+  managedOpenclawStartup?: boolean;
   preserveRebuildLivePolicy?: boolean;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
@@ -54,6 +55,18 @@ export interface FinalOnboardFlowPhaseOptions<
     VerifyChain,
     VerificationResult
   >["deps"];
+}
+
+export function shouldInitializeNativeOpenclawInferenceRoute(
+  context: Pick<OnboardFlowContext, "agent" | "fromDockerfile" | "session">,
+  preserveRebuildLivePolicy: boolean,
+): boolean {
+  return (
+    context.agent === null &&
+    (context.fromDockerfile !== null || Boolean(context.session?.metadata?.fromImage)) &&
+    (!preserveRebuildLivePolicy || Boolean(context.session?.metadata?.fromImage)) &&
+    context.session?.steps.openclaw?.status !== "complete"
+  );
 }
 
 export function createFinalOnboardFlowPhases<
@@ -77,16 +90,29 @@ export function createFinalOnboardFlowPhases<
     if (isProviderlessComponentOnboarding(context)) {
       return { result: advanceTo("policies", { metadata: { state: options.branchState } }) };
     }
+    const initializeNativeInferenceRoute = shouldInitializeNativeOpenclawInferenceRoute(
+      context,
+      options.preserveRebuildLivePolicy === true,
+    );
+    const settleOpenclawStartupBeforeConfiguration =
+      initializeNativeInferenceRoute && Boolean(context.session?.metadata?.fromImage);
+    if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
+      throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
+    }
     const agentSetupResult = await handleAgentSetupState({
       agent: context.agent,
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
-      webSearchConfig: context.webSearchConfig,
+      preferredInferenceApi: context.preferredInferenceApi,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
+      managedOpenclawStartup: options.managedOpenclawStartup === true,
+      initializeNativeInferenceRoute,
+      settleOpenclawStartupBeforeConfiguration,
+      revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,
     });
     return {
@@ -150,6 +176,7 @@ export function createFinalOnboardFlowPhases<
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     if (
@@ -189,6 +216,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

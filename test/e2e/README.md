@@ -5,8 +5,22 @@
 
 Direct E2E coverage runs through Vitest.
 
+OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
+Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
+Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
+The full OpenClaw cases verify readiness after explicit admin approval and an ordinary agent turn. When the approved device matches the calling CLI's existing identity, the CLI confirms the already-granted admin scope through a read-only gateway request before exiting, so later ordinary calls retain the rotated token's approved metadata. This confirmation uses the existing transport with normal token-cache writes; other device commands keep their read-only shared-state behavior. Approvals for confirmed other devices retain their existing behavior. If reading the local identity fails, the CLI reports that approval completed but the handoff failed, and exits unsuccessfully with recovery guidance.
+The llama.cpp GPU case proves ordinary inference before approval, then uses the existing admin-only cron operation and exact-request helper for denial, approval, and privileged-consumer evidence. Its former requirement for an ordinary greeting to request admin is replaced by successful inference; GPU, model, authentication, and cleanup assertions remain live.
+
+OpenClaw owns TUI turn ordering and `chat.send` correlation.
+Fixes and regression coverage for those behaviors belong upstream.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
+
+The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
+It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
+The container configuration package supplies Podman's standard image policy and seccomp files.
+The install refuses package removals, preserving the runner's Docker and containerd packages and their supplied runtime.
 
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
@@ -29,24 +43,29 @@ before those targets run; local runners must provide it themselves.
   Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
+- The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
+  runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
+  rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
+  source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
+  components. Select it with
+  `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
+  gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
-The `agent-turn-latency` target checks the configured host CLI with both text and
-JSON output, including explicit local mode and a requested timeout. For inline
-messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
-child's stdin. The fixture holds its writer open until command completion, so
-inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
-File-message turns use a relative symlink chain to a file with spaces in its path,
-with competing stdin, in both output formats. Each turn must return the answer
-from the selected input. Parser combinations and stdin aliases belong to the
-unit and real-child tests; this target does not repeat native file-permission errors.
-The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
-agent duration. Missing or inconsistent timing fails that bound.
-These cases are selectable for both Docker and Podman through the existing runtime
-matrix. Host stdin is preserved for nonempty message-file arguments because only
-the sandbox can resolve their paths.
+The `agent-turn-latency` target makes one JSON OpenClaw hosted turn and one Hermes
+hosted API turn. The OpenClaw fixture keeps the host pipe open while the wrapper
+closes the dispatch child's stdin. The fixture holds its writer open until command
+completion, so inheriting that pipe blocks until the test timeout, regardless of
+the model-time cap. The OpenClaw turn also requires at most 60 seconds outside
+OpenClaw's reported agent duration. Missing or inconsistent timing fails that bound.
+Both turns record the selected provider, model, answer, and elapsed time. The Hermes
+turn also records the HTTP status. Parser combinations, explicit local forwarding,
+requested timeouts, message-file input, and stdin aliases belong to deterministic
+tests. The real-child input cases include a relative symbolic-link chain to a regular
+file with spaces while stdin contains competing data. This target is selectable for
+Docker and Podman through the existing runtime matrix.
 
 ## CI execution shape
 
@@ -63,6 +82,9 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
+The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
+It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -132,7 +154,8 @@ This boundary keeps candidate source separate from the trusted workflow implemen
 The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
 For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
-When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+When those paths are unchanged, the planner finds the PR base's latest reviewed image input on the trusted workflow commit's first-parent history.
+It selects the nearest fully successful cohort publication at or after that commit.
 It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
 It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
 The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
@@ -160,10 +183,31 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
+that require elevated scopes. It approves only the request ID emitted by the current sandbox's
+non-admin CLI, after the existing selector verifies that device and its requested scopes.
+The fixture transfers its approval script through non-terminal `exec --stdin`, then runs the
+verified script bytes in a subshell of the prepared `connect` shell. The subshell inherits its
+approval wrapper while isolating the script's exit and cleanup trap. This preserves the credential boundary
+without feeding a bulk script through terminal line editing. Cleanup removes the temporary
+script after success or failure; a cleanup failure also fails the fixture. The fixture checks
+the transferred bytes against the host's digest before evaluation and rejects a replaced script.
+Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
+approval and verify the grant through its own native operation, avoiding an unrelated cron job or
+agent session. Sessions/agents coverage requires the main session seed to succeed and does not
+approve arbitrary pending devices or silently skip the main-session cases.
+The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
+The full onboarding test relies on its existing status poll, which fails when status never succeeds.
+MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
+serialization or the provider-update success message. Approval phase labels live with the existing
+fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
-command committed one coherent bridge. The rejected command must report either the exact portable
-host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must succeed idempotently from the verified committed source.
+command committed one coherent bridge. The rejected command must report the exact portable
+host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
+Unknown or unverifiable-owner diagnostics remain failures. The deterministic classifier and one-retry
+bound are covered by `support/mcp-bridge-reliability.test.ts`. The retry has its own command artifact
+and must succeed idempotently from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -171,6 +215,49 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
+before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
+diagnostics contain no raw errors, request data, or credentials and do not establish successful
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
+
+Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
+onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
+trusted-private probe must discover authenticated tools from the HTTPS fixture
+signed by that CA through supervisor egress. Cloud onboarding separately verifies
+installed bundle contents and permissions; file presence alone is not TLS-consumer
+evidence. The managed-startup unit tests own activation ordering and identity checks.
+Cloud onboarding checks that migrated credentials are removed and unrelated legacy entries
+remain, with redaction applied before assertion formatting. Credential-store tests cover
+equal-valued unrelated fields, complete-file deletion when no unrelated entries remain,
+and preservation after failed migration.
+Cloud onboarding also downloads a leading-hyphen file and directory through the installed CLI,
+checks their bytes, and verifies that a leading-hyphen symbolic-link source is refused without
+replacing the host destination. Source tests own path normalization and publication safety;
+this live check owns the real CLI, OpenShell transfer, and sandbox filesystem boundary.
+
+If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
+OpenShell supervisor logs and the runtime container's state and startup output
+before asserting the original failure. These reads remain available when sandbox
+exec is rejected in `Error` state. Container reads require exactly one validated
+runtime resource handle. Each output stream uses a 32 KiB capture buffer and each command has a 30-second limit; log
+capture retains at most 200 lines from the last two minutes for OpenShell and
+three minutes for the runtime container, with fixture credentials redacted.
+The collector also streams `/tmp/nemoclaw-start.log` from the stopped container into
+the bounded redactor, which retains the last 32 KiB and removes secret fragments at
+the capture boundary. It reads only that archive member without unpacking files on
+the host and includes the capture-omission notice in the retained artifact.
+The same collector retains startup, container, supervisor, and host gateway evidence after failed
+onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcomes can be declared so a normal
+refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
+not retry the mutation or replace its result.
+OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
@@ -221,7 +308,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain one v0.0.89 fixture with a pinned installer commit and digest, sandbox image digest, and reviewed OpenClaw archive. Prove that the current gateway upgrade leaves its sandbox Ready, preserves a workspace marker, keeps the raw gateway credential out of the sandbox environment, `/sandbox/.openclaw/openclaw.json`, and recursive `auth-profiles.json` files below `/sandbox/.openclaw/agents`, and supports authenticated agent turns before and after the upgrade. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
@@ -279,6 +366,13 @@ removed. Their production-image security coverage now belongs to
 installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
 boundaries are the behavior under test.
 
+The managed-image test retains final-image module loading, system shell environment loading,
+protected blueprint directories, and writable plugin state. Source tests own environment generation
+and blueprint apply/snapshot logic; the image test does not repeat the fake-OpenShell apply sequence
+or its progress messages. Configuration hash, seal, and normalizer checks ended with those retired
+implementations. `test/e2e-non-root-smoke.sh`, run by `pr-self-hosted.yaml`, retains the entrypoint
+check under `no-new-privileges`.
+
 ## Platform Evidence
 
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
@@ -287,6 +381,12 @@ The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+
+WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
+probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
+Other errors stop setup. The helper masks `docker.service` and `docker.socket` in the job-owned
+distro so the masks survive a restart. The test script checks Docker again immediately before
+Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
@@ -387,27 +487,79 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
-After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The exported effective policy comes from the SDK configuration response and is compared with the
-independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
-
-- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
-- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
-- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
-- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+This proves that the real SDK connection reaches the fail-closed secondary-agent and identity-drift
+boundaries. It does not qualify successful export or effective-policy preservation. Deterministic
+adapter tests own individual wire shapes and malformed responses, while successful single-agent
+export evidence remains with its owning scenarios. The assertion budget is lowered with the removed
+successful-export checks.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
-the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
-credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
+the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission
+of credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
+
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+On Docker, the fixture compares the registry before and after export. State validation confirms that the
+sandbox remains ready after the read-only command.
+Registry targets on Podman require the unsupported-runtime refusal and no output file.
+They retain source identity observations, state checks, target-specific checks, and cleanup.
+Successful-export schema, secret, and pinned-consumer checks remain on Docker because v1alpha1 export does not support Podman.
+The fixture contract and runtime refusal are covered in `support/e2e-phase-config-export-validation.test.ts`.
+
+The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
+OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
+secret. A different container must preserve a workspace marker and complete the authenticated MCP
+tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
+retain their existing bridge checks and record this additional Docker compatibility proof as not
+applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
+rules remain covered by source and component tests.
+
+The OpenClaw `mcp-bridge` shard also owns public pin recovery for #10464. After proving the existing
+credential rotation and denied-tool behavior, it replaces only the live endpoint pins with an
+unrelated public address and requires a policy denial. It then runs
+`mcp update fake --refresh-public-pins` and requires an authenticated native tool call while the
+denied tool remains blocked. Existing restart and rebuild checks retain their own assertions.
+Source tests own public-target validation, source conflicts, and preservation of every policy field
+except `allowed_ips`. This live step proves that OpenShell enforces the refreshed policy; it does not
+depend on an external DNS rotation happening during the test. A failed step restores the captured
+policy before normal sandbox cleanup.
+
+The pin-recovery proof stays within the existing assertion budget by retiring fixture-detail checks:
+the probe's fixed HTTP method and JSON-RPC fields, and the removed proxy's `enc:v1:` and `proxy.pid`
+markers. `test/mcp/mcp-bridge-servers.test.ts` owns the fake server's protocol behavior, and
+`test/state/registry.test.ts` proves legacy MCP state is omitted from runtime and disk. Live checks
+still verify the authenticated request, policy denials, absence of MCP URLs, provider names and
+credentials from the registry, and restart, rebuild and cleanup outcomes.
+
+The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox,
+requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
+finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
+Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
+
+`deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
+public installer and the installed `nemohermes` or `nemo-deepagents` command on Docker and Podman. The installer child receives
+none of the three accepted inference credential variables. The test verifies that installation does
+not create a sandbox, complete onboarding, or register a gateway, then supplies the public NVIDIA
+credential and completes onboarding in the same home. The `nvidia-api` profile owns that credential;
+the test uses it only for the continuation command. Installer-plan and installer integration tests
+own provider classification, invalid inputs, and the deterministic decision matrix.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
@@ -435,6 +587,10 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
+The `openclaw-inference-switch` target owns fresh custom-image route initialization.
+Its fixture contains only a different baked model and stale limits.
+The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 
@@ -461,7 +617,6 @@ The execution profile owns the credentials available to its target step:
 - `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 - `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
   The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
-- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
@@ -476,13 +631,14 @@ Each target selects its runner through the catalogue.
 The reusable workflow validates the catalogue plan before candidate checkout.
 It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
 It then owns checkout, Docker authentication, reviewed host preparation, setup, CLI artifact restoration, OpenShell installation, runner telemetry, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
-Catalogue entries may request only the reviewed `expect` and `iptables` host packages.
+Catalogue host packages are allowlisted: `expect`, `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
+Only `gpu-double-onboard` and `hermes-slack` declare the seven native Podman prerequisites through `podmanHostPackages`; their Docker rows receive no added packages.
+The planner combines common `hostPackages` with `podmanHostPackages` only for Podman rows and emits the existing `host_packages` input.
 The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
 A host package or selector alone does not require a dedicated workflow job.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
 The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
-TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
 On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 When `shard` is not `default`, the standard layout adds the shard directory.
@@ -495,41 +651,63 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
-A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
-managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
-definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
-managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
-before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
-scenario. It retries read-only daemon readiness checks on connection refusal or curl
+The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
+and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
+The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
-models through the saved endpoint. It destroys the sandbox before stopping that daemon.
+Cleanup destroys each sandbox before its inference runtime and removes private output files.
+The attached-Ollama export scenario gives the candidate CLI a private per-test `HOME`. Cleanup
+removes its sandbox, stops the gateway runtime, and removes the gateway registration before it
+removes that state and the exported YAML.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
-The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
-It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
-The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
-Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
-The export assertions replace redundant checks within the same Brave lifecycle.
-Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
-Successful agent execution and its answer cover the negative diagnostic-text check.
-Retained sandbox identity, materialized configuration, and HTTP egress cover the reused status command.
-Complete JSON parsing and expected configuration fields cover config-read exit codes; valid exact UUID continuity covers sandbox-read exit codes.
-The retained nonzero HTTP response covers the extra egress command exit check.
-The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
+### Brave Search coverage
 
-For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
-Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
-Trusted `main` controls the 45-minute job limit.
-Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
+Brave Search is an optional integration. Its tests use synthetic credentials and mocked responses; the live E2E gate does not require a Brave account.
+`test/onboarding/brave-search-integration.test.ts` runs the production credential probe against a loopback HTTP backend.
+A test-only curl wrapper replaces only the canonical Brave URL and refuses other HTTP destinations.
+It preserves the real curl request, private credential file, query parameters, and response classification.
+The worker backend returns deterministic search results and HTTP 401, 403, 429, and 503 failures.
+The test removes its worker and temporary files after success or failure.
+
+The `brave-search` live target retains the Brave-specific isolation regression for #7425.
+It onboards a real OpenShell sandbox with a synthetic Brave credential, then starts a real `openclaw agent` command and opens a fresh login shell.
+The agent probe waits for the command's wrapper to exec Node, inspects only that child, and terminates its process group after inspection; it does not assert an inference result.
+It observes its own child because Yama blocks `/proc` environment reads across unrelated process trees, including the already-running gateway.
+Both observations must show an absent key or an OpenShell placeholder; missing or unreadable process evidence fails.
+The test uses the `nvidia-inference` profile and never reads a real Brave secret.
+Its host curl wrapper routes validation to the loopback backend and delegates unrelated requests.
+A test-only Node preload intercepts only onboarding's optional Brave egress subprocess and returns a failed probe without sending the request.
+The OpenShell CLI and installed component paths remain unchanged, so the production component-integrity check reads the real binaries.
+Sandbox creation, provider attachment, the production isolation guard, and the two runtime observations still execute through real OpenShell.
+The fixture verifies that validation ran and the configured Brave probe was intercepted, so disabled search cannot pass as isolation evidence.
+Cleanup destroys the sandbox and removes the mock backend, curl wrapper, and preload.
+Backend startup and request-report waits each have a five-second deadline; a failed wait terminates the worker and removes its temporary directory.
+
+`test/e2e/support/brave-search-isolation.test.ts` owns deterministic probe selection, raw-key rejection, missing-process failures, and stub delegation checks.
+It does not substitute for runtime isolation evidence.
+The coverage disposition is:
+
+| Former live evidence | Current owner and scope |
+| --- | --- |
+| Successful Brave validation | The local-backend integration test covers successful and failed HTTP validation without an external quota. |
+| Stable export, credential references, profile validation, and safe diagnostics | `src/lib/adapters/config/live-export-source.test.ts` and the config domain tests exercise production export logic with mocked SDK metadata. |
+| OpenClaw search configuration and credential placeholder | `test/generation/generate-openclaw-config-web-search.test.ts` tests generated configuration. |
+| Raw credential rejection and search response verification | `src/lib/onboard/web-search-verify.test.ts` covers the production isolation guard, placeholder requests, results, and failures with mocked sandbox commands. |
+| Disabled-search reuse and retained policy | `src/lib/onboard/openclaw-setup.test.ts` and `policy-resume-selection.test.ts` cover reconciliation and policy selection. |
+| Raw Brave credential isolation in the running agent and fresh login shell | `brave-search` retains both real sandbox observations with a synthetic key. |
+| Sandbox identity, cleanup, and inference/MCP provider credential rewriting | The existing lifecycle, security-posture, and `openshell-credential-generation-window` live targets retain the shared runtime boundaries. |
+| A live Brave result, model-generated search title, and Brave service reachability | Removed from the gate. These depended on third-party availability and quota; mocked coverage does not claim to qualify the live Brave service. |
+| Brave-specific export assertion helper and its self-tests | Removed with the export scenarios. Production export tests remain. |
+
+The common-egress targets retain their live network policy and agent-fetch boundaries.
+They disable optional search explicitly and use the `nvidia-inference` profile.
+The weather case checks five initial presets, then the added weather preset and its verified agent fetch.
+Brave preset inclusion belongs to the existing onboarding policy tests, independent of weather coverage.
 
 ### Catalogue Execution Evidence
 
@@ -603,6 +781,26 @@ do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
+## Full E2E inference availability
+
+`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
+It requires a successful response containing the expected answer.
+`live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
+`support/full-e2e-inference-probe.test.ts` verifies that behavior.
+The stateless request has no tools or conversation persistence, so repeating it
+has no application mutation. It may consume another inference request.
+
+The probe retries once after five seconds only when curl exits 22 with empty
+stdout and exactly reports HTTP 503. This reports service unavailability but
+does not identify whether the gateway or upstream produced it. Every request
+has its own command artifact and a 90-second curl limit. Each reply-budget
+attempt logs bounded availability evidence, including recovery or exhaustion,
+before writing its artifact. The aggregate log survives an artifact-write failure
+and is retained after Brev cleanup; the artifact exists only when its write succeeds.
+The existing two reply budgets permit at most four requests in total.
+Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
+The existing response validation and answer assertion remain unchanged.
+
 ## Launch-readiness locked-image acceptance
 
 Use the repository helper to test an existing OpenClaw sandbox without
@@ -623,12 +821,28 @@ The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
 runs two logical `launch` sessions during the same fixed lease. Each logical
 session may retry once with a fresh run ID and input only when the OpenClaw
 session store contains a structured transient provider-unavailability record
-and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+and cleanup succeeds. A managed `openai-completions` assistant record with empty
+array content, `stopReason=error`, and string `errorCode=503` qualifies regardless
+of provider error wording. Conflicting error classes and authentication or policy
+diagnostics still prevent retry. Other eligible server codes require the known
+`InternalServerError` or `ServiceUnavailableError` class.
+Authentication, authorization, policy, malformed-response,
 cleanup, and unknown failures stop the acceptance test without retrying.
 Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
+Empty-message failures include the message index, role, and allowlisted provider
+error metadata from JSONL or SQLite. Provider error text and unknown field values
+are omitted. These diagnostics do not change failure classification or retries.
+Failed launch attempts also retain the last turn-verifier exit status and fixed
+cleanup stages: started, child reaped, and completed with cleanup status. Only the
+existing final provider marker authorizes a retry after successful cleanup.
+Baseline and PTY cleanup calls run independently so a fatal shell error in one
+cannot skip the other. Failed calls retain their last 2 KiB of error output through
+the fixture's normal redaction boundary, and any cleanup failure prevents retry.
+The host launch harness uses a non-login Bash shell with its supplied environment.
+It does not source user login or logout files. A failing logout file can disrupt Bash 5.1 exit-trap cleanup.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
@@ -799,72 +1013,80 @@ contains only the numeric port and TUI boolean. The fixture retains identity-dri
 registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
 disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
-## Current OpenClaw plugin EXDEV lifecycle
+The `hermes-inference-switch` lane also verifies native Hermes configuration
+ownership. The gateway, dashboard, CLI, and TUI share `/sandbox/.hermes`; the
+switch test proves the dashboard reports the new model without creating the
+retired `profiles/dashboard-home/config.yaml` shadow copy. The OpenShell route
+registry remains the durable routing and credential-custody record, while the
+completed onboarding session remains unchanged as historical onboarding
+evidence. Deterministic startup and action tests own the corresponding launch
+environment and session non-rewrite checks.
 
-The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+## Native plugin and package lifecycle
 
-1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
-2. Install v1-exdev with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1-exdev.
-4. Recreate the sandbox with the plugin changed to v2 and verify v2.
+Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job
+and its custom-image prebuild/recreation fixtures. That removes one default E2E
+job and the image-ownership contract it existed to verify.
 
-The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If onboarding or recreation reports missing canonical
-CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
-record structured diagnostics, attempts to write bounded `failed-no-retry`
-evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence write failure propagates, so that retry artifact may be
-absent. `tools.invoke`
-assertions prove the plugin version after onboarding, restart, and recreation.
-The job uses OpenClaw's real plugin installer from a read-only host mount whose
-device differs from the extension target. This proves installation across the
-filesystem boundary, not a particular internal `EXDEV` system call or fallback.
+The standard `full-e2e` target now owns native OpenClaw installation,
+invocation, update command access, local-source replacement, self-update dry
+run, restart survival, credential non-exposure, and removal in one sandbox.
+After replacing plugin v1 with v2, it restarts through the native gateway
+command and invokes the updated tool through the running gateway. A separate
+CLI inspection cannot prove that the gateway discarded its cached plugin code.
+`rebuild-openclaw` proves a user-installed native plugin survives rebuild with
+no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
+container, observes `Error`, and requires a different container to restore both the workspace and
+native plugin, with the OpenClaw health endpoint ready. This uses the same identity-fenced disruption
+helper as the MCP target, but reaches recovery independently of MCP networking. The retained receipt
+identifies whether native readiness or provider-backed MCP was proved; neither substitutes for the
+other. The original healthy-source checks and all MCP assertions remain in place. `rebuild-hermes` proves native user-plugin and
+lazy-package state survive rebuild. Managed-image activation exercises native
+OpenClaw and Hermes discovery before and after gateway restart. Deterministic
+state-restore tests prove complete native directories are archived without
+image-plugin exclusions.
 
-The live assertions stop at the boundary outcomes: v1 after onboarding,
-distinct source and target devices, a successful real install, v1-exdev after a
-real gateway restart, v2 after recreation, and registered cleanup. The target
-does not rewrite OpenShell commands or assert terminal wording. Its one
-forward-specific setup check proves the restarted listener belongs to the exact
-canonical OpenShell command before targeted termination, then bounds port
-release before recreation. Fast tests own the listener matching and
-termination behavior. `e2e-support` also owns canonical component composition,
-immutable image handoff, recreation command shape, fixture extraction safety,
-output parsing, and cleanup ordering. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
-permutations remain outside this live contract. Workspace preservation and
-policy selection retain their focused coverage. The `rebuild-openclaw` job
-remains the canonical live rebuild coverage.
+On Docker, managed-image activation also adopts the published OpenClaw and
+Hermes digests through `--from-image`. It confirms OpenShell readiness, the
+durable external-image receipt, NemoClaw destruction, and shared image
+retention. The external-image check does not run on Podman.
 
-The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, extracts the cross-device payload
-from the matching immutable image ID into a fresh canonical `/dev/shm`
-directory, and mounts that directory read-only at the same target during
-onboarding and recreation. A minimal custom Dockerfile pins the image ID while
-preserving the tool-disclosure build arguments. Canonical OpenShell CLI,
-gateway, and sandbox executables own every forward lifecycle command. User
-`--from` Dockerfiles retain the gateway-builder trust boundary and are never
-host-prebuilt by this fixture. The current-checkout fixture enables local
-base-image resolution after the workflow removes Docker Hub credentials.
+## Device-auth health classification
 
-The release-baseline lane is retired. Historical package versions are not part
-of this current runtime contract.
+Issue #11946 retired the standalone `device-auth-health` target. The target
+repeated these retained contracts:
 
-At issue creation, the live target had 9 direct `expect` calls and 17 direct
-assertion points across 654 lines. Its three companions raised the transitive
-totals to 9 `expect` calls, 32 assertion points, and three generated probe
-blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
-though the core cross-device install took about seven seconds. After #11552
-fixed canonical forward ownership, the current base kept those assertion totals
-while growing to 658 target lines and 1,202 transitive live lines. Its first
-automatic main run completed the live step in 7 minutes 26 seconds.
+| Removed assertion | Retained owner |
+|---|---|
+| Install, onboard, list, status, and sandbox inference succeed. | `full-e2e` |
+| An authenticated compatible endpoint receives the sandbox request. | `openclaw-inference-switch` |
+| Gateway, dashboard, and inference HTTP 401 responses remain reachable. | `src/lib/verify-deployment.test.ts` and `src/lib/verify-deployment-agent.test.ts` |
+| Status keeps a reachable authenticated route online. | `test/cli/sandbox-status-json.test.ts` |
+| A real dashboard remains exposed through its supported host forward. | `dashboard-remote-bind` |
 
-The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
-calls while lowering the direct assertion points from 17 to 16. Its two
-companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
-and no generated probe blocks across 1,140 lines. Against the current base, the
-live target falls from 658 to 585 lines and the transitive live surface falls
-from 1,202 to 1,140 lines.
-Push-run timing for this revision is recorded by the focused PR E2E run.
+The deleted helper tests covered only the retired target's command environment,
+retry loop, and cleanup calls. They did not own a product behavior.
+
+## Cloud inference consolidation
+
+Issue #11946 also retired the standalone `cloud-inference` target. The target's
+supported outcomes now have these owners:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
+| Fresh managed sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
+| `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
+unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
+That component fixture also observes which profiles reach Doctor in root and non-root startup.
+`full-e2e` exercises native Doctor lint and agent turns.
+
+The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
+The deleted provider retry classifier and sandbox-layout wrapper served only the
+retired target.
 
 ## OpenShell development artifact retention
 
@@ -1391,6 +1613,11 @@ rolling history or write to the GitHub Actions step summary. Both output files
 are private regular files on the runner (`0600`) with strict per-line and total
 size limits.
 
+Cloud onboarding creates its disposable installer workspace and isolated `HOME`
+under the runner account's home directory. Native SDK lifecycle operations require
+trusted gateway-state ancestors, so this workspace must not live beneath the
+world-writable system temporary directory. The test cleanup removes the workspace.
+
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
 allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
@@ -1464,6 +1691,19 @@ Validate phase coverage without executing test bodies with:
 ```bash
 npm run test:e2e-phases:check
 ```
+
+### Managed vLLM final-consumer lifecycle
+
+The existing `gpu-e2e` target runs its managed vLLM case twice. Each cycle onboards
+the supported fixed profile on port 18000, exports its configuration, then checks
+status, doctor, and connect with the port override cleared. Normal cleanup destroys
+the final sandbox and checks actual container and listener absence before any
+fixture fallback cleanup. The second cycle proves that onboarding can reacquire
+the released GPU resources.
+
+Source tests own shared-consumer retention, receipt ownership, invalid recorded
+routes, and interrupted-cleanup recovery. The physical Spark Express test retains
+its existing platform-specific qualification.
 
 ### DGX Spark Express vLLM
 
@@ -1603,7 +1843,9 @@ The full-main `Release qualification` aggregate does not use this receipt.
 The `base-image-publication` job first resolves any authenticated PR managed-image catalog.
 When a PR catalog is selected, explicit targets with no `jobs` selector and no `managed-image-` target use it without waiting for main's base images.
 Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.
-Runs without a PR catalog require a trusted main base and managed-image publication; PR runs select the nearest fully successful publication on the PR base first-parent history.
+Runs without a PR catalog require a trusted main base and managed-image publication.
+PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
+The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
 It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
@@ -1625,7 +1867,7 @@ The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
 A same-repository PR run with empty selectors exposes these values to candidate-controlled job processes:
 
-- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY` and `NVIDIA_API_KEY`.
 - Docker Hub credentials from `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, available to candidate processes through the job's temporary Docker configuration until cleanup.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
 - The job-scoped `GITHUB_TOKEN`, exposed only to the target step in the `token-rotation` and `openshell-gateway-upgrade` catalogue executions.
@@ -1704,6 +1946,11 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
+To run Portable Hermes finalization evidence, set
+`jobs=portable-hermes-finalization` and leave `targets` empty. This explicit lane
+selects Podman 5.7 itself, uses the exact candidate checkout, and obtains its
+runtime binary and helper artifact through trusted workflow jobs before
+candidate execution.
 A trusted `main` workflow step validates the open PR before candidate checkout.
 It requires `NVIDIA/NemoClaw` as the source repository before authorizing the full ordinary plan and credential profiles.
 A second validation after checkout rejects a changed selected commit, base commit, repository, or

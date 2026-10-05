@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import type { OpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
@@ -265,10 +267,31 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
   const providers = createRuntimeProviderBundleRegistry([["podman", bundle]]);
   const entry: SandboxEntry = {
     agent,
+    lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId(`id-${sandboxName}`)!,
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  const startOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["startSandbox"]>(async () => {
+    lifecycle.capture(["start", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const stopOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["stopSandbox"]>(async () => {
+    lifecycle.capture(["stop", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const openShellLifecycle: OpenShellSandboxStateLifecycle = {
+    startSandbox: startOpenShellSandbox,
+    stopSandbox: stopOpenShellSandbox,
+  };
+  return {
+    entry,
+    lifecycle,
+    openShellLifecycle,
+    providers,
+    sandboxName,
+    startOpenShellSandbox,
+    stopOpenShellSandbox,
+  };
 }
 
 function readyObserver(sandboxName: string): OpenShellSandboxObserver {
@@ -283,6 +306,12 @@ function readyObserver(sandboxName: string): OpenShellSandboxObserver {
 }
 
 describe("managed Podman runtime provider", () => {
+  beforeAll(() => {
+    // startSandbox lazily loads connect. Load its source graph during suite setup
+    // so cold compilation does not consume the first lifecycle test's budget.
+    require("../../actions/sandbox/connect");
+  });
+
   it.each(AGENTS)(
     "runs basic CPU start and stop for %s through an injected bundle",
     async (agent) => {
@@ -294,6 +323,7 @@ describe("managed Podman runtime provider", () => {
       await expect(
         startSandbox(runtime.sandboxName, {
           getSandbox: () => runtime.entry,
+          openShellLifecycle: runtime.openShellLifecycle,
           observer: readyObserver(runtime.sandboxName),
           updateSandbox,
           runtimeProviders: runtime.providers,
@@ -305,6 +335,7 @@ describe("managed Podman runtime provider", () => {
         withCurrentPortableHostFence(() =>
           stopSandbox(runtime.sandboxName, {
             getSandbox: () => runtime.entry,
+            openShellLifecycle: runtime.openShellLifecycle,
             updateSandbox,
             runtimeProviders: runtime.providers,
             stopSandboxChannels,
@@ -333,6 +364,7 @@ describe("managed Podman runtime provider", () => {
     await expect(
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
+        openShellLifecycle: runtime.openShellLifecycle,
         observer: readyObserver(runtime.sandboxName),
         runtimeProviders: runtime.providers,
         verifyGateway,
@@ -340,11 +372,9 @@ describe("managed Podman runtime provider", () => {
       }),
     ).rejects.toBe(gatewayFailure);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(
-      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([args]) => (args as readonly string[])[0] === "start",
-      ),
-    ).toBe(true);
+    expect(runtime.startOpenShellSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: runtime.sandboxName }),
+    );
   });
 
   it("executes privileged control through the lifecycle-bound Podman engine", () => {
@@ -356,12 +386,7 @@ describe("managed Podman runtime provider", () => {
       { readonly supported: true }
     >;
 
-    supportedLifecycle.start({
-      environment: {},
-      log: vi.fn(),
-      sandbox: runtime.entry,
-      sandboxName: runtime.sandboxName,
-    });
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
     const target = supportedLifecycle.privilegedSandboxControl.resolveTarget({
       registeredSandboxNames: [runtime.sandboxName],
       sandbox: runtime.entry,
@@ -436,8 +461,10 @@ describe("managed Podman runtime provider", () => {
         registeredSandboxNames: [runtime.sandboxName],
         sandbox: runtime.entry,
         sandboxName: runtime.sandboxName,
+        timeoutMs: 1_250,
       }),
     ).toThrow(DirectSandboxContainerNotFoundError);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(expect.any(Array), 1_250);
   });
 
   it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
@@ -482,7 +509,8 @@ describe("managed Podman runtime provider", () => {
         paths: ["/sandbox/.openclaw/openclaw-weixin"],
       }),
     ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
-    expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      1,
       [
         "image",
         "inspect",
@@ -491,6 +519,11 @@ describe("managed Podman runtime provider", () => {
         expect.stringContaining("node:24.18.1-trixie-slim"),
       ],
       30_000,
+    );
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      2,
+      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      120_000,
     );
   });
 
@@ -595,6 +628,16 @@ describe("managed Podman runtime provider", () => {
         kind: "legacy-dockerfile",
         reference: null,
         shared: false,
+      }),
+    ).toBe(false);
+    expect(
+      runtime.providers.podman?.workload.acceptsReceipt({
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: `ghcr.io/example/downstream-openclaw@sha256:${"d".repeat(64)}`,
+        platform: "linux/amd64",
+        runtimeImageContentId: `sha256:${"e".repeat(64)}`,
+        shared: true,
       }),
     ).toBe(false);
   });

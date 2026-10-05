@@ -67,7 +67,9 @@ function statusDeps(entry: SandboxEntry) {
       state: "present" as const,
       output: `Name: ${SANDBOX}\nPhase: Ready\n`,
     }),
-    captureOpenshellForStatusImpl: async () => ({ status: 0, output: "" }),
+    inferenceRouteObserver: {
+      observeInferenceRoute: async () => ({ ok: true, value: { state: "unconfigured" } }) as const,
+    },
     probeProviderHealthImpl: vi.fn(() => null),
     probeSandboxInferenceGatewayHealthImpl: vi.fn(async () => null),
     probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),

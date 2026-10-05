@@ -47,7 +47,6 @@ describe("portable profile rootless runtime workflow", () => {
     });
   });
 
-  /** Keep the workflow prerequisites aligned with the runtime exercised by live E2E. */
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
@@ -84,9 +83,14 @@ describe("portable profile rootless runtime workflow", () => {
     const policyIndex = steps.findIndex(
       (step) => step.name === "Apply Ubuntu pasta signal policy correction",
     );
+    const hermesBaseIndex = steps.findIndex(
+      (step) => step.name === "Build the exact Hermes base for portable validation",
+    );
+    const hermesBaseBuild = steps[hermesBaseIndex]?.run;
     const liveTestIndex = steps.findIndex(
       (step) => step.name === "Exercise portable profile in the rootless environment",
     );
+    const liveStep = steps[liveTestIndex];
     const packageInstallIndex = provision?.indexOf("sudo apt-get install") ?? -1;
     const packageVersionIndex = provision?.indexOf("dpkg-query --show") ?? -1;
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
@@ -96,6 +100,7 @@ describe("portable profile rootless runtime workflow", () => {
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
+        "agents/hermes/Dockerfile.base",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
         "src/lib/actions/sandbox/forward-recovery.ts",
@@ -119,7 +124,20 @@ describe("portable profile rootless runtime workflow", () => {
     expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
     expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
-    expect(liveTestIndex).toBeGreaterThan(policyIndex);
+    expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
+    expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);
+    expect(job?.["timeout-minutes"]).toBe(45);
+    expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
+      "${{ runner.temp }}/nemoclaw-hermes-base-storage",
+    );
+    expect(liveStep?.env?.E2E_HERMES_BASE_STORAGE_HOME).toBe(
+      "${{ runner.temp }}/nemoclaw-hermes-base-storage",
+    );
+    expect(hermesBaseBuild).toContain("--file agents/hermes/Dockerfile.base");
+    expect(hermesBaseBuild).toContain("--tag localhost/nemoclaw-hermes-base:portable-e2e");
+    expect(liveStep?.env?.NEMOCLAW_HERMES_E2E_BASE_IMAGE).toBe(
+      "localhost/nemoclaw-hermes-base:portable-e2e",
+    );
     expect(packageInstallIndex).toBeGreaterThanOrEqual(0);
     expect(provision).toContain("apparmor");
     expect(provision).toContain('"podman=$PODMAN_APT_VERSION"');
@@ -149,6 +167,8 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).not.toContain("OPENSHELL_V0106_QUALIFICATION");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain("baseImageRef: process.env.NEMOCLAW_HERMES_E2E_BASE_IMAGE");
+    expect(liveTest).toContain("process.env.E2E_HERMES_BASE_STORAGE_HOME");
     expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
     expect(liveTest).toContain('".hermes-policy.yaml"');
     expect(liveTest).toContain('flag: "wx"');
@@ -299,6 +319,10 @@ ${serviceIdentityCheck}`,
       workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
     expect.soft(selects("pull_request", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/session-bootstrap.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/resume/locked-runtime.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/session-bootstrap.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/resume/locked-runtime.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/launch.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/connect.ts")).toBe(true);
     expect

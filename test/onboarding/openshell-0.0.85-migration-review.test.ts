@@ -83,7 +83,6 @@ describe("OpenShell migration executable contracts", () => {
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
     const migratedConsumers = [
-      ["test/e2e/live/brave-search-helpers.ts", ["singleLineShell", "base64 -d"]],
       ["test/e2e/live/network-policy.test.ts", ["shellEvalArg", "nemoclaw-web-fetch-e2e.mjs"]],
       ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts", ["base64 -d | sh"]],
       ["test/e2e/live/kimi-inference-compat-helpers.ts", ["base64 -d", 'toString("base64")']],
@@ -96,10 +95,6 @@ describe("OpenShell migration executable contracts", () => {
       ["test/e2e/live/openclaw-inference-switch.test.ts", ["singleLineSandboxShellScript"]],
       ["test/e2e/live/openclaw-skill-cli.test.ts", ["singleLineSandboxScript"]],
       ["test/e2e/live/phase6-messaging-helpers.ts", ["sandboxEncodedSh", "base64(script)"]],
-      [
-        "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-        ["data:text/javascript;base64", "nemoclaw-exdev-guard.sh"],
-      ],
       [
         "test/e2e/live/mcp-bridge.test.ts",
         ["mcpCallScriptB64", "nemoclaw-mcp-provider-rewrite-proof.cjs"],

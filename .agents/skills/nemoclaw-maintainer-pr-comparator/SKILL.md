@@ -86,6 +86,10 @@ bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-t
 ```
 
 All six gates are required.
+Gate 3 accepts `BEHIND`, but fails closed on transient `UNSTABLE` evidence and on `BLOCKED` because
+the comparator cannot prove a stable merge result or every GitHub branch-protection condition.
+Separately confirm whether an active rule requires an up-to-date branch. If so, integrate the base
+and rerun all candidate evidence before declaring the PR eligible to merge.
 Treat PR Review Advisor output as input for maintainer review. Do not treat it as merge authorization.
 See `checks/tier-0-gates.md`.
 

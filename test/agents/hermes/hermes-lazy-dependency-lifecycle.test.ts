@@ -70,7 +70,7 @@ function runLazyDependencyPreparation(
       'printf "identity=%s\\n" "${NEMOCLAW_INSTALL_IDENTITY:-current}"',
       'printf "home=%s\\n" "$HOME"',
       'printf "target=%s\\n" "$HERMES_LAZY_INSTALL_TARGET"',
-      'printf "cache=%s\\n" "$UV_CACHE_DIR"',
+      'printf "cache=%s\\n" "${UV_CACHE_DIR:-}"',
       "while IFS= read -r name; do",
       '  case "$name" in UV_*|PIP_*|PYTHON*|LD_*|DYLD_*|BASH_ENV|ENV|PATH|VIRTUAL_ENV) printf "managed-env=%s=%s\\n" "$name" "${!name}" ;; esac',
       "done < <(compgen -e | LC_ALL=C sort)",
@@ -91,10 +91,9 @@ function runLazyDependencyPreparation(
       "set -euo pipefail",
       extractShellFunction(source, "prepare_hermes_lazy_dependencies"),
       `id() { [ "\${1:-}" = "-u" ] && printf "${root ? "0" : "1000"}\\n" || command id "$@"; }`,
-      'prepare_hermes_gateway_lazy_install_target() { printf "gateway-target=prepared\\n"; }',
+      'prepare_hermes_native_lazy_install_target() { printf "native-target=prepared\\n"; }',
       `HERMES_DIR=${shellQuote(hermesDir)}`,
       "HERMES_SANDBOX_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages",
-      "HERMES_GATEWAY_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages",
       `_HERMES_PYTHON=${shellQuote(pythonPath)}`,
       `STEP_DOWN_PREFIX_GATEWAY=(${shellQuote(handoffPath)})`,
       "prepare_hermes_lazy_dependencies",
@@ -128,20 +127,8 @@ function managedEnvironment(stdout: string): Record<string, string> {
 
 describe("Hermes lazy dependency lifecycle", () => {
   it.each([
-    [
-      "root-separated",
-      true,
-      "gateway",
-      "/run/nemoclaw/hermes-gateway-lazy-packages",
-      "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
-    ],
-    [
-      "same-identity",
-      false,
-      "current",
-      "/sandbox/.hermes/lazy-packages",
-      "/sandbox/.hermes/cache/uv",
-    ],
+    ["root-separated", true, "gateway", "/sandbox/.hermes/lazy-packages", ""],
+    ["same-identity", false, "current", "/sandbox/.hermes/lazy-packages", ""],
   ] as const)(
     "runs approved preparation under the consuming identity (%s) (#8613)",
     (_mode, root, identity, target, cache) => {
@@ -154,7 +141,7 @@ describe("Hermes lazy dependency lifecycle", () => {
       expect(result.stdout).toContain(`cache=${cache}`);
       expect(result.stdout).toContain("activated=durable");
       expect(result.stdout).toContain("installer=reviewed");
-      expect(result.stdout.includes("gateway-target=prepared")).toBe(root);
+      expect(result.stdout.includes("native-target=prepared")).toBe(root);
     },
   );
 
@@ -167,7 +154,7 @@ describe("Hermes lazy dependency lifecycle", () => {
     expect(result.stdout).not.toContain("installer=reviewed");
   });
 
-  it("scrubs inherited package-manager and Python inputs only for root-separated preparation", () => {
+  it("preserves native package-manager and Python inputs in both topologies (#11766)", () => {
     const hostileEnvironment = {
       UV_CONFIG_FILE: "/sandbox/uv.toml",
       UV_INDEX_URL: "file:///sandbox/wheels",
@@ -186,26 +173,19 @@ describe("Hermes lazy dependency lifecycle", () => {
     const sameIdentity = runLazyDependencyPreparation(false, "hindsight", hostileEnvironment);
 
     expect(rootSeparated.status, rootSeparated.stderr).toBe(0);
-    expect(managedEnvironment(rootSeparated.stdout)).toEqual({
-      PIP_CONFIG_FILE: "/dev/null",
-      PIP_DISABLE_PIP_VERSION_CHECK: "1",
-      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      PYTHONNOUSERSITE: "1",
-      PYTHONSAFEPATH: "1",
-      PYTHONUTF8: "1",
-      UV_CACHE_DIR: "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
-      UV_NO_CACHE: "1",
-      UV_NO_CONFIG: "1",
-    });
-
+    const rootSeparatedEnvironment = managedEnvironment(rootSeparated.stdout);
     expect(sameIdentity.status, sameIdentity.stderr).toBe(0);
     const sameIdentityEnvironment = managedEnvironment(sameIdentity.stdout);
-    expect(sameIdentityEnvironment.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
-    expect(sameIdentityEnvironment.UV_INDEX_URL).toBe("file:///sandbox/wheels");
-    expect(sameIdentityEnvironment.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");
-    expect(sameIdentityEnvironment.PIP_INDEX_URL).toBe("file:///sandbox/wheels");
-    expect(sameIdentityEnvironment.PYTHONPATH).toBe("/sandbox/python");
-    expect(sameIdentityEnvironment.PYTHONHOME).toBe("/sandbox/python-home");
-    expect(sameIdentityEnvironment.VIRTUAL_ENV).toBe("/sandbox/venv");
+    const expected = {
+      UV_CONFIG_FILE: "/sandbox/uv.toml",
+      UV_INDEX_URL: "file:///sandbox/wheels",
+      PIP_CONFIG_FILE: "/sandbox/pip.conf",
+      PIP_INDEX_URL: "file:///sandbox/wheels",
+      PYTHONPATH: "/sandbox/python",
+      PYTHONHOME: "/sandbox/python-home",
+      VIRTUAL_ENV: "/sandbox/venv",
+    };
+    expect(rootSeparatedEnvironment).toMatchObject(expected);
+    expect(sameIdentityEnvironment).toMatchObject(expected);
   });
 });

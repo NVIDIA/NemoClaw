@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { BackupResult } from "../state/sandbox";
+import * as snapshotBackup from "../actions/sandbox/snapshot/backup-authority";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
@@ -24,6 +25,30 @@ function makeBackup(overrides: Partial<BackupResult> = {}): BackupResult {
 }
 
 describe("backupSandboxBeforeRecreate", () => {
+  it("routes the default recreation backup through managed authority", () => {
+    const backup = makeBackup();
+    const managedBackup = vi
+      .spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority")
+      .mockReturnValue(backup);
+    const getSandbox = vi.fn(() => null);
+
+    try {
+      const result = backupSandboxBeforeRecreate({
+        sandboxName: "managed-assistant",
+        getSandbox,
+        log: vi.fn(),
+        errorLog: vi.fn(),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(managedBackup).toHaveBeenCalledWith("managed-assistant", {
+        getSandbox,
+      });
+    } finally {
+      managedBackup.mockRestore();
+    }
+  });
+
   it("returns ok with backup result on success", () => {
     const backup = makeBackup();
     const backupImpl = vi.fn().mockReturnValue(backup);
@@ -39,46 +64,6 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(result.failureKind).toBe("none");
     expect(backupImpl).toHaveBeenCalledWith("my-assistant");
     expect(log).toHaveBeenCalledWith(expect.stringContaining("State backed up"));
-  });
-
-  it("rejects an unmarked custom OpenClaw backup before recreate deletion (#6108)", () => {
-    const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
-      sandboxName: "my-assistant",
-      sandboxEntry: {
-        name: "my-assistant",
-        agent: "openclaw",
-        fromDockerfile: "/tmp/Dockerfile.custom",
-      },
-      backupImpl: () => makeBackup(),
-      log: vi.fn(),
-      errorLog,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.failureKind).toBe("plugin-provenance");
-    expect(errorLog).toHaveBeenCalledWith(
-      expect.stringContaining("aborting recreate before delete"),
-    );
-  });
-
-  it("rejects an unmarked backup for an orphan custom OpenClaw target (#6108)", () => {
-    const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
-      sandboxName: "orphan",
-      sandboxEntry: null,
-      requireOpenClawImagePluginProvenance: true,
-      backupImpl: () => makeBackup(),
-      log: vi.fn(),
-      errorLog,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.failureKind).toBe("plugin-provenance");
-    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("new name"));
-    expect(errorLog).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP=1"),
-    );
   });
 
   it("returns ok:false with failureKind=partial when some entries failed", () => {

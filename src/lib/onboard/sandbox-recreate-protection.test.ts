@@ -7,7 +7,7 @@ import { createSandboxRecreateProtection } from "./sandbox-recreate-protection";
 import type { SandboxRecreateSourceProof } from "./sandbox-recreate-transaction";
 
 describe("createSandboxRecreateProtection", () => {
-  it("forwards one custom-image protection context to every recreation path (#6108)", () => {
+  it("forwards one journal-bound backup context to every recreation path", () => {
     const note = vi.fn();
     const sandboxEntry = {
       name: "my-assistant",
@@ -27,11 +27,12 @@ describe("createSandboxRecreateProtection", () => {
       failureKind: "none" as const,
     };
     const backupSandboxBeforeRecreate = vi.fn(() => backupResult);
+    const getSandbox = vi.fn(() => sandboxEntry);
     const protection = createSandboxRecreateProtection(
       {
         sandboxName: "my-assistant",
         sandboxEntry,
-        customOpenClawImage: true,
+        getSandbox,
         note,
       },
       {
@@ -49,6 +50,7 @@ describe("createSandboxRecreateProtection", () => {
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
       sourceConfirmedAbsent: true,
+      reservationSessionId: "session-recreate",
       targetGeneration: "3c9a1b7e-target",
     };
     const observation = { state: "missing" as const, liveIdentityFingerprint: null };
@@ -70,8 +72,6 @@ describe("createSandboxRecreateProtection", () => {
       registryEntry: sandboxEntry,
       readRegistryEntry,
       observation: expect.any(Function),
-      existingSandboxEntry: sandboxEntry,
-      requireOpenClawImagePluginProvenance: true,
       sandboxName: "my-assistant",
       note,
     });
@@ -84,13 +84,12 @@ describe("createSandboxRecreateProtection", () => {
       kind: "proceed",
       restoreBackupPath: "/tmp/backup",
     });
-    expect(resolveNotReadyOutcome).toHaveBeenCalledWith("my-assistant", note, sandboxEntry, true);
+    expect(resolveNotReadyOutcome).toHaveBeenCalledWith("my-assistant", note);
 
     expect(protection.backup()).toBe(backupResult);
     expect(backupSandboxBeforeRecreate).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
-      sandboxEntry,
-      requireOpenClawImagePluginProvenance: true,
+      getSandbox,
     });
   });
 
@@ -104,6 +103,7 @@ describe("createSandboxRecreateProtection", () => {
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
       sourceConfirmedAbsent: true,
+      reservationSessionId: "session-recreate",
       targetGeneration: "3c9a1b7e-target",
     };
 
@@ -114,7 +114,7 @@ describe("createSandboxRecreateProtection", () => {
         {
           sandboxName: "my-assistant",
           sandboxEntry: { name: "my-assistant" },
-          customOpenClawImage: false,
+          getSandbox: () => ({ name: "my-assistant" }),
           note: vi.fn(),
         },
         {

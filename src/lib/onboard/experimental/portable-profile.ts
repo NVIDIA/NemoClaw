@@ -28,7 +28,6 @@ export const PORTABLE_DOCKER_NETWORK_SUBNET = "10.87.0.0/24";
 
 export type ExperimentalOnboardProfile = typeof PORTABLE_EXPERIMENTAL_PROFILE;
 
-/** Select Portable only for its explicit environment opt-in; ignore unknown profiles. */
 export function resolveExperimentalOnboardProfile(
   env: NodeJS.ProcessEnv = process.env,
 ): ExperimentalOnboardProfile | null {
@@ -37,7 +36,6 @@ export function resolveExperimentalOnboardProfile(
     : null;
 }
 
-/** Keep Portable-only behavior disabled unless the explicit profile resolves to Portable. */
 export function isPortableExperimentalProfile(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveExperimentalOnboardProfile(env) === PORTABLE_EXPERIMENTAL_PROFILE;
 }

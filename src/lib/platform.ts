@@ -15,6 +15,7 @@ export interface PlatformLookupOptions {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface WslDetectionOptions {
@@ -271,6 +272,10 @@ function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions
   return runtime === "colima" || runtime === "podman";
 }
 
+function dedupe(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
 function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   return [
@@ -285,7 +290,9 @@ function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): stri
 }
 
 function findColimaDockerSocket(
-  opts: PlatformLookupOptions & { existsSync?: (filePath: string) => boolean } = {},
+  opts: PlatformLookupOptions & {
+    existsSync?: (filePath: string) => boolean;
+  } = {},
 ): string | null {
   const fileExists = opts.existsSync ?? defaultExistsSync;
   return getColimaDockerSocketCandidates(opts).find((socketPath) => fileExists(socketPath)) ?? null;
@@ -294,6 +301,7 @@ function findColimaDockerSocket(
 function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
+  const env = opts.env ?? process.env;
   const uid = opts.uid ?? process.getuid?.() ?? 1000;
 
   if (platform === "darwin") {
@@ -304,7 +312,16 @@ function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
-    return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+    // Rootless Podman puts its socket under the session runtime directory.
+    // `XDG_RUNTIME_DIR` names that directory and is not always `/run/user/$UID`
+    // — systemd user sessions on some hosts relocate it, and the DNS commands
+    // have honoured it since before they shared this candidate list (#10632).
+    const runtimeDir = env.XDG_RUNTIME_DIR;
+    return dedupe([
+      ...(runtimeDir ? [path.join(runtimeDir, "podman/podman.sock")] : []),
+      `/run/user/${String(uid)}/podman/podman.sock`,
+      "/run/podman/podman.sock",
+    ]);
   }
 
   return [];
@@ -332,7 +349,7 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
       "/run/docker.sock",
       "/var/run/docker.sock",
       `/run/user/${String(uid)}/docker.sock`,
-      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
+      ...getPodmanSocketCandidates({ env: opts.env, home, platform, uid: opts.uid }),
     ];
   }
 
@@ -367,13 +384,25 @@ interface DockerAuthoritySelection {
  */
 function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
-  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. It selects the
-  // daemon authority exactly as DOCKER_HOST does, so
+  // The Docker CLI gives an explicit DOCKER_HOST precedence when both selectors
+  // are set. A context still selects the daemon when DOCKER_HOST is absent, so
   // a discovered fallback socket must never replace it: redirecting a host that
   // named its own authority runs NemoClaw against a daemon the operator did not
   // choose, and reports readiness for that other daemon (#11719). Resolving the
   // context to its endpoint keeps every later consumer — readiness probes,
   // preflight, and the container-engine authority — measuring the same daemon.
+  const dockerHost = String(env.DOCKER_HOST ?? "").trim();
+  if (dockerHost) {
+    return {
+      selection: {
+        dockerHost,
+        source: "env",
+        socketPath: null,
+      },
+      conflict: null,
+    };
+  }
+
   const context = String(env.DOCKER_CONTEXT ?? "").trim();
   if (context) {
     const resolveContextHost =
@@ -391,17 +420,6 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
     };
   }
 
-  if (env.DOCKER_HOST) {
-    return {
-      selection: {
-        dockerHost: env.DOCKER_HOST,
-        source: "env",
-        socketPath: null,
-      },
-      conflict: null,
-    };
-  }
-
   const probe = opts.probeDockerHost ?? ((dockerHost) => probeDockerHost(dockerHost, env));
   const ambient = probe(undefined);
   // Redirect the CLI away from the host's own default authority only after
@@ -412,7 +430,7 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;
   let selected: DockerAuthorityCandidate | null = null;
-  for (const socketPath of getDockerSocketCandidates(opts)) {
+  for (const socketPath of getDockerSocketCandidates({ ...opts, env })) {
     if (!fileExists(socketPath)) continue;
     const dockerHost = `unix://${socketPath}`;
     const observation = probe(dockerHost);
@@ -421,7 +439,9 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
     if (selected && observation.identity !== selected.identity) {
       return {
         selection: null,
-        conflict: { candidates: [selected, { socketPath, identity: observation.identity }] },
+        conflict: {
+          candidates: [selected, { socketPath, identity: observation.identity }],
+        },
       };
     }
     if (selection) continue;
@@ -457,6 +477,7 @@ export {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  probeDockerHost,
   observeDockerAuthorityConflict,
   shouldPatchCoredns,
 };
