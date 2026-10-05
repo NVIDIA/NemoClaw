@@ -12,6 +12,14 @@ use nemoclaw_sdk::{
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
 };
 
+/// Whether any reason the assessment gives contains `text`.
+fn says(assessment: &DiscoveryAssessment, text: &str) -> bool {
+    assessment
+        .reasons
+        .iter()
+        .any(|reason| reason.contains(text))
+}
+
 fn document() -> Document {
     Document::parse(&include_bytes!("../../../examples/onboarding/openclaw.yaml")[..]).unwrap()
 }
@@ -123,7 +131,6 @@ fn available_engine_and_owner_valid_configuration_establish_compatibility() {
     let before = document.yaml().unwrap();
     let assessment = observed_target(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Compatible);
-    assert!(assessment.pending.is_empty());
     assert_eq!(document.yaml().unwrap(), before);
 }
 
@@ -157,14 +164,16 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
     observed.fabric = None;
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(
-        assessment.pending.is_empty(),
-        "do not continually retry a completed unknown engine query"
-    );
+    // A failed read is unknown, not unasked.
+    assert!(says(&assessment, "The selected engine remains unverified"));
+    assert!(!says(
+        &assessment,
+        "The selected engine has not been observed"
+    ));
 }
 
 #[test]
-fn a_read_that_failed_is_unknown_so_unverified_and_not_asked_again() {
+fn a_read_that_failed_is_unknown_so_unverified_rather_than_unobserved() {
     let document = document();
     let (engine, fabric) = (engine_query(&document), fabric_query(&document));
     let observations = DiscoveryObservations::new()
@@ -172,11 +181,13 @@ fn a_read_that_failed_is_unknown_so_unverified_and_not_asked_again() {
         .with(fabric.clone(), fabric.unknown("image unreadable"));
     let assessment = assess_target(&document, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(assessment.pending.is_empty());
+    assert!(says(&assessment, "The selected engine remains unverified"));
+    assert!(says(&assessment, "Fabric capabilities remain unverified"));
+    assert!(!says(&assessment, "not been observed"));
 }
 
 #[test]
-fn changing_the_target_leaves_old_facts_behind_and_queries_engine_before_fabric() {
+fn changing_the_target_leaves_old_facts_behind() {
     let document = document();
     let mut observed = observed_target(&document);
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
@@ -192,18 +203,28 @@ fn changing_the_target_leaves_old_facts_behind_and_queries_engine_before_fabric(
     gateway.engine = "unix:///another-target.sock".into();
     let assessment = assess_target(&moved, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_eq!(assessment.pending, vec![engine_query(&moved)]);
+    assert!(says(
+        &assessment,
+        "The selected engine has not been observed"
+    ));
 }
 
 #[test]
-fn changing_only_image_keeps_engine_facts_and_queries_fabric() {
+fn changing_only_image_keeps_engine_facts_and_leaves_the_image_unobserved() {
     let document = document();
     let observations = observed_target(&document).observations(&document);
     let mut changed = document.clone();
     changed.spec.sandboxes[0].image.ref_ = "another-image".into();
     let assessment = assess_target(&changed, &observations).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_eq!(assessment.pending, vec![fabric_query(&changed)]);
+    assert!(says(
+        &assessment,
+        "Fabric capabilities have not been observed"
+    ));
+    assert!(!says(
+        &assessment,
+        "The selected engine has not been observed"
+    ));
 }
 
 #[test]
@@ -236,16 +257,15 @@ fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
     );
     let mut changed_driver = renamed.clone();
     changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
-    assert_eq!(
-        assess_target(&changed_driver, &observations)
-            .unwrap()
-            .pending,
-        vec![engine_query(&changed_driver)]
-    );
+    let assessment = assess_target(&changed_driver, &observations).unwrap();
+    assert!(says(
+        &assessment,
+        "The selected engine has not been observed"
+    ));
 }
 
 #[test]
-fn a_catalog_without_the_adapter_conflicts_without_reading_the_image_again() {
+fn a_catalog_without_the_adapter_is_a_conflict() {
     let document = document();
     let mut observed = observed_target(&document);
     observed
@@ -259,7 +279,6 @@ fn a_catalog_without_the_adapter_conflicts_without_reading_the_image_again() {
         .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-    assert!(assessment.pending.is_empty());
 }
 
 #[test]
@@ -361,7 +380,10 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         "ssh://images@example.com"
     );
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
-    assert_eq!(assessment.pending, vec![fabric_query(&document)]);
+    assert!(says(
+        &assessment,
+        "Fabric capabilities have not been observed"
+    ));
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
 
     let mut observed = observed_target(&document);
@@ -376,26 +398,19 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
     );
 
     let changed = external_document("ssh://different-images@example.com");
-    assert_eq!(
-        assess_target(&changed, &observed.observations(&document))
-            .unwrap()
-            .pending,
-        vec![fabric_query(&changed)]
-    );
+    let assessment = assess_target(&changed, &observed.observations(&document)).unwrap();
+    assert!(says(
+        &assessment,
+        "Fabric capabilities have not been observed"
+    ));
 }
 
 #[test]
-fn external_gateway_without_an_image_engine_stays_unverified_without_a_query() {
+fn external_gateway_without_an_image_engine_stays_unverified_and_names_the_missing_engine() {
     let document = external_document("");
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert!(assessment.pending.is_empty());
-    assert!(
-        assessment
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("spec.gateway.engine"))
-    );
+    assert!(says(&assessment, "spec.gateway.engine"));
 }
 
 #[test]
@@ -414,10 +429,9 @@ fn switching_to_a_managed_gateway_requires_an_engine_observation() {
         engine: None,
         ..observed_target(&external)
     };
-    assert_eq!(
-        assess_target(&managed, &observed.observations(&external))
-            .unwrap()
-            .pending,
-        vec![engine_query(&managed)]
-    );
+    let assessment = assess_target(&managed, &observed.observations(&external)).unwrap();
+    assert!(says(
+        &assessment,
+        "The selected engine has not been observed"
+    ));
 }

@@ -125,12 +125,6 @@ impl JourneyState {
             .document()
             .ok_or_else(|| diagnostic("delegation", "The desired state is not SDK-valid yet."))?;
         let target = crate::assess_target(document, observations)?;
-        if !target.pending.is_empty() {
-            return Err(diagnostic(
-                "delegation",
-                "Target discovery is missing or stale.",
-            ));
-        }
         if target.status != CompatibilityStatus::Compatible {
             return Err(diagnostic(
                 "delegation",

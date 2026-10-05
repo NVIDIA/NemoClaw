@@ -154,7 +154,7 @@ Three exclusions are deliberate and tested: only the selected route's inference 
 `discover` repeats observe and merge until nothing asked for is missing, so a read can depend on an earlier one.
 Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman, through `RecordedDiscovery`.
 Hardware and gateway observations do not affect questions or readiness yet.
-`resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`, whose pending queries are the ones still to ask.
+`resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
 An empty `DiscoveryObservations` leaves the resolution unchanged.
 Observations do not silently replace authored values.
 `delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, an advertised model, and available credential references.

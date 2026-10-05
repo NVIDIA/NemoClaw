@@ -5,7 +5,7 @@ use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway, HarnessKind},
     discovery::{DiscoveryRequest, ObservationStatus},
-    discovery_session::{DiscoveryObservations, DiscoveryQuery},
+    discovery_session::DiscoveryObservations,
     fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
 
@@ -35,8 +35,6 @@ pub enum CompatibilityStatus {
 pub struct DiscoveryAssessment {
     pub status: CompatibilityStatus,
     pub reasons: Vec<String>,
-    /// The dependency-ready queries not yet asked.
-    pub pending: Vec<DiscoveryQuery>,
 }
 
 /// Read target dependencies from SDK-valid desired state.
@@ -65,9 +63,8 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
 }
 
 /// Evaluate target observations without rewriting desired state or the global menu.
-/// Pending contains only dependency-ready queries that were never asked. A read
-/// that failed is an unknown observation and remains unverified until the
-/// caller refreshes it.
+/// An observation that was never made is unverified, as is a read that failed,
+/// which is an unknown observation, until the caller asks again.
 pub fn assess_target(
     document: &Document,
     observations: &DiscoveryObservations,
@@ -82,7 +79,6 @@ pub fn assess_target(
         .filter(|_| key.managed_gateway);
     let fabric = observations.fabric(&key.engine, &key.image);
     let mut reasons = Vec::new();
-    let mut pending = Vec::new();
     let mut conflict = false;
     // An external gateway's engine only supplies image metadata. Do not
     // infer its execution platform or prerequisites from that image store.
@@ -108,7 +104,6 @@ pub fn assess_target(
                 false
             }
             None => {
-                pending.push(DiscoveryQuery::Engine(engine_request));
                 reasons.push("The selected engine has not been observed.".into());
                 false
             }
@@ -156,12 +151,6 @@ pub fn assess_target(
             false
         }
         None => {
-            if engine_available {
-                pending.push(DiscoveryQuery::Fabric {
-                    engine: key.engine.clone(),
-                    image: key.image.clone(),
-                });
-            }
             reasons.push("The selected image's Fabric capabilities have not been observed.".into());
             false
         }
@@ -175,6 +164,5 @@ pub fn assess_target(
             CompatibilityStatus::Unverified
         },
         reasons,
-        pending,
     })
 }
