@@ -43,6 +43,7 @@ export function retainNativeHostedProviderAuthority(
 export function resolveGatewayNativeHostedProviderAuthority(input: {
   profile: NativeHostedProfile;
   gatewayName: string;
+  gatewayAuthority?: unknown;
   recordedGatewayName?: string | null;
   recordedAttachment?: NativeHostedProviderAttachment;
   recordedAuthorities?: unknown;
@@ -59,6 +60,7 @@ export function resolveGatewayNativeHostedProviderAuthority(input: {
     const receipt = normalizeNativeHostedProviderAttachment(raw);
     if (receipt?.profileId === input.profile.profileId) receipts.push(receipt);
   };
+  collect(input.gatewayAuthority);
   if (input.recordedGatewayName === input.gatewayName) {
     collect(input.recordedAttachment);
     for (const receipt of normalizeNativeHostedProviderAuthorities(input.recordedAuthorities) ?? [])

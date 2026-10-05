@@ -39,6 +39,41 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  it("retains hosted registration ownership per gateway and profile and refuses replacement", async () => {
+    const { registry } = await loadRegistryDocument({ sandboxes: {} });
+    const openai = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "openai-owned",
+    };
+    const anthropic = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-anthropic-inference-v1",
+      providerName: "nemoclaw-anthropic-prod-v1",
+      providerId: "anthropic-owned",
+    };
+    registry.setNativeHostedProviderAuthority("first", openai);
+    registry.setNativeHostedProviderAuthority("first", anthropic);
+    registry.setNativeHostedProviderAuthority("second", { ...openai, providerId: "second-owned" });
+    expect(registry.getNativeHostedProviderAuthority("first", openai.profileId)).toEqual(openai);
+    expect(registry.getNativeHostedProviderAuthority("first", anthropic.profileId)).toEqual(
+      anthropic,
+    );
+    expect(() =>
+      registry.setNativeHostedProviderAuthority("first", { ...openai, providerId: "foreign" }),
+    ).toThrow("Conflicting native provider ownership receipts");
+    expect(registry.getNativeHostedProviderAuthority("first", openai.profileId)).toEqual(openai);
+    registry.clearNativeHostedProviderAuthority("first", openai.profileId);
+    expect(registry.getNativeHostedProviderAuthority("first", openai.profileId)).toBeUndefined();
+    expect(registry.getNativeHostedProviderAuthority("first", anthropic.profileId)).toEqual(
+      anthropic,
+    );
+    expect(registry.getNativeHostedProviderAuthority("second", openai.profileId)?.providerId).toBe(
+      "second-owned",
+    );
+  });
+
   it("reads Slice 1 NVIDIA receipts and persists the generalized field without losing identity (#12589)", async () => {
     const receipt = {
       schemaVersion: 1,
@@ -97,6 +132,36 @@ describe("sandbox registry normalization", () => {
     expect(() => registry.getSandbox("alpha")).toThrow(
       "Invalid pending native inference detach receipt",
     );
+  });
+
+  it("persists only valid gateway-scoped native NVIDIA provider authorities", async () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const { registry } = await loadRegistryDocument({
+      defaultSandbox: null,
+      sandboxes: {},
+      nativeNvidiaProviderAuthorities: {
+        broken: { ...receipt, providerId: "" },
+        "nemoclaw-19080": receipt,
+      },
+    });
+
+    expect(registry.getNativeNvidiaProviderAuthority("broken")).toBeUndefined();
+    expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toEqual(receipt);
+    registry.setNativeNvidiaProviderAuthority("nemoclaw-19081", {
+      ...receipt,
+      providerId: "22222222-3333-4444-8555-666666666666",
+    });
+    expect(registry.load().nativeNvidiaProviderAuthorities).toEqual({
+      "nemoclaw-19080": receipt,
+      "nemoclaw-19081": { ...receipt, providerId: "22222222-3333-4444-8555-666666666666" },
+    });
+    registry.clearNativeNvidiaProviderAuthority("nemoclaw-19080");
+    expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toBeUndefined();
   });
 
   it("persists incomplete OpenClaw synchronization until explicit completion", async () => {

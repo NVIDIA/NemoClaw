@@ -21,6 +21,7 @@ import {
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
+  normalizeNativeNvidiaProviderAttachment,
   nativeHostedProfile,
   ensureNativeHostedProvider,
   isNativeHostedProvider,
@@ -237,6 +238,10 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeHostedProviderAuthority?: typeof import("../state/registry").getNativeHostedProviderAuthority;
+  setNativeHostedProviderAuthority?: typeof import("../state/registry").setNativeHostedProviderAuthority;
+  getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   withOllamaModelOwnershipTransaction?: typeof withOllamaModelOwnershipTransaction;
@@ -951,6 +956,13 @@ export function createSetupInference(
           let providerAuthority = selectedNativeProfile
             ? resolveGatewayNativeHostedProviderAuthority({
                 profile: selectedNativeProfile,
+                gatewayAuthority:
+                  provider === "nvidia-prod"
+                    ? deps.getNativeNvidiaProviderAuthority?.(gatewayName)
+                    : deps.getNativeHostedProviderAuthority?.(
+                        gatewayName,
+                        selectedNativeProfile.profileId,
+                      ),
                 gatewayName,
                 recordedGatewayName: recordedSandbox?.gatewayName,
                 recordedAttachment,
@@ -1012,6 +1024,13 @@ export function createSetupInference(
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
             });
+            const nvidiaAuthority = normalizeNativeNvidiaProviderAttachment(
+              nativeHostedProviderAttachment,
+            );
+            if (nvidiaAuthority)
+              deps.setNativeNvidiaProviderAuthority?.(gatewayName, nvidiaAuthority);
+            else
+              deps.setNativeHostedProviderAuthority?.(gatewayName, nativeHostedProviderAttachment);
             return null;
           }
 

@@ -180,6 +180,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     sandboxes: SandboxEntry[];
     defaultSandbox: string | null;
   };
+  getNativeHostedProviderAuthority?: typeof registry.getNativeHostedProviderAuthority;
+  getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -312,6 +314,8 @@ function defaultDeps(): InferenceSetDeps {
     getDefaultSandbox: registry.getDefault,
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
+    getNativeHostedProviderAuthority: registry.getNativeHostedProviderAuthority,
+    getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -1264,6 +1268,19 @@ function resolveMatchingAgentConfigTarget(
   return target;
 }
 
+function readRegisteredNativeAuthority(
+  deps: InferenceSetDeps,
+  gatewayName: string,
+  provider: string,
+) {
+  return provider === "nvidia-prod"
+    ? deps.getNativeNvidiaProviderAuthority?.(gatewayName)
+    : deps.getNativeHostedProviderAuthority?.(
+        gatewayName,
+        nativeHostedProfile(provider)!.profileId,
+      );
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1533,6 +1550,7 @@ async function runInferenceSetWithoutHostLock(
     ? resolveGatewayNativeHostedProviderAuthority({
         profile: nativeHostedProfile(provider)!,
         gatewayName: preparedRoute.gatewayName,
+        gatewayAuthority: readRegisteredNativeAuthority(deps, preparedRoute.gatewayName, provider),
         recordedGatewayName: entry.gatewayName,
         recordedAttachment: previousNativeHostedAttachment,
         recordedAuthorities: entry.nativeHostedProviderAuthorities,

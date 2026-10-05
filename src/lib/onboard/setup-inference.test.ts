@@ -214,6 +214,8 @@ describe("native NVIDIA onboarding", () => {
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
     const updateSandbox = vi.fn(() => true);
+    const setNativeNvidiaProviderAuthority = vi.fn(() => true);
+    const setNativeHostedProviderAuthority = vi.fn();
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
     const setupInference = createSetupInference({
@@ -226,6 +228,8 @@ describe("native NVIDIA onboarding", () => {
       getGatewayName: () => "onboarding-gateway",
       runOpenshell,
       updateSandbox,
+      setNativeNvidiaProviderAuthority,
+      setNativeHostedProviderAuthority,
       getSandbox: () => null,
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute,
@@ -292,6 +296,36 @@ describe("native NVIDIA onboarding", () => {
         },
       }),
     );
+    expect(setNativeHostedProviderAuthority.mock.calls).toEqual(
+      profile.logicalProvider === "nvidia-prod"
+        ? []
+        : [
+            [
+              "onboarding-gateway",
+              {
+                schemaVersion: 1,
+                profileId: profile.profileId,
+                providerName: profile.providerName,
+                providerId: "provider-id",
+              },
+            ],
+          ],
+    );
+    expect(setNativeNvidiaProviderAuthority.mock.calls).toEqual(
+      profile.logicalProvider === "nvidia-prod"
+        ? [
+            [
+              "onboarding-gateway",
+              {
+                schemaVersion: 1,
+                profileId: profile.profileId,
+                providerName: profile.providerName,
+                providerId: "provider-id",
+              },
+            ],
+          ]
+        : [],
+    );
   });
 
   it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
@@ -320,21 +354,11 @@ describe("native NVIDIA onboarding", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
       updateSandbox,
       getSandbox: () => null,
-      listSandboxes: () => ({
-        defaultSandbox: "first",
-        sandboxes: [
-          {
-            name: "first",
-            gatewayName: "onboarding-gateway",
-            provider: "nvidia-prod",
-            nativeNvidiaProviderAttachment: {
-              schemaVersion: 1,
-              profileId: "nemoclaw-nvidia-inference-v1",
-              providerName: "nemoclaw-nvidia-prod-v1",
-              providerId: "provider-id",
-            },
-          },
-        ],
+      getNativeNvidiaProviderAuthority: () => ({
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-id",
       }),
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),

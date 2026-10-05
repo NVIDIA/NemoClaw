@@ -36,9 +36,13 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
+  isNativeHostedProvider,
+  normalizeNativeHostedProviderAttachment,
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
 import {
@@ -386,8 +390,10 @@ async function resolveInferenceRoute(
   openshellConnected: boolean,
   gatewayName: string | null,
 ): Promise<DoctorInferenceRoute> {
+  const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
+  const recordedNativeHosted = isNativeHostedProvider(sb?.provider);
   let live: { provider: string; model: string } | null = null;
-  if (openshellBin && openshellConnected && gatewayName) {
+  if (!recordedNativeHosted && openshellBin && openshellConnected && gatewayName) {
     const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
@@ -401,6 +407,17 @@ async function resolveInferenceRoute(
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
+    agentName: sb?.agent,
+    nativeHostedProviderAttachment: normalizeNativeHostedProviderAttachment(
+      sb?.nativeHostedProviderAttachment ?? sb?.nativeNvidiaProviderAttachment,
+    ),
+    ...(recordedNativeNvidia
+      ? {
+          nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(
+            sb?.nativeHostedProviderAttachment ?? sb?.nativeNvidiaProviderAttachment,
+          ),
+        }
+      : {}),
   };
 }
 

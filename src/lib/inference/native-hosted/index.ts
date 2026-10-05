@@ -386,3 +386,5 @@ export async function detachNativeHostedProvider(input: {
 }
 
 export { nativeHostedProfile } from "./profiles";
+
+export { normalizeNativeNvidiaProviderAttachment } from "../native-nvidia/contract";

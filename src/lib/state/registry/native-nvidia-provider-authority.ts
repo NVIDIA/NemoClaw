@@ -1,0 +1,95 @@
+import {
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../../inference/native-hosted/contract";
+import {
+  normalizeNativeHostedProviderAuthorities,
+  retainNativeHostedProviderAuthority,
+} from "../../inference/native-hosted/authority";
+import { isValidNativeProviderGateway as isValidName } from "./native-nvidia-provider-authority-state";
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
+import {
+  applyNativeNvidiaProviderAuthority,
+  readNativeNvidiaProviderAuthority,
+  removeNativeNvidiaProviderAuthority as applyRemoveNativeNvidiaProviderAuthority,
+} from "./native-nvidia-provider-authority-state";
+import { withLock } from "./lock";
+import { load, save } from "./persistence";
+
+export function getNativeNvidiaProviderAuthority(
+  gatewayName: string,
+): NativeNvidiaProviderAttachment | undefined {
+  return readNativeNvidiaProviderAuthority(load(), gatewayName);
+}
+
+export function setNativeNvidiaProviderAuthority(
+  gatewayName: string,
+  receipt: NativeNvidiaProviderAttachment,
+): void {
+  withLock(() => {
+    const data = load();
+    const existing = readNativeNvidiaProviderAuthority(data, gatewayName);
+    if (existing?.providerId === receipt.providerId) return;
+    if (!applyNativeNvidiaProviderAuthority(data, gatewayName, receipt)) {
+      throw new Error("Cannot record invalid native NVIDIA gateway provider authority");
+    }
+    save(data);
+  });
+}
+
+export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
+  withLock(() => {
+    const data = load();
+    if (!applyRemoveNativeNvidiaProviderAuthority(data, gatewayName)) return;
+    save(data);
+  });
+}
+
+export function getNativeHostedProviderAuthority(
+  gatewayName: string,
+  profileId: string,
+): NativeHostedProviderAttachment | undefined {
+  if (!isValidName(gatewayName)) return undefined;
+  return normalizeNativeHostedProviderAuthorities(
+    load().gatewayNativeHostedProviderAuthorities?.[gatewayName],
+  )?.find((receipt) => receipt.profileId === profileId);
+}
+
+export function setNativeHostedProviderAuthority(
+  gatewayName: string,
+  receipt: NativeHostedProviderAttachment,
+): void {
+  const normalized = normalizeNativeHostedProviderAttachment(receipt);
+  if (!isValidName(gatewayName) || !normalized)
+    throw new Error("Invalid native provider gateway authority");
+  withLock(() => {
+    const data = load();
+    const previous = data.gatewayNativeHostedProviderAuthorities?.[gatewayName];
+    const retained = retainNativeHostedProviderAuthority(previous, normalized);
+    if (JSON.stringify(previous) === JSON.stringify(retained)) return;
+    data.gatewayNativeHostedProviderAuthorities = {
+      ...data.gatewayNativeHostedProviderAuthorities,
+      [gatewayName]: retained,
+    };
+    save(data);
+  });
+}
+
+export function clearNativeHostedProviderAuthority(gatewayName: string, profileId: string): void {
+  if (!isValidName(gatewayName)) return;
+  withLock(() => {
+    const data = load();
+    const previous = data.gatewayNativeHostedProviderAuthorities?.[gatewayName];
+    if (!previous?.some((receipt) => receipt.profileId === profileId)) return;
+    const next = { ...data.gatewayNativeHostedProviderAuthorities };
+    const retained = previous.filter((receipt) => receipt.profileId !== profileId);
+    if (retained.length) next[gatewayName] = retained;
+    else delete next[gatewayName];
+    if (Object.keys(next).length) data.gatewayNativeHostedProviderAuthorities = next;
+    else delete data.gatewayNativeHostedProviderAuthorities;
+    save(data);
+  });
+}

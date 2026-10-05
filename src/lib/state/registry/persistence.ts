@@ -1,3 +1,4 @@
+import { normalizeGatewayNativeHostedAuthorities } from "./native-nvidia-provider-authority-state";
 import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
@@ -10,6 +11,7 @@ import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
+import { normalizeNativeNvidiaProviderAuthorities } from "./native-nvidia-provider-authority-state";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
@@ -126,6 +128,9 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
+    data.nativeNvidiaProviderAuthorities,
+  );
   const sandboxes = Object.fromEntries(
     parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
       name,
@@ -141,12 +146,22 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     ),
     sandboxes,
   };
+  const hostedAuthorities = normalizeGatewayNativeHostedAuthorities(
+    data.gatewayNativeHostedProviderAuthorities,
+  );
+  if (hostedAuthorities) base.gatewayNativeHostedProviderAuthorities = hostedAuthorities;
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeNvidiaProviderAuthorities) {
+    base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
+  }
   return base;
 }
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
+    data.nativeNvidiaProviderAuthorities,
+  );
   const sandboxes = Object.fromEntries(
     Object.entries(data.sandboxes).map(([name, entry]) => [
       name,
@@ -165,7 +180,14 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
         : reversibleRemoval.incrementDefaultSelectionRevision(currentDefaultSelectionRevision),
     sandboxes,
   };
+  const hostedAuthorities = normalizeGatewayNativeHostedAuthorities(
+    data.gatewayNativeHostedProviderAuthorities,
+  );
+  if (hostedAuthorities) base.gatewayNativeHostedProviderAuthorities = hostedAuthorities;
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeNvidiaProviderAuthorities) {
+    base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
+  }
   return base;
 }
 

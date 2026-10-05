@@ -18,6 +18,12 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+  getNativeNvidiaProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} = require("../state/registry/native-nvidia-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -393,6 +399,10 @@ function setupInferenceProviderDeps(runOpenshell) {
   return {
     providerExistsInGateway,
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeHostedProviderAuthority,
+    setNativeHostedProviderAuthority,
+    getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority,
   };
 }
 

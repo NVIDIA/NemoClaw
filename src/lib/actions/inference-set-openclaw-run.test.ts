@@ -79,6 +79,132 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
+  it("reuses a same-gateway native NVIDIA provider authority from a peer sandbox", async () => {
+    const peerAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const deps = createDeps({
+      config: {},
+      entries: [
+        {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          provider: "",
+          model: "",
+        },
+        {
+          name: "beta",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/peer-model",
+          nativeNvidiaProviderAttachment: peerAttachment,
+        },
+      ],
+      defaultSandbox: "alpha",
+      resolveCredentialValue: () => "",
+    });
+
+    vi.spyOn(deps.providerAdapter, "getProvider").mockResolvedValue({
+      ok: true,
+      value: {
+        name: peerAttachment.providerName,
+        type: peerAttachment.profileId,
+        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: peerAttachment.providerId, resourceVersion: 1 },
+      },
+    });
+
+    let attachedToAlpha = false;
+    vi.spyOn(deps.providerAdapter, "attachProvider").mockImplementation(async () => {
+      attachedToAlpha = true;
+      return { ok: true };
+    });
+    vi.spyOn(deps.providerAdapter, "listProviderAttachments").mockImplementation(async () => ({
+      ok: true,
+      value: { names: attachedToAlpha ? [peerAttachment.providerName] : [] },
+    }));
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeHostedProviderAttachment: peerAttachment }),
+    );
+  });
+
+  it.each(
+    NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "hermes-provider"),
+  )("selects a native $label provider registered before any sandbox used it", async (profile) => {
+    const gatewayAuthority = {
+      schemaVersion: 1 as const,
+      profileId: profile.profileId,
+      providerName: profile.providerName,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    let attached = false;
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: profile.providerName,
+          type: profile.profileId,
+          credentialKeys: [profile.credentialEnv],
+          configKeys: [],
+          revision: { id: gatewayAuthority.providerId, resourceVersion: 1 },
+        },
+      })),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? [profile.providerName] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "",
+        model: "",
+      },
+      getNativeHostedProviderAuthority: () => gatewayAuthority,
+      getNativeNvidiaProviderAuthority: () => ({
+        ...gatewayAuthority,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+      }),
+      providerAdapter,
+      resolveCredentialValue: () => "",
+    });
+
+    await runInferenceSet(
+      { provider: profile.logicalProvider, model: "selected-model", noVerify: true },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeHostedProviderAttachment: gatewayAuthority,
+        nativeHostedProviderAuthorities: expect.arrayContaining([gatewayAuthority]),
+      }),
+    );
+  });
+
   it("detaches previous native access before publishing another provider", async () => {
     const deps = createDeps({
       config: {

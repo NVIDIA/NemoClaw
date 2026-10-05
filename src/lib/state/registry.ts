@@ -9,13 +9,10 @@ import {
   normalizeInferenceSelection,
 } from "../inference/selection";
 import {
+  normalizeNativeNvidiaProviderAttachment,
   normalizeNativeHostedProviderAttachment,
   retainNativeHostedProviderAuthority,
 } from "../inference/native-hosted";
-import {
-  isNativeNvidiaProvider,
-  normalizeNativeNvidiaProviderAttachment,
-} from "../inference/native-nvidia";
 
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
@@ -74,6 +71,11 @@ export {
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
+export {
+  clearNativeNvidiaProviderAuthority,
+  getNativeNvidiaProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} from "./registry/native-nvidia-provider-authority";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -771,9 +773,10 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
-      nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
-        ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
-        : undefined,
+      nativeNvidiaProviderAttachment:
+        normalized.provider?.trim() === "nvidia-prod"
+          ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
+          : undefined,
       nativeNvidiaProviderAuthority:
         nativeNvidiaProviderAuthority ??
         (existing?.gatewayName === route.gatewayName
@@ -1110,3 +1113,9 @@ export function getConfiguredMessagingChannels(name: string): string[] {
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
   return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }
+
+export {
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+  clearNativeHostedProviderAuthority,
+} from "./registry/native-nvidia-provider-authority";

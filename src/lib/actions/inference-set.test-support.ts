@@ -282,6 +282,8 @@ export function createDeps(options: {
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
+  getNativeHostedProviderAuthority?: InferenceSetDeps["getNativeHostedProviderAuthority"];
+  getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -437,6 +439,8 @@ export function createDeps(options: {
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
+    getNativeHostedProviderAuthority: options.getNativeHostedProviderAuthority,
+    getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
