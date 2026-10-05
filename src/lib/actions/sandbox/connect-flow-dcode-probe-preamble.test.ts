@@ -76,10 +76,11 @@ describe("connectSandbox DCode probe preamble boundary", () => {
       const harness = createConnectHarness({
         agentName: "langchain-deepagents-code",
         registryEntry: {
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
           model: "nvidia/nemotron-3-super-120b-a12b",
         },
-        inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+        inferenceGetOutput:
+          "Provider: custom-shared-provider\nModel: nvidia/nemotron-3-super-120b-a12b\n",
         sessionAgent: { name: "langchain-deepagents-code" },
       });
       const runBuffered = harness.sandboxRunBufferedSpy.getMockImplementation()!;
@@ -111,7 +112,7 @@ describe("connectSandbox DCode probe preamble boundary", () => {
       const harness = createConnectHarness({
         agentName: "langchain-deepagents-code",
         sessionAgent: { name: "langchain-deepagents-code" },
-        registryEntry: { provider: "nvidia-prod", model: "nvidia/nemotron", ...missing },
+        registryEntry: { provider: "custom-shared-provider", model: "nvidia/nemotron", ...missing },
       });
 
       await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
@@ -127,11 +128,11 @@ describe("connectSandbox DCode probe preamble boundary", () => {
       const harness = createConnectHarness({
         agentName: "langchain-deepagents-code",
         registryEntry: {
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
           model: "nvidia/nemotron-3-super-120b-a12b",
         },
         inferenceGetOutput:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+          "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
         inferenceProbeResponses: [output],
         sessionAgent: { name: "langchain-deepagents-code" },
       });
@@ -153,11 +154,11 @@ describe("connectSandbox DCode probe preamble boundary", () => {
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: [
         {
           status: 0,
@@ -188,11 +189,11 @@ describe("connectSandbox DCode probe preamble boundary", () => {
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: [`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`],
       sessionAgent: { name: "langchain-deepagents-code" },
     });

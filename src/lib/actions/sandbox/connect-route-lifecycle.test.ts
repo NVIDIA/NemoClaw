@@ -46,10 +46,10 @@ describe("connectSandbox route lifecycle", () => {
   it("warns and aligns a diverged route during a quiet probe-only connect (#3726)", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: {
         model: "claude-sonnet-4-20250514",
-        provider: "anthropic-prod",
+        provider: "other-shared-provider",
       },
     });
 
@@ -58,10 +58,10 @@ describe("connectSandbox route lifecycle", () => {
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain("differs from the recorded route");
     expect(errorOutput).toContain(
-      "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
+      "Aligning the gateway to other-shared-provider/claude-sonnet-4-20250514",
     );
     expect(errorOutput).toContain(
-      "nemoclaw inference set --provider 'nvidia-prod' --model 'nvidia/nemotron-3-super-120b-a12b' --sandbox 'alpha'",
+      "nemoclaw inference set --provider 'custom-shared-provider' --model 'nvidia/nemotron-3-super-120b-a12b' --sandbox 'alpha'",
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       [
@@ -71,7 +71,7 @@ describe("connectSandbox route lifecycle", () => {
         "nemoclaw",
         "--no-verify",
         "--provider",
-        "anthropic-prod",
+        "other-shared-provider",
         "--model",
         "claude-sonnet-4-20250514",
       ],
@@ -87,11 +87,11 @@ describe("connectSandbox route lifecycle", () => {
   it("stops after an ambiguous route swap before probing or attempting repair", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/old-model\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/old-model\n",
       inferenceSetResult: { status: null, output: "", signal: "SIGTERM" },
       registryEntry: {
         model: "claude-sonnet-4-20250514",
-        provider: "anthropic-prod",
+        provider: "other-shared-provider",
       },
     });
 
@@ -165,7 +165,7 @@ describe("connectSandbox route lifecycle", () => {
       registryEntry: {
         name: sandboxName,
         model: "claude-sonnet-4-20250514",
-        provider: "anthropic-prod",
+        provider: "other-shared-provider",
       },
     });
 
@@ -187,12 +187,12 @@ describe("connectSandbox route lifecycle", () => {
     try {
       const harness = createConnectHarness({
         inferenceGetOutput:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+          "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
         inferenceProbeResponses: ['BROKEN 503 {"error":"inference service unavailable"}', "OK 200"],
         registryEntry: {
           model: "nvidia/nemotron-3-super-120b-a12b",
           openshellDriver: "vm",
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
         },
       });
 
@@ -215,10 +215,10 @@ describe("connectSandbox route lifecycle", () => {
 
   it.each([
     ["null", null, null],
-    ["provider-only", "nvidia-prod", null],
+    ["provider-only", "custom-shared-provider", null],
     ["model-only", null, "nvidia/test"],
     ["blank-provider", "   ", "nvidia/test"],
-    ["blank-model", "nvidia-prod", "   "],
+    ["blank-model", "custom-shared-provider", "   "],
   ] as const)(
     "skips inference reconciliation for %s registry entries (#5937)",
     async (_description, provider, model) => {
@@ -237,10 +237,10 @@ describe("connectSandbox route lifecycle", () => {
   it("does not reset an inference route that already matches the sandbox", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: {
         model: "nvidia/nemotron-3-super-120b-a12b",
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
       },
     });
 
@@ -257,7 +257,7 @@ describe("connectSandbox route lifecycle", () => {
     const harness = createConnectHarness({
       registryEntry: {
         model: "nvidia/nemotron-3-super-120b-a12b",
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
       },
     });
     harness.captureOpenshellSpy
@@ -285,12 +285,12 @@ describe("connectSandbox route lifecycle", () => {
   it("stops before opening SSH when route repair and reset both fail", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: Array(7).fill('BROKEN 503 {"error":"upstream unavailable"}'),
       registryEntry: {
         model: "nvidia/nemotron-3-super-120b-a12b",
         openshellDriver: "kubernetes",
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
       },
     });
 
@@ -306,7 +306,7 @@ describe("connectSandbox route lifecycle", () => {
         "nemoclaw",
         "--no-verify",
         "--provider",
-        "nvidia-prod",
+        "custom-shared-provider",
         "--model",
         "nvidia/nemotron-3-super-120b-a12b",
       ],

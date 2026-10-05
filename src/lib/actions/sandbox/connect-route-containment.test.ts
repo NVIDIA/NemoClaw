@@ -57,7 +57,7 @@ describe("connect route containment", () => {
     const sandbox: SandboxEntry = {
       name: "demo",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       openshellDriver: "vm",
       gpuEnabled: false,
     };
@@ -79,12 +79,12 @@ describe("connect route containment", () => {
       agent: "openclaw",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      provider: "anthropic-prod",
+      provider: "other-shared-provider",
       model: "claude-sonnet-4-20250514",
     } as const;
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: alpha,
       registryEntries: [
         alpha,
@@ -93,7 +93,7 @@ describe("connect route containment", () => {
           agent: "openclaw",
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
           model: "nvidia/nemotron-3-super-120b-a12b",
         },
       ],
@@ -109,7 +109,7 @@ describe("connect route containment", () => {
         "inference",
         "set",
         "--provider",
-        "anthropic-prod",
+        "other-shared-provider",
         "--model",
         "claude-sonnet-4-20250514",
       ]),
@@ -120,7 +120,7 @@ describe("connect route containment", () => {
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain("differs from the recorded route for sandbox 'alpha'");
     expect(errorOutput).toContain(
-      "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
+      "Aligning the gateway to other-shared-provider/claude-sonnet-4-20250514",
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -205,7 +205,7 @@ describe("connect route containment", () => {
       agent: "openclaw",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "nvidia/model-a",
     } as const;
     const harness = createConnectHarness({
@@ -223,7 +223,7 @@ describe("connect route containment", () => {
     await lockEntered;
     const peer = harness.registryEntries.find((candidate) => candidate.name === "peer");
     expect(peer).toBeDefined();
-    Object.assign(peer!, { provider: "anthropic-prod", model: "claude-new" });
+    Object.assign(peer!, { provider: "other-shared-provider", model: "claude-new" });
     releaseLock();
 
     await expect(connect).resolves.toBeUndefined();
@@ -236,7 +236,7 @@ describe("connect route containment", () => {
       expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      expect.arrayContaining(["inference", "set", "--provider", "nvidia-prod"]),
+      expect.arrayContaining(["inference", "set", "--provider", "custom-shared-provider"]),
       expect.any(Object),
     );
     expect(exitSpy).not.toHaveBeenCalled();
@@ -303,7 +303,7 @@ describe("connect route containment", () => {
       agent: "openclaw",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "nvidia/model-a",
     } as const;
     const harness = createConnectHarness({
@@ -350,7 +350,7 @@ describe("connect route containment", () => {
         agent: "openclaw",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
@@ -381,7 +381,7 @@ describe("connect route containment", () => {
         name: "alpha",
         pendingRouteReservation: true,
         gatewayName: "nemoclaw",
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/model-a",
       },
     });
@@ -398,7 +398,7 @@ describe("connect route containment", () => {
   it("exits before repairing a lone incomplete legacy custom route (#6315)", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: {
         name: "alpha",
         agent: "openclaw",
@@ -436,12 +436,12 @@ describe("connect route containment", () => {
       agent: "openclaw",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "nvidia/nemotron-3-super-120b-a12b",
     } as const;
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: alpha,
       registryEntries: [
         alpha,
@@ -450,7 +450,7 @@ describe("connect route containment", () => {
           agent: "openclaw",
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
-          provider: "anthropic-prod",
+          provider: "other-shared-provider",
           model: "claude-sonnet-4-20250514",
         },
       ],
@@ -473,12 +473,12 @@ describe("connect route containment", () => {
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
       openshellDriver: "docker",
-      provider: "anthropic-prod",
+      provider: "other-shared-provider",
       model: "claude-sonnet-4-20250514",
     } as const;
     const harness = createConnectHarness({
       inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200"],
       registryEntry: alpha,
       registryEntries: [
@@ -488,7 +488,7 @@ describe("connect route containment", () => {
           agent: "openclaw",
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
-          provider: "nvidia-prod",
+          provider: "custom-shared-provider",
           model: "nvidia/nemotron-3-super-120b-a12b",
         },
       ],
@@ -513,7 +513,7 @@ describe("connect route containment", () => {
         "nemoclaw-9090",
         "--no-verify",
         "--provider",
-        "anthropic-prod",
+        "other-shared-provider",
         "--model",
         "claude-sonnet-4-20250514",
       ]);

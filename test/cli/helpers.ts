@@ -378,6 +378,7 @@ export function writeDoctorSandboxRegistry(
 ): void {
   writeSandboxRegistry(home, sandboxName, {
     agent: "openclaw",
+    provider: "custom-shared-provider",
     openshellDriver: "docker",
     openshellVersion: "0.0.72",
     nemoclawVersion: "0.0.95",

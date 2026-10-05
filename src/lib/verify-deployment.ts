@@ -418,7 +418,7 @@ async function verifyInferenceRoute(
       httpCode: 0,
       hint:
         "The sandbox-attached hosted provider could not serve the selected model. Confirm the " +
-        "NVIDIA credential and model, then re-run: nemoclaw <sandbox> status.",
+        "provider credential and model, then re-run: nemoclaw <sandbox> status.",
     };
   }
   const routeContext = toRouteHealthContext(context);

@@ -67,7 +67,7 @@ function configureAlignedInferenceGet(harness: ReturnType<typeof createConnectHa
       ? {
           status: 0,
           output:
-            "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+            "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
         }
       : capture(args, options);
   }) as never);
@@ -232,7 +232,7 @@ describe("connectSandbox flow", () => {
     registry.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
     });
@@ -243,7 +243,7 @@ describe("connectSandbox flow", () => {
         {
           status: 0,
           output:
-            "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+            "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
         },
       ],
       ["sandbox exec", { status: 0, output: "OK 200" }],
@@ -335,10 +335,11 @@ describe("connectSandbox flow", () => {
     const longProbeDetail = `route probe unavailable NVIDIA_API_KEY=super-secret ${"x".repeat(400)}`;
     const harness = createConnectHarness({
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
-      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceGetOutput:
+        "Provider: custom-shared-provider\nModel: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: [longProbeDetail],
     });
 
@@ -363,7 +364,7 @@ describe("connectSandbox flow", () => {
   it("fails closed without repair when the route probe transport throws (#6192)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
@@ -389,7 +390,7 @@ describe("connectSandbox flow", () => {
   it("fails closed without repair when the route probe transport times out (#6192)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
@@ -426,7 +427,7 @@ describe("connectSandbox flow", () => {
   it("fails closed without repair when the OpenShell CA boundary is unavailable (#6192)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
@@ -826,10 +827,11 @@ describe("connectSandbox flow", () => {
   it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
-        provider: "nvidia-prod",
+        provider: "custom-shared-provider",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
-      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceGetOutput:
+        "Provider: custom-shared-provider\nModel: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: ["route probe unavailable"],
     });
 
@@ -1031,7 +1033,7 @@ describe("connectSandbox flow", () => {
       "mismatched",
       {
         inferenceGetOutput:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/other-model\n",
+          "Gateway inference:\n  Provider: custom-shared-provider\n  Model: nvidia/other-model\n",
       },
     ],
     ["unreachable", { inferenceProbeResponses: ["BROKEN 503"] }],

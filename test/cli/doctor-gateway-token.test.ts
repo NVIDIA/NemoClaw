@@ -113,7 +113,7 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
 
@@ -142,7 +142,7 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
       // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
@@ -207,7 +207,7 @@ describe("CLI dispatch", () => {
       '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
       '  "sandbox list -g nemoclaw-8090") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
       "esac",
     ]);
     writeDoctorSandboxRegistry(setup.home, "alpha", {
@@ -244,7 +244,7 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
       writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
@@ -274,7 +274,7 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
       writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
@@ -368,7 +368,7 @@ describe("CLI dispatch", () => {
           '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
           '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-          '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+          '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
           "esac",
         ],
       );
@@ -439,7 +439,7 @@ describe("CLI dispatch", () => {
           '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
           `  "sandbox list -g nemoclaw") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
-          '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+          '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
           "esac",
         ],
         sandboxName,
@@ -481,7 +481,7 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         `  "sandbox list -g nemoclaw") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: custom-shared-provider\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ],
       sandboxName,

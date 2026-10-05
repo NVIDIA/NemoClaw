@@ -407,6 +407,7 @@ async function resolveInferenceRoute(
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
+    preferredInferenceApi: sb?.preferredInferenceApi,
     agentName: sb?.agent,
     nativeHostedProviderAttachment: normalizeNativeHostedProviderAttachment(
       sb?.nativeHostedProviderAttachment ?? sb?.nativeNvidiaProviderAttachment,

@@ -12,6 +12,8 @@ import {
   type SetupInferenceDeps,
 } from "../../src/lib/onboard/setup-inference.js";
 import { redact } from "../../src/lib/security/redact.js";
+import type { NativeHostedProviderAttachment } from "../../src/lib/inference/native-hosted/contract";
+import type { NativeNvidiaProviderAttachment } from "../../src/lib/inference/native-nvidia/contract";
 
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
   upsertProvider: (
@@ -330,6 +332,8 @@ export function createDirectSetupInferenceHarnessFactory(
   createSetupInference: CreateSetupInference,
 ) {
   return function createDirectSetupInferenceHarness(options: DirectSetupHarnessOptions = {}) {
+    const hostedAuthorities = new Map<string, NativeHostedProviderAttachment>();
+    const nvidiaAuthorities = new Map<string, NativeNvidiaProviderAttachment>();
     const commands: DirectCommandEntry[] = [];
     const errors: string[] = [];
     const logs: string[] = [];
@@ -491,6 +495,15 @@ export function createDirectSetupInferenceHarnessFactory(
       // #9110: neutralize the GPU-release seams so harness consumers backed by
       // the production defaults never read the developer's real registry or
       // curl a live Ollama daemon.
+      getNativeHostedProviderAuthority: (gateway, profile) =>
+        hostedAuthorities.get(`${gateway}/${profile}`),
+      setNativeHostedProviderAuthority: (gateway, receipt) => {
+        hostedAuthorities.set(`${gateway}/${receipt.profileId}`, receipt);
+      },
+      getNativeNvidiaProviderAuthority: (gateway) => nvidiaAuthorities.get(gateway),
+      setNativeNvidiaProviderAuthority: (gateway, receipt) => {
+        nvidiaAuthorities.set(gateway, receipt);
+      },
       getSandbox: () => null,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
       unloadOllamaModels,

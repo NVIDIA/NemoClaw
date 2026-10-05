@@ -367,6 +367,7 @@ registry.getSandbox = (name) =>
   name === "hermes-resume"
     ? {
         name,
+        gatewayName: "nemoclaw",
         gpuEnabled: false,
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",

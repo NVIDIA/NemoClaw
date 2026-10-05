@@ -41,6 +41,7 @@ import {
 export type DoctorInferenceRoute = {
   model: string;
   provider: string;
+  preferredInferenceApi?: string | null;
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
   /** Sandbox route endpoint recorded at onboard; selects the bearerless local vLLM host port. */
   recordedEndpointUrl?: string | null;
@@ -147,7 +148,7 @@ async function collectNativeHostedRouteProbe(
       agentName: route.agentName,
       provider: route.provider,
       model: route.model,
-      preferredInferenceApi: null,
+      preferredInferenceApi: route.preferredInferenceApi ?? null,
       nativeProvider: true,
     },
     {},

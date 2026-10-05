@@ -756,7 +756,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
     ...(options.agentName === "langchain-deepagents-code"
-      ? { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" }
+      ? { provider: "custom-shared-provider", model: "nvidia/nemotron-3-super-120b-a12b" }
       : {}),
     lifecycleLiveIdentityFingerprint:
       portableDisposition.kind === "hermes"

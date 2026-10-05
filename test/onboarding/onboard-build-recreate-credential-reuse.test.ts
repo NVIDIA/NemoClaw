@@ -124,6 +124,7 @@ const registry = require(${registryPath});
 // ownership evidence because another sandbox can use the same provider name.
 registry.registerSandbox({
   name: "rg-test-noninter",
+  gatewayName: "nemoclaw",
   provider: "nvidia-prod",
   model: "nvidia/llama-3.3-nemotron-super-49b-v1",
   nativeNvidiaProviderAttachment: {

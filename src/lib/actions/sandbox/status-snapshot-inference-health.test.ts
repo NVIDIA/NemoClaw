@@ -605,7 +605,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as ready once an invocation succeeds (#10080)", async () => {
+  it("reports native Deep Agents Code OpenRouter ready only after a verified invocation (#10080)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -621,6 +621,12 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       {
         agent: "langchain-deepagents-code",
         gatewayName: "nemoclaw-19080",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-openrouter-inference-v1",
+          providerName: "nemoclaw-openrouter-api-v1",
+          providerId: "owned",
+        },
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
       },
@@ -631,6 +637,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       ...options,
       deps: {
         ...options.deps,
+        verifyNativeHostedProviderAttachmentImpl: async () => undefined,
         probeSandboxInferenceGatewayHealthImpl,
         probeSandboxInferenceInvocationImpl,
       },
@@ -644,14 +651,12 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         provider: "openrouter-api",
         model: "openai/gpt-4o-mini",
         preferredInferenceApi: null,
+        nativeProvider: true,
       },
       {},
       95_000,
     );
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
-      gatewayName: "nemoclaw-19080",
-    });
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+    expect(probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 

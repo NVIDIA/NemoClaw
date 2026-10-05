@@ -211,8 +211,11 @@ export function resolveTrustedLaunchAgent(
 export function getNativeHostedProviderAttachment(
   entry: SandboxEntry,
 ): NativeHostedProviderAttachment | null {
-  const receipt = normalizeNativeHostedProviderAttachment(entry.nativeHostedProviderAttachment);
-  if (receipt && nativeHostedProfile(entry.provider)?.profileId !== receipt.profileId) {
+  const receipt = normalizeNativeHostedProviderAttachment(
+    entry.nativeHostedProviderAttachment ?? entry.nativeNvidiaProviderAttachment,
+  );
+  const profile = nativeHostedProfile(entry.provider);
+  if ((profile && !receipt) || (receipt && profile?.profileId !== receipt.profileId)) {
     throw new LaunchReadinessEvidenceError();
   }
   return receipt ?? null;

@@ -970,11 +970,11 @@ describe("launch readiness validation", () => {
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
     sandbox = {
       ...entry("langchain-deepagents-code"),
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "model-a",
       credentialEnv: "NVIDIA_API_KEY",
     };
-    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+    routeOutput = "Gateway Inference:\n\n  Provider: custom-shared-provider\n  Model: model-a\n";
     const currentDeps = deps();
     currentDeps.inferenceInvocationProbe = async () => ({ ok: true });
     const gatewayHealth = vi.fn(async () => true);
@@ -996,11 +996,11 @@ describe("launch readiness validation", () => {
   it("rejects a Deep Agents Code lease when model discovery succeeds but inference fails (#11520)", async () => {
     sandbox = {
       ...entry("langchain-deepagents-code"),
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       model: "model-a",
       credentialEnv: "NVIDIA_API_KEY",
     };
-    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+    routeOutput = "Gateway Inference:\n\n  Provider: custom-shared-provider\n  Model: model-a\n";
     const currentDeps = deps();
     currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
     await createAcceptedLease(currentDeps);

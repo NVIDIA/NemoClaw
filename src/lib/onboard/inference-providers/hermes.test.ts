@@ -432,7 +432,7 @@ describe("native Hermes inference preparation", () => {
         },
         deps as any,
       ),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, nativeHostedProviderAttachment: expected });
     expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ expected }),

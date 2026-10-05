@@ -34,15 +34,22 @@ Credential values remain in OpenShell. Sandbox configuration contains only a pla
 
 `native-hosted/index.ts` owns profile import, provider identity checks, attachment, and confirmed removal.
 The registry records the selected attachment in `nativeHostedProviderAttachment`.
+Credential registration also retains ownership by gateway and profile before any sandbox uses the
+provider. Onboarding and inference selection reconcile those receipts with sandbox ownership before
+reuse. Reset removes the selected provider's gateway receipt only after deletion is confirmed;
+a failed deletion preserves it. Switching providers retains prior ownership without retaining access.
 The persistence boundary also reads Slice 1's `nativeNvidiaProviderAttachment` field without changing its provider identity.
 Selection does not update the shared `inference.local` route.
 A switch retains `pendingNativeHostedProviderDetach` until OpenShell confirms removal of the previous attachment.
 Retries complete that cleanup before applying another selection.
-Existing beta sandboxes without an attachment receipt require recreation.
+Existing beta sandboxes without an attachment receipt require recreation. Status, doctor, connect,
+and launch readiness must refuse missing or mismatched ownership; they must not substitute the shared
+route. Native probes preserve the selected API protocol and the recorded gateway.
 Custom endpoints and local providers retain their existing routing behavior.
-V1alpha1 configuration export does not yet represent native profile attachments.
-Native sandboxes require an exporter follow-up; exporting an older shared-route sandbox
-continues to verify its original image endpoint without implicitly migrating it.
+V1alpha1 configuration export supports native NVIDIA attachments. Other native hosted
+profiles require an exporter follow-up and are refused before publication. Exporting an
+older shared-route sandbox continues to verify its original image endpoint without
+implicitly migrating it.
 
 Agent configuration preserves the provider's API protocol and native base URL.
 OpenRouter attribution comes from `native-hosted/openrouter-headers.ts` and is configured in each supported agent.

@@ -50,6 +50,7 @@ describe("doctor inference checks", () => {
         {
           provider: profile.logicalProvider,
           model: "selected-model",
+          preferredInferenceApi: "openai-responses",
           agentName: "hermes",
           nativeHostedProviderAttachment: receipt,
         },
@@ -74,7 +75,7 @@ describe("doctor inference checks", () => {
           agentName: "hermes",
           provider: profile.logicalProvider,
           model: "selected-model",
-          preferredInferenceApi: null,
+          preferredInferenceApi: "openai-responses",
           nativeProvider: true,
         },
         {},

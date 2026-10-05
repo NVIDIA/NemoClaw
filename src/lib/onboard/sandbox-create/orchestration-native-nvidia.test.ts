@@ -27,7 +27,10 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
   } as unknown as OpenShellProviderAdapter;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
+function nativeProviderBoundary(
+  adapter: OpenShellProviderAdapter,
+  inferenceProvider = "nemoclaw-nvidia-prod-v1",
+) {
   return createProviderEffectBoundary({
     deferred: false,
     sandboxName: "alpha",
@@ -40,7 +43,7 @@ function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
     },
     preparationInput: {
       openshellDriver: "docker",
-      inferenceProvider: "nemoclaw-nvidia-prod-v1",
+      inferenceProvider,
       messagingProviders: [],
       messagingProviderRequests: [],
       extraProviders: [],
@@ -80,7 +83,7 @@ describe("native NVIDIA post-create provider verification", () => {
     ).resolves.toBeUndefined();
 
     expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
-      "attaching and verifying native NVIDIA provider for sandbox 'alpha'",
+      "attaching and verifying native hosted provider for sandbox 'alpha'",
     );
     expect(adapter.listProviderAttachments).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName: "alpha" }),
@@ -113,13 +116,27 @@ describe("native NVIDIA post-create provider verification", () => {
     expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects a replaced provider before inspecting its sandbox attachments", async () => {
+  it("rejects an ownership receipt for a different selected native provider before gateway access", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    const boundary = nativeProviderBoundary(adapter, "nemoclaw-openai-api-v1");
+
+    await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
+      /does not match the selected profile/u,
+    );
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replaced provider before changing its sandbox attachments", async () => {
     const adapter = providerAdapter("99999999-2222-4333-8444-555555555555");
+    adapter.attachProvider = vi.fn();
+    adapter.detachProvider = vi.fn();
     const boundary = nativeProviderBoundary(adapter);
 
     await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
       /changed identity.*Recreate the sandbox/u,
     );
-    expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+    expect(adapter.attachProvider).not.toHaveBeenCalled();
+    expect(adapter.detachProvider).not.toHaveBeenCalled();
   });
 });

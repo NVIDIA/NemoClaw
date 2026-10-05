@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/ope
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
+  getNativeHostedProviderAttachment,
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
   requireLaunchSemanticHealth,
@@ -20,6 +22,16 @@ import {
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it("refuses native readiness without an ownership receipt", () => {
+    expect(() =>
+      getNativeHostedProviderAttachment({
+        name: "alpha",
+        provider: "openai-api",
+        model: "selected",
+      } as SandboxEntry),
+    ).toThrow(LaunchReadinessEvidenceError);
+  });
+
   it.each([
     ["becomes observable", [null, null, null, null, null, true], true],
     ["remains unavailable", [null, null, null, null, null, null], false],
@@ -208,7 +220,14 @@ const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
+  const profile = nativeHostedProfile(provider)!;
   return {
+    nativeHostedProviderAttachment: {
+      schemaVersion: 1,
+      profileId: profile.profileId,
+      providerName: profile.providerName,
+      providerId: "owned",
+    },
     name: SANDBOX,
     agent: "langchain-deepagents-code",
     provider,
@@ -224,6 +243,7 @@ function dcodeHealthDeps(
   httpStatus = 404,
 ): LaunchReadinessHealthDeps {
   return {
+    verifyNativeHostedAttachment: vi.fn(async () => undefined),
     smoke: vi.fn(async () => ({ ok: true }) as const),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
@@ -278,6 +298,7 @@ describe("Deep Agents Code launch readiness", () => {
       provider,
       model: MODEL,
       preferredInferenceApi: null,
+      nativeProvider: true,
     });
   });
 

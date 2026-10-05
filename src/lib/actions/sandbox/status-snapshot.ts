@@ -573,7 +573,7 @@ export async function collectSandboxStatusSnapshot(
   const nativeHostedAttachment = normalizeNativeHostedProviderAttachment(
     sb?.nativeHostedProviderAttachment ?? sb?.nativeNvidiaProviderAttachment,
   );
-  const nativeHosted = Boolean(nativeHostedAttachment);
+  const nativeHosted = Boolean(nativeHostedProfile(sb?.provider) || nativeHostedAttachment);
   const nativeAttachmentLabel = nativeNvidiaAttachment ? "Native NVIDIA" : "Native hosted";
   if (lookup.state === "present") {
     try {
@@ -945,6 +945,7 @@ async function buildSandboxStatusReport(
     sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const nativeHosted = Boolean(
+    nativeHostedProfile(sb?.provider) ||
     normalizeNativeHostedProviderAttachment(
       sb?.nativeHostedProviderAttachment ?? sb?.nativeNvidiaProviderAttachment,
     ),

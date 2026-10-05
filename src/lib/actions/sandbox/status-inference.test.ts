@@ -47,7 +47,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     } | null;
     routeProbeThrows?: boolean;
   }) {
-    const provider = options.provider ?? "nvidia-prod";
+    const provider = options.provider ?? "custom-shared-provider";
     const reportInferenceProbeError = vi.fn();
     let sandbox = {
       name: "alpha",
@@ -274,7 +274,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(report.servingProcessHealth).toBeNull();
   });
 
-  it.each(["nvidia-router", "hermes-provider"])(
+  it.each(["nvidia-router", "custom-shared-provider"])(
     "probes inference.local for %s without a direct health probe (#6192)",
     async (provider) => {
       const deps = snapshotDeps({
@@ -296,6 +296,25 @@ describe("sandbox status inference.local route health (#6192)", () => {
       expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
     },
   );
+
+  it("refuses Hermes Provider without native ownership instead of probing the shared route", async () => {
+    const deps = snapshotDeps({
+      provider: "hermes-provider",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "unrelated shared route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceInvocationImpl).not.toHaveBeenCalled();
+  });
 
   it("keeps an upstream failure diagnostic when inference.local is healthy (#6192)", async () => {
     const deps = snapshotDeps({
@@ -325,7 +344,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
   it("probes the live route while status displays the sandbox's recorded route (#6315)", async () => {
     const deps = snapshotDeps({
-      provider: "nvidia-prod",
+      provider: "custom-shared-provider",
       liveProvider: "openai-api",
       liveModel: "gpt-5.2",
       routeHealth: {
@@ -338,11 +357,11 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(snapshot.currentProvider).toBe("nvidia-prod");
+    expect(snapshot.currentProvider).toBe("custom-shared-provider");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
     expect(snapshot.routeDrift).toEqual({
       live: { provider: "openai-api", model: "gpt-5.2" },
-      recorded: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      recorded: { provider: "custom-shared-provider", model: "nvidia/nemotron" },
       canConnect: true,
     });
     expect(deps.probeProviderHealthImpl).toHaveBeenCalledWith("openai-api", {

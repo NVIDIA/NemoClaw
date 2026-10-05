@@ -1063,7 +1063,7 @@ async function restorePreviousNativeHostedAfterFailedPublish(input: {
     const recoveryDetail =
       reattachError instanceof Error ? reattachError.message : String(reattachError);
     throw new InferenceSetError(
-      `${detail}\n  Native NVIDIA access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
+      `${detail}\n  Native hosted-provider access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
       input.error instanceof InferenceSetError ? input.error.exitCode : 1,
     );
   }
@@ -1080,7 +1080,7 @@ async function applyInferenceRouteSelection(input: {
   deps: InferenceSetDeps;
 }): Promise<boolean> {
   if (input.nativeHosted) {
-    input.deps.log(`  Using attached native NVIDIA provider: ${input.provider} / ${input.model}`);
+    input.deps.log(`  Using attached native hosted provider: ${input.provider} / ${input.model}`);
     return false;
   }
   input.deps.log(`  Setting OpenShell inference route: ${input.provider} / ${input.model}`);
@@ -1787,7 +1787,7 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
-    // Removing native NVIDIA access is a security gate for publishing another
+    // Removing native hosted access is a security gate for publishing another
     // route. Do not commit the non-native registry/config while the sandbox can
     // still use the credential-bearing attached provider.
     previousNativeHostedDetached = await detachPreviousNativeHostedBeforePublish({

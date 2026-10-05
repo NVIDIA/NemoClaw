@@ -667,6 +667,60 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it("keeps native OpenAI selection, gateway and Responses mode when the shared route differs", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "owned-openai",
+    };
+    const harness = createDoctorHarness("openai-api", {
+      registryOverrides: {
+        nativeHostedProviderAttachment: receipt,
+        preferredInferenceApi: "openai-responses",
+      },
+    });
+    const originalCapture = harness.captureOpenShellSpy.getMockImplementation()!;
+    harness.captureOpenShellSpy.mockImplementation((args: string[], ...rest: unknown[]) =>
+      args[0] === "inference" && args[1] === "get"
+        ? { status: 0, output: "Provider: nvidia-prod\nModel: unrelated-model\n" }
+        : originalCapture(args, ...rest),
+    );
+    const verify = vi
+      .spyOn(requireDist("./inference-route-health.js"), "verifyNativeHostedStatusAttachment")
+      .mockResolvedValue(undefined);
+    const invoke = vi
+      .spyOn(requireDist("./inference-invocation-probe.js"), "probeSandboxInferenceInvocation")
+      .mockResolvedValue({ ok: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      {
+        gatewayName: "nemoclaw-19080",
+        sandboxName: "alpha",
+        provider: "openai-api",
+        model: "registry-model",
+        agentName: "openclaw",
+        preferredInferenceApi: "openai-responses",
+        nativeProvider: true,
+      },
+      {},
+      95000,
+    );
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native OpenAI)", status: "ok" }),
+    );
+  });
+
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();
 

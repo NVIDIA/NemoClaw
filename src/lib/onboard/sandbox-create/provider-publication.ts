@@ -74,13 +74,17 @@ export async function verifyNativeHostedAttachmentAfterCreate(input: {
   readonly expected: SandboxEntry["nativeHostedProviderAttachment"];
   readonly deps: ProviderPreparationDeps;
 }): Promise<void> {
-  if (!usesNativeHostedProvider(input.inferenceProvider)) return;
+  const profile = NATIVE_HOSTED_PROFILES.find(
+    (candidate) => candidate.providerName === input.inferenceProvider,
+  );
+  if (!profile) return;
   if (!input.expected) {
     throw new Error(
       `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
     );
   }
   await ensureNativeHostedProviderAttached({
+    profile,
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,

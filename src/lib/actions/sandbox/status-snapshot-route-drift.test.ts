@@ -623,6 +623,42 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     },
   );
 
+  it("never falls back to a shared route when a native selection has no receipt", async () => {
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "openai-api",
+      model: "selected-model",
+    } as SandboxEntry;
+    const observe = vi.fn(async () => ({
+      ok: true,
+      value: { state: "configured", route: { provider: "nvidia-prod", model: "unrelated" } },
+    }));
+    const shared = vi.fn(async () => ({
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "healthy",
+    }));
+    const invoke = vi.fn(async () => ({ ok: true }));
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        inferenceRouteObserver: { observeInferenceRoute: observe },
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: shared,
+        probeSandboxInferenceInvocationImpl: invoke,
+      },
+    } as never);
+    expect(observe).not.toHaveBeenCalled();
+    expect(shared).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+  });
+
   it("refuses a native receipt for a different recorded provider before probing", async () => {
     const sandbox: SandboxEntry = {
       name: "alpha",
