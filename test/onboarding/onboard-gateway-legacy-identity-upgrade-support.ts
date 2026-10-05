@@ -10,8 +10,9 @@ export function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
-  // An exited orphan can retain its PID until init reaps it. The stopper
-  // considers zombie processes exited; PID existence alone is not liveness.
+  // An exited orphan can retain its PID until init reaps it.
+  // The stopper requires every reported Linux thread to be exited.
+  // PID existence alone does not prove liveness.
   const args = ["-p", String(pid), "-o", "stat="];
   if (process.platform === "linux") args.push("-L");
   const status = spawnSync("ps", args, { encoding: "utf-8" });
