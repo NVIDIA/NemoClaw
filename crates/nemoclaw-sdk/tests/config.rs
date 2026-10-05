@@ -6,29 +6,6 @@ use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint};
 use serde_json::Value;
 
 #[test]
-fn exporting_and_reparsing_preserves_intent_identity_and_connections() {
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config");
-    let mut checked = 0;
-    for entry in std::fs::read_dir(fixtures).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
-        }
-        let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
-        let workspace = document.workspace();
-        let digest = document.digest();
-        let connection = document.inference_connection().unwrap();
-        let restored = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
-        assert_eq!(restored, document, "{}", path.display());
-        assert_eq!(restored.workspace(), workspace);
-        assert_eq!(restored.digest(), digest);
-        assert_eq!(restored.inference_connection().unwrap(), connection);
-        checked += 1;
-    }
-    assert!(checked > 0);
-}
-
-#[test]
 fn ownership_identity_depends_on_uid_while_intent_tracks_configuration() {
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();

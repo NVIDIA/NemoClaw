@@ -11,17 +11,16 @@ It does not add a production translator, adopt a v0 sandbox, or qualify Relay, S
 
 The fixture under `crates/nemoclaw-e2e/fixtures/hermes-nvidia-hosted/` records:
 
-- the representative supported v0 deployment shape and its exact hash;
 - the secret-free `nemoclaw.nvidia.com/v1alpha1` export shape delivered by revision `b6934c6300c4e1e175757e9281ae3a641d9a5b1f` in #11986; and
 - the separately authored current v1 document after the parser applies its gateway, network, and Hermes-image defaults.
 
 The Hermes default is the offline-verified ARM64 image pinned by `images.hermes` in `versions.json`.
 It is separate from the OpenClaw image selected by `images.agent`, so the omitted target-owned image cannot start the wrong harness runtime.
 
-The deterministic test verifies rejection of the historical list shape, equality of its test-only projection with the authored document, and preservation of the Hermes harness, explicit API interface, hosted provider, model route, credential reference, process principal, and required Fabric, NemoClaw, and Hermes filesystem roots:
+The deterministic test verifies equality of the export's test-only projection with the authored document, and preservation of the Hermes harness, explicit API interface, hosted provider, model route, credential reference, process principal, and required Fabric, NemoClaw, and Hermes filesystem roots:
 
 ```sh
-cargo test -p nemoclaw-e2e --test hosted_parity
+cargo test -p nemoclaw-e2e --test integration hosted_parity::
 ```
 
 ## Live Verification
@@ -49,8 +48,8 @@ NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
 NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
 NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
-  cargo test -p nemoclaw-e2e --test hosted_parity \
-  authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle \
+  cargo test -p nemoclaw-e2e --test integration \
+  hosted_parity::live::authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle \
   -- --ignored
 ```
 

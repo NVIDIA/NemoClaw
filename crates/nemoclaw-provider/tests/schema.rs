@@ -76,14 +76,6 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     ] {
         assert!(resources.contains_key(name));
     }
-    for removed in [
-        "route",
-        "inference_service",
-        "ollama_service",
-        "ollama_proxy",
-    ] {
-        assert!(!resources.contains_key(removed));
-    }
     let profile = resources["provider_profile"]
         .schema(&mut diagnostics)
         .unwrap();

@@ -1,0 +1,5 @@
+{
+  "harness": {"kind": "org.nemoclaw.dummy", "settings": {"reply": "service-fixture-ok"}},
+  "invocation": {"message": "Return service-fixture-ok"},
+  "expected_reply": "service-fixture-ok"
+}

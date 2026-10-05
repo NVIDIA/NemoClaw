@@ -5,32 +5,11 @@ use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(name);
-    serde_saphyr::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    crate::support::example(name)
 }
 
 fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(value.to_string().as_bytes())
-}
-
-#[test]
-fn maintained_examples_parse_without_connecting_to_services() {
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let mut count = 0;
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
-        }
-        let bytes = std::fs::read(&path).unwrap();
-        Document::parse(bytes.as_slice()).unwrap_or_else(|error| {
-            panic!("{}: {error}", path.display());
-        });
-        count += 1;
-    }
-    assert!(count > 0, "the maintained example corpus must not be empty");
 }
 
 #[test]

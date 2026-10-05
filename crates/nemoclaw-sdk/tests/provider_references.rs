@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::provider_scope;
 
-#[path = "support/provider_scope.rs"]
-mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, targets},
     config::{Document, schema::input_schema},
@@ -10,7 +9,7 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
+    crate::support::example("fabric-openclaw.yaml")
 }
 fn inline(mut value: Value) -> Value {
     let provider = value["spec"]["inferenceProviders"][0].clone();

@@ -7,8 +7,11 @@ use nemoclaw_sdk::config::InferenceProviderKind;
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
-use std::{fs, path::PathBuf};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 macro_rules! harness_test {
     ($name:ident, $harness:literal) => {
@@ -43,31 +46,25 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     // Keep passive discovery deterministic across apply and export. Connection
     // failures can otherwise vary between transport errors and timeouts.
-    let inference = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    document.spec.inference_providers[0].endpoint =
-        format!("http://{}/v1", inference.local_addr().unwrap());
-    let request_line = if harness == "nvidia.fabric.claude" {
-        "GET /v1/models?limit=1000 HTTP/1.1\r\n"
+    let catalog_path = if harness == "nvidia.fabric.claude" {
+        "/v1/models?limit=1000"
     } else {
-        "GET /v1/models HTTP/1.1\r\n"
+        "/v1/models"
     };
-    let mut catalog_server = tokio::task::JoinSet::<()>::new();
-    catalog_server.spawn(async move {
-        loop {
-            let (mut stream, _) = inference.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(stream.read_u8().await.unwrap());
-            }
-            assert!(request.starts_with(request_line.as_bytes()));
-            stream
-                .write_all(
-                    b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                )
-                .await
-                .unwrap();
+    let unexpected = Arc::new(Mutex::new(Vec::new()));
+    let seen = unexpected.clone();
+    let catalog = nemoclaw_e2e::http_fixture::Fixture::start_tcp(move |request| {
+        if request.method == "GET" && request.path == catalog_path {
+            Some((503, Vec::new()))
+        } else {
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", request.method, request.path));
+            Some((400, Vec::new()))
         }
-    });
+    })
+    .await;
+    document.spec.inference_providers[0].endpoint = format!("{}/v1", catalog.endpoint);
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "nvidia.fabric.pi" {
         let pi = Document::parse(
@@ -108,9 +105,10 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().inference_exit = 1;
     deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        catalog_server.try_join_next().is_none(),
-        "model catalog fixture exited"
+    assert_eq!(
+        *unexpected.lock().unwrap(),
+        Vec::<String>::new(),
+        "only the model catalog may be requested"
     );
     assert!(
         !fixture
@@ -422,9 +420,10 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     deployment.destroy(&cancel).await.unwrap();
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert!(fixture.state.lock().unwrap().providers.is_empty());
-    assert!(
-        catalog_server.try_join_next().is_none(),
-        "model catalog fixture exited"
+    assert_eq!(
+        *unexpected.lock().unwrap(),
+        Vec::<String>::new(),
+        "only the model catalog may be requested"
     );
 }
 

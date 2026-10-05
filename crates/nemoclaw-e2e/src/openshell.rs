@@ -11,8 +11,21 @@ use std::{
 };
 use tonic::{Request, Response, Status, body::Body};
 
+/// Optional real image execution behind the deterministic gateway protocol.
+/// Resource discovery remains simulated; command bytes and exit status are not.
+pub trait SandboxExecution: Send + Sync {
+    fn create(
+        &self,
+        sandbox: &p::Sandbox,
+        credentials: &HashMap<String, String>,
+    ) -> Result<(), Status>;
+    fn delete(&self, sandbox: &p::Sandbox) -> Result<(), Status>;
+    fn exec(&self, request: &p::ExecSandboxRequest) -> Result<std::process::Output, Status>;
+}
+
 #[derive(Default)]
 pub struct State {
+    pub sandbox_execution: Option<Arc<dyn SandboxExecution>>,
     pub driver: Option<String>,
     pub gateway_info: Option<p::GetGatewayInfoResponse>,
     pub gateway_reads: usize,
@@ -531,6 +544,17 @@ fn create_sandbox(
         }),
         ..Default::default()
     };
+    if let Some(execution) = &state.sandbox_execution {
+        let mut credentials = HashMap::new();
+        for name in &sandbox.spec.as_ref().unwrap().providers {
+            let provider = state
+                .providers
+                .get(&format!("{}/{}", workspace(&q.workspace_scope)?, name))
+                .ok_or_else(|| Status::failed_precondition("sandbox provider is absent"))?;
+            credentials.extend(provider.credentials.clone());
+        }
+        execution.create(&sandbox, &credentials)?;
+    }
     state.sandboxes.insert(key.clone(), sandbox.clone());
     if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
         let metadata = state
@@ -569,10 +593,15 @@ fn delete_sandbox(
     state: &mut State,
     q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.name);
     let sandbox = state
         .sandboxes
-        .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .get(&key)
         .ok_or_else(|| Status::not_found("absent"))?;
+    if let Some(execution) = &state.sandbox_execution {
+        execution.delete(sandbox)?;
+    }
+    let sandbox = state.sandboxes.remove(&key).unwrap();
     state.effects += 1;
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("secret-sentinel: deletion reply lost"));
@@ -630,6 +659,41 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         let Some(sandbox) = state.sandboxes.get(&format!("{scope}/{}", request.sandbox)) else {
             return std::future::ready(Err(Status::not_found("absent")));
         };
+        if let Some(execution) = state.sandbox_execution.clone() {
+            state.exec_calls.push(request.command.clone());
+            state.exec_stdin.push(request.stdin.clone());
+            state.exec_environments.push(request.environment.clone());
+            drop(state);
+            let output = match execution.exec(&request) {
+                Ok(output) => output,
+                Err(error) => return std::future::ready(Err(error)),
+            };
+            let mut events = Vec::new();
+            for data in output.stdout.chunks(64 * 1024) {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                        p::ExecSandboxStdout {
+                            data: data.to_vec(),
+                        },
+                    )),
+                }));
+            }
+            for data in output.stderr.chunks(64 * 1024) {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stderr(
+                        p::ExecSandboxStderr {
+                            data: data.to_vec(),
+                        },
+                    )),
+                }));
+            }
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
+                    exit_code: output.status.code().unwrap_or(1),
+                })),
+            }));
+            return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::iter(events)))));
+        }
         let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
         let launch = &sandbox.spec.as_ref().unwrap().command;
         let operation_index = launch.len() - 3;

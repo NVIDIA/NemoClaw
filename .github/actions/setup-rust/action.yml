@@ -21,7 +21,10 @@ runs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         prefix-key: ${{ inputs.cache-prefix }}
-        key: ${{ inputs.platform }}-${{ hashFiles('Cargo.toml') }}
+        # The action hashes manifests, Cargo.lock, rust-toolchain.toml and
+        # .cargo/config.toml itself, and restores an older cache for this
+        # platform when they change. Hashing files here would block that.
+        key: ${{ inputs.platform }}
         add-rust-environment-hash-key: "true"
         workspaces: . -> target
         cache-targets: "true"
