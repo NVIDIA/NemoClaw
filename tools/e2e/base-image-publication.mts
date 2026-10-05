@@ -413,10 +413,19 @@ export function resolveFirstParentHistory(
   ]);
   sha(relevantSha, "latest applicable base-image commit");
 
-  const historyHeadSha = options.allowCheckedOutDescendant === true ? checkedOutSha : expectedSha;
-  const firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
+  let historyHeadSha = options.allowCheckedOutDescendant === true ? checkedOutSha : expectedSha;
+  let firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
     .split(/\r?\n/u)
     .filter(Boolean);
+  if (options.allowCheckedOutDescendant === true && !firstParentShas.includes(expectedSha)) {
+    if (runGit(["merge-base", expectedSha, checkedOutSha]) !== expectedSha) {
+      throw new Error("expected SHA is not an ancestor of the checked-out commit");
+    }
+    historyHeadSha = expectedSha;
+    firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
+      .split(/\r?\n/u)
+      .filter(Boolean);
+  }
   if (firstParentShas.length === 0 || firstParentShas[0] !== historyHeadSha) {
     throw new Error("first-parent history must begin at the selected history commit");
   }
