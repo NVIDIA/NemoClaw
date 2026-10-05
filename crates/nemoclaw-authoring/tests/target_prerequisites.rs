@@ -6,64 +6,11 @@ use nemoclaw_authoring::{
     TargetPrerequisite, inference_request_for_document,
 };
 use nemoclaw_sdk::{
-    config::Document,
-    discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
-    fabric_capabilities::ImageMetadata,
-    fabric_catalog::{BridgeCapabilities, FabricCatalog},
+    discovery::ObservationStatus,
+    discovery_session::{DiscoveryObservation, DiscoveryQuery},
     inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
 use serde_json::json;
-
-/// Observed images must advertise the Fabric bridge to be compatible.
-fn installed_catalog() -> FabricCatalog {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
-    catalog
-}
-
-/// The target observations a journey would hold after reading `document`'s engine and image.
-fn target_observations(
-    document: &Document,
-    engine: Option<EngineObservation>,
-    fabric: Option<FabricObservation>,
-) -> DiscoveryObservations {
-    let key = crate::support::target(document);
-    let mut sheet = DiscoveryObservations::new();
-    if let Some(engine) = engine {
-        sheet.record(
-            DiscoveryQuery::Engine(DiscoveryRequest {
-                engine: key.engine.clone(),
-                compute_driver: key.compute_driver,
-            }),
-            DiscoveryObservation::Engine(engine),
-        );
-    }
-    if let Some(fabric) = fabric {
-        sheet.record(
-            DiscoveryQuery::Fabric {
-                engine: key.engine,
-                image: key.image,
-            },
-            DiscoveryObservation::Fabric(fabric),
-        );
-    }
-    sheet
-}
 
 fn express() -> JourneyDefinition {
     let base =
@@ -103,32 +50,10 @@ fn required_target_compatibility_stays_unverified_without_current_observations()
     );
 
     let document = unresolved.materialized_document().unwrap();
-    let key = crate::support::target(document);
-    let engine = EngineObservation {
-        status: ObservationStatus::Available,
-        reason: None,
-        source: "fixture".into(),
-        server_version: Some("1".into()),
-        architecture: Some("aarch64".into()),
-        operating_system: Some("linux".into()),
-        memory_bytes: None,
-        cpus: None,
-    };
-    let fabric = FabricObservation {
-        status: ObservationStatus::Available,
-        reason: None,
-        source: "fixture".into(),
-        image_id: Some("sha256:observed".into()),
-        catalog: Some(installed_catalog()),
-        image: ImageMetadata {
-            architecture: Some("arm64".into()),
-            operating_system: Some("linux".into()),
-            repo_digests: vec![key.image],
-            ..Default::default()
-        },
-        compatibility: None,
-    };
-    let compatible = target_observations(document, Some(engine.clone()), Some(fabric.clone()));
+    let engine = crate::support::available_engine();
+    let fabric = crate::support::installed_image(document);
+    let compatible =
+        crate::support::target_observations(document, Some(engine.clone()), Some(fabric.clone()));
     let verified = state
         .resolve_with_observations(&capabilities, &compatible)
         .unwrap();
@@ -141,7 +66,7 @@ fn required_target_compatibility_stays_unverified_without_current_observations()
     // Observations read for another image say nothing about this one.
     let mut other_image = document.clone();
     other_image.spec.sandboxes[0].image.ref_ = "sha256:old-image".into();
-    let stale = target_observations(&other_image, Some(engine), Some(fabric));
+    let stale = crate::support::target_observations(&other_image, Some(engine), Some(fabric));
     let unresolved = state
         .resolve_with_observations(&capabilities, &stale)
         .unwrap();
@@ -159,18 +84,9 @@ fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisi
     let plain = state.resolve(&capabilities).unwrap();
     let document = plain.materialized_document().unwrap();
     assert!(plain.ready_document().is_some());
-    let conflict = target_observations(
+    let conflict = crate::support::target_observations(
         document,
-        Some(EngineObservation {
-            status: ObservationStatus::Unavailable,
-            reason: Some("engine rejected the target".into()),
-            source: "fixture".into(),
-            server_version: None,
-            architecture: None,
-            operating_system: None,
-            memory_bytes: None,
-            cpus: None,
-        }),
+        Some(crate::support::rejecting_engine()),
         None,
     );
     let resolved = state
@@ -193,18 +109,9 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         .unwrap();
     let base = state.resolve(&capabilities).unwrap();
     let document = base.assessment().document().unwrap();
-    let mut observations = target_observations(
+    let mut observations = crate::support::target_observations(
         document,
-        Some(EngineObservation {
-            status: ObservationStatus::Unavailable,
-            reason: Some("engine rejected the target".into()),
-            source: "fixture".into(),
-            server_version: None,
-            architecture: None,
-            operating_system: None,
-            memory_bytes: None,
-            cpus: None,
-        }),
+        Some(crate::support::rejecting_engine()),
         None,
     );
     observations.record(

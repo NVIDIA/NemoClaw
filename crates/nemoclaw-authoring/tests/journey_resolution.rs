@@ -5,29 +5,8 @@ use nemoclaw_authoring::{
     Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
     JourneyScope, PartialDocument,
 };
-use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
-
-/// Observed images must advertise the Fabric bridge to be compatible.
-fn installed_catalog() -> FabricCatalog {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
-    catalog
-}
 
 fn minimum() -> PartialDocument {
     PartialDocument::from_yaml(
@@ -1457,9 +1436,8 @@ fn sparse_journey_delegation_requires_current_target_observations() {
 fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
     use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
-        discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-        discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
-        fabric_capabilities::ImageMetadata,
+        discovery::ObservationStatus,
+        discovery_session::{DiscoveryObservation, DiscoveryQuery},
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1493,70 +1471,37 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
         .document()
         .unwrap()
         .clone();
-    let key = crate::support::target(&document);
-    let mut observations = DiscoveryObservations::new()
-        .with(
-            DiscoveryQuery::Engine(DiscoveryRequest {
-                engine: key.engine.clone(),
-                compute_driver: key.compute_driver,
-            }),
-            DiscoveryObservation::Engine(EngineObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                server_version: Some("1".into()),
-                architecture: Some("aarch64".into()),
-                operating_system: Some("linux".into()),
-                memory_bytes: None,
-                cpus: None,
-            }),
-        )
-        .with(
-            DiscoveryQuery::Fabric {
-                engine: key.engine.clone(),
-                image: key.image.clone(),
-            },
-            DiscoveryObservation::Fabric(FabricObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                image_id: Some("sha256:observed".into()),
-                catalog: Some(installed_catalog()),
-                image: ImageMetadata {
-                    architecture: Some("arm64".into()),
-                    operating_system: Some("linux".into()),
-                    repo_digests: vec![key.image],
-                    ..Default::default()
-                },
-                compatibility: None,
-            }),
-        )
-        .with(
-            DiscoveryQuery::Inference(
-                inference_request_for_document(&document, state.current_route())
+    let mut observations = crate::support::target_observations(
+        &document,
+        Some(crate::support::available_engine()),
+        Some(crate::support::installed_image(&document)),
+    );
+    observations.record(
+        DiscoveryQuery::Inference(
+            inference_request_for_document(&document, state.current_route())
+                .unwrap()
+                .unwrap(),
+        ),
+        DiscoveryObservation::Inference(EndpointObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec![
+                document.spec.sandboxes[0]
+                    .agent
+                    .inference
+                    .as_ref()
                     .unwrap()
-                    .unwrap(),
-            ),
-            DiscoveryObservation::Inference(EndpointObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                reachable: Some(true),
-                authentication: AuthenticationStatus::Accepted,
-                models: vec![
-                    document.spec.sandboxes[0]
-                        .agent
-                        .inference
-                        .as_ref()
-                        .unwrap()
-                        .routes[0]
-                        .overrides
-                        .model
-                        .clone(),
-                ],
-                api_verified: false,
-            }),
-        );
+                    .routes[0]
+                    .overrides
+                    .model
+                    .clone(),
+            ],
+            api_verified: false,
+        }),
+    );
     for reference in document.credential_names() {
         observations.record(
             DiscoveryQuery::Credential {

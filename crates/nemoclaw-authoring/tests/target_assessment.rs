@@ -3,13 +3,12 @@
 
 use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, DiscoveryAssessment, JourneyDefinition, PartialDocument,
-    assess_target, inference_request_for_document,
+    assess_target,
 };
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway, InferenceApi, InferenceProviderKind},
+    config::{ComputeDriver, Document, Gateway},
     discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
-    discovery_session::{DiscoveryObservation, DiscoveryObservations, DiscoveryQuery},
-    fabric_catalog::{BridgeCapabilities, FabricCatalog},
+    discovery_session::{DiscoveryObservations, DiscoveryQuery},
 };
 
 /// Whether any reason the assessment gives contains `text`.
@@ -71,27 +70,7 @@ struct Observed {
 
 impl Observed {
     fn observations(&self, document: &Document) -> DiscoveryObservations {
-        let key = crate::support::target(document);
-        let mut observations = DiscoveryObservations::new();
-        if let Some(engine) = &self.engine {
-            observations.record(
-                DiscoveryQuery::Engine(DiscoveryRequest {
-                    engine: key.engine.clone(),
-                    compute_driver: key.compute_driver,
-                }),
-                DiscoveryObservation::Engine(engine.clone()),
-            );
-        }
-        if let Some(fabric) = &self.fabric {
-            observations.record(
-                DiscoveryQuery::Fabric {
-                    engine: key.engine,
-                    image: key.image,
-                },
-                DiscoveryObservation::Fabric(fabric.clone()),
-            );
-        }
-        observations
+        crate::support::target_observations(document, self.engine.clone(), self.fabric.clone())
     }
 
     fn assess(&self, document: &Document) -> DiscoveryAssessment {
@@ -99,48 +78,11 @@ impl Observed {
     }
 }
 
+/// A target whose engine is available and whose image carries an installed catalog.
 fn observed_target(document: &Document) -> Observed {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
     Observed {
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "engine_gateway_prerequisites".into(),
-            server_version: Some("1".into()),
-            architecture: Some("aarch64".into()),
-            operating_system: Some("linux".into()),
-            memory_bytes: None,
-            cpus: None,
-        }),
-        fabric: Some(FabricObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "engine_image_inspect".into(),
-            image_id: Some("sha256:observed".into()),
-            catalog: Some(catalog),
-            image: nemoclaw_sdk::fabric_capabilities::ImageMetadata {
-                architecture: Some("arm64".into()),
-                operating_system: Some("linux".into()),
-                repo_digests: vec![crate::support::target(document).image],
-                ..Default::default()
-            },
-            compatibility: None,
-        }),
+        engine: Some(crate::support::available_engine()),
+        fabric: Some(crate::support::installed_image(document)),
     }
 }
 
@@ -154,7 +96,7 @@ fn available_engine_and_owner_valid_configuration_establish_compatibility() {
 }
 
 #[test]
-fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_are_unverified() {
+fn a_catalog_without_the_documents_adapter_is_a_conflict() {
     let document = document();
     let mut observed = observed_target(&document);
     observed
@@ -169,11 +111,22 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert_says(&assessment, "fabric_plan");
+}
+
+#[test]
+fn an_image_that_is_not_present_is_unverified_rather_than_a_conflict() {
+    let document = document();
+    let mut observed = observed_target(&document);
     observed.fabric.as_mut().unwrap().status = ObservationStatus::Unavailable;
-    assert_eq!(
-        observed.assess(&document).status,
-        CompatibilityStatus::Unverified
-    );
+    let assessment = observed.assess(&document);
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+    assert_says(&assessment, "image is not present");
+}
+
+#[test]
+fn an_unknown_engine_leaves_the_target_unverified_and_says_so() {
+    let document = document();
+    let mut observed = observed_target(&document);
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unknown;
     observed.fabric = None;
     let assessment = observed.assess(&document);
@@ -264,23 +217,6 @@ fn identity_edits_keep_observations_and_runtime_edits_recheck_engine() {
 }
 
 #[test]
-fn a_catalog_without_the_adapter_is_a_conflict() {
-    let document = document();
-    let mut observed = observed_target(&document);
-    observed
-        .fabric
-        .as_mut()
-        .unwrap()
-        .catalog
-        .as_mut()
-        .unwrap()
-        .adapters
-        .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
-    let assessment = observed.assess(&document);
-    assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-}
-
-#[test]
 fn native_configuration_is_checked_by_the_fabric_planner() {
     let valid = document();
     assert_eq!(
@@ -327,30 +263,6 @@ fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
         observed.assess(&document).status,
         CompatibilityStatus::Conflict
     );
-}
-
-#[test]
-fn managed_service_route_has_no_external_catalog_to_discover() {
-    let document =
-        Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
-    let before = document.clone();
-    assert_eq!(
-        inference_request_for_document(&document, None).unwrap(),
-        None
-    );
-    assert_eq!(document, before);
-}
-
-#[test]
-fn provider_without_an_explicit_api_is_probed_with_its_protocol_default() {
-    let mut document = document();
-    let provider = document.inference_provider_mut().unwrap();
-    provider.provider = InferenceProviderKind::Anthropic;
-    provider.api = None;
-    let request = inference_request_for_document(&document, None)
-        .unwrap()
-        .unwrap();
-    assert_eq!(request.api, InferenceApi::AnthropicMessages);
 }
 
 fn external_document(engine: &str) -> Document {

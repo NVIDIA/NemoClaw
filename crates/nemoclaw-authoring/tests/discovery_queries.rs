@@ -3,9 +3,9 @@
 //! Onboarding asks the target what planning asks for the same document: its
 //! queries are the SDK's `plan_queries` with a few named exclusions, plus the
 //! credential checks. Each exclusion is deliberate and tested below.
-use nemoclaw_authoring::discovery_queries;
+use nemoclaw_authoring::{discovery_queries, inference_request_for_document};
 use nemoclaw_sdk::{
-    config::Document,
+    config::{Document, InferenceApi, InferenceProviderKind},
     discovery_session::{DiscoveryQuery, plan_queries},
 };
 
@@ -102,4 +102,28 @@ fn an_unresolved_engine_is_the_second_named_exclusion() {
     };
     assert_eq!(image_reads(&plan_queries(&document).unwrap()), 1);
     assert_eq!(image_reads(&discovery_queries(&document, None).unwrap()), 0);
+}
+
+#[test]
+fn managed_service_route_has_no_external_catalog_to_discover() {
+    let document =
+        Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
+    let before = document.clone();
+    assert_eq!(
+        inference_request_for_document(&document, None).unwrap(),
+        None
+    );
+    assert_eq!(document, before);
+}
+
+#[test]
+fn provider_without_an_explicit_api_is_probed_with_its_protocol_default() {
+    let mut document = onboarding_example();
+    let provider = document.inference_provider_mut().unwrap();
+    provider.provider = InferenceProviderKind::Anthropic;
+    provider.api = None;
+    let request = inference_request_for_document(&document, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.api, InferenceApi::AnthropicMessages);
 }
