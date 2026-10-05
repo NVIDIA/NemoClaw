@@ -32,13 +32,18 @@ export async function readPublicNvidiaSwitchAttachmentEvidence(options: {
 }): Promise<string | null> {
   if (options.logicalProvider !== PUBLIC_NVIDIA_SWITCH_PROVIDER) return null;
   const receipt = normalizeNativeNvidiaProviderAttachment(options.receipt);
+  const providerRedactionValues = [
+    options.env.NVIDIA_API_KEY,
+    options.env[NVIDIA_HOSTED_CREDENTIAL_ENV],
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
   const provider = await options.sandbox.openshell(
     ["provider", "get", "-g", "nemoclaw", NVIDIA_HOSTED_NATIVE_PROVIDER],
     {
       artifactName: `${options.artifactName}-provider-metadata`,
       captureLimitBytes: 16 * 1024,
       env: options.env,
-      persistArtifacts: false,
+      persistArtifacts: true,
+      redactionValues: providerRedactionValues,
       timeoutMs: 60_000,
     },
   );
