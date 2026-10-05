@@ -518,6 +518,10 @@ export async function backupAllUnderPortableHostFence(
 export async function garbageCollectImages(
   options: string[] | GarbageCollectImagesOptions = {},
 ): Promise<void> {
+  // Reject unsupported state before even listing host images. The same check
+  // runs again inside deletion admission after confirmation to cover changes
+  // that occur while the prompt is open.
+  assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "gc");
   return garbageCollectImagesWithoutPortableAuthority(options, (operation) =>
     withHermesPortableMaintenanceAdmission("gc", async () => await operation()),
   );
