@@ -9,14 +9,28 @@ import {
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
-import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
   return findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
 }
 
-export function listPersistedSandboxTargets(): registry.SandboxEntry[] {
-  return registry.listSandboxes().sandboxes;
+/**
+ * Persisted sandbox rows for endpoint lookup. Without a sandbox name, only the
+ * selected registry root is read. With a sandbox name, rows from every gateway
+ * root are returned, because the sandbox resolves through its owning root even
+ * when NEMOCLAW_GATEWAY_PORT is unset or selects a different root (#12403).
+ */
+export function listPersistedSandboxTargets(sandboxName?: string): registry.SandboxEntry[] {
+  // The config reader throws ConfigCorruptError / ConfigPermissionError, which
+  // inference get reports as registry-corrupt / registry-unreadable. The
+  // cross-port reader throws plain errors, so the selected root is read first.
+  const selected = registry.listSandboxes().sandboxes;
+  if (!sandboxName) return selected;
+  return listPublishedSandboxesAcrossGatewayRoots();
 }
 
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {

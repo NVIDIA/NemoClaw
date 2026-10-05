@@ -197,7 +197,7 @@ function getPersistedEndpoint(
 
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
   try {
-    sandboxes = deps.listSandboxes();
+    sandboxes = deps.listSandboxes(sandboxName);
   } catch (error) {
     if (error instanceof ConfigCorruptError) {
       return endpointOmission("registry-corrupt");
