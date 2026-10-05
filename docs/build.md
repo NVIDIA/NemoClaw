@@ -93,6 +93,7 @@ The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
 The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
 It removes its temporary image tag after completion; it does not start an adapter or request model responses.
+Direct `docker buildx bake` builds omit these labels, so plan cannot select them.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
@@ -103,7 +104,6 @@ Plan requires the selected image's runtime metadata to supply its bridge command
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
-Keep the original bundle and state to operate or destroy deployments created before runtime metadata was retained; this change does not migrate their sandbox bindings.
 
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 

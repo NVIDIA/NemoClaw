@@ -50,6 +50,7 @@ Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share
 
 Declare managed services under `spec.services` and select their connections with `inferenceProviders[].serviceRef`.
 Every declared service is installed and checked, even without an inference consumer.
+Services run on the gateway's Docker engine by default, or on another host through [SSH placement](remote-service.md).
 See [service constraints](inference.md#combine-local-and-hosted-providers) for multiple Ollama/vLLM services and [models](models.md) for hardware contracts and optional [recipes](recipes.md).
 
 ## Use a Managed Podman Gateway
@@ -346,7 +347,3 @@ See [retention details](state.md#deletion-and-retention) for surviving resources
 
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.
 OpenShell deletes by name without an ID/version condition, so a concurrent replacement between the final identity check and delete cannot be eliminated by this client.
-
-## Remote Model Service
-
-Use [the SSH model service guide](remote-service.md) for placement, publication, host prerequisites, and qualification limits.

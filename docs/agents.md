@@ -170,7 +170,7 @@ Changing sandbox resources can still require a separate deployment under the nor
 
 ## Runtime Lifecycle
 
-Build the selected agent image with its installed Fabric metadata using the [image procedure](inference.md#build-an-image-with-the-configuration-interface).
+Build the selected agent image with its installed Fabric metadata using the [image procedure](build.md#build-agent-images).
 Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect retained sandboxes, provider registrations, and storage.
 

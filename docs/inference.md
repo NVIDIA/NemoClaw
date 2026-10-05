@@ -134,35 +134,12 @@ Native agents send the configured model ID to the native endpoint using an OpenS
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
 Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until their endpoint/API/model combinations are qualified.
 
-## Build an Image with the Configuration Interface
+## Use an Image Built from This Revision
 
-Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
-
-Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
-
-```sh
-# On Linux ARM64:
-cargo images build --platform linux/arm64 openclaw
-# For Hermes:
-cargo images build --platform linux/arm64 hermes
-# On Linux AMD64:
-cargo images build --platform linux/amd64 deepagents
-```
-
-These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally and attach catalog metadata obtained through the installed Fabric discovery API.
-Direct Docker Bake builds do not attach that metadata.
-Linux AMD64 also supports the OpenClaw target through the same `--platform` selector.
-Follow [image digest selection](build.md#build-agent-images) and use the matching immutable reference in `sandboxes[].image.ref`.
-The sandbox compute daemon must have access to the built image under that digest; a build on another Docker daemon does not make it available to the gateway.
+Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes[].image.ref`.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
-
-Changing an existing sandbox's image, provider attachments, or security policy can require replacement.
-Ordinary apply rejects sandbox replacement rather than destroying it automatically.
-Model and native settings updates use the owned agent-configuration resource and restart the runtime without replacing its sandbox.
-Use a separate deployment to change images; changing YAML does not migrate native agent state.
-For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
-See [deployment recovery](usage.md) for the operation workflow.
+Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](usage.md#choose-the-change-path).
 
 ## Run Managed Ollama
 
@@ -289,7 +266,7 @@ The proxy exposes `openai-completions`; its service contract does not restrict t
 The selected adapter must accept that protocol and model configuration.
 For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
-Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
+Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](build.md#build-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
 
 ```sh

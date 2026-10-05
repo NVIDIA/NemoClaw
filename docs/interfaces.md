@@ -76,7 +76,7 @@ cargo images build --platform linux/arm64 openclaw
 ```
 
 Select `linux/amd64` on an AMD64 builder.
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), including image availability on the sandbox compute daemon.
+Follow the [image build](build.md#build-agent-images), including image availability on the sandbox compute daemon.
 Replace the dashboard example's image digest, deployment UID, endpoint, and model values, then use the [desired-state workflow](usage.md).
 Changes to public Fabric configuration reconcile through the owned agent-configuration resource and restart the runtime inside its existing sandbox.
 Image or sandbox policy changes retain the ordinary replacement protections.
@@ -139,7 +139,7 @@ See [native controls](agents.md#native-controls-at-initialization) for their own
 
 ### Build and Connect
 
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and build from the repository root:
+Follow the [image build prerequisites](build.md#build-agent-images) and build from the repository root:
 
 ```sh
 cargo images build --platform linux/arm64 hermes

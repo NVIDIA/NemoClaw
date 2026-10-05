@@ -31,7 +31,7 @@ The external Ollama proxy uses OpenAI Completions; Fabric metadata determines ad
 The inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
 External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
-Build an image for the selected harness using [the Fabric image procedure](../inference.md#build-an-image-with-the-configuration-interface).
+Build an image for the selected harness using [the agent image procedure](../build.md#build-agent-images).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
 Hermes service mode is selected explicitly through its Fabric settings; [Relay tracing](../agents.md#hermes-relay-tracing) does not change the adapter identifier.

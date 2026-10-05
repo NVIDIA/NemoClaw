@@ -33,7 +33,7 @@ Review [credential ownership](security.md#credentials-and-authentication) and [d
 
 ## 2. Build the Agent Image
 
-Follow [the Fabric image build](inference.md#build-an-image-with-the-configuration-interface) for OpenClaw.
+Follow [the agent image build](build.md#build-agent-images) for OpenClaw.
 Record the printed immutable image reference and make that exact image available to the gateway's sandbox compute daemon.
 The image must include this revision's configuration and dashboard interfaces.
 An example's old digest or zero-digest placeholder is not a downloadable release artifact.

@@ -241,7 +241,7 @@ The example requires an existing OpenShell gateway and a Linux AMD64 Docker host
 That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
 Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
-Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
+Build a compatible OpenClaw sandbox image using the [agent image procedure](build.md#build-agent-images), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
 
 `hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
