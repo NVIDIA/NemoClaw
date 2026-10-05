@@ -290,6 +290,95 @@ describe("native NVIDIA onboarding", () => {
     );
   });
 
+  it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: true,
+      value: {
+        name: "nemoclaw-nvidia-prod-v1",
+        type: "nemoclaw-nvidia-inference-v1",
+        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: "provider-id", resourceVersion: 4 },
+      },
+    }));
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => null,
+      listSandboxes: () => ({
+        defaultSandbox: "first",
+        sandboxes: [
+          {
+            name: "first",
+            gatewayName: "onboarding-gateway",
+            provider: "nvidia-prod",
+            nativeNvidiaProviderAttachment: {
+              schemaVersion: 1,
+              profileId: "nemoclaw-nvidia-inference-v1",
+              providerName: "nemoclaw-nvidia-prod-v1",
+              providerId: "provider-id",
+            },
+          },
+        ],
+      }),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter: {
+        importProviderProfile,
+        getProvider,
+        createProvider,
+        updateProvider,
+      } as unknown as OpenShellProviderAdapter,
+      hydrateCredentialEnv: vi.fn(() => null),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "second",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        {
+          revalidateSandboxIdentity: () => undefined,
+          reuseGatewayCredentialWithoutLocalKey: true,
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(createProvider).not.toHaveBeenCalled();
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "second",
+      expect.objectContaining({
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId: "provider-id" }),
+      }),
+    );
+  });
+
   it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
     const providerAdapter = {
       importProviderProfile: vi.fn(),
