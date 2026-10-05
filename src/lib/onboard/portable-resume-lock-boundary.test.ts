@@ -386,7 +386,10 @@ describe("portable resume command lock boundary", () => {
       child.stdout?.on("data", (chunk: Buffer) => (childOutput += chunk.toString()));
       child.stderr?.on("data", (chunk: Buffer) => (childOutput += chunk.toString()));
       try {
-        await vi.waitFor(() => expect(fs.existsSync(readyFile)).toBe(true), testTimeoutOptions);
+        await vi.waitFor(
+          () => expect(fs.existsSync(readyFile)).toBe(true),
+          testTimeoutOptions(30_000),
+        );
         expect(fs.existsSync(portableHostFencePath(tempHome))).toBe(true);
         await expect(withPortableHostFenceTry(tempHome, () => undefined)).rejects.toThrow(
           /Host maintenance is in progress/,

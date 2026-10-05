@@ -30,11 +30,14 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 
 describe("sandbox create intent machine boundary", () => {
   beforeEach(() => {
-    vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-intent-")));
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-intent-")),
+    );
   });
 
   afterEach(() => {
-    fs.rmSync(process.env.HOME, { force: true, recursive: true });
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
     vi.unstubAllEnvs();
   });
 

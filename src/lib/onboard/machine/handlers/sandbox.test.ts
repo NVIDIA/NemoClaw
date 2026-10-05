@@ -49,12 +49,15 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
 
 describe("handleSandboxState", () => {
   beforeEach(() => {
-    vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-handler-")));
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-handler-")),
+    );
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
   });
 
   afterEach(() => {
-    fs.rmSync(process.env.HOME, { force: true, recursive: true });
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
     vi.unstubAllEnvs();
   });
 

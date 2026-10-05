@@ -11,11 +11,11 @@ import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("sandbox registration route transaction", () => {
   beforeEach(() => {
-    vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-route-")));
+    vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-route-")));
   });
 
   afterEach(() => {
-    fs.rmSync(process.env.HOME, { force: true, recursive: true });
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
     vi.unstubAllEnvs();
   });
 
