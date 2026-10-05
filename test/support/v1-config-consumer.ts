@@ -39,6 +39,20 @@ export interface PinnedV1OpenClawNativeSettings {
   execution: { timeoutSeconds: number; heartbeatEvery: string | null };
   dashboard: { enabled: boolean; port: number; bind: string };
   toolDisclosure: string;
+  diagnostics?: {
+    enabled: boolean;
+    otel: {
+      enabled: boolean;
+      endpoint: string;
+      serviceName: string;
+      sampleRate: number;
+      protocol: string;
+      traces: boolean;
+      metrics: boolean;
+      logs: boolean;
+    };
+  };
+  diagnosticsPlugin?: { enabled: boolean };
 }
 
 export interface PinnedV1HermesNativeSettings {
@@ -88,6 +102,15 @@ export interface PinnedV1ConsumerEvidence {
   openclawNativeSettings?: Record<string, PinnedV1OpenClawNativeSettings>;
   openclawNativeSettingsVerified?: number;
   hermesNativeSettingsVerified?: number;
+  webSearch?: Record<
+    string,
+    {
+      provider: "brave" | "tavily";
+      credentialReference: string;
+      agentRefs: string[];
+      nativeProvider: "brave" | "tavily";
+    }
+  >;
 }
 
 /** Parse an exact export and generate its native settings with the pinned v1 consumer. */

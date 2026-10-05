@@ -464,11 +464,11 @@ describe("connect route containment", () => {
         "set",
         "-g",
         "nemoclaw-9090",
+        "--no-verify",
         "--provider",
         "anthropic-prod",
         "--model",
         "claude-sonnet-4-20250514",
-        "--no-verify",
       ]);
     }
     expect([...inferenceReads, ...inferenceWrites]).not.toContainEqual(

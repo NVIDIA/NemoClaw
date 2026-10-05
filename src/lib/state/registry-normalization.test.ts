@@ -39,6 +39,41 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  it("persists incomplete OpenClaw synchronization until explicit completion", async () => {
+    const registry = await loadRegistryWith({
+      alpha: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+    });
+
+    expect(registry.updateSandbox("alpha", { model: "new", openClawConfigSyncPending: true })).toBe(
+      true,
+    );
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      model: "new",
+      openClawConfigSyncPending: true,
+    });
+    registry.updateSandbox("alpha", { agentVersion: "updated" });
+    expect(registry.load().sandboxes.alpha.openClawConfigSyncPending).toBe(true);
+
+    registry.updateSandbox("alpha", { openClawConfigSyncPending: undefined });
+    expect(registry.load().sandboxes.alpha).not.toHaveProperty("openClawConfigSyncPending");
+  });
+
+  it("does not carry incomplete OpenClaw synchronization into a replacement registration", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "new",
+        openClawConfigSyncPending: true,
+      },
+    });
+
+    registry.registerSandbox(registry.getSandbox("alpha")!);
+
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("openClawConfigSyncPending");
+  });
+
   const servingProfileProvenance = {
     schemaVersion: 1,
     catalogDigest: `sha256:${"1".repeat(64)}`,
@@ -212,6 +247,40 @@ describe("sandbox registry normalization", () => {
     expect(reloadedRegistry.getSandbox("replacement")).toMatchObject({
       lifecycleGeneration,
       lifecycleLiveIdentityFingerprint,
+    });
+  });
+
+  it("round-trips the persisted external dashboard URL (#11439)", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({
+      name: "proxied",
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+
+    vi.resetModules();
+    const reloadedRegistry = await import("./registry");
+    expect(reloadedRegistry.getSandbox("proxied")).toMatchObject({
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+  });
+
+  it("preserves a persisted external dashboard URL when only the port is updated (#11439)", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({
+      name: "proxied",
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+
+    // Mirror the non-clearing persistDashboardPort update: a loopback re-onboard
+    // must not overwrite the external URL with null.
+    registry.updateSandbox("proxied", { dashboardPort: 18_790 });
+
+    expect(registry.getSandbox("proxied")).toMatchObject({
+      dashboardPort: 18_790,
+      dashboardExternalUrl: "https://dash.example.com:18789",
     });
   });
 

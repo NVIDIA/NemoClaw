@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deleteSnapshotDirectory } from "./snapshot-delete-helper.js";
-import { deleteSnapshot, pruneSnapshots } from "./snapshot.js";
+import { deleteSnapshot, pruneSnapshots } from "./snapshot-management.js";
 
 const tempRoots: string[] = [];
 const REAL_TMP = fs.realpathSync(os.tmpdir());

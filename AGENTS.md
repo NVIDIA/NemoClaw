@@ -68,6 +68,14 @@ publication and review follow-up when requested. A first patch or lifecycle hand
 Keep local verification within the test's documented effects; live E2E and external writes retain
 their own authorization boundaries. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval.
 
+### E2E Triage
+
+For every E2E triage, diagnosis, debugging, or repair task, first use
+[`nemoclaw-maintainer-audit-e2e-assertions`](.agents/skills/nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
+This also applies when E2E failures emerge during broader PR or CI work. Complete its itemized
+source audit before a repair push or expensive rerun. Status-only and dispatch-only requests
+continue through the existing E2E execution skill without an assertion audit.
+
 ### E2E Selection and Authoring
 
 When adding or extending E2E tests, read the [E2E authoring reference](.agents/references/e2e-authoring.md).
@@ -89,6 +97,10 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`, which owns access failu
 ### Pull Request Follow-Up
 
 Follow `.agents/skills/_shared/pr-follow-up.md`.
+
+An authorized PR workflow includes synchronizing the working branch with its target branch under the
+shared contract. Use a merge or GitHub's Update branch operation. Resolve mechanical, in-scope
+conflicts without separate approval. These actions are not destructive Git operations.
 
 ### Common Patterns
 

@@ -215,8 +215,9 @@ That narrow transition is allowed so uninstall can finish removing the remaining
 `$$nemoclaw stop` does not scan or signal the externally supervised gateway.
 Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.
 It does not signal the gateway, use the legacy `gateway destroy` fallback, or remove its Docker volumes.
-Uninstall can delete the selected sandboxes, providers, and local registration.
-It keeps the externally supervised gateway process, Docker resources, and OpenShell binaries.
+When another gateway environment remains, gateway-scoped cleanup can delete selected sandboxes and remove the local registration without signaling the externally supervised gateway.
+Full uninstall refuses bulk sandbox cleanup and exits before deleting selected sandboxes, providers, or the local registration.
+It preserves that downstream state together with the externally supervised gateway process, Docker resources, and OpenShell binaries.
 
 Registering and selecting the validated endpoint changes only the local OpenShell gateway registration used by downstream commands.
 It does not transfer process ownership to NemoClaw.

@@ -626,6 +626,21 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only reports the readiness publication stage and safe reason", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: {
+        kind: "evidence-failed",
+        diagnostic: { stage: "publication-store", reason: "publication-time-unsafe" },
+      },
+    });
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      "  Readiness evidence: stage=publication-store reason=publication-time-unsafe",
+    );
+  });
+
   it("probe-only completes macOS recovery and exits zero when evidence is unavailable (#9278)", async () => {
     const harness = createConnectHarness({
       readinessDecision: {
