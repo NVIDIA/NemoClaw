@@ -433,6 +433,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                     Observation::Inference(value) => Some(value.status),
                     Observation::RuntimeImage(value) => Some(value.status),
                     Observation::Gateway(value) => Some(value.status),
+                    Observation::Credential(value) => Some(value.status),
                     Observation::Service { ready, .. } => ready.map(|value| {
                         if value {
                             ObservationStatus::Available

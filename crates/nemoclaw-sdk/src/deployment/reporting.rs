@@ -133,6 +133,7 @@ impl DiscoveryReport {
                     DiscoveryObservation::Hardware(value) => value.status == Available,
                     DiscoveryObservation::Inference(value) => value.status == Available,
                     DiscoveryObservation::RuntimeImage(value) => value.status == Available,
+                    DiscoveryObservation::Credential(value) => value.status == Available,
                     DiscoveryObservation::Gateway(value) => {
                         value.status == Available && value.compatible == Some(true)
                     }

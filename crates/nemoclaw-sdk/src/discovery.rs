@@ -24,6 +24,7 @@ pub enum DiscoveryObservation {
     Inference(crate::inference_discovery::EndpointObservation),
     RuntimeImage(RuntimeImageObservation),
     Gateway(GatewayObservation),
+    Credential(crate::inference_discovery::CredentialObservation),
     Service { ready: Option<bool>, source: String },
     Unresolved { category: String },
 }
@@ -46,6 +47,22 @@ pub struct EngineObservation {
     pub cpus: Option<i64>,
 }
 
+impl EngineObservation {
+    /// A read that could not be made, recorded as unknown rather than absent.
+    pub fn unknown(reason: &str) -> Self {
+        Self {
+            status: ObservationStatus::Unknown,
+            reason: Some(reason.into()),
+            source: "engine_info".into(),
+            server_version: None,
+            architecture: None,
+            operating_system: None,
+            memory_bytes: None,
+            cpus: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FabricObservation {
     pub status: ObservationStatus,
@@ -57,6 +74,21 @@ pub struct FabricObservation {
     pub image: crate::fabric_capabilities::ImageMetadata,
     #[serde(default)]
     pub compatibility: Option<crate::fabric_capabilities::CompatibilityReport>,
+}
+
+impl FabricObservation {
+    /// A read that could not be made, recorded as unknown rather than absent.
+    pub fn unknown(reason: &str) -> Self {
+        Self {
+            status: ObservationStatus::Unknown,
+            reason: Some(reason.into()),
+            source: "engine_image_inspect".into(),
+            image_id: None,
+            catalog: None,
+            image: Default::default(),
+            compatibility: None,
+        }
+    }
 }
 
 /// Compatibility of a managed inference image with the compiled runtime contract.

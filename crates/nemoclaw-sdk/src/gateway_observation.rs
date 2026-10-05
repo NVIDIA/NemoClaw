@@ -25,6 +25,17 @@ pub struct GatewayObservation {
     pub compatible: Option<bool>,
 }
 impl GatewayObservation {
+    /// A read that could not be made, recorded as unknown rather than absent.
+    pub fn unknown(reason: &str) -> Self {
+        Self {
+            status: ObservationStatus::Unknown,
+            reason: Some(reason.into()),
+            source: "openshell_gateway_info".into(),
+            capabilities: None,
+            compatible: None,
+        }
+    }
+
     pub fn from_result(
         result: Result<GatewayCapabilities, ObservationError>,
         required: &[crate::config::ComputeDriver],

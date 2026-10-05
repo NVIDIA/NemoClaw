@@ -83,7 +83,8 @@ pub struct EndpointObservation {
     pub api_verified: bool,
 }
 impl EndpointObservation {
-    fn unknown(reason: &str) -> Self {
+    /// A read that could not be made, recorded as unknown rather than absent.
+    pub fn unknown(reason: &str) -> Self {
         Self {
             status: ObservationStatus::Unknown,
             reason: Some(reason.into()),
