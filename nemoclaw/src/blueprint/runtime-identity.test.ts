@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createBlueprintOpenShellCli } from "./openshell-cli.js";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -186,17 +187,20 @@ describe("runtime identity contract", () => {
       OKTA_CLIENT_SECRET: "client-secret",
     };
     deps = {
-      run: async (args, options) => {
-        calls.push({ args, env: options?.env });
-        const captureCommand: Partial<Record<string, () => void>> = {
-          "provider profile import --file": () => {
-            importedProfilePaths.push(args[5]);
-            importedProfileSources.push(readFileSync(args[5], "utf8"));
-          },
-        };
-        captureCommand[commandKey(args)]?.();
-        return responses.get(commandKey(args))?.shift() ?? success;
-      },
+      client: createBlueprintOpenShellCli({
+        capture: async (args, options) => {
+          calls.push({ args, env: options?.env });
+          const captureCommand: Partial<Record<string, () => void>> = {
+            "provider profile import --file": () => {
+              importedProfilePaths.push(args[5]);
+              importedProfileSources.push(readFileSync(args[5], "utf8"));
+            },
+          };
+          captureCommand[commandKey(args)]?.();
+          return responses.get(commandKey(args))?.shift() ?? success;
+        },
+      }),
+      gatewayName: "test-gateway",
       formatError: (output, secretValues = []) =>
         secretValues.reduce(
           (redacted, secret) => redacted.replaceAll(secret, secret.length > 0 ? "<redacted>" : ""),

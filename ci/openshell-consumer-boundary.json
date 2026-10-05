@@ -31,7 +31,7 @@
       "disposition": "typed-cli-implementation",
       "evidence": "#9811, #11830, #11831, and #11838",
       "owner": "src/lib/adapters/openshell/sandbox-lifecycle-cli.ts",
-      "reason": "The typed lifecycle adapter owns production create, delete, and bulk cleanup behavior; final plugin consumers remain below as explicit deferrals.",
+      "reason": "Typed CLI implementations own production create, delete, bulk cleanup, and package-compatible plugin create behavior.",
       "removalCondition": "Remove the CLI implementation only after another backend proves lifecycle, reconciliation, and cleanup parity.",
       "operations": ["sandbox create", "sandbox delete", "sandbox remove", "sandbox start", "sandbox stop"]
     },
@@ -53,7 +53,7 @@
       "disposition": "typed-cli-implementation",
       "evidence": "#9806 and its eight merged delivery slices",
       "owner": "src/lib/adapters/openshell/provider-adapter-cli.ts",
-      "reason": "The typed provider adapter owns production provider transport; final plugin consumers remain below as explicit deferrals.",
+      "reason": "Typed CLI implementations own production provider transport and the package-compatible plugin provider boundary.",
       "removalCondition": "Remove the CLI implementation only after another backend proves provider and credential-custody parity.",
       "operations": [
         "provider create",
@@ -75,11 +75,11 @@
       "id": "inference-routing",
       "capability": "inference route observation and mutation",
       "consumer": "CLI, onboarding, recovery, and plugin route callers",
-      "disposition": "dependency-deferral",
+      "disposition": "typed-cli-implementation",
       "evidence": "#9809, #11738, and #11770",
-      "owner": "@rsliter",
-      "reason": "The accepted inference route implementation is not complete on current main.",
-      "removalCondition": "Migrate every route caller through the typed inference adapter after its read and mutation dependencies merge.",
+      "owner": "src/lib/adapters/openshell/inference-route-cli.ts and nemoclaw/src/blueprint/openshell-cli.ts",
+      "reason": "Typed CLI implementations own route observation and mutation for the CLI and independently packaged plugin.",
+      "removalCondition": "Remove the CLI implementations only after another backend proves observation, mutation, and verification parity.",
       "operations": ["inference get", "inference set"]
     },
     {
@@ -107,7 +107,7 @@
       "disposition": "typed-cli-implementation",
       "evidence": "#9807, #11330, and #11741",
       "owner": "src/lib/adapters/openshell/gateway-lifecycle-cli.ts",
-      "reason": "Typed gateway adapters own supported gateway transport; final wrappers and plugin consumers remain in the sweep.",
+      "reason": "Typed CLI implementations own supported gateway transport, including the package-compatible plugin boundary.",
       "removalCondition": "Remove the CLI implementation only after a parity-proven backend owns the same local lifecycle semantics.",
       "operations": [
         "status",
@@ -134,60 +134,15 @@
       "id": "global-settings-and-version",
       "capability": "global settings and installed CLI version",
       "consumer": "plugin identity, onboarding compatibility, and diagnostics",
-      "disposition": "dependency-deferral",
-      "evidence": "#9812 and accepted follow-on #11832",
-      "owner": "@rsliter",
-      "reason": "Global setting reads and installed-version consumers remain in the accepted follow-on.",
-      "removalCondition": "Migrate application consumers and classify installer or local-diagnostic probes as executable exceptions.",
+      "disposition": "typed-cli-implementation",
+      "evidence": "#9812, #11832, #12508, and #9813",
+      "owner": "src/lib/adapters/openshell/installed-version-cli.ts and nemoclaw/src/blueprint/openshell-cli.ts",
+      "reason": "Typed CLI implementations own installed-version observation and the plugin's global-settings prerequisite read.",
+      "removalCondition": "Remove the CLI implementations only after another backend proves version and settings observation parity.",
       "operations": ["settings get", "--version"]
     }
   ],
   "consumerGroups": [
-    {
-      "id": "plugin-blueprint-consumers",
-      "capability": "plugin blueprint OpenShell operations",
-      "consumer": "blueprint runner, runtime identity, and legacy snapshot restore",
-      "disposition": "dependency-deferral",
-      "evidence": "#9813; dependencies #11738 and #11832; snapshot retirement PR #11825",
-      "owner": "@rsliter",
-      "reason": "The plugin still needs the accepted route-mutation and settings follow-ons before its raw command runner can be removed.",
-      "removalCondition": "Route retained plugin behavior through package-compatible typed adapters and remove snapshot restore if PR #11825 retires its final production caller.",
-      "sites": [
-        {
-          "path": "nemoclaw/src/blueprint/runner.ts",
-          "kinds": ["direct-argv"],
-          "operations": [
-            "gateway info",
-            "inference get",
-            "inference set",
-            "policy get",
-            "policy list",
-            "provider create",
-            "provider get",
-            "sandbox create",
-            "sandbox get",
-            "status"
-          ]
-        },
-        {
-          "path": "nemoclaw/src/blueprint/runtime-identity.ts",
-          "kinds": ["direct-argv"],
-          "operations": [
-            "provider create",
-            "provider delete",
-            "provider get",
-            "provider profile export",
-            "provider profile import",
-            "provider refresh configure",
-            "provider refresh rotate",
-            "provider refresh status",
-            "sandbox provider attach",
-            "sandbox provider detach",
-            "settings get"
-          ]
-        }
-      ]
-    },
     {
       "id": "production-src-deferrals",
       "capability": "remaining production CLI consumer sweep",
@@ -195,7 +150,7 @@
       "disposition": "dependency-deferral",
       "evidence": "#9813 and the accepted capability handoffs from #9803 through #9812",
       "owner": "@rsliter",
-      "reason": "These current-main consumers are the bounded sweep backlog. Some await #11738 or #11832; the rest require final migration or retirement without reopening completed capability scope.",
+      "reason": "These current-main consumers are the bounded sweep backlog and require final migration or retirement without reopening completed capability scope.",
       "removalCondition": "Delete each allowance as its consumer moves behind a typed adapter or is retired; do not convert a deferral into an exception without an explicit decision.",
       "sites": [
         {"path":"src/lib/actions/inference-get.ts","kinds":["raw-runtime-import"],"operations":["arbitrary argv"]},

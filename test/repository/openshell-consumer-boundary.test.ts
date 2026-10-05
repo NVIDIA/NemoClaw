@@ -103,6 +103,34 @@ describe("OpenShell consumer boundary (#9813)", () => {
     ]);
   });
 
+  test("excludes only the reviewed plugin CLI implementation paths", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-openshell-plugin-boundary-");
+    writeModule(
+      root,
+      "nemoclaw/src/blueprint/openshell-cli.ts",
+      'run(["openshell", "sandbox", "get", "owned"]);\n',
+    );
+    writeModule(
+      root,
+      "nemoclaw/src/blueprint/openshell-policy.ts",
+      'run(["openshell", "policy", "get", "--global"]);\n',
+    );
+    writeModule(
+      root,
+      "nemoclaw/src/blueprint/openshell-extra.ts",
+      'run(["openshell", "sandbox", "get", "unowned"]);\n',
+    );
+
+    expect(scanOpenShellConsumers(root)).toEqual([
+      {
+        id: "consumer:nemoclaw/src/blueprint/openshell-extra.ts",
+        kinds: ["direct-argv"],
+        operations: ["sandbox get"],
+        path: "nemoclaw/src/blueprint/openshell-extra.ts",
+      },
+    ]);
+  });
+
   test("finds direct executable calls and generic helper definitions", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-openshell-executable-");
     writeModule(
@@ -119,6 +147,26 @@ describe("OpenShell consumer boundary (#9813)", () => {
         kinds: ["direct-argv", "direct-executable", "raw-helper-definition"],
         operations: ["arbitrary argv", "gateway info", "sandbox future-operation"],
         path: "src/direct.ts",
+      },
+    ]);
+  });
+
+  test("finds dynamically composed OpenShell argv outside the implementation boundary", ({
+    resources,
+  }) => {
+    const root = resources.temporaryDirectory("nemoclaw-openshell-dynamic-argv-");
+    writeModule(
+      root,
+      "nemoclaw/src/dynamic.ts",
+      'const suffix = ["sandbox", "get", "example"];\nrun(["openshell", ...suffix]);\n',
+    );
+
+    expect(scanOpenShellConsumers(root)).toEqual([
+      {
+        id: "consumer:nemoclaw/src/dynamic.ts",
+        kinds: ["direct-argv"],
+        operations: ["arbitrary argv"],
+        path: "nemoclaw/src/dynamic.ts",
       },
     ]);
   });

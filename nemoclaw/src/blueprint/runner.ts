@@ -50,6 +50,7 @@ import type {
   ExternalOpenShellGatewayStatus,
   OpenShellGatewayHealthObserver,
 } from "../shared/openshell-observation-boundary.cjs";
+import { blueprintOpenShellCli, type BlueprintOpenShellCommandResult } from "./openshell-cli.js";
 import { createBlueprintOpenShellPolicyClient } from "./openshell-policy.js";
 import { isPrivateHostname } from "./private-networks.js";
 import {
@@ -61,7 +62,6 @@ import {
   parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
   type RuntimeIdentityCommandDeps,
-  type RuntimeIdentityCommandOptions,
   type RuntimeIdentityConfig,
   type RuntimeIdentityDeps,
   type RuntimeIdentityPlan,
@@ -785,51 +785,8 @@ export function loadBlueprint(): Blueprint {
   return parsed;
 }
 
-async function runCmd(
-  args: string[],
-  options?: {
-    gateway?: string;
-    maxBuffer?: number;
-    omitSandboxPolicy?: boolean;
-    reject?: boolean;
-    timeout?: number;
-  },
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const env = buildBlueprintOpenShellEnv(options?.gateway);
-  if (options?.omitSandboxPolicy) {
-    delete env.OPENSHELL_SANDBOX_POLICY;
-  }
-  const result = await execa(args[0], args.slice(1), {
-    reject: options?.reject ?? true,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-    extendEnv: false,
-    ...(options?.maxBuffer !== undefined ? { maxBuffer: options.maxBuffer } : {}),
-    ...(options?.timeout !== undefined ? { timeout: options.timeout } : {}),
-  });
-  return {
-    exitCode: result.exitCode ?? 1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
-}
-
-function buildBlueprintOpenShellEnv(
-  gateway?: string,
-  extra?: Record<string, string>,
-): Record<string, string> {
-  const env = buildSubprocessEnv(extra);
-  if (gateway !== undefined) {
-    env.OPENSHELL_GATEWAY = gateway;
-  }
-  delete env.OPENSHELL_GATEWAY_ENDPOINT;
-  delete env.OPENSHELL_GATEWAY_INSECURE;
-  return env;
-}
-
 async function inspectActiveGatewayBinding(): Promise<GatewayBinding> {
-  const result = await runCmd(["openshell", "status"], { reject: false });
+  const result = await blueprintOpenShellCli.inspectActiveGateway();
   const output = `${result.stderr}\n${result.stdout}`;
   if (result.exitCode !== 0) {
     throw new Error(
@@ -867,19 +824,13 @@ function blueprintInspectionFailureMessage(failure: BlueprintInspectionFailure):
 }
 
 async function runBlueprintInspectionCommand(
-  command: string[],
-  gateway: string,
+  capture: () => Promise<BlueprintOpenShellCommandResult>,
   failure: BlueprintInspectionFailure,
-): Promise<Awaited<ReturnType<typeof runCmd>>> {
+): Promise<BlueprintOpenShellCommandResult> {
   const failureMessage = blueprintInspectionFailureMessage(failure);
-  let result: Awaited<ReturnType<typeof runCmd>>;
+  let result: BlueprintOpenShellCommandResult;
   try {
-    result = await runCmd(command, {
-      gateway,
-      maxBuffer: POLICY_INSPECTION_MAX_BYTES,
-      reject: false,
-      timeout: POLICY_INSPECTION_TIMEOUT_MS,
-    });
+    result = await capture();
   } catch {
     throw new Error(failureMessage);
   }
@@ -908,14 +859,18 @@ async function runBlueprintInspectionCommand(
 
 const blueprintOpenShellPolicyClient = createBlueprintOpenShellPolicyClient({
   captureRead: (command, gatewayName) =>
-    runBlueprintInspectionCommand(command, gatewayName, {
-      kind: "policy",
-      subject: "sandbox",
-    }),
+    runBlueprintInspectionCommand(
+      () =>
+        blueprintOpenShellCli.runPolicyCommand(command, gatewayName, {
+          maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+          reject: false,
+          timeout: POLICY_INSPECTION_TIMEOUT_MS,
+        }),
+      { kind: "policy", subject: "sandbox" },
+    ),
   captureWrite: async (command, gatewayName) => {
     try {
-      const result = await runCmd(command, {
-        gateway: gatewayName,
+      const result = await blueprintOpenShellCli.runPolicyCommand(command, gatewayName, {
         maxBuffer: POLICY_INSPECTION_MAX_BYTES,
         reject: false,
         timeout: POLICY_INSPECTION_TIMEOUT_MS,
@@ -951,8 +906,11 @@ async function inspectBlueprintPolicy(
     }
   }
   const history = await runBlueprintInspectionCommand(
-    ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
-    gateway,
+    () =>
+      blueprintOpenShellCli.inspectGlobalPolicyHistory(gateway, {
+        maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+        timeout: POLICY_INSPECTION_TIMEOUT_MS,
+      }),
     { kind: "policy", subject: "global" },
   );
   const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
@@ -965,8 +923,11 @@ async function inspectBlueprintPolicy(
     );
   }
   const result = await runBlueprintInspectionCommand(
-    ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"],
-    gateway,
+    () =>
+      blueprintOpenShellCli.readActiveGlobalPolicy(gateway, {
+        maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+        timeout: POLICY_INSPECTION_TIMEOUT_MS,
+      }),
     {
       kind: "policy",
       subject: "global",
@@ -1198,35 +1159,20 @@ function readConfiguredSandboxPolicy(): { path: string } | null {
 
 async function inspectGatewayEndpoint(name: string): Promise<{ host: string; port: number }> {
   const info = await runBlueprintInspectionCommand(
-    ["openshell", "gateway", "info", "-g", name],
-    name,
+    () =>
+      blueprintOpenShellCli.inspectGateway(name, {
+        maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+        timeout: POLICY_INSPECTION_TIMEOUT_MS,
+      }),
     { kind: "state", subject: "gateway" },
   );
   return parseSingleManagedGatewayEndpoint(`${info.stderr}\n${info.stdout}`);
 }
 
-async function runRuntimeIdentityCommand(
-  args: string[],
-  options?: RuntimeIdentityCommandOptions,
-  gateway?: string,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const result = await execa(args[0], args.slice(1), {
-    reject: false,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: buildBlueprintOpenShellEnv(gateway, options?.env),
-    extendEnv: false,
-  });
-  return {
-    exitCode: result.exitCode ?? 1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
-}
-
 function runtimeIdentityCommandDeps(gateway: string): RuntimeIdentityCommandDeps {
   return {
-    run: (args, options) => runRuntimeIdentityCommand(args, options, gateway),
+    client: blueprintOpenShellCli,
+    gatewayName: gateway,
     formatError: boundedCommandError,
   };
 }
@@ -1803,30 +1749,12 @@ export async function actionApply(
     let reuseExistingInferenceRoute = false;
     let reuseExistingSandbox = false;
     progress(20, "Creating OpenClaw sandbox");
-    const createArgs = [
-      "openshell",
-      "sandbox",
-      "create",
-      "-g",
-      policyGateway.name,
-      "--from",
-      sandboxImage,
-      "--name",
-      sandboxName,
-    ];
-    if (configuredSandboxPolicy) {
-      createArgs.push("--policy", configuredSandboxPolicy.path);
-    }
-    for (const port of forwardPorts) {
-      createArgs.push("--forward", String(port));
-    }
-
     await requireCreatePolicyBoundary();
     if (runtimeIdentityConfig) {
-      const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
-        gateway: policyGateway.name,
-        reject: false,
-      });
+      const sandboxResult = await blueprintOpenShellCli.inspectSandbox(
+        policyGateway.name,
+        sandboxName,
+      );
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         reuseExistingSandbox = true;
@@ -1838,10 +1766,12 @@ export async function actionApply(
       }
     }
     if (!reuseExistingSandbox) {
-      const createResult = await runCmd(createArgs, {
-        gateway: policyGateway.name,
-        omitSandboxPolicy: true,
-        reject: false,
+      const createResult = await blueprintOpenShellCli.createSandbox({
+        gatewayName: policyGateway.name,
+        image: sandboxImage,
+        name: sandboxName,
+        ...(configuredSandboxPolicy ? { policyPath: configuredSandboxPolicy.path } : {}),
+        forwardPorts,
       });
       if (createResult.exitCode !== 0) {
         if (createResult.stderr.includes("already exists")) {
@@ -1864,10 +1794,10 @@ export async function actionApply(
     assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
 
     if (runtimeIdentityConfig) {
-      const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
-        gateway: policyGateway.name,
-        reject: false,
-      });
+      const providerResult = await blueprintOpenShellCli.inspectProvider(
+        policyGateway.name,
+        providerName,
+      );
       const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
       if (providerResult.exitCode === 0) {
         assertReusableInferenceProvider(providerResult.stdout, {
@@ -1883,10 +1813,7 @@ export async function actionApply(
         );
       }
       if (reuseExistingInferenceProvider) {
-        const routeResult = await runCmd(["openshell", "inference", "get"], {
-          gateway: policyGateway.name,
-          reject: false,
-        });
+        const routeResult = await blueprintOpenShellCli.inspectInferenceRoute(policyGateway.name);
         if (routeResult.exitCode !== 0) {
           throw new Error(
             `Failed to inspect the active inference route before runtime identity apply: ${boundedCommandError(`${routeResult.stderr}\n${routeResult.stdout}`)}`,
@@ -1915,31 +1842,12 @@ export async function actionApply(
     if (reuseExistingInferenceProvider) {
       log(`Provider '${providerName}' already exists, reusing.`);
     } else {
-      const providerArgs = [
-        "openshell",
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        providerType,
-      ];
-      // Pass the env-var NAME (not the value) to --credential; openshell reads the value from the env.
-      // Scope the credential to the subprocess to avoid leaking into later commands.
-      const credEnv: Record<string, string> = {};
-      if (credential) {
-        credEnv.OPENAI_API_KEY = credential;
-        providerArgs.push("--credential", "OPENAI_API_KEY");
-      }
-      if (endpoint) {
-        providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
-      }
-      const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
-        reject: false,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: buildBlueprintOpenShellEnv(policyGateway.name, credEnv),
-        extendEnv: false,
+      const providerResult = await blueprintOpenShellCli.createInferenceProvider({
+        gatewayName: policyGateway.name,
+        name: providerName,
+        type: providerType,
+        ...(credential ? { credential } : {}),
+        ...(endpoint ? { endpoint } : {}),
       });
       // A required mutation: a silently-ignored failure would persist plan.json and
       // report a ready sandbox that cannot perform inference. Mirror the
@@ -1950,10 +1858,10 @@ export async function actionApply(
       if (providerResult.exitCode !== 0) {
         if (providerResult.stderr.includes("already exists")) {
           if (runtimeIdentityConfig) {
-            const racedProvider = await runCmd(["openshell", "provider", "get", providerName], {
-              gateway: policyGateway.name,
-              reject: false,
-            });
+            const racedProvider = await blueprintOpenShellCli.inspectProvider(
+              policyGateway.name,
+              providerName,
+            );
             if (racedProvider.exitCode !== 0) {
               throw new Error(
                 `Failed to inspect inference provider '${providerName}' after concurrent creation: ${boundedCommandError(`${racedProvider.stderr}\n${racedProvider.stdout}`)}`,
@@ -1988,21 +1896,13 @@ export async function actionApply(
     if (reuseExistingInferenceRoute) {
       log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
     } else {
-      const inferenceArgs = [
-        "openshell",
-        "inference",
-        "set",
-        "--provider",
-        providerName,
-        "--model",
+      const inferenceResult = await blueprintOpenShellCli.setInferenceRoute({
+        gatewayName: policyGateway.name,
+        provider: providerName,
         model,
-      ];
-      if (inferenceCfg.timeout_secs !== undefined) {
-        inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
-      }
-      const inferenceResult = await runCmd(inferenceArgs, {
-        gateway: policyGateway.name,
-        reject: false,
+        ...(inferenceCfg.timeout_secs !== undefined
+          ? { timeoutSeconds: inferenceCfg.timeout_secs }
+          : {}),
       });
       // Another required mutation: without a routed provider the sandbox cannot
       // perform inference, so a non-zero result must abort the apply. (#6703)

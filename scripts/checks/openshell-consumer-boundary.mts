@@ -65,6 +65,10 @@ export type ConsumerBoundaryViolation = Readonly<{
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "ci", "openshell-consumer-boundary.json");
 const SCAN_ROOTS = ["src", "nemoclaw/src"] as const;
+const OPENSHELL_CLI_IMPLEMENTATION_PATHS = new Set([
+  "nemoclaw/src/blueprint/openshell-cli.ts",
+  "nemoclaw/src/blueprint/openshell-policy.ts",
+]);
 const SOURCE_EXTENSION = /\.[cm]?[jt]sx?$/u;
 const TEST_SUPPORT_PATH =
   /(?:^|\/)(?:__test-helpers__|test-fixtures)(?:\/|$)|\.(?:test|spec|test-support|test-fixture)\.[cm]?[jt]sx?$/u;
@@ -247,7 +251,12 @@ function rawRuntimeSpecifier(node: ts.Node): string | null {
 }
 
 function scanSourceFile(repoPath: string, absPath: string): ConsumerFinding[] {
-  if (repoPath.startsWith("src/lib/adapters/openshell/")) return [];
+  if (
+    repoPath.startsWith("src/lib/adapters/openshell/") ||
+    OPENSHELL_CLI_IMPLEMENTATION_PATHS.has(repoPath)
+  ) {
+    return [];
+  }
   const source = sourceFileFor(absPath);
   const bindings = collectStaticBindings(source);
   const kinds = new Set<ConsumerFindingKind>();
@@ -286,6 +295,13 @@ function scanSourceFile(repoPath: string, absPath: string): ConsumerFinding[] {
       const name = calledName(node);
       const first = node.arguments[0];
       const second = node.arguments[1];
+      if (
+        first &&
+        ts.isArrayLiteralExpression(first) &&
+        stringValue(first.elements[0] as ts.Expression) === "openshell"
+      ) {
+        add("direct-argv", operationFromArray(first) ?? "arbitrary argv");
+      }
       if (name && RAW_HELPERS.has(name) && first && ts.isArrayLiteralExpression(first)) {
         const operation = operationFromArray(first);
         if (operation) add("direct-argv", operation);

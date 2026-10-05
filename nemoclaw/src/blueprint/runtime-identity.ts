@@ -18,6 +18,7 @@ import YAML from "yaml";
 
 import { isSubprocessEnvNameAllowed } from "../lib/subprocess-env.js";
 import { isPlainObject } from "../shared/object-record.js";
+import type { BlueprintOpenShellCli, BlueprintOpenShellCommandResult } from "./openshell-cli.js";
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
 const CLIENT_ID_ENV_PATTERN = /(?:^|_)CLIENT_ID$/;
@@ -102,21 +103,11 @@ export interface RuntimeIdentityReceipt extends RuntimeIdentityPlan {
   attachment_created: boolean;
 }
 
-export interface RuntimeIdentityCommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-export interface RuntimeIdentityCommandOptions {
-  env?: Record<string, string>;
-}
+export type RuntimeIdentityCommandResult = BlueprintOpenShellCommandResult;
 
 export interface RuntimeIdentityCommandDeps {
-  run(
-    args: string[],
-    options?: RuntimeIdentityCommandOptions,
-  ): Promise<RuntimeIdentityCommandResult>;
+  client: BlueprintOpenShellCli;
+  gatewayName: string;
   formatError(output: string, secretValues?: readonly string[]): string;
   blueprintPath?: string;
   env?: NodeJS.ProcessEnv;
@@ -673,7 +664,7 @@ function requiredEnvironmentValue(
 }
 
 async function requireProviderDerivedPolicy(deps: RuntimeIdentityCommandDeps): Promise<void> {
-  const result = await deps.run(["openshell", "settings", "get", "--global", "--json"]);
+  const result = await deps.client.readGlobalSettings(deps.gatewayName);
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to inspect OpenShell provider-policy prerequisite: ${deps.formatError(commandOutput(result))}`,
@@ -790,15 +781,11 @@ async function requireConfiguredRuntimeIdentityRefresh(
   expected: RuntimeIdentityPlan,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
-  const result = await deps.run([
-    "openshell",
-    "provider",
-    "refresh",
-    "status",
+  const result = await deps.client.inspectProviderRefresh(
+    deps.gatewayName,
     expected.provider_name,
-    "--credential-key",
     expected.credential_key,
-  ]);
+  );
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to inspect runtime identity refresh binding for '${expected.provider_name}': ${deps.formatError(commandOutput(result))}`,
@@ -816,7 +803,7 @@ async function inspectProvider(
   deps: RuntimeIdentityCommandDeps,
   allowConfiguredRefresh = false,
 ): Promise<"absent" | "matching"> {
-  const result = await deps.run(["openshell", "provider", "get", expected.provider_name]);
+  const result = await deps.client.inspectProvider(deps.gatewayName, expected.provider_name);
   if (isMissingResource(result)) return "absent";
   const credentialState = assertMatchingProvider(result, expected, deps, allowConfiguredRefresh);
   if (credentialState === "configured") {
@@ -831,7 +818,7 @@ async function deleteCreatedProvider(
 ): Promise<void> {
   const providerState = await inspectProvider(receipt, deps, true);
   if (providerState === "absent") return;
-  const result = await deps.run(["openshell", "provider", "delete", receipt.provider_name]);
+  const result = await deps.client.deleteProvider(deps.gatewayName, receipt.provider_name);
   if (result.exitCode !== 0 && !isMissingResource(result)) {
     throw new Error(
       `Failed to delete runtime identity provider '${receipt.provider_name}': ${deps.formatError(commandOutput(result))}`,
@@ -868,7 +855,7 @@ async function importValidatedProfile(
       flag: "wx",
       mode: 0o600,
     });
-    return await deps.run(["openshell", "provider", "profile", "import", "--file", snapshotPath]);
+    return await deps.client.importProviderProfile(deps.gatewayName, snapshotPath);
   } finally {
     rmSync(snapshotDir, { recursive: true, force: true });
   }
@@ -929,15 +916,10 @@ export async function prepareRuntimeIdentity(
         `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
       );
     }
-    const profileExport = await deps.run([
-      "openshell",
-      "provider",
-      "profile",
-      "export",
+    const profileExport = await deps.client.exportProviderProfile(
+      deps.gatewayName,
       config.provider_type,
-      "--output",
-      "yaml",
-    ]);
+    );
     if (profileExport.exitCode !== 0) {
       throw new Error(
         `Failed to inspect existing runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
@@ -970,16 +952,11 @@ export async function prepareRuntimeIdentity(
   };
   let providerAcquired = false;
   try {
-    const providerCreate = await deps.run([
-      "openshell",
-      "provider",
-      "create",
-      "--name",
+    const providerCreate = await deps.client.createRuntimeIdentityProvider(
+      deps.gatewayName,
       config.provider_name,
-      "--type",
       config.provider_type,
-      "--runtime-credentials",
-    ]);
+    );
     if (providerCreate.exitCode !== 0) {
       throw new Error(
         `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
@@ -991,29 +968,20 @@ export async function prepareRuntimeIdentity(
     // that the next process cannot prove this run created.
     providerAcquired = true;
 
-    const refreshArgs = [
-      "openshell",
-      "provider",
-      "refresh",
-      "configure",
-      config.provider_name,
-      "--credential-key",
-      config.credential_key,
-      "--strategy",
-      "oauth2-refresh-token",
-      "--material",
-      `client_id=${clientId}`,
-      "--secret-material-env",
-      `refresh_token=${config.refresh_token_env}`,
-    ];
-    const refreshEnv: Record<string, string> = {
-      [config.refresh_token_env]: refreshToken,
-    };
-    if (config.client_secret_env && clientSecret) {
-      refreshArgs.push("--secret-material-env", `client_secret=${config.client_secret_env}`);
-      refreshEnv[config.client_secret_env] = clientSecret;
-    }
-    const refreshResult = await deps.run(refreshArgs, { env: refreshEnv });
+    const refreshResult = await deps.client.configureProviderRefresh({
+      gatewayName: deps.gatewayName,
+      providerName: config.provider_name,
+      credentialKey: config.credential_key,
+      clientId,
+      refreshTokenEnvironmentName: config.refresh_token_env,
+      refreshToken,
+      ...(config.client_secret_env && clientSecret
+        ? {
+            clientSecretEnvironmentName: config.client_secret_env,
+            clientSecret,
+          }
+        : {}),
+    });
     if (refreshResult.exitCode !== 0) {
       throw new Error(
         `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
@@ -1033,15 +1001,11 @@ export async function mintRuntimeIdentityCredential(
   receipt: RuntimeIdentityReceipt,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
-  const rotate = await deps.run([
-    "openshell",
-    "provider",
-    "refresh",
-    "rotate",
+  const rotate = await deps.client.rotateProviderRefresh(
+    deps.gatewayName,
     receipt.provider_name,
-    "--credential-key",
     receipt.credential_key,
-  ]);
+  );
   if (rotate.exitCode !== 0) {
     throw new Error(
       `Failed to mint runtime identity credential: ${deps.formatError(commandOutput(rotate))}`,
@@ -1061,14 +1025,11 @@ export async function attachRuntimeIdentity(
       `Runtime identity provider '${receipt.provider_name}' disappeared before attach`,
     );
   }
-  const attach = await deps.run([
-    "openshell",
-    "sandbox",
-    "provider",
-    "attach",
+  const attach = await deps.client.attachProvider(
+    deps.gatewayName,
     sandboxName,
     receipt.provider_name,
-  ]);
+  );
   if (attach.exitCode === 0) return true;
   if (/already attached/i.test(commandOutput(attach))) return false;
   throw new Error(
@@ -1083,14 +1044,11 @@ async function detachRuntimeIdentity(
 ): Promise<void> {
   const providerState = await inspectProvider(receipt, deps, true);
   if (providerState === "absent") return;
-  const detach = await deps.run([
-    "openshell",
-    "sandbox",
-    "provider",
-    "detach",
+  const detach = await deps.client.detachProvider(
+    deps.gatewayName,
     sandboxName,
     receipt.provider_name,
-  ]);
+  );
   if (
     detach.exitCode !== 0 &&
     !isMissingResource(detach) &&
