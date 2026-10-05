@@ -19,6 +19,7 @@ import {
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   normalizeNativeNvidiaProviderAttachment,
+  resolveGatewayNativeNvidiaProviderAuthority,
   resolveAgentInferenceApi,
   type NativeNvidiaProviderAttachment,
   type SandboxInferenceConfig,
@@ -948,7 +949,7 @@ function assertNativeNvidiaMigrationReady(input: {
 
 async function prepareNativeNvidiaSelection(input: {
   provider: string;
-  previousAttachment?: NativeNvidiaProviderAttachment;
+  expectedAttachment?: NativeNvidiaProviderAttachment;
   gatewayName: string;
   sandboxName: string;
   deps: InferenceSetDeps;
@@ -962,7 +963,7 @@ async function prepareNativeNvidiaSelection(input: {
     adapter: input.deps.providerAdapter,
     target,
     credentialValue: input.deps.resolveCredentialValue(NVIDIA_HOSTED_CREDENTIAL_ENV) || null,
-    ...(input.previousAttachment ? { expected: input.previousAttachment } : {}),
+    ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
   });
   const attached = await ensureNativeNvidiaProviderAttached({
     adapter: input.deps.providerAdapter,
@@ -1513,6 +1514,13 @@ async function runInferenceSetWithoutHostLock(
     previousAttachment: previousNativeNvidiaAttachment,
     sandboxName,
   });
+  const nativeNvidiaProviderAuthority = selectingNativeNvidia
+    ? resolveGatewayNativeNvidiaProviderAuthority({
+        gatewayName: preparedRoute.gatewayName,
+        recordedAttachment: previousNativeNvidiaAttachment,
+        sandboxes: routeSandboxes,
+      })
+    : undefined;
   const rollbackRoute = preMutationRoute.state === "configured" ? preMutationRoute.route : null;
   // Capture before registry writes: a retry already has the new route, while
   // the sandbox config can still carry the previous endpoint's context window.
@@ -1588,7 +1596,7 @@ async function runInferenceSetWithoutHostLock(
   try {
     const nativeNvidiaSelection = await prepareNativeNvidiaSelection({
       provider,
-      previousAttachment: previousNativeNvidiaAttachment,
+      expectedAttachment: nativeNvidiaProviderAuthority,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       deps,

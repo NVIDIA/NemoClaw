@@ -15,6 +15,7 @@ import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "./contract";
 
@@ -46,6 +47,35 @@ export function nativeNvidiaProviderProfilePath(root = REPOSITORY_ROOT): string 
 
 export function isNativeNvidiaProvider(provider: string | null | undefined): boolean {
   return provider?.trim() === NVIDIA_HOSTED_LOGICAL_PROVIDER;
+}
+
+export function resolveGatewayNativeNvidiaProviderAuthority(input: {
+  gatewayName: string;
+  recordedAttachment?: NativeNvidiaProviderAttachment | null;
+  sandboxes: ReadonlyArray<{
+    gatewayName?: string | null;
+    provider?: string | null;
+    nativeNvidiaProviderAttachment?: unknown;
+  }>;
+}): NativeNvidiaProviderAttachment | undefined {
+  if (input.recordedAttachment) return input.recordedAttachment;
+
+  const authorities = new Map<string, NativeNvidiaProviderAttachment>();
+  for (const sandbox of input.sandboxes) {
+    if (sandbox.gatewayName !== input.gatewayName || !isNativeNvidiaProvider(sandbox.provider)) {
+      continue;
+    }
+    const attachment = normalizeNativeNvidiaProviderAttachment(
+      sandbox.nativeNvidiaProviderAttachment,
+    );
+    if (attachment) authorities.set(attachment.providerId, attachment);
+  }
+  if (authorities.size > 1) {
+    throw new NativeNvidiaProviderError(
+      `Gateway '${input.gatewayName}' has conflicting native NVIDIA provider ownership receipts. No provider was changed.`,
+    );
+  }
+  return authorities.values().next().value;
 }
 
 export function nativeInferenceProviderForSandbox(

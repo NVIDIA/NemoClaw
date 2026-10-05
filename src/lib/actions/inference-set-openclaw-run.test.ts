@@ -27,6 +27,47 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
+  it("reuses a same-gateway native NVIDIA provider authority from a peer sandbox", async () => {
+    const peerAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const deps = createDeps({
+      config: {},
+      entries: [
+        {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+        {
+          name: "beta",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/peer-model",
+          nativeNvidiaProviderAttachment: peerAttachment,
+        },
+      ],
+      defaultSandbox: "alpha",
+      resolveCredentialValue: () => "",
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeNvidiaProviderAttachment: peerAttachment }),
+    );
+  });
+
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
     let attached = true;
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {

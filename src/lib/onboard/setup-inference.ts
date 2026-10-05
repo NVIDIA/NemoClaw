@@ -25,6 +25,7 @@ import {
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   normalizeNativeNvidiaProviderAttachment,
+  resolveGatewayNativeNvidiaProviderAuthority,
   type NativeNvidiaProviderAttachment,
 } from "../inference/native-nvidia";
 import {
@@ -631,29 +632,6 @@ function releaseSupersededOllamaModel(
   if (authorityRefusal) throw authorityRefusal;
 }
 
-function resolveGatewayNativeNvidiaProviderAuthority(
-  deps: SetupInferenceDeps,
-  gatewayName: string,
-  recordedAttachment: NativeNvidiaProviderAttachment | null | undefined,
-): NativeNvidiaProviderAttachment | undefined {
-  if (recordedAttachment) return recordedAttachment;
-
-  const authorities = new Map<string, NativeNvidiaProviderAttachment>();
-  for (const sandbox of deps.listSandboxes?.().sandboxes ?? []) {
-    if (sandbox.gatewayName !== gatewayName || !isNativeNvidiaProvider(sandbox.provider)) continue;
-    const attachment = normalizeNativeNvidiaProviderAttachment(
-      sandbox.nativeNvidiaProviderAttachment,
-    );
-    if (attachment) authorities.set(attachment.providerId, attachment);
-  }
-  if (authorities.size > 1) {
-    throw new Error(
-      `Gateway '${gatewayName}' has conflicting native NVIDIA provider ownership receipts. No provider was changed.`,
-    );
-  }
-  return authorities.values().next().value;
-}
-
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
@@ -1003,11 +981,11 @@ export function createSetupInference(
                 `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
               );
             }
-            const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority(
-              deps,
+            const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
               gatewayName,
               recordedAttachment,
-            );
+              sandboxes: deps.listSandboxes?.().sandboxes ?? [],
+            });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,
               target: { kind: "named", gatewayName },
