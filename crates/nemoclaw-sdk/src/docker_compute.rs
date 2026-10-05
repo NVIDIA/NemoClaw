@@ -13,11 +13,15 @@ fn process(target: &Target) -> bool {
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
         || matches!(
             target.kind.as_str(),
-            "inference_service" | "ollama_service" | "ollama_proxy"
+            "inference_service" | "ollama_service" | "ollama_proxy" | "container_service"
         )
 }
 pub(crate) fn address(logical: &str) -> String {
-    for kind in ["inference_storage", "ollama_service_storage"] {
+    for kind in [
+        "inference_storage",
+        "ollama_service_storage",
+        "container_storage",
+    ] {
         if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}."))
             && !name.ends_with("_auth")
         {
@@ -29,6 +33,7 @@ pub(crate) fn address(logical: &str) -> String {
         "ollama_service",
         "ollama_proxy",
         "managed_gateway",
+        "container_service",
     ] {
         if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}.")) {
             return format!("docker_container.{kind}_{name}");
@@ -133,6 +138,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
     for target in &mut result {
         if address(&target.address).starts_with("docker_volume.") {
+            let retained = target.kind != crate::services::installers::container::STORAGE_KIND;
             let storage: crate::managed::Storage = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid cache specification"))?;
             target.address = address(&target.address);
@@ -142,6 +148,9 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
                 ("name".into(), storage.name),
                 ("owner".into(), storage.owner),
             ]);
+            if !retained {
+                target.values.insert("disposable".into(), "true".into());
+            }
         }
     }
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
@@ -225,6 +234,25 @@ fn container(target: &Target) -> Result<Value, Error> {
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
     let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    if target.kind == crate::services::installers::container::SERVICE_KIND {
+        let attrs_map = attrs.as_object_mut().unwrap();
+        attrs_map.remove("entrypoint");
+        attrs_map.remove("command");
+        attrs_map.remove("ulimit");
+        if process.port == 0 {
+            attrs_map.remove("ports");
+        }
+        attrs["user"] = json!(process.user);
+        attrs["labels"] = json!(
+            spec.labels()?
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(label, value)| json!({"label":label,"value":value}))
+                .collect::<Vec<_>>()
+        );
+        attrs["destroy_grace_seconds"] = json!(15);
+    }
     if target.kind == "inference_service"
         && crate::services::installers::vllm::configured_service(&spec)?
             .authentication
@@ -252,7 +280,11 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
             "docker_volume" => {
-                json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}})
+                let mut volume = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}});
+                if target.values.get("disposable").is_some_and(|v| v == "true") {
+                    volume.as_object_mut().unwrap().remove("lifecycle");
+                }
+                volume
             }
             "docker_network" => {
                 json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
@@ -318,11 +350,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             }
             storage_path(&mut attrs);
         }
-        if matches!(target.kind.as_str(), "inference_service" | "ollama_service") {
+        if matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "container_service"
+        ) {
             let cache_kind = if target.kind == "inference_service" {
                 "inference_storage"
-            } else {
+            } else if target.kind == "ollama_service" {
                 "ollama_service_storage"
+            } else {
+                "container_storage"
             };
             let name = target.address.split_once('.').unwrap().1;
             attrs["mounts"][0]["source"] =
@@ -383,10 +420,12 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
 
 fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> {
     let mut gates = Vec::new();
-    for target in raw
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
-    {
+    for target in raw.iter().filter(|target| {
+        matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "container_service"
+        )
+    }) {
         let image = image(target)?;
         let container = address(&target.address);
         let name = container

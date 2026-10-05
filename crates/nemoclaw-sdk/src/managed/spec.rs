@@ -55,6 +55,10 @@ pub struct Process {
     pub entrypoint: Vec<String>,
     #[serde(default)]
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub environment: std::collections::BTreeMap<String, String>,
     pub mount_target: String,
     pub bind_address: String,
     pub port: u16,
@@ -75,6 +79,46 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+impl Process {
+    fn valid_application(&self) -> bool {
+        let matches =
+            |pattern: &str, value: &str| regex::Regex::new(pattern).unwrap().is_match(value);
+        let env_name = regex::Regex::new(crate::config::constraints::ENV).unwrap();
+        self.engine.starts_with("unix:///")
+            && matches(crate::config::constraints::IMAGE, &self.image)
+            && !self.image.contains(['\0', '\r', '\n'])
+            && matches!(self.architecture.as_str(), "arm64" | "amd64")
+            && self
+                .network_cidr
+                .parse::<ipnet::Ipv4Net>()
+                .is_ok_and(|net| {
+                    net.addr().is_private() && net.prefix_len() == 24 && net.addr() == net.network()
+                })
+            && self.configuration.is_empty()
+            && self.entrypoint.is_empty()
+            && self.command.is_empty()
+            && !self.gpu
+            && !self.host_ipc
+            && self.memory_bytes == 1 << 30
+            && self.shared_memory_bytes == 64 << 20
+            && matches(r"^[1-9][0-9]{0,8}:[1-9][0-9]{0,8}$", &self.user)
+            && self.environment.len() <= 128
+            && self.environment.values().map(String::len).sum::<usize>() <= 128 << 10
+            && self.environment.iter().all(|(key, value)| {
+                env_name.is_match(key)
+                    && !key.contains(['\0', '\r', '\n'])
+                    && value.len() <= 65536
+                    && !value.contains('\0')
+            })
+            && matches(r"^/var/lib/[a-z][a-z0-9-]{0,62}$", &self.mount_target)
+            && (self.port == 0 && self.bind_address.is_empty()
+                || self.port >= 1024
+                    && self
+                        .bind_address
+                        .parse::<std::net::Ipv4Addr>()
+                        .is_ok_and(|ip| ip.is_private() || ip.is_loopback()))
+    }
 }
 impl Spec {
     /// Validate ownership, configuration, runtime kind, and layout.
@@ -123,14 +167,20 @@ impl Spec {
                 && crate::config::validate_engine_endpoint(&process.engine).is_ok()
                 && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
                 && process.image.contains("@sha256:")
-                && valid_token(&process.configuration)
-                && !process.entrypoint.is_empty()
+                && (if self.kind == crate::services::installers::container::SERVICE_KIND {
+                    process.valid_application()
+                } else {
+                    valid_token(&process.configuration)
+                        && !process.entrypoint.is_empty()
+                        && process.user.is_empty()
+                        && process.environment.is_empty()
+                        && !process.bind_address.is_empty()
+                        && process.port != 0
+                })
                 && process.entrypoint.iter().all(|value| valid_token(value))
                 && process.command.iter().all(|value| valid_token(value))
                 && process.mount_target.starts_with('/')
                 && !process.mount_target.contains("..")
-                && !process.bind_address.is_empty()
-                && process.port != 0
                 && !process.architecture.is_empty()
                 && process.memory_bytes > 0
             {
@@ -308,12 +358,23 @@ impl Spec {
             let process = self.process.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
             ))?;
-            config["Entrypoint"] = json!(process.entrypoint);
-            config["Cmd"] = json!(process.command);
-            config["Env"] = json!([format!(
-                "NEMOCLAW_RUNTIME_SPEC={}",
-                self.runtime_configuration()?
-            )]);
+            if self.kind == crate::services::installers::container::SERVICE_KIND {
+                config["User"] = json!(process.user);
+                config["Env"] = json!(
+                    process
+                        .environment
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                config["Entrypoint"] = json!(process.entrypoint);
+                config["Cmd"] = json!(process.command);
+                config["Env"] = json!([format!(
+                    "NEMOCLAW_RUNTIME_SPEC={}",
+                    self.runtime_configuration()?
+                )]);
+            }
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] =
                 json!([{"Type":"volume","Source":self.volume(),"Target":process.mount_target}]);
@@ -326,8 +387,12 @@ impl Spec {
             if process.gpu {
                 host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
             }
-            host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
-            host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            if self.kind != crate::services::installers::container::SERVICE_KIND {
+                host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
+            }
+            if process.port != 0 {
+                host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            }
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)

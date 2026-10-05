@@ -10,14 +10,21 @@ use crate::{
 /// Validate a compiled resource without opening connections or reading secrets.
 /// Parse errors deliberately omit serialized source values.
 pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
-    if matches!(kind, vllm::STORAGE_KIND | ollama::STORAGE_KIND) {
+    if matches!(
+        kind,
+        vllm::STORAGE_KIND | ollama::STORAGE_KIND | super::installers::container::STORAGE_KIND
+    ) {
         let storage: Storage = serde_json::from_str(encoded)
             .map_err(|_| Error::State("invalid managed storage specification"))?;
         return storage.validate();
     }
     if !matches!(
         kind,
-        GATEWAY_KIND | GATEWAY_STORAGE_KIND | vllm::SERVICE_KIND | ollama::SERVICE_KIND
+        GATEWAY_KIND
+            | GATEWAY_STORAGE_KIND
+            | vllm::SERVICE_KIND
+            | ollama::SERVICE_KIND
+            | super::installers::container::SERVICE_KIND
     ) {
         return Ok(());
     }

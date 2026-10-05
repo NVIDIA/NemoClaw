@@ -182,6 +182,8 @@ fn managed_targets(
             .map_err(|_| Error::State("cannot serialize Ollama runtime configuration"))?,
         entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
         command: Vec::new(),
+        user: String::new(),
+        environment: BTreeMap::new(),
         mount_target: "/data".into(),
         bind_address,
         port: service.serving.port as u16,

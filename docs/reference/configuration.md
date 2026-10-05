@@ -159,6 +159,64 @@ Paths:
 | `cudagraphMode` | string | Yes | — | CUDA graph execution mode. Constraints: `"NONE"` or `"FULL_DECODE_ONLY"`. |
 | `mode` | integer | Yes | — | Compilation mode understood by the pinned vLLM image. Constraints: minimum 0; maximum 3. |
 
+## ContainerData
+
+An owned disposable data volume. The image must supply the writable non-root mount directory.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.data`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `mountPath` | string | Yes | — | One canonical application directory below /var/lib, owned by the image's non-root user. Constraints: pattern `^/var/lib/[a-z][a-z0-9-]{0,62}$`. |
+
+## ContainerPlacement
+
+Local Docker engine and application network. Remote engines are not qualified here.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.placement`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `engine` | string | Yes | — | Local Unix Docker socket endpoint. TCP and SSH endpoints are rejected. Constraints: pattern `^unix:///`. |
+| `networkCIDR` | string | Yes | — | Canonical private IPv4 /24. Services sharing an engine must use the same network. |
+
+## ContainerPublication
+
+One application TCP listener, independent of inference URL conventions.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.publication`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `bindAddress` | string | Yes | — | Loopback or private host IPv4 address; public and wildcard addresses are rejected by SDK validation. |
+| `port` | integer | Yes | — | Same unprivileged TCP port inside the container and on the selected host. Constraints: minimum 1024; maximum 65535. |
+
+## ContainerReadiness
+
+Apply observes Docker health only while this bounded startup wait is active.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.readiness`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `startupTimeoutSeconds` | integer | No | `300` | Bounded startup wait, 1–3600 seconds. Omission selects 300 seconds. Constraints: minimum 1; maximum 3600. |
+
 ## Credential
 
 A reference to a caller-provided environment variable; the configuration contains no credential value.
@@ -1037,6 +1095,25 @@ Managed vLLM runtime and immutable model snapshot.
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
+
+### Alternative 4
+
+Image-owned application with bounded Docker HEALTHCHECK observation.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `architecture` | string | Yes | — | Linux image architecture: arm64 or amd64. This does not select a host architecture. Constraints: `"arm64"` or `"amd64"`. |
+| `data` | [ContainerData](#containerdata) | Yes | — | Disposable application data. Destroy removes this volume; external data is not mounted. |
+| `dependsOn` | array of string | No | — | Declared services that must be ready before this container starts. This injects no settings. Constraints: maximum items 128; items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `environment` | map of string | No | — | Literal non-secret application settings. Credentials must not be supplied here. Constraints: keys: pattern `^[A-Z_][A-Z0-9_]{0,127}$`; values: pattern `^[^\u0000]*$(?![\s\S])`; maximum characters 65536. |
+| `image` | string | Yes | — | Immutable application image. The image owns its entrypoint, CMD, and HEALTHCHECK. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Omission selects IfNotPresent. Never requires an image in the selected engine. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"container"`. |
+| `placement` | [ContainerPlacement](#containerplacement) | No | — | Local Docker placement. Omission inherits the managed Docker gateway's engine and network. |
+| `publication` | [ContainerPublication](#containerpublication) | No | — | Optional loopback or private IPv4 TCP publication. Omission publishes no port. |
+| `readiness` | [ContainerReadiness](#containerreadiness) | No | — | Apply-time observation of the image-owned Docker HEALTHCHECK; no mutation or task invocation. |
+| `user` | string | No | `"65532:65532"` | Numeric non-root UID:GID. Omission selects 65532:65532. Constraints: pattern `^[1-9][0-9]{0,8}:[1-9][0-9]{0,8}$`. |
 
 ## ServiceHardware
 

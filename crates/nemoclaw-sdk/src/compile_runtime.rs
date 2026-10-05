@@ -147,18 +147,6 @@ pub(crate) fn compiled_runtime(
         );
         readiness["container_id"] = json!("${docker_container.managed_gateway_runtime.id}");
     }
-    for target in targets
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
-    {
-        let container = crate::docker_compute::address(&target.address);
-        let logical = container.split_once('.').unwrap().1;
-        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
-            "spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{"),
-            "container_id":format!("${{{container}.id}}"),
-            "read_trigger":"${timestamp() != \"\"}",
-            "wait_timeout_seconds":9 * 3600
-        });
-    }
+    crate::services::configure_readiness(&mut graph, &targets)?;
     Ok((graph, crate::docker_compute::targets(&targets)?))
 }

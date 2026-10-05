@@ -232,6 +232,79 @@
       ],
       "type": "object"
     },
+    "ContainerData": {
+      "additionalProperties": false,
+      "description": "An owned disposable data volume. The image must supply the writable non-root mount directory.",
+      "properties": {
+        "mountPath": {
+          "description": "One canonical application directory below /var/lib, owned by the image's non-root user.",
+          "pattern": "^/var/lib/[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mountPath"
+      ],
+      "type": "object"
+    },
+    "ContainerPlacement": {
+      "additionalProperties": false,
+      "description": "Local Docker engine and application network. Remote engines are not qualified here.",
+      "properties": {
+        "engine": {
+          "description": "Local Unix Docker socket endpoint. TCP and SSH endpoints are rejected.",
+          "pattern": "^unix:///",
+          "type": "string"
+        },
+        "networkCIDR": {
+          "description": "Canonical private IPv4 /24. Services sharing an engine must use the same network.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "networkCIDR"
+      ],
+      "type": "object"
+    },
+    "ContainerPublication": {
+      "additionalProperties": false,
+      "description": "One application TCP listener, independent of inference URL conventions.",
+      "properties": {
+        "bindAddress": {
+          "description": "Loopback or private host IPv4 address; public and wildcard addresses are rejected by SDK validation.",
+          "format": "ipv4",
+          "type": "string"
+        },
+        "port": {
+          "description": "Same unprivileged TCP port inside the container and on the selected host.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bindAddress",
+        "port"
+      ],
+      "type": "object"
+    },
+    "ContainerReadiness": {
+      "additionalProperties": false,
+      "description": "Apply observes Docker health only while this bounded startup wait is active.",
+      "properties": {
+        "startupTimeoutSeconds": {
+          "default": 300,
+          "description": "Bounded startup wait, 1–3600 seconds. Omission selects 300 seconds.",
+          "format": "uint64",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "Credential": {
       "additionalProperties": false,
       "description": "A reference to a caller-provided environment variable; the configuration contains no credential value.",
@@ -2507,6 +2580,91 @@
               }
             }
           },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Image-owned application with bounded Docker HEALTHCHECK observation.",
+          "properties": {
+            "architecture": {
+              "description": "Linux image architecture: arm64 or amd64. This does not select a host architecture.",
+              "enum": [
+                "arm64",
+                "amd64"
+              ],
+              "type": "string"
+            },
+            "data": {
+              "$ref": "#/$defs/ContainerData",
+              "description": "Disposable application data. Destroy removes this volume; external data is not mounted."
+            },
+            "dependsOn": {
+              "description": "Declared services that must be ready before this container starts. This injects no settings.",
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]{0,39}$",
+                "type": "string"
+              },
+              "maxItems": 128,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "environment": {
+              "additionalProperties": {
+                "maxLength": 65536,
+                "pattern": "^[^\\u0000]*$(?![\\s\\S])",
+                "type": "string"
+              },
+              "description": "Literal non-secret application settings. Credentials must not be supplied here.",
+              "maxProperties": 128,
+              "propertyNames": {
+                "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+              },
+              "type": "object"
+            },
+            "image": {
+              "description": "Immutable application image. The image owns its entrypoint, CMD, and HEALTHCHECK.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Omission selects IfNotPresent. Never requires an image in the selected engine.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
+            },
+            "kind": {
+              "const": "container",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "placement": {
+              "$ref": "#/$defs/ContainerPlacement",
+              "description": "Local Docker placement. Omission inherits the managed Docker gateway's engine and network."
+            },
+            "publication": {
+              "$ref": "#/$defs/ContainerPublication",
+              "description": "Optional loopback or private IPv4 TCP publication. Omission publishes no port."
+            },
+            "readiness": {
+              "$ref": "#/$defs/ContainerReadiness",
+              "description": "Apply-time observation of the image-owned Docker HEALTHCHECK; no mutation or task invocation."
+            },
+            "user": {
+              "default": "65532:65532",
+              "description": "Numeric non-root UID:GID. Omission selects 65532:65532.",
+              "pattern": "^[1-9][0-9]{0,8}:[1-9][0-9]{0,8}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "image",
+            "architecture",
+            "data"
+          ],
           "type": "object"
         }
       ]

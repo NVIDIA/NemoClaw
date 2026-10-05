@@ -57,7 +57,8 @@ fn observation(
         || allowed.keys().any(|address| {
             (address.starts_with("docker_container.inference_service_")
                 || address.starts_with("docker_container.ollama_service_")
-                || address.starts_with("docker_container.ollama_proxy_"))
+                || address.starts_with("docker_container.ollama_proxy_")
+                || address.starts_with("docker_container.container_service_"))
                 && change.address
                     == format!(
                         "data.nemoclaw_service_readiness.{}",
