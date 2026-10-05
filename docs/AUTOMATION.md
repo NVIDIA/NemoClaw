@@ -42,7 +42,7 @@ To recover a damaged import, stop the preview server, remove only the generated 
 ## Validate Locally
 
 Complete the Rust and `protoc` prerequisites in [build.md](build.md).
-Install Node.js 24.21.0 and Python 3.12 or newer for the documentation tooling.
+Install Node.js 24.21.0 for the documentation tooling.
 Node runs main's imported generators and the pinned Fern CLI through `npx`; the application remains a Cargo workspace with no root npm package.
 The first Fern invocation downloads its npm dependencies.
 CI uses the same Node version and main's pinned reviewed-npm setup action.
@@ -50,7 +50,7 @@ CI uses the same Node version and main's pinned reviewed-npm setup action.
 From the repository root:
 
 ```sh
-python3 tools/docs/fern.py check
+cargo run --locked -p nemoclaw-build -- fern check
 ```
 
 The command checks schema/reference freshness, generates both versions, checks generated output, and validates the combined Fern configuration.
@@ -73,8 +73,7 @@ New source links become reachable on GitHub when that commit is pushed.
 Run focused tooling tests after changing the generator or publisher:
 
 ```sh
-cargo test --locked -p nemoclaw-build --test integration docs::
-python3 -B -m unittest discover -s tools/docs -p 'test_*.py'
+cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::
 ```
 
 Also run the [repository checks](testing.md).
@@ -84,7 +83,7 @@ Also run the [repository checks](testing.md).
 For a local browser preview, install `pnpm` on `PATH`, as required by [Fern's development server](https://buildwithfern.com/learn/docs/preview-publish/preview-changes), then run:
 
 ```sh
-python3 tools/docs/fern.py dev
+cargo run --locked -p nemoclaw-build -- fern dev
 ```
 
 Open the URL printed by Fern.
@@ -96,7 +95,7 @@ Stop the local server with Ctrl-C.
 To publish a shareable branch preview, provide `FERN_TOKEN` with access to the staging instance in the process environment:
 
 ```sh
-python3 tools/docs/fern.py preview --id nemoclaw-v1-my-branch
+cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1-my-branch
 ```
 
 This writes a remotely hosted preview; do not include secrets in documentation.
@@ -105,7 +104,7 @@ Unset a locally supplied token when finished.
 Delete only the preview you own:
 
 ```sh
-python3 tools/docs/fern.py delete --id nemoclaw-v1-my-branch
+cargo run --locked -p nemoclaw-build -- fern delete --id nemoclaw-v1-my-branch
 ```
 
 ## GitHub Actions

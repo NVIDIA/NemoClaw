@@ -199,7 +199,7 @@ Follow [documentation contribution requirements](../CONTRIBUTING.md).
 Check local links and anchors, navigation ownership, generated reference freshness when applicable, and `git diff --check`.
 Run required workspace format, lint, and test checks; documentation-only changes need no new runtime tests or live resources.
 Record any checks that could not run and the reason in the handoff.
-Run `python3 tools/docs/fern.py check` for source and rendered-route validation; see [documentation build prerequisites](../AUTOMATION.md#validate-locally).
+Run `cargo run --locked -p nemoclaw-build -- fern check` for source and rendered-route validation; see [documentation build prerequisites](../AUTOMATION.md#validate-locally).
 The v1 build uses Cargo for generation and schema freshness, with the pinned Fern CLI for rendering and publication.
 
 ### Executable Examples and Claims
