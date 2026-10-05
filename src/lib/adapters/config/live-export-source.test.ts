@@ -505,7 +505,7 @@ describe("live export snapshot reader", () => {
       expect(yaml).not.toContain(readFailureCanary);
       expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: "nvidia", workspace: profileWorkspace },
+        { id: "nemoclaw-nvidia-inference-v1", workspace: profileWorkspace },
         { signal: expect.any(AbortSignal) },
       );
       expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
