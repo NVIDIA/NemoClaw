@@ -44,7 +44,12 @@ import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import { shellQuote } from "../runner.js";
-import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
+import {
+  createTempSshConfig,
+  runWithTempSshConfigCleanup,
+  runWithTempSshConfigCleanupAsync,
+  type TempSshConfigRunResult,
+} from "../sandbox/temp-ssh-config.js";
 import {
   CREDENTIAL_PLACEHOLDER,
   isConfigValue,
@@ -818,7 +823,7 @@ export function probeSandboxSshReachable(sandboxName: string, deadlineMs: number
   if (!sshConfig) return false;
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-readiness-");
-  try {
+  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, () => {
     const probeTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
     if (probeTimeoutMs === null) return false;
     const result = spawnSync("ssh", [...sshArgs(tempSshConfig.file, sandboxName), ":"], {
@@ -826,9 +831,9 @@ export function probeSandboxSshReachable(sandboxName: string, deadlineMs: number
       timeout: probeTimeoutMs,
     });
     return result.status === 0 && !result.error && !result.signal;
-  } finally {
-    tempSshConfig.cleanup();
-  }
+  });
+  if (sshPhase.cleanupError) throw sshPhase.cleanupError;
+  return sshPhase.result;
 }
 
 function computeBlueprintDigest(): string | null {
@@ -2132,6 +2137,22 @@ function backupDeadlineExpired(deadlineMs: number | undefined): boolean {
   return deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now());
 }
 
+function withSshCleanupResult<T extends BackupResult | RestoreResult>({
+  result,
+  cleanupError,
+}: TempSshConfigRunResult<T>): T {
+  return cleanupError
+    ? {
+        ...result,
+        success: false,
+        ...("unreachable" in result ? { unreachable: false } : {}),
+        error: [result.error, `${cleanupError.message}. Remove that directory before retrying.`]
+          .filter(Boolean)
+          .join(" "),
+      }
+    : result;
+}
+
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
 function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
   if (backupDeadlineExpired(options.deadlineMs)) {
@@ -2152,7 +2173,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
   rejectSymlinksOnPath(backupPath);
 
   let temporary: ReturnType<typeof createTempSshConfig> | null = null;
-  try {
+  const capture = (): BackupResult => {
     let rootResult: { root: string } | { error: string; unreachable: boolean };
     if (options.nativeStateSource) {
       const root = options.nativeStateSource.root;
@@ -2452,13 +2473,8 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       backedUpFiles: [],
       failedFiles: [],
     };
-  } finally {
-    try {
-      temporary?.cleanup();
-    } catch {
-      /* ignore */
-    }
-  }
+  };
+  return withSshCleanupResult(runWithTempSshConfigCleanup(() => temporary, capture));
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
@@ -2704,12 +2720,13 @@ async function restoreNativeSandboxState(
     const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
     if (!sshConfig) return failure(`Could not get SSH configuration for target '${sandboxName}'`);
     const temporary = createTempSshConfig(sshConfig, "nemoclaw-native-restore-");
-    try {
+    const expectedRoot = manifest.nativeState.root;
+    const restore = async (): Promise<RestoreResult> => {
       const rootResult = resolveNativeStateRoot(temporary.file, sandboxName, selectedEnv);
       if ("error" in rootResult) return failure(rootResult.error);
-      if (rootResult.root !== manifest.nativeState.root) {
+      if (rootResult.root !== expectedRoot) {
         return failure(
-          `Backup native root '${manifest.nativeState.root}' does not match target root '${rootResult.root}'`,
+          `Backup native root '${expectedRoot}' does not match target root '${rootResult.root}'`,
         );
       }
       const mutationError = await validateSnapshotRestoreMutation(backupPath, options);
@@ -2798,13 +2815,8 @@ async function restoreNativeSandboxState(
         restoredFiles: [],
         failedFiles: [],
       };
-    } finally {
-      try {
-        temporary.cleanup();
-      } catch {
-        /* ignore */
-      }
-    }
+    };
+    return withSshCleanupResult(await runWithTempSshConfigCleanupAsync(temporary, restore));
   } finally {
     closeSync(archiveFd);
   }
