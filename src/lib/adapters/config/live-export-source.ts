@@ -15,7 +15,10 @@ import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
-import { EXPORT_REGISTRY_EVIDENCE_KEYS } from "../../domain/config/export-evidence";
+import {
+  EXPORT_REGISTRY_EVIDENCE_KEYS,
+  exportWebSearchBinding,
+} from "../../domain/config/export-evidence";
 import type {
   ExportSnapshotReadStage,
   ExportSnapshotReader,
@@ -239,7 +242,7 @@ async function inferenceFor(
 }
 
 async function readWebSearchProvider(
-  entry: Readonly<SandboxEntry>,
+  binding: NonNullable<ReturnType<typeof exportWebSearchBinding>>,
   gatewayName: string,
   signal: AbortSignal,
   connection?: ExportGatewayConnection,
@@ -247,9 +250,9 @@ async function readWebSearchProvider(
   const provider = await createProviders(connection?.connect).get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
-    name: `${entry.name}-brave-search`,
+    name: binding.name,
     configKeys: [],
-    profileContract: "brave",
+    profileContract: binding.profileId,
     signal,
   });
   if (!provider) throw new Error("The live web-search provider is missing.");
@@ -348,9 +351,10 @@ async function readGatewaySnapshot(
     connection,
   );
   let webSearchProvider: ObservedExportWebSearchProvider | undefined;
-  if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
+  const search = exportWebSearchBinding(entry);
+  if (search) {
     beforeRead("web-search-provider");
-    webSearchProvider = await readWebSearchProvider(entry, gateway.name, signal, connection);
+    webSearchProvider = await readWebSearchProvider(search, gateway.name, signal, connection);
   }
   beforeRead("effective-policy");
   const { configuration, ...policy } = await effectivePolicy(gateway, row, signal, connection);

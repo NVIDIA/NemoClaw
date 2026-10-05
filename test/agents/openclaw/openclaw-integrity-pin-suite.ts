@@ -111,6 +111,8 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
   "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
+const PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY =
+  "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
   "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==";
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
@@ -802,6 +804,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY")).toBe(
           PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
+        );
+        expect(requiredDockerArg("OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY")).toBe(
+          PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY,
         );
         const { result, calls } = runOptionalOpenClawPluginBlock();
 
@@ -1577,6 +1582,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "OPENCLAW_2026_9_2_TARBALL",
           "OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY",
           "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY",
+          "OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY",
         ]);
 
         const futurePinArgNames = [
@@ -1779,6 +1785,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(archiveBlock).toContain(
           "ADD --chmod=0444 --checksum=sha256:40c0cf23e8373f2285034b8f0a575cc51ec1ed53d081b0e1592d219dd411e54d",
+        );
+        expect(archiveBlock).toContain(
+          "ADD --chmod=0444 --checksum=sha256:c5d65ff201a8178ec914736887802c38d33628c667be5b2453b890fe44086984 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz /tavily-plugin-2026.9.2.tgz",
         );
         expect(archiveBlock).not.toContain("propagator-jaeger-2.9.0.tgz");
         expect(archiveBlock).not.toContain("core-2.9.0.tgz");

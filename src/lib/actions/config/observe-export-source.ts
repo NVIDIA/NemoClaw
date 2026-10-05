@@ -27,7 +27,12 @@ import {
 } from "../../policy/sandbox-policy-validation";
 
 export type ExportObservationResult =
-  | { readonly ok: true; readonly source: VerifiedExportSource; readonly attempts: 1 | 2 }
+  | {
+      readonly ok: true;
+      readonly source: VerifiedExportSource;
+      readonly attempts: 1 | 2;
+      readonly corporateCaOmitted?: true;
+    }
   | {
       readonly ok: false;
       readonly findings: NonEmptyExportFindings;
@@ -193,7 +198,10 @@ export async function observeStableExportSource(
         attempts,
       };
     }
-    if (outcome.kind === "verified") return { ok: true, source: outcome.source, attempts };
+    if (outcome.kind === "verified") {
+      const { kind: _kind, ...verified } = outcome;
+      return { ok: true, ...verified, attempts };
+    }
     return { ok: false, findings: outcome.findings, attempts };
   }
   throw new Error("unreachable");

@@ -87,6 +87,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
       expect(recoverManagedLlamaCpp).toHaveBeenCalledOnce();
       expect(recoverManagedLlamaCpp).toHaveBeenCalledWith("llama-cpp-local", "spark-agent");
+      expect(calls.probeLlamaCppSandboxReachability).not.toHaveBeenCalled();
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
       );
@@ -105,6 +106,9 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
   it("persists a fresh managed llama.cpp recipe through provider and inference completion", async () => {
     const { deps, calls } = createDeps({
+      probeLlamaCppSandboxReachability: vi.fn(async () => {
+        throw new Error("Managed runtime readiness must remain with its lifecycle owner.");
+      }),
       setupNim: vi.fn(async () => ({
         ...baseSelection,
         provider: "llama-cpp-local",
@@ -137,6 +141,65 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       servingProfileProvenance: llamaCppProfile,
     });
   });
+
+  it.each([
+    { resume: false, reachable: false, result: "exit 1" },
+    { resume: true, reachable: false, result: "exit 1" },
+    { resume: false, reachable: true, result: "complete" },
+  ])(
+    "requires a reachable operator llama.cpp route (resume=$resume, reachable=$reachable)",
+    async ({ resume, reachable, result }) => {
+      const route = {
+        provider: "llama-cpp-local",
+        model: "team/model-alias",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      };
+      const session = createSession({
+        ...route,
+        sandboxName: "operator-agent",
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = resume ? "complete" : "pending";
+      const probeLlamaCppSandboxReachability = vi.fn(async () => ({
+        ok: reachable,
+        reason: reachable ? ("ok" as const) : ("tcp_failed" as const),
+        networkName: "openshell",
+        gatewayIp: "172.18.0.1",
+      }));
+      const setupNim = vi.fn(async () => ({ ...baseSelection, ...route }));
+      const { deps, calls } = createDeps({
+        setupNim,
+        isInferenceRouteReady: vi.fn(() => true),
+        probeLlamaCppSandboxReachability,
+      });
+
+      const outcome = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume,
+        sandboxName: "operator-agent",
+      }).then(
+        () => "complete",
+        (error: Error) => error.message,
+      );
+      expect(outcome).toBe(result);
+      expect(calls.setupInference).toHaveBeenCalledTimes(reachable ? 1 : 0);
+      expect(calls.complete.mock.calls.some(([step]) => step === "inference")).toBe(reachable);
+      expect(
+        calls.error.mock.calls.some(([message]) =>
+          message.includes("host.openshell.internal:8081"),
+        ),
+      ).toBe(!reachable);
+      expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
+      expect(setupNim).toHaveBeenCalledTimes(resume ? 0 : 1);
+    },
+  );
 
   it("persists installer vLLM profile provenance returned by provider setup (#11896)", async () => {
     const session = createSession({

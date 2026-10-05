@@ -14,6 +14,7 @@ function externalGatewayIsVerified(gateway: ObservedExportGateway): boolean {
   const external = gateway.external;
   return (
     gateway.management === "external" &&
+    gateway.stateRootOwned === false &&
     external !== undefined &&
     isExternalHttpGatewayOrigin(external.endpoint, gateway.port) &&
     /^[a-f0-9]{64}$/u.test(external.authorityFingerprint) &&

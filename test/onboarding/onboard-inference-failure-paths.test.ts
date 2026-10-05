@@ -850,7 +850,7 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(harness.errors).toContain(
-      "  Failed to configure inference provider 'compatible-anthropic-endpoint'.",
+      "  OpenShell inference route update returned an inconclusive result.",
     );
     expect(harness.logs).toEqual([
       "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",

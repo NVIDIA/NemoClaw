@@ -3,7 +3,7 @@
 
 use nemoclaw_sdk::{
     compile::{Generations, runtime_targets, targets},
-    config::Document,
+    config::{Document, Gateway},
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, env, fs};
@@ -18,7 +18,7 @@ fn parses_export_and_generates_runtime_settings() {
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
     let compiled = targets(&document, &generations).expect("export must compile");
-    if document.spec.gateway.management == "external" {
+    if matches!(&document.spec.gateway, Gateway::External(_)) {
         assert!(
             runtime_targets(&document, &generations)
                 .expect("external gateway runtime must compile")

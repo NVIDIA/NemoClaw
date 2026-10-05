@@ -77,6 +77,22 @@ describe("external gateway config export", () => {
     },
   );
 
+  it("refuses external gateway evidence that claims a managed state root (#11861)", async () => {
+    const source = snapshot({ gateway: { ...externalGateway, stateRootOwned: true } });
+    const exported = await exportSnapshots([source]);
+
+    expect(exported.outcome.ok).toBe(false);
+    expect(exported.outcome).toMatchObject({
+      failure: {
+        findings: expect.arrayContaining([
+          expect.objectContaining({ field: "spec.gateway.management", category: "drifted" }),
+        ]),
+      },
+    });
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+    expect(exported.publish).not.toHaveBeenCalled();
+  });
+
   it("rejects external gateways for Hermes (#11861)", () => {
     expect(verify({ ...hermesSnapshot(), gateway: externalGateway })).toMatchObject({
       kind: "rejected",
@@ -138,7 +154,7 @@ describe("external gateway config export", () => {
       expect(
         validateConfigExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0]),
       ).toMatchObject({
-        revision: "88c6600c06b0937907290362eef86912052c4ad0",
+        revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
       });
     },
   );
@@ -157,7 +173,7 @@ describe("external gateway config export", () => {
       const example = section.match(/```yaml\n([\s\S]*?)\n```/u)?.[1];
       expect(example).toBeTypeOf("string");
       expect(validateConfigExportWithPinnedV1(example!)).toMatchObject({
-        revision: "88c6600c06b0937907290362eef86912052c4ad0",
+        revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
         compiledSandboxes: 1,
       });
     },

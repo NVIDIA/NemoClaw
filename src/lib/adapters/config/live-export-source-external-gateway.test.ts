@@ -12,10 +12,22 @@ import {
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  managedBraveProfile,
+  managedTavilyProfile,
+} from "../../../../test/fixtures/openshell-provider-profile";
+import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { connectExternalHttpOpenShellSdk, connectManagedOpenShellSdk } from "../openshell/sdk";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { observeExportGateway } from "./gateway-export";
-import { readFailureCanary } from "./live-export-source-test-fixture";
+import {
+  braveProvider,
+  entry,
+  inventory,
+  provider,
+  readFailureCanary,
+  startupInput,
+} from "./live-export-source-test-fixture";
 import type { ExportSnapshotReadStage } from "../../domain/config/export-evidence";
 
 vi.mock("./gateway-export", async (importOriginal) => ({
@@ -36,8 +48,8 @@ const external = {
   },
 } as const;
 
-function mockExternalSource() {
-  mockSupportedLiveSource();
+function mockExternalSource(sourceEntry?: Parameters<typeof mockSupportedLiveSource>[2]) {
+  mockSupportedLiveSource(3, 3, sourceEntry);
   vi.mocked(observeExportGateway).mockResolvedValue(external);
   vi.mocked(connectExternalHttpOpenShellSdk).mockResolvedValue({ raw });
 }
@@ -100,6 +112,87 @@ describe("external gateway live source reader", () => {
     const routeEnvironment = vi.mocked(captureSanitizedResolvedOpenshell).mock.calls[0]![1].env;
     expect(fs.existsSync(routeEnvironment?.HOME ?? "")).toBe(false);
   });
+
+  it.each([
+    { searchProvider: "brave", credentialEnv: "BRAVE_API_KEY", profile: managedBraveProfile() },
+    {
+      searchProvider: "tavily",
+      credentialEnv: "TAVILY_API_KEY",
+      profile: managedTavilyProfile("openclaw"),
+    },
+  ] as const)(
+    "exports $searchProvider through the external gateway without reading credential values (#11861)",
+    async ({ searchProvider, credentialEnv, profile }) => {
+      const startup = buildManagedStartupProfile({
+        ...startupInput,
+        webSearch: { fetchEnabled: true, provider: searchProvider },
+      });
+      mockExternalSource({
+        ...entry,
+        webSearchEnabled: true,
+        webSearchProvider: searchProvider,
+        workload: {
+          ...entry.workload,
+          encodedProfile: startup.encodedProfile,
+          startupProfileSha256: startup.startupProfileSha256,
+        },
+      });
+      const search = braveProvider();
+      const providerName = `alpha-${searchProvider}-search`;
+      raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+        name === providerName
+          ? {
+              provider: {
+                ...search.provider,
+                metadata: { ...search.provider.metadata, name: providerName },
+                type: profile.id,
+                credentials: Object.defineProperty({}, credentialEnv, {
+                  enumerable: true,
+                  get: search.readCredential,
+                }),
+              },
+            }
+          : provider(),
+      );
+      raw.getProviderProfile.mockResolvedValue({ profile });
+      const liveSandbox = inventory().sandbox;
+      raw.getSandbox.mockResolvedValue({
+        sandbox: {
+          ...liveSandbox,
+          spec: { ...liveSandbox.spec, providers: [providerName] },
+        },
+      });
+
+      const exported = await exportLiveSource();
+
+      expect(exported.result.ok).toBe(true);
+      const yaml = exported.writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(document.spec.gateway).toEqual({
+        management: "external",
+        endpoint: external.external.endpoint,
+      });
+      expect(sandbox.integrations?.[`${searchProvider}-search`]).toEqual({
+        kind: "webSearch",
+        provider: searchProvider,
+        credential: { env: credentialEnv },
+      });
+      expect(sandbox.agent.integrationRefs).toEqual([`${searchProvider}-search`]);
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: profile.id, workspace: "default" },
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(connectExternalHttpOpenShellSdk).toHaveBeenCalledWith(
+        { kind: "named", gatewayName: "nemoclaw" },
+        external.external.endpoint,
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
+      expect(search.readCredential).not.toHaveBeenCalled();
+      expect(yaml).not.toContain(readFailureCanary);
+    },
+  );
 
   it("isolates and removes CLI credential locations when the route read fails (#11861)", async () => {
     mockExternalSource();
