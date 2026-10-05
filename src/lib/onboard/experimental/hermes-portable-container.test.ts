@@ -155,6 +155,36 @@ function activeReceipt(running = true): HermesPortableConfiguredReceipt {
 }
 
 describe("Hermes portable container authority", () => {
+  it("enrolls a labelled workload while excluding its supervisor", () => {
+    const workloadLabels = { ...LABELS, "openshell.ai/isolation-role": "sandbox" };
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: ID + "\n", stderr: "" })
+      .mockReturnValueOnce(inspect("no", workloadLabels));
+    const enrolled = enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+      podman,
+      assertSocketAuthority: vi.fn(),
+    });
+    expect(enrolled.authority.containerId).toBe(ID);
+    expect(enrolled.labels["openshell.ai/isolation-role"]).toBe("sandbox");
+    expect(podman.mock.calls[0]?.[0]).toContain("label!=openshell.ai/isolation-role=supervisor");
+    expect(podman).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["supervisor", "unknown", ""])("rejects the non-workload role %s", (role) => {
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: ID + "\n", stderr: "" })
+      .mockReturnValueOnce(inspect("no", { ...LABELS, "openshell.ai/isolation-role": role }));
+    expect(() =>
+      enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+        podman,
+        assertSocketAuthority: vi.fn(),
+      }),
+    ).toThrow("isolation role does not identify a sandbox workload");
+    expect(podman).toHaveBeenCalledTimes(2);
+  });
+
   it("enrolls exactly one running full-ID container with exact OpenShell labels (#9203)", () => {
     const podman = vi
       .fn()
@@ -178,6 +208,7 @@ describe("Hermes portable container authority", () => {
       hermesPortableContainerInternals.labelsDigest(LABELS),
     );
     expect(assertSocketAuthority).toHaveBeenCalledTimes(4);
+    expect(podman.mock.calls[0]?.[0]).toContain("label!=openshell.ai/isolation-role=supervisor");
   });
 
   it.each([

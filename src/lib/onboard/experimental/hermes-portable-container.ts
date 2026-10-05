@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { assertPodmanSocketAuthority, type PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import {
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
@@ -323,6 +324,10 @@ function parseInspection(
   if (containerId !== expected.containerId) fail("inspect returned another container ID");
   const config = record(row.Config, "inspect Config");
   const containerLabels = labels(config.Labels);
+  const isolationRole = containerLabels[PODMAN_ISOLATION_ROLE_LABEL];
+  if (isolationRole !== undefined && isolationRole !== "sandbox") {
+    fail("inspect isolation role does not identify a sandbox workload");
+  }
   const required = {
     [PODMAN_MANAGED_LABEL]: "true",
     [PODMAN_SANDBOX_ID_LABEL]: expected.sandboxId,
@@ -414,6 +419,8 @@ export function enrollHermesPortableContainer(
         `label=${PODMAN_SANDBOX_NAME_LABEL}=${receipt.sandboxName}`,
         "--filter",
         `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+        "--filter",
+        `label!=${PODMAN_ISOLATION_ROLE_LABEL}=supervisor`,
         "--format",
         "{{.ID}}",
       ],

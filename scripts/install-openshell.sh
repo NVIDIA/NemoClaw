@@ -607,9 +607,9 @@ openshell_has_required_messaging_features() {
     return 1
   fi
 
-  # MCP policy enforcement and credential replacement execute in
-  # openshell-sandbox. When that host artifact is present, require the native
-  # MCP policy marker from that exact binary.
+  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize
+  # only its exact pinned sandbox artifacts here, not version text alone.
+  # Runtime policy verification still precedes credential/provider changes.
   if [ -z "$sandbox_bin" ] || [ ! -f "$sandbox_bin" ]; then
     # VM drivers embed a compressed supervisor, so scanning the host driver is
     # not authoritative. Docker/VM packaging can also keep the supervisor out
@@ -621,6 +621,11 @@ openshell_has_required_messaging_features() {
   fi
   sandbox_strings="$(strings "$sandbox_bin" 2>/dev/null || true)"
   if [[ "$sandbox_strings" != *"$OPENSHELL_SANDBOX_MCP_FEATURE"* ]]; then
+    local sandbox_digest
+    sandbox_digest="$(file_sha256 "$sandbox_bin")" || return 1
+    if [ "$(pinned_sandbox_build_version "$sandbox_digest")" = "0.1.2" ]; then
+      return 0
+    fi
     OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing MCP/JSON-RPC L7 policy support."
     return 1
   fi

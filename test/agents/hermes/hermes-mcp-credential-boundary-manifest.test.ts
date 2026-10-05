@@ -14,9 +14,9 @@ const TRANSACTION = path.join(
   "hermes",
   "mcp-config-transaction.py",
 );
-const MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.116.json";
+const MANIFEST_NAME = "openshell-child-visible-credentials.v0.1.2.json";
 const validManifest: Record<string, unknown> = {
-  openshellVersion: "0.0.116",
+  openshellVersion: "0.1.2",
   rawChildValueKeys: ["RAW_CHILD_VALUE"],
   rewrittenChildValueKeys: ["REWRITTEN_CHILD_VALUE"],
   runtimeControlKeys: ["RUNTIME_CONTROL"],
@@ -68,6 +68,39 @@ function runEmbeddedTransactionImportWithManifest(manifest: Record<string, unkno
 }
 
 describe("Hermes MCP credential boundary manifest (#6256)", () => {
+  it("loads the reviewed manifest from an isolated installed-helper layout", () => {
+    expect(runEmbeddedTransactionImportWithManifest(validManifest)).toEqual({
+      loaded: true,
+      type: "",
+      message: "",
+    });
+  });
+
+  it("rejects the previous manifest version at the current installed path", () => {
+    expect(
+      runEmbeddedTransactionImportWithManifest({ ...validManifest, openshellVersion: "0.0.116" }),
+    ).toEqual({
+      loaded: false,
+      type: "RuntimeError",
+      message: "Hermes MCP credential boundary manifest is invalid",
+    });
+  });
+
+  it("does not load the old manifest filename from an installed helper", () => {
+    expect(
+      runEmbeddedTransactionImport((helperDir) => {
+        fs.writeFileSync(
+          path.join(helperDir, "openshell-child-visible-credentials.v0.0.116.json"),
+          JSON.stringify(validManifest),
+        );
+      }),
+    ).toEqual({
+      loaded: false,
+      type: "RuntimeError",
+      message: "Hermes MCP credential boundary manifest is missing",
+    });
+  });
+
   it("fails closed when the manifest is missing", () => {
     expect(runEmbeddedTransactionImport()).toEqual({
       loaded: false,

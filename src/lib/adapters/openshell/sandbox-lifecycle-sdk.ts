@@ -28,6 +28,12 @@ type SdkSandboxRef = Readonly<{ id: string; phase: string }>;
 type SdkSandboxMutationResponse = Readonly<{
   sandbox?: Readonly<{ metadata?: Readonly<{ id?: string }> }>;
 }>;
+type SdkSandboxMutationRequest = Readonly<{
+  name: string;
+  workspaceScope: Readonly<{
+    selection: Readonly<{ case: "workspace"; value: "default" }>;
+  }>;
+}>;
 type SdkClient = Readonly<{
   sandbox: Readonly<{
     get(name: string, options: CallOptions): Promise<SdkSandboxRef>;
@@ -35,11 +41,11 @@ type SdkClient = Readonly<{
   }>;
   raw: Readonly<{
     startSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
     stopSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
   }>;
@@ -162,7 +168,13 @@ async function mutate(
     observedPhase = observed.phase;
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     const mutation = await Promise.race([
-      operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
+      operation(
+        {
+          name: request.sandboxName,
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
+        { signal: controller.signal },
+      ),
       aborted,
     ]);
     if (

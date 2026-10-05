@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.2.json";
 import {
   BREW_OUTCOMES,
   CANDIDATE_RUNTIME,
@@ -39,6 +39,7 @@ function runWithInstalledVersion(
     driverLocation?: "path" | "explicit" | "symlink";
     driverVersion?: string;
     sandboxVersion?: string;
+    sandboxMarkers?: string;
     sandboxVersionExit?: number;
     sandboxBinaryDigest?: string;
     driverVersionExit?: number;
@@ -99,7 +100,7 @@ exit 99`,
               : [
                   {
                     name: "openshell-sandbox",
-                    markers: OPENSHELL_MCP_FEATURE_MARKER,
+                    markers: options.sandboxMarkers ?? OPENSHELL_MCP_FEATURE_MARKER,
                   },
                 ]),
             ...(options.driverBins === "gateway-vm"
@@ -1227,8 +1228,8 @@ exit 0`,
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
-  it("reinstalls the pinned release when openshell 0.0.117 is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.117");
+  it("reinstalls the pinned release when openshell 0.1.3 is above MAX_VERSION", () => {
+    const result = runWithInstalledVersion("0.1.3");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1241,7 +1242,7 @@ exit 0`,
   });
 
   it("reinstalls the pinned release when openshell is at a much newer version", () => {
-    const result = runWithInstalledVersion("0.1.0");
+    const result = runWithInstalledVersion("1.0.0");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1260,7 +1261,7 @@ exit 0`,
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+      "NemoClaw requires exact stable OpenShell 0.1.2; the dev channel is not supported.",
     );
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
@@ -1269,7 +1270,7 @@ exit 0`,
     "NEMOCLAW_OPENSHELL_MIN_VERSION",
     "NEMOCLAW_OPENSHELL_MAX_VERSION",
     "NEMOCLAW_OPENSHELL_PIN_VERSION",
-  ] as const)("rejects a non-0.0.116 %s override before installation", (variable) => {
+  ] as const)("rejects a non-0.1.2 %s override before installation", (variable) => {
     const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {
       [variable]: "0.0.115",
     });
@@ -1345,4 +1346,23 @@ exit 1`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+});
+
+describe("OpenShell 0.1.2 split sandbox installation", () => {
+  it.each([
+    ["5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1", true],
+    ["9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa", true],
+    ["0".repeat(64), false],
+    ["326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40", false],
+  ] as const)(
+    "checks the exact sandbox digest before deferring supervisor policy verification [%s]",
+    (digest, accepted) => {
+      const result = runWithInstalledVersion(
+        "0.1.2",
+        {},
+        { sandboxMarkers: "", sandboxBinaryDigest: digest },
+      );
+      expect(result.status === 0, result.stdout + result.stderr).toBe(accepted);
+    },
+  );
 });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -79,7 +79,7 @@ export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | nul
 
 function executableSha256(candidate: string): string | null {
   try {
-    return createHash("sha256").update(fs.readFileSync(candidate)).digest("hex");
+    return crypto.createHash("sha256").update(fs.readFileSync(candidate)).digest("hex");
   } catch {
     return null;
   }
@@ -210,13 +210,20 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   }
   if (!REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => foundMarkers.has(marker))) return false;
 
-  // MCP policy enforcement and credential replacement execute in the sandbox
-  // supervisor. When that exact host artifact is available, require its native
-  // MCP marker rather than accepting a union of unrelated binaries.
+  // OpenShell 0.1.2 moved policy enforcement into the supervisor image. Only
+  // its exact pinned sandbox artifacts use that split here; version text alone
+  // cannot exempt another sandbox from the legacy marker check. Runtime policy
+  // verification remains mandatory before credential or provider changes.
   const sandboxMarker = Buffer.from(REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE);
   if (sandboxBin) {
     try {
-      return fs.readFileSync(sandboxBin).includes(sandboxMarker);
+      const content = fs.readFileSync(sandboxBin);
+      return (
+        content.includes(sandboxMarker) ||
+        pinnedOpenShellSandboxBuildVersion(
+          crypto.createHash("sha256").update(content).digest("hex"),
+        ) === "0.1.2"
+      );
     } catch {
       return false;
     }
