@@ -8,6 +8,7 @@ use std::{process::Stdio, time::Duration};
 pub(crate) struct Readiness {
     url: String,
     credential: Option<String>,
+    interval: Duration,
 }
 pub(crate) fn launch(
     service: &Service,
@@ -51,6 +52,7 @@ pub(crate) fn launch(
                 }
             ),
             credential,
+            interval: Duration::from_secs(5),
         },
     ))
 }
@@ -78,7 +80,7 @@ pub(crate) async fn wait_ready(
             let _ = ready.send(true).await;
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(readiness.interval).await;
     }
 }
 
@@ -175,6 +177,7 @@ mod tests {
             Readiness {
                 url,
                 credential: None,
+                interval: Duration::from_millis(10),
             },
             ready_tx,
         ));
