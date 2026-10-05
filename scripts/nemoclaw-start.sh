@@ -4981,7 +4981,7 @@ run_requested_openclaw_post_upgrade_doctor() {
   local ready_expected="nemoclaw-openclaw-post-upgrade-doctor-ready-v1"
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
   local ready_owner=""
-  local gate_attempt late_attempt
+  local gate_attempt late_attempt marker_identity
   local late_hold_seen="${1:-}"
   local -a doctor_command
 
@@ -5022,14 +5022,16 @@ EOF
       return 1
     fi
     echo "[setup] OpenClaw maintenance hold arrived after startup began; waiting for restart" >&2
+    # Poll the marker's identity without opening it, so a FIFO cannot block the wait.
+    if ! marker_identity="$(stat -c '%d %i %s %y' "$marker" 2>/dev/null)"; then
+      run_requested_openclaw_post_upgrade_doctor late-hold
+      return
+    fi
     late_attempt=0
     while [ "$late_attempt" -lt 600 ]; do
       late_attempt=$((late_attempt + 1))
       sleep 1
-      marker_value=""
-      if [ ! -f "$marker" ] || [ -L "$marker" ] \
-        || ! IFS= read -r marker_value <"$marker" \
-        || [ "$marker_value" != "$backup_expected" ]; then
+      if [ "$(stat -c '%d %i %s %y' "$marker" 2>/dev/null)" != "$marker_identity" ]; then
         run_requested_openclaw_post_upgrade_doctor late-hold
         return
       fi

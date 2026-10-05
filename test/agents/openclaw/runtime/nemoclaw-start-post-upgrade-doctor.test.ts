@@ -365,7 +365,7 @@ function fixture() {
   );
   fs.writeFileSync(
     path.join(fakeBin, "stat"),
-    `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%u %h": f"{s.st_uid} {s.st_nlink}", "%u %a %h": f"{s.st_uid} {stat.S_IMODE(s.st_mode):o} {s.st_nlink}"}\nprint(values[sys.argv[1]])\nPY\n`,
+    `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%u %h": f"{s.st_uid} {s.st_nlink}", "%u %a %h": f"{s.st_uid} {stat.S_IMODE(s.st_mode):o} {s.st_nlink}", "%d %i %s %y": f"{s.st_dev} {s.st_ino} {s.st_size} {s.st_mtime_ns}"}\nprint(values[sys.argv[1]])\nPY\n`,
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -462,7 +462,7 @@ function runLateBackupRequest(
   f: ReturnType<typeof fixture>,
   hostSteps: string[],
   lateAttempts = 600,
-  entry = "",
+  beforeRecheck = "",
 ) {
   const waiting = path.join(f.root, "late-wait-started");
   const script = [
@@ -472,7 +472,13 @@ function runLateBackupRequest(
     ),
     `sleep() { : >${JSON.stringify(waiting)}; /bin/sleep 0.01; }`,
     `(${[waitFor(waiting), ...hostSteps].join("; ")}) >/dev/null 2>&1 &`,
-    `run_requested_openclaw_post_upgrade_doctor ${entry} && consume_openclaw_post_upgrade_release_before_gateway`,
+    ...(beforeRecheck
+      ? [
+          'eval "first_$(declare -f run_requested_openclaw_post_upgrade_doctor)"',
+          `run_requested_openclaw_post_upgrade_doctor() { if [ "\${1:-}" = late-hold ]; then ${beforeRecheck}; fi; first_run_requested_openclaw_post_upgrade_doctor "$@"; }`,
+        ]
+      : []),
+    "run_requested_openclaw_post_upgrade_doctor && consume_openclaw_post_upgrade_release_before_gateway",
   ];
   return spawnSync("bash", ["-c", script.join("\n")], {
     encoding: "utf8",
@@ -615,6 +621,25 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
+  it("continues startup when the host withdraws a late backup request before the wait begins", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const withdrawn = source.replace(
+        "    if ! marker_identity=",
+        `    rm -f -- ${JSON.stringify(f.marker)}\n    if ! marker_identity=`,
+      );
+      const result = runLateBackupRequest(withdrawn, f, []);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when no restart follows a late backup request", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
@@ -717,11 +742,17 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const f = fixture();
     try {
       fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
-      const result = runLateBackupRequest(source, f, [], 600, "late-hold");
+      const result = runLateBackupRequest(
+        source,
+        f,
+        [writeMarker(f, "nemoclaw-openclaw-post-upgrade-doctor-v2")],
+        600,
+        writeMarker(f, "nemoclaw-openclaw-backup-quiesce-v1"),
+      );
 
       expect(result.status).toBe(1);
+      expect(result.stderr.match(/waiting for restart/g)).toHaveLength(1);
       expect(result.stderr).toContain("Refusing repeated late OpenClaw maintenance hold");
-      expect(result.stderr).not.toContain("waiting for restart");
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
     } finally {
