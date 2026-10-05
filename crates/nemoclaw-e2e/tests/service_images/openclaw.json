@@ -1,0 +1,14 @@
+{
+  "harness": {
+    "kind": "nvidia.fabric.openclaw",
+    "settings": {
+      "cli": "/app/openclaw.mjs"
+    }
+  },
+  "invocation": {
+    "agent": "main",
+    "message": "Reply with service-fixture-ok."
+  },
+  "expected_reply": "service-fixture-ok",
+  "expects_inference": true
+}
