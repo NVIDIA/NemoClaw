@@ -41,6 +41,12 @@ import ConfigExportCommand from "./export";
 
 const documentDigest = "sha256:" + "a".repeat(64);
 const specDigest = "sha256:" + "b".repeat(64);
+const caOmissionNotice =
+  "The source's corporate CA configuration is not included in the exported YAML. Review destination trust requirements before deployment.";
+const caStates = [
+  { state: "without retained CA", corporateCaOmitted: undefined, notices: [] },
+  { state: "with retained CA", corporateCaOmitted: true, notices: [[caOmissionNotice]] },
+] as const;
 
 describe("config export command", () => {
   beforeEach(() => {
@@ -65,24 +71,58 @@ describe("config export command", () => {
     process.exitCode = 0;
   });
 
-  it("composes live observation through canonical YAML stdout (#10938)", async () => {
-    const write = vi.spyOn(process.stdout, "write").mockImplementation(((
+  it.each(caStates)(
+    "writes YAML stdout $state and keeps the CA notice on stderr (#12146)",
+    async ({ corporateCaOmitted, notices }) => {
+      const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.observeStableExportSource.mockResolvedValue({
+        ok: true,
+        source: { sandboxName: "alpha" },
+        attempts: 1,
+        ...(corporateCaOmitted ? { corporateCaOmitted } : {}),
+      });
+      const write = vi.spyOn(process.stdout, "write").mockImplementation(((
+        _: string,
+        callback?: (error?: Error | null) => void,
+      ) => {
+        callback?.();
+        return true;
+      }) as typeof process.stdout.write);
+      await expect(
+        ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team-alpha"], process.cwd()),
+      ).resolves.toBeUndefined();
+      expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
+      expect(mocks.buildExportConfig).toHaveBeenCalledWith(
+        { sandboxName: "alpha" },
+        expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
+      );
+      expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(notice.mock.calls).toEqual(notices);
+      expect(mocks.publishExportFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not report CA omission when YAML stdout fails (#12146)", async () => {
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.observeStableExportSource.mockResolvedValue({
+      ok: true,
+      source: { sandboxName: "alpha" },
+      attempts: 1,
+      corporateCaOmitted: true,
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation(((
       _: string,
       callback?: (error?: Error | null) => void,
     ) => {
-      callback?.();
+      callback?.(new Error("write-failure-canary"));
       return true;
     }) as typeof process.stdout.write);
+
     await expect(
-      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team-alpha"], process.cwd()),
-    ).resolves.toBeUndefined();
-    expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
-    expect(mocks.buildExportConfig).toHaveBeenCalledWith(
-      { sandboxName: "alpha" },
-      expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
-    );
-    expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
-    expect(mocks.publishExportFile).not.toHaveBeenCalled();
+      ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
+    ).rejects.toThrow("The export could not be written to stdout.");
+    expect(notice).not.toHaveBeenCalled();
   });
 
   it("rejects JSON on YAML stdout before reading source state (#10938)", async () => {
@@ -114,6 +154,7 @@ describe("config export command", () => {
   });
 
   it("displays a returned observation failure without building the document", async () => {
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.observeStableExportSource.mockResolvedValue({
       ok: false,
       findings: [
@@ -130,6 +171,7 @@ describe("config export command", () => {
       ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
     ).rejects.toThrow("Config export failed (not-found).\nThe sandbox was not found.");
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+    expect(notice).not.toHaveBeenCalled();
   });
 
   it("reports observation failures in JSON without publishing a document", async () => {
@@ -174,31 +216,76 @@ describe("config export command", () => {
     expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
-  it("composes live observation through file publication and JSON result (#10938)", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const result = await ConfigExportCommand.run(
-      ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
-      process.cwd(),
-    );
-    expect(result).toEqual({
-      version: 1,
-      status: "succeeded",
-      sourceSandbox: "alpha",
-      outputPath: "/tmp/alpha.yaml",
-      documentDigest,
-      specDigest,
-    });
-    expect(log).toHaveBeenCalledTimes(1);
-    const emitted: unknown = JSON.parse(log.mock.calls[0]![0]);
-    expect(Check(ConfigExportResultSchema, emitted)).toBe(true);
-    expect(emitted).toEqual(result);
-    expect(mocks.publishExportFile).toHaveBeenCalledWith(
-      "/tmp/alpha.yaml",
-      "kind: NemoClawConfig\n",
-      false,
-    );
-  });
+  it.each(caStates)(
+    "publishes a file $state without JSON stdout and keeps CA notices on stderr (#12146)",
+    async ({ corporateCaOmitted, notices }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.observeStableExportSource.mockResolvedValue({
+        ok: true,
+        source: { sandboxName: "alpha" },
+        attempts: 1,
+        ...(corporateCaOmitted ? { corporateCaOmitted } : {}),
+      });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const result = await ConfigExportCommand.run(
+        ["alpha", "--output", "/tmp/alpha.yaml"],
+        process.cwd(),
+      );
+      expect(result).toEqual({
+        version: 1,
+        status: "succeeded",
+        sourceSandbox: "alpha",
+        outputPath: "/tmp/alpha.yaml",
+        documentDigest,
+        specDigest,
+      });
+      expect(Check(ConfigExportResultSchema, result)).toBe(true);
+      expect(log).not.toHaveBeenCalled();
+      expect(notice.mock.calls).toEqual(notices);
+      expect(mocks.publishExportFile).toHaveBeenCalledWith(
+        "/tmp/alpha.yaml",
+        "kind: NemoClawConfig\n",
+        false,
+      );
+    },
+  );
+
+  it.each(caStates)(
+    "publishes a file $state with the version 1 JSON result and separate CA notices (#12146)",
+    async ({ corporateCaOmitted, notices }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.observeStableExportSource.mockResolvedValue({
+        ok: true,
+        source: { sandboxName: "alpha" },
+        attempts: 1,
+        ...(corporateCaOmitted ? { corporateCaOmitted } : {}),
+      });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const result = await ConfigExportCommand.run(
+        ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
+        process.cwd(),
+      );
+      expect(result).toEqual({
+        version: 1,
+        status: "succeeded",
+        sourceSandbox: "alpha",
+        outputPath: "/tmp/alpha.yaml",
+        documentDigest,
+        specDigest,
+      });
+      expect(Check(ConfigExportResultSchema, result)).toBe(true);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(log.mock.calls[0]![0])).toEqual(result);
+      expect(notice.mock.calls).toEqual(notices);
+      expect(mocks.publishExportFile).toHaveBeenCalledWith(
+        "/tmp/alpha.yaml",
+        "kind: NemoClawConfig\n",
+        false,
+      );
+    },
+  );
 
   it.each([
     {
@@ -224,6 +311,13 @@ describe("config export command", () => {
     "displays a $name publication failure without the requested path",
     async ({ failure, diagnostic }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.observeStableExportSource.mockResolvedValue({
+        ok: true,
+        source: { sandboxName: "alpha" },
+        attempts: 1,
+        corporateCaOmitted: true,
+      });
       mocks.publishExportFile.mockReturnValue({ ok: false, failure });
       const result = await ConfigExportCommand.run(
         ["alpha", "--output", "/private/raw-path.yaml"],
@@ -232,6 +326,7 @@ describe("config export command", () => {
       expect(result).toBeInstanceOf(Error);
       expect((result as Error).message).toContain(diagnostic);
       expect((result as Error).message).not.toContain("/private/raw-path.yaml");
+      expect(notice).not.toHaveBeenCalled();
     },
   );
 

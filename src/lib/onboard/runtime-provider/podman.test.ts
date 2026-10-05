@@ -461,8 +461,10 @@ describe("managed Podman runtime provider", () => {
         registeredSandboxNames: [runtime.sandboxName],
         sandbox: runtime.entry,
         sandboxName: runtime.sandboxName,
+        timeoutMs: 1_250,
       }),
     ).toThrow(DirectSandboxContainerNotFoundError);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(expect.any(Array), 1_250);
   });
 
   it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
