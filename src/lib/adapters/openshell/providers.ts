@@ -18,6 +18,8 @@ import {
 
 import {
   ManagedBraveProfileResponseSchema,
+  ManagedTavilyProfileResponseSchema,
+  ManagedHermesTavilyProfileResponseSchema,
   ManagedOpenAiProfileResponseSchema,
   BuiltinNvidiaProfileResponseSchema,
   ProviderResponseSchema,
@@ -32,6 +34,15 @@ import {
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
 
+const managedProfileSchemas = {
+  brave: ManagedBraveProfileResponseSchema,
+  openai: ManagedOpenAiProfileResponseSchema,
+  tavily: ManagedTavilyProfileResponseSchema,
+  "tavily-hermes-v1": ManagedHermesTavilyProfileResponseSchema,
+};
+type ManagedProfileContract = keyof typeof managedProfileSchemas;
+type ProfileContract = ManagedProfileContract | "native-nvidia";
+
 export type Provider = Readonly<
   Pick<OpenShellProviderMetadata, "name" | "type" | "credentialKeys" | "configKeys"> & {
     id: string;
@@ -43,7 +54,7 @@ export type Provider = Readonly<
     profileWorkspace?: string;
     // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
-      id: "brave" | "openai" | typeof NVIDIA_HOSTED_NATIVE_PROFILE_ID;
+      id: ManagedProfileContract | typeof NVIDIA_HOSTED_NATIVE_PROFILE_ID;
       source: "builtin" | "user";
       scope: "" | "platform" | "workspace";
       resourceVersion: string;
@@ -56,7 +67,7 @@ export interface Providers {
       Readonly<{
         name: string;
         configKeys: readonly string[];
-        profileContract?: "brave" | "native-nvidia" | "openai";
+        profileContract?: ProfileContract;
       }>,
   ): Promise<Provider | null>;
 }
@@ -80,7 +91,7 @@ async function readBuiltinNvidiaEndpoint(
 async function readManagedProfile(
   client: OpenShellReadClient,
   request: ReadRequest,
-  profileContract: NonNullable<Parameters<Providers["get"]>[0]["profileContract"]>,
+  profileContract: ProfileContract,
   providerType: string,
   profileWorkspace: string | undefined,
 ): Promise<NonNullable<Provider["managedProfile"]> | null> {
@@ -127,18 +138,13 @@ function validateNativeManagedProfileResponse(
 
 function validateManagedProfileResponse(
   response: unknown,
-  profileContract: NonNullable<Parameters<Providers["get"]>[0]["profileContract"]>,
+  profileContract: ProfileContract,
   profileWorkspace: string,
 ): NonNullable<Provider["managedProfile"]> {
   if (profileContract === "native-nvidia") {
     return validateNativeManagedProfileResponse(response, profileWorkspace);
   }
-  const { profile } = readValue(
-    profileContract === "brave"
-      ? ManagedBraveProfileResponseSchema
-      : ManagedOpenAiProfileResponseSchema,
-    response,
-  );
+  const { profile } = readValue(managedProfileSchemas[profileContract], response);
   const builtin = profile.source === "builtin";
   const customScope = profileWorkspace === "" ? "platform" : "workspace";
   const expectedScope = builtin ? "" : customScope;

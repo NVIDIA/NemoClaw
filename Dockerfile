@@ -89,6 +89,7 @@ FROM scratch AS openclaw-optional-plugin-archives
 
 ADD --chmod=0444 --checksum=sha256:fe5baa1d9bbe53b3cf616a13ff7dcb0f21d6ce7a7d6d9856b9909e81c53a884c https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz /diagnostics-otel-2026.9.2.tgz
 ADD --chmod=0444 --checksum=sha256:40c0cf23e8373f2285034b8f0a575cc51ec1ed53d081b0e1592d219dd411e54d https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz /brave-plugin-2026.9.2.tgz
+ADD --chmod=0444 --checksum=sha256:c5d65ff201a8178ec914736887802c38d33628c667be5b2453b890fe44086984 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz /tavily-plugin-2026.9.2.tgz
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
@@ -839,6 +840,7 @@ ARG OPENCLAW_2026_9_2_INTEGRITY=sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRX
 ARG OPENCLAW_2026_9_2_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz
 ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==
 ARG OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==
+ARG OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY=sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
 # behavior. Production workflows reject the fixture flag, both legacy version
@@ -1786,37 +1788,28 @@ RUN set -eu; \
 RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
     export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
     managed_image_union="${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION:-0}"; \
-    verify_openclaw_plugin_integrity() { \
-        plugin_spec="$1"; \
-        expected_integrity=""; \
-        expected_tarball=""; \
-        archive_name=""; \
+    install_reviewed_openclaw_plugin() { \
+        plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         case "$plugin_spec" in \
-            "@openclaw/diagnostics-otel@2026.9.2") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz"; archive_name="diagnostics-otel-2026.9.2.tgz" ;; \
-            "@openclaw/brave-plugin@2026.9.2") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"; archive_name="brave-plugin-2026.9.2.tgz" ;; \
+            "@openclaw/diagnostics-otel@2026.9.2") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY" ;; \
+            "@openclaw/brave-plugin@2026.9.2") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY" ;; \
+            "@openclaw/tavily-plugin@2026.9.2") expected_integrity="$OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY" ;; \
+            *) echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1 ;; \
         esac; \
-        if [ -z "$expected_integrity" ]; then \
-            echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
-        fi; \
+        archive_name="${1#@openclaw/}-${OPENCLAW_VERSION}.tgz"; \
+        expected_tarball="https://registry.npmjs.org/$1/-/${archive_name}"; \
         if [ -n "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then \
             plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"; \
             node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if(actual!==process.argv[2]) { console.error(`integrity mismatch for ${process.argv[1]}`); process.exit(1); }' \
                 "$plugin_archive" "$expected_integrity"; \
-            printf '%s\n' "$plugin_archive"; \
         else \
-            node /scripts/lib/reviewed-npm-archive.mts \
+            plugin_archive="$(node /scripts/lib/reviewed-npm-archive.mts \
                 --package-spec "$plugin_spec" --integrity "$expected_integrity" \
-                --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
+                --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}")"; \
         fi; \
-    }; \
-    install_reviewed_openclaw_plugin() { \
-        plugin_spec="${1}@${OPENCLAW_VERSION}"; \
-        plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
-        plugin_source_root="$(dirname "$plugin_archive")"; \
-        plugin_install_archive="$plugin_archive"; \
         NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_install_archive}"; \
-        if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi; \
+            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"; \
+        if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$(dirname "$plugin_archive")"; fi; \
     }; \
     if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
@@ -1824,6 +1817,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     if [ "$managed_image_union" = "1" ]; then \
         install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
         install_reviewed_openclaw_plugin "@openclaw/brave-plugin"; \
+        install_reviewed_openclaw_plugin "@openclaw/tavily-plugin"; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
     fi; \
@@ -1834,7 +1828,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
                 BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
                 ;; \
             tavily) \
-                openclaw plugins inspect tavily --json > /dev/null; \
+                install_reviewed_openclaw_plugin "@openclaw/tavily-plugin"; \
                 TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
                 ;; \
             *) \
