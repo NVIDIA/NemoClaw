@@ -742,6 +742,8 @@ def _startup_ready_marker_absent() -> bool:
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
+    if action == "native-inference-credential":
+        return
     installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
     try:
         sandbox_uid = pwd.getpwnam("sandbox").pw_uid
@@ -1397,6 +1399,47 @@ def assert_mcp_integrity_snapshot_current(snapshot: McpIntegritySnapshot) -> Non
                 raise UnsafePathError("refusing raced Hermes MCP integrity snapshot")
         finally:
             opened.close()
+
+
+def _native_inference_hash_file(hermes_dir: str, strict_hash_file: str) -> str:
+    # Reuse the same procfs authority as config mutations; a bad strict hash
+    # never selects the compatibility path.
+    direct_start = _pid1_is_nemoclaw_start()
+    pid1_uid = _process_effective_uid(1) if direct_start else None
+    if direct_start and pid1_uid is not None and pid1_uid != 0:
+        return os.path.join(hermes_dir, ".config-hash")
+    if not direct_start:
+        try:
+            sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+        except KeyError:
+            sandbox_uid = -1
+        if sandbox_uid >= 0 and _openshell_supervised_nonroot_start_is_live(0, sandbox_uid):
+            return os.path.join(hermes_dir, ".config-hash")
+    return strict_hash_file
+
+
+def validate_native_inference_credential(hermes_dir: str, hash_file: str) -> None:
+    """Validate the current integrity-bound route, including after a switch."""
+    try:
+        selected_hash_file = _native_inference_hash_file(hermes_dir, hash_file)
+        snapshot = inspect_mcp_integrity_snapshot(hermes_dir, selected_hash_file)
+        config = yaml.safe_load(snapshot.config_text)
+        api_key = config.get("model", {}).get("api_key")
+        if api_key == "sk-OPENSHELL-PROXY-REWRITE" or api_key is None:
+            assert_mcp_integrity_snapshot_current(snapshot)
+            return
+        keys = ("NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN")
+        key = next((name for name in keys if api_key == "${" + name + "}"), None)
+        if key is None or re.fullmatch(
+            rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}",
+            os.environ.get(key, ""),
+        ) is None:
+            raise UnsafePathError("invalid native credential")
+        assert_mcp_integrity_snapshot_current(snapshot)
+    except (OSError, ValueError, AttributeError, yaml.YAMLError, UnsafePathError):
+        raise UnsafePathError(
+            "Native inference requires an intact managed route and an issued OpenShell credential handle"
+        ) from None
 
 
 def inspect_mcp_integrity(hermes_dir: str, hash_file: str) -> str:
@@ -3271,6 +3314,7 @@ def main() -> int:
             "inspect-mutation-owner",
             "write-config",
             "recover-prestate-lock",
+            "native-inference-credential",
         ),
     )
     parser.add_argument("--hermes-dir", required=True)
@@ -3300,7 +3344,11 @@ def main() -> int:
         if args.mcp_transition != "preserve" and args.action != "refresh-hashes":
             raise UnsafePathError("--mcp-transition requires refresh-hashes")
         _validate_action_readiness(args.action, args.startup_owner)
-        if args.action == "ensure-api-key":
+        if args.action == "native-inference-credential":
+            if not args.hash_file:
+                raise UnsafePathError("native-inference-credential requires --hash-file")
+            validate_native_inference_credential(args.hermes_dir, args.hash_file)
+        elif args.action == "ensure-api-key":
             if not args.hash_file:
                 raise UnsafePathError("ensure-api-key requires --hash-file")
             ensure_api_key(args.hermes_dir, args.hash_file, args.mode)

@@ -147,7 +147,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://integrate.api.nvidia.com/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      api_key: "${NVIDIA_INFERENCE_API_KEY}",
     });
   });
 

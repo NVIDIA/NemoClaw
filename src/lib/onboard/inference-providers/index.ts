@@ -34,3 +34,18 @@ export {
   normalizeNativeCompatibleProviderAttachment,
   type NativeCompatibleProviderAttachment,
 } from "../../inference/native-compatible/contract";
+
+export {
+  ensureBedrockRuntimeAdapter,
+  getCompatibleAnthropicCredentialForBedrock,
+} from "../../inference/bedrock-runtime-adapter";
+export { ensureNativeBedrockProvider } from "../../inference/native-bedrock/profile";
+export {
+  nativeBedrockIdentity,
+  normalizeNativeBedrockProviderAttachment,
+  type NativeBedrockProviderAttachment,
+} from "../../inference/native-bedrock/contract";
+export {
+  getNativeBedrockProviderAuthority,
+  setNativeBedrockProviderAuthority,
+} from "../../state/registry/native-bedrock-provider-authority";

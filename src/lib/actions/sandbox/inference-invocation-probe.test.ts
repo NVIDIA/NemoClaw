@@ -24,6 +24,7 @@ import {
   probeSandboxInferenceInvocation,
   resolveSandboxInferenceInvocationEndpoint,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -58,7 +59,8 @@ function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-  probeInput = input,
+  probeInput: SandboxInferenceInvocationInput = input,
+  workloadEnvironment: Record<string, string> = {},
 ): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
@@ -79,7 +81,7 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: { ...process.env, ...workloadEnvironment, PATH: `${bin}:${process.env.PATH || ""}` },
     });
     return {
       stdout: run.stdout || "",
@@ -143,10 +145,11 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain("Authorization: Bearer ");
+    expect(command).toContain('native_handle="${NVIDIA_INFERENCE_API_KEY:-}"');
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).not.toContain("nemoclaw-openshell-provider");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
@@ -677,5 +680,15 @@ describe("native compatible invocation paths", () => {
       nativeCompatibleProviderAttachment: receipt,
     };
     expect(resolveSandboxInferenceInvocationEndpoint(input)).toBe(`${identity.endpoint}${suffix}`);
+    const handle = "openshell:resolve:env:v42_NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY";
+    const result = runProbeCommandWithBody("200", "{}", tmpdir(), input, {
+      NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY: handle,
+    });
+    expect(result.stdout).toBe("200\n{}");
+    expect(result.argv).toContain(
+      `${api === "anthropic-messages" ? "x-api-key: " : "Authorization: Bearer "}${handle}`,
+    );
+    expect(result.argv).toContain(`${identity.endpoint}${suffix}`);
+    expect(result.argv).not.toContain("Authorization: Bearer nemoclaw-openshell-provider");
   });
 });

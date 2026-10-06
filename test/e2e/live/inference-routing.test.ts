@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -34,6 +36,7 @@ import {
   expectOpenAiChatThroughSandbox,
   hasRawNodeStackTrace,
   inferenceSandboxName,
+  nativeCompatibleCurlCommand,
   onboardSandbox,
   redactedResultText,
   requireLivePrerequisites,
@@ -812,7 +815,7 @@ test(
 );
 
 test(
-  "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
+  "TC-INF-11 native HTTPS endpoint denies DNS rebinding and private redirects (#6141)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
     meta: {
@@ -836,9 +839,6 @@ test(
     cleanup.add(`best-effort inference-routing https-pin cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
     );
-    cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-    );
     progress.phase("clear the HTTPS pin sandbox");
     await cleanupSandbox(host, sandbox, sandboxName);
     progress.phase("start the public HTTPS compatible endpoint");
@@ -850,11 +850,8 @@ test(
         await fake.close();
       }
     });
-    // A genuinely public, DNS-resolvable, publicly-trusted-certificate origin
-    // is required: the adapter's SSRF preflight rejects loopback/private
-    // addresses, and only a real TLS trust chain exercises its SNI-pinned
-    // certificate validation. This reuses the same trycloudflare.com quick
-    // tunnel mechanism as the MCP-bridge DNS-rebinding coverage.
+    // A public trusted TLS endpoint selects native hosted inference. The local
+    // self-signed fixture is only the cloudflared origin hop.
     const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
     const tunnel = await startPublicMcpHttpsTunnel({
       cloudflaredBin,
@@ -868,30 +865,19 @@ test(
     const endpointUrl = `${tunnel.origin}/v1`;
     const endpointHostname = new URL(tunnel.origin).hostname;
     await artifacts.target.declare({
-      id: "https-pin-runtime-adapter-dns-backed-endpoint",
+      id: "native-compatible-dns-and-redirect-denial",
       issue: 6141,
       contract: [
-        "inference set routes a DNS-backed HTTPS endpoint through the local pinning adapter",
-        "OpenShell's own policy view never references the real upstream hostname",
-        "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
-        "a DNS rebind of the upstream hostname after inference set does not redirect adapter traffic",
-        "an upstream redirect to a private target is rejected without relaying Location or reaching the target",
+        "inference set attaches a native provider scoped to the DNS-backed HTTPS endpoint",
+        "fresh authenticated chat succeeds before rebinding and after DNS restoration",
+        "a sandbox DNS rebind is denied before upstream contact",
+        "following a redirect to an unregistered private target is denied without target contact or credential transmission",
       ],
       endpointUrl,
       model,
     });
-    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
-    // rejects private/internal addresses; it does not fail closed on
-    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
-    // and onboarding never wires that adapter itself (only
-    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
-    // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
-    // onboards successfully with -- then switch to the DNS-backed HTTPS
-    // endpoint through `inference set --endpoint-url`, the actual #6141 call
-    // site this test exercises.
-    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
-    // listen beyond host loopback so the resulting sandbox route can reach it.
+    // Keep the existing host-local -> hosted switch boundary distinct from
+    // TC-INF-14's native onboarding proof.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
@@ -904,6 +890,9 @@ test(
       requireAuthModels: true,
     });
     cleanup.add("close https-pin onboarding placeholder endpoint", () => placeholder.close());
+    cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
     progress.phase("onboard with the placeholder endpoint");
     const onboard = await onboardSandbox(
       artifacts,
@@ -964,128 +953,271 @@ test(
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
     ).toBe(0);
     progress.phase("verify pinned route isolation and DNS rebinding");
-    // OpenShell's own network-policy view is a second, independent witness:
-    // it must never learn the real upstream hostname either, only the local
-    // adapter's host.openshell.internal boundary that everything else here
-    // already resolves through.
-    const policy = await sandbox.openshell(["policy", "get", "--full", sandboxName], {
-      artifactName: "tc-inf-11-policy-get-https-pin",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    const policyText = resultText(policy).replace(/\u001b\[[0-9;]*m/g, "");
-    expect(policy.exitCode, policyText).toBe(0);
-    expect(policyText).not.toContain(endpointHostname);
-    const sandboxRequestOffset = fake.requests().length;
-    // OpenShell 0.0.85 refreshes the sandbox-side inference bundle every five
-    // seconds. Because this switch intentionally keeps the same provider/model
-    // identity while replacing only its endpoint binding, an immediate request
-    // can still use the placeholder route cached before `inference set`. Poll
-    // through two refresh intervals, but accept success only after the real
-    // pinned upstream records the authenticated request.
-    let routeProbeAttempt = 0;
-    await expect
-      .poll(
-        async () => {
-          routeProbeAttempt += 1;
-          await expectOpenAiChatThroughSandbox(
-            sandbox,
-            sandboxName,
-            model,
-            [apiKey],
-            `https-pin-endpoint-inference-local-chat-${routeProbeAttempt}`,
-          );
-          return fake
-            .requests()
-            .slice(sandboxRequestOffset)
-            .some(
-              (request) =>
-                request.auth === "ok" &&
-                request.method === "POST" &&
-                request.path === "/v1/chat/completions",
-            );
-        },
-        { interval: 5_000, timeout: 11_000 },
-      )
-      .toBe(true);
-    // The assertions above only prove the *initial* `inference set` reached
-    // the real target. They do not prove the adapter is resistant to a DNS
-    // record changing after the route is already pinned -- the exact
-    // SSRF/DNS-rebinding vulnerability the pinning mechanism exists to close.
-    // Rebind the tunnel hostname to a reserved, unreachable documentation
-    // address (RFC 5737 TEST-NET-1) now that the route is registered: if the
-    // adapter re-resolved DNS per request instead of using the addresses it
-    // already pinned, this chat call would fail to connect instead of
-    // succeeding.
-    const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
-    cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
-      restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
-    );
-    await remapDnsRebindingHostname(
-      host,
-      sandboxName,
-      hostsFixture,
-      "192.0.2.1",
-      "tc-inf-11-dns-rebind-after-inference-set",
-    );
-    const rebindRequestOffset = fake.requests().length;
     await expectOpenAiChatThroughSandbox(
       sandbox,
       sandboxName,
       model,
       [apiKey],
-      "https-pin-endpoint-dns-rebinding-chat",
+      "tc-inf-11-native-chat-before-rebinding",
+      endpointUrl,
+      true,
     );
+    // OpenShell 0.0.116 resolves via /proc/{entrypoint_pid}/root/etc/hosts
+    // before DNS (proxy.rs:3813-3870 at d1155aa). Unlike the retired local
+    // adapter, its native provider revalidates each CONNECT against allowed_ips.
+    const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
+    cleanup.add(`restore native HTTPS DNS rebinding hosts fixture for ${sandboxName}`, () =>
+      restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
+    );
+    try {
+      await remapDnsRebindingHostname(
+        host,
+        sandboxName,
+        hostsFixture,
+        "192.0.2.1",
+        "tc-inf-11-native-dns-rebind",
+      );
+      const offset = fake.requests().length;
+      const denied = await sandbox.exec(
+        sandboxName,
+        nativeCompatibleCurlCommand([
+          "-sS",
+          "--max-time",
+          "30",
+          "--output",
+          "/dev/null",
+          "--write-out",
+          "NATIVE_REBIND_CONNECT=%{http_connect}",
+          `${endpointUrl}/chat/completions`,
+          "-H",
+          "Content-Type: application/json",
+          "--data-raw",
+          JSON.stringify({ model, messages: [{ role: "user", content: "PONG" }] }),
+        ]),
+        {
+          artifactName: "tc-inf-11-native-dns-denied",
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [apiKey],
+          timeoutMs: 60_000,
+        },
+      );
+      expect(denied.stdout).toContain("NATIVE_REBIND_CONNECT=403");
+      expect(fake.requests()).toHaveLength(offset);
+    } finally {
+      await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
+    }
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      sandboxName,
+      model,
+      [apiKey],
+      "tc-inf-11-native-chat-after-dns-restoration",
+      endpointUrl,
+      true,
+    );
+    progress.phase("verify private redirect rejection");
+    // Use an unregistered private destination, not the previously registered
+    // placeholder port. Otherwise a legitimate host-local grant could mask the
+    // native supervisor's private-destination denial.
+    const privateAddress = (await discoverHostAddress(host)).address;
+    expect(isPrivateIp(privateAddress)).toBe(true);
+    const privateSink = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      model,
+      host: "0.0.0.0",
+      publicHost: privateAddress,
+      progress,
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.add("close native HTTPS private redirect sink", async () => {
+      try {
+        await artifacts.writeJson(
+          "tc-inf-11-private-redirect-sink-requests.json",
+          privateSink.requests(),
+        );
+      } finally {
+        await privateSink.close();
+      }
+    });
+    const redirectTarget = new URL("chat/completions", `${privateSink.baseUrl}/`).toString();
+    fake.setChatRedirect(redirectTarget);
+    const privateSinkOffset = privateSink.requests().length;
+    const sourceOffset = fake.requests().length;
+    try {
+      const redirect = await sandbox.exec(
+        sandboxName,
+        nativeCompatibleCurlCommand([
+          "-sS",
+          "--include",
+          "--location",
+          "--max-redirs",
+          "3",
+          "--max-time",
+          "60",
+          "--write-out",
+          "\nNATIVE_REDIRECT_HTTP=%{http_code}",
+          `${endpointUrl}/chat/completions`,
+          "-H",
+          "Content-Type: application/json",
+          "--data-raw",
+          JSON.stringify({ model, messages: [{ role: "user", content: "PONG" }] }),
+        ]),
+        {
+          artifactName: "tc-inf-11-native-private-redirect-denied",
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [apiKey],
+          timeoutMs: 90_000,
+        },
+      );
+      expect(redirect.stdout).toMatch(/^HTTP\/[12](?:\.[01])? 302/mu);
+      expect(redirect.stdout.toLowerCase()).toContain(`location: ${redirectTarget}`.toLowerCase());
+      expect(redirect.stdout).toContain("NATIVE_REDIRECT_HTTP=403");
+      expect(fake.requests().length).toBeGreaterThan(sourceOffset);
+      expect(privateSink.requests()).toHaveLength(privateSinkOffset);
+    } finally {
+      fake.setChatRedirect(null);
+    }
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      sandboxName,
+      model,
+      [apiKey],
+      "tc-inf-11-native-chat-after-redirect-denial",
+      endpointUrl,
+      true,
+    );
+  },
+);
+
+test(
+  "TC-INF-14 hosted compatible endpoint serves a fresh agent turn through its attached native provider",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "start the hosted compatible endpoint",
+        "onboard the native compatible sandbox",
+        "request a fresh native agent turn",
+        "verify native status and inference health",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
+    await requireLivePrerequisites(host, runtimeProvider);
+    const sandboxName = inferenceSandboxName("e2e-native-compat");
+    const model = "nemoclaw-e2e-native-compatible";
+    const apiKey = "sk-native-compatible-TEST-NOT-A-REAL-VALUE";
+    await cleanupSandbox(host, sandbox, sandboxName);
+    progress.phase("start the hosted compatible endpoint");
+    const fake = await startFakeHttpsCompatibleServer({ apiKey, model, chatContent: "PONG" });
+    cleanup.add("close native compatible HTTPS fixture", async () => {
+      try {
+        await artifacts.writeJson("tc-inf-14-endpoint-requests.json", fake.requests());
+      } finally {
+        await fake.close();
+      }
+    });
+    const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+    const tunnel = await startPublicMcpHttpsTunnel({
+      cloudflaredBin,
+      cleanup,
+      label: "native compatible inference routing",
+      progress,
+      readinessPath: "/v1/models",
+      readinessStatus: 401,
+      server: fake,
+    });
+    // Register last so the real sandbox is destroyed while its endpoint and
+    // tunnel still exist. The fixture cleanup stack runs in reverse order.
+    cleanup.add(`remove native compatible sandbox ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
+    const endpointUrl = `${tunnel.origin}/v1`;
+    await artifacts.target.declare({
+      id: "native-compatible-hosted-agent",
+      contract: [
+        "hosted compatible onboarding attaches its endpoint-scoped native provider to the selected sandbox",
+        "a fresh agent turn reaches that endpoint with the selected model and injected credential",
+      ],
+      endpointUrl,
+      model,
+    });
+    progress.phase("onboard the native compatible sandbox");
+    const onboard = await onboardSandbox(
+      artifacts,
+      sandboxName,
+      {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_ENDPOINT_URL: endpointUrl,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      [apiKey],
+      "tc-inf-14-onboard-native-compatible",
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(onboard, "TC-INF-14 native compatible onboard");
+    progress.phase("request a fresh native agent turn");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      sandboxName,
+      buildAvailabilityProbeEnv(),
+      [apiKey],
+      false,
+    );
+    const offset = fake.requests().length;
+    const turn = await sandbox.exec(
+      sandboxName,
+      [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `native-compatible-${Date.now()}`,
+        "-m",
+        "Reply with exactly one word: PONG",
+      ],
+      {
+        artifactName: "tc-inf-14-native-agent-turn",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    expect(turn.stdout).toContain("PONG");
     expect(
       fake
         .requests()
-        .slice(rebindRequestOffset)
+        .slice(offset)
         .some(
           (request) =>
-            request.auth === "ok" &&
             request.method === "POST" &&
-            request.path === "/v1/chat/completions",
+            request.path === "/v1/chat/completions" &&
+            request.auth === "ok" &&
+            JSON.parse(request.body).model === model,
         ),
     ).toBe(true);
-    await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
-    progress.phase("verify private redirect rejection");
-    const privateTargetRequestOffset = placeholder.requests().length;
-    const redirectTarget = new URL("chat/completions", `${placeholder.baseUrl}/`).toString();
-    fake.setChatRedirect(redirectTarget);
-    const redirectPayload = JSON.stringify({
-      model,
-      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: 50,
+    progress.phase("verify native status and inference health");
+    const status = await host.nemoclaw([sandboxName, "status", "--json"], {
+      artifactName: "tc-inf-14-native-status-health",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 180_000,
     });
-    const redirect = await sandbox.exec(
-      sandboxName,
-      [
-        "curl",
-        "-sS",
-        "--include",
-        "--location",
-        "--max-redirs",
-        "3",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        redirectPayload,
-      ],
-      {
-        artifactName: "tc-inf-11-private-redirect-rejection",
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    const redirectText = resultText(redirect);
-    expect(redirect.exitCode, redirectText).toBe(0);
-    expect(redirectText).toMatch(/HTTP\/1\.[01] 502/u);
-    expect(redirectText).toContain("redirect_blocked");
-    expect(redirectText.toLowerCase()).not.toContain("location:");
-    expect(placeholder.requests()).toHaveLength(privateTargetRequestOffset);
+    expect(status.exitCode, resultText(status)).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      inferenceHealth: { ok: true, endpoint: endpointUrl },
+    });
   },
 );

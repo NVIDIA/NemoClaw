@@ -41,7 +41,7 @@ const NEMOTRON_ULTRA_MODEL_IDS = new Set([
   "nvidia/nvidia/nemotron-3-ultra",
 ]);
 const MANAGED_INFERENCE_API_KEY_ENV = "DEEPAGENTS_CODE_OPENAI_API_KEY";
-const ATTACHED_PROVIDER_API_KEY_ENV = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY";
+const ATTACHED_PROVIDER_API_KEY_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(
@@ -160,11 +160,20 @@ function providerConfigLines(
   model: string,
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
+  upstreamProvider: string,
 ): string[] {
   const apiKeyEnv =
-    baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
-      ? ATTACHED_PROVIDER_API_KEY_ENV
-      : MANAGED_INFERENCE_API_KEY_ENV;
+    upstreamProvider === "compatible-anthropic-endpoint" &&
+    /^http:\/\/host\.openshell\.internal:[1-9][0-9]{0,4}\/v1$/.test(baseUrl) &&
+    Number(new URL(baseUrl).port || "80") <= 65535
+      ? "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"
+      : upstreamProvider === "nvidia-prod" && baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+        ? ATTACHED_PROVIDER_API_KEY_ENV
+        : ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(upstreamProvider) &&
+            new URL(baseUrl).protocol === "https:" &&
+            new URL(baseUrl).hostname !== "inference.local"
+          ? "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"
+          : MANAGED_INFERENCE_API_KEY_ENV;
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
@@ -197,7 +206,13 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "[models]",
     `default = ${tomlString(defaultModel)}`,
     "",
-    ...providerConfigLines(provider, model, settings.baseUrl, settings.reasoningEffort),
+    ...providerConfigLines(
+      provider,
+      model,
+      settings.baseUrl,
+      settings.reasoningEffort,
+      settings.upstreamProvider,
+    ),
     "",
     "[update]",
     "check = false",

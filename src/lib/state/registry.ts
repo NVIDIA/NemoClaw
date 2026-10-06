@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyNativeBedrockProviderAuthority } from "./registry/persistence";
+
+import { requireMatchingNativeBedrockAttachment } from "../inference/selection";
+
 import {
   requireMatchingNativeCompatibleAttachment,
   isNativeCompatibleSelection,
@@ -497,6 +501,10 @@ export function registerSandbox(
         "Cannot register a sandbox with an invalid native NVIDIA provider attachment",
       );
     }
+    const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+      entry.nativeBedrockProviderAttachment,
+      entry,
+    );
     const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
       entry.nativeCompatibleProviderAttachment,
       entry,
@@ -552,6 +560,7 @@ export function registerSandbox(
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
       ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
@@ -604,6 +613,7 @@ type SandboxInferenceRouteReservation = Pick<
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
   nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
 };
 
@@ -646,6 +656,11 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
+    const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+      route.nativeBedrockProviderAttachment,
+      route,
+    );
+
     const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
       route.nativeNvidiaProviderAttachment,
     );
@@ -710,6 +725,10 @@ export function reserveSandboxInferenceRoute(
             route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
           ) &&
           isDeepStrictEqual(
+            existing.nativeBedrockProviderAttachment,
+            nativeBedrockProviderAttachment ?? existing.nativeBedrockProviderAttachment,
+          ) &&
+          isDeepStrictEqual(
             existing.nativeNvidiaProviderAttachment,
             nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
@@ -756,6 +775,7 @@ export function reserveSandboxInferenceRoute(
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,
+      nativeBedrockProviderAttachment,
       nativeCompatibleProviderAttachment,
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
@@ -836,6 +856,12 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     if (updates.provider !== undefined && !isNativeCompatibleSelection(updates.provider)) {
       next.nativeCompatibleProviderAttachment = undefined;
     }
+    if (updates.provider !== undefined && updates.provider !== "compatible-anthropic-endpoint")
+      next.nativeBedrockProviderAttachment = undefined;
+    next.nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+      next.nativeBedrockProviderAttachment,
+      next,
+    );
     next.nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
       next.nativeCompatibleProviderAttachment,
       next,
@@ -1080,5 +1106,16 @@ export function setNativeCompatibleProviderAuthority(
   withLock(() => {
     const state = load();
     if (applyNativeCompatibleProviderAuthority(state, gatewayName, receipt)) save(state);
+  });
+}
+
+export { getNativeBedrockProviderAuthority } from "./registry/persistence";
+export function setNativeBedrockProviderAuthority(
+  gatewayName: string,
+  receipt: import("../inference/native-bedrock/contract").NativeBedrockProviderAttachment,
+): void {
+  withLock(() => {
+    const state = load();
+    if (applyNativeBedrockProviderAuthority(state, gatewayName, receipt)) save(state);
   });
 }

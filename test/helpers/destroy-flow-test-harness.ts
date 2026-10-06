@@ -68,6 +68,7 @@ export type DestroyHarness = {
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSandboxProviderPreDeleteCleanupSpy: MockInstance;
+  retireCompatibleProviderSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
   setDockerIdentityResult: (result: {
@@ -669,6 +670,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       events.push("detach");
       return { detached: options.detachedProviders ?? [], failures: [] };
     });
+  const retireCompatibleProviderSpy = vi
+    .spyOn(sandboxProviderCleanup, "retireDestroyedSandboxCompatibleProvider")
+    .mockResolvedValue(undefined);
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
@@ -757,6 +761,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   logSpy.mockClear();
 
   return {
+    retireCompatibleProviderSpy,
     destroyCommand,
     assertHermesPortableCommandUnavailableSpy,
     assertDestroyIdentitySpy,

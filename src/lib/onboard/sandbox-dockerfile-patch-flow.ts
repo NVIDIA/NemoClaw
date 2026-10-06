@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireMatchingNativeBedrockAttachment } from "../inference/native-bedrock/contract";
+import type { NativeBedrockProviderAttachment } from "../inference/native-bedrock/contract";
+
 import {
   requireMatchingNativeCompatibleAttachment,
   type NativeCompatibleProviderAttachment,
@@ -45,6 +48,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   chatUiUrl: string;
   provider: string | null;
   endpointUrl?: string | null;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   compatibleEndpointReasoning?: "true" | "false";
   preferredInferenceApi: string | null;
@@ -126,6 +130,7 @@ export async function prepareSandboxDockerfilePatch({
   chatUiUrl,
   provider,
   endpointUrl = null,
+  nativeBedrockProviderAttachment,
   nativeCompatibleProviderAttachment,
   compatibleEndpointReasoning,
   preferredInferenceApi,
@@ -204,6 +209,12 @@ export async function prepareSandboxDockerfilePatch({
     !fromDockerfile && STABLE_MANAGED_BUILD_ID_AGENTS.has(managedAgentName)
       ? "preserve"
       : "rewrite";
+  const nativeBedrock = requireMatchingNativeBedrockAttachment(nativeBedrockProviderAttachment, {
+    provider,
+    endpointUrl,
+    preferredInferenceApi,
+    gatewayName: nativeBedrockProviderAttachment?.gatewayName,
+  });
   const nativeCompatible = requireMatchingNativeCompatibleAttachment(
     nativeCompatibleProviderAttachment,
     { provider, endpointUrl, preferredInferenceApi },
@@ -218,7 +229,7 @@ export async function prepareSandboxDockerfilePatch({
     webSearchConfig,
     resolved ? resolved.ref : null,
     darwinVmCompat,
-    nativeCompatible?.endpointUrl ?? null,
+    nativeBedrock?.adapterBaseUrl ?? nativeCompatible?.endpointUrl ?? null,
     hermesToolGateways,
     (() => {
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);

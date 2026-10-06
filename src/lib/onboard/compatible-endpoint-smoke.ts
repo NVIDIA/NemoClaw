@@ -1,12 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireMatchingNativeBedrockAttachment,
+  type NativeBedrockProviderAttachment,
+} from "../inference/native-bedrock/contract";
+import { verifyNativeBedrockProviderAttachment } from "../inference/native-bedrock/profile";
+import { getNativeBedrockSandboxInferenceConfig } from "../inference/config";
+
+import { verifyNativeCompatibleProviderAttachment } from "../inference/native-compatible/profile";
+import {
+  requireMatchingNativeCompatibleAttachment,
+  type NativeCompatibleProviderAttachment,
+} from "../inference/native-compatible/contract";
+import { probeSandboxInferenceInvocation } from "../actions/sandbox/inference-invocation-probe";
 import type { StdioOptions } from "node:child_process";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
-import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
+import {
+  getNativeCompatibleSandboxInferenceConfig,
+  INFERENCE_ROUTE_URL,
+  MANAGED_PROVIDER_ID,
+  type SandboxInferenceConfig,
+} from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
 import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
@@ -100,6 +118,50 @@ export function spawnOutputToString(value: unknown): string {
   return String(value);
 }
 
+/** Verify the effective OpenClaw route without echoing configuration or parser errors. */
+export function buildNativeCompatibleOpenClawConfigSmokeScript(
+  route: Pick<
+    SandboxInferenceConfig,
+    | "providerKey"
+    | "primaryModelRef"
+    | "inferenceBaseUrl"
+    | "inferenceApi"
+    | "inferenceCredentialEnv"
+  >,
+  configPath = "/sandbox/.openclaw/openclaw.json",
+): string {
+  const expected = JSON.stringify({
+    providerKey: route.providerKey,
+    primary: route.primaryModelRef,
+    endpoint: route.inferenceBaseUrl,
+    api: route.inferenceApi,
+    credential:
+      "${" + (route.inferenceCredentialEnv ?? "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY") + "}",
+  });
+  return `python3 - ${shellQuote(configPath)} ${shellQuote(expected)} <<'PYCFG'
+import json
+import sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as source:
+        cfg = json.load(source)
+    expected = json.loads(sys.argv[2])
+    providers = cfg.get("models", {}).get("providers", {})
+    provider = providers.get(expected["providerKey"])
+    valid = (isinstance(providers, dict) and "deepinfra" not in providers
+        and isinstance(provider, dict)
+        and provider.get("baseUrl") == expected["endpoint"]
+        and provider.get("api") == expected["api"]
+        and provider.get("apiKey") == expected["credential"]
+        and cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary") == expected["primary"])
+except Exception:
+    valid = False
+if not valid:
+    print("Native OpenClaw configuration does not match the selected inference route.", file=sys.stderr)
+    sys.exit(1)
+print("OPENCLAW_NATIVE_CONFIG_OK")
+PYCFG`;
+}
+
 export async function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxName: string;
   provider: string;
@@ -108,6 +170,8 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
   redact: (value: string) => string;
   endpointUrl?: string | null;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   credentialEnv?: string | null;
   messagingChannels?: string[] | null;
   agent?: CompatibleEndpointSmokeAgent;
@@ -120,6 +184,8 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
+    !options.nativeCompatibleProviderAttachment &&
+    !options.nativeBedrockProviderAttachment &&
     (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
   ) {
     return;
@@ -148,6 +214,153 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       };
     },
   });
+  if (options.nativeBedrockProviderAttachment && options.forceCanonicalRoute !== true) {
+    const receipt = requireMatchingNativeBedrockAttachment(
+      options.nativeBedrockProviderAttachment,
+      {
+        provider: options.provider,
+        endpointUrl: options.endpointUrl,
+        gatewayName: options.nativeBedrockProviderAttachment.gatewayName,
+      },
+    );
+    if (!receipt) throw new Error("Native Bedrock smoke requires its selected provider receipt.");
+    await verifyNativeBedrockProviderAttachment({
+      adapter,
+      sandboxName: options.sandboxName,
+      expected: receipt,
+    });
+    const route = getNativeBedrockSandboxInferenceConfig({
+      provider: options.provider,
+      model: options.model,
+      endpointUrl: receipt.endpointUrl,
+      gatewayName: receipt.gatewayName,
+      receipt,
+    });
+    const namedTarget = { kind: "named" as const, gatewayName: receipt.gatewayName };
+    if (agentName === "openclaw") {
+      const config = await options.sandboxCommandExecutor.runBuffered({
+        sandboxName: options.sandboxName,
+        target: namedTarget,
+        command: ["sh", "-lc", buildNativeCompatibleOpenClawConfigSmokeScript(route)],
+        timeoutMilliseconds: 30_000,
+      });
+      if (
+        config.outcome.kind !== "completed" ||
+        config.outcome.exitCode !== 0 ||
+        config.stdout.trim() !== "OPENCLAW_NATIVE_CONFIG_OK"
+      )
+        throw new Error(
+          "Native Bedrock OpenClaw configuration does not match the selected inference route.",
+        );
+    }
+    const result = await probeSandboxInferenceInvocation(
+      {
+        sandboxName: options.sandboxName,
+        agentName,
+        provider: options.provider,
+        model: options.model,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: receipt.gatewayName,
+        nativeBedrockProviderAttachment: receipt,
+      },
+      {
+        commandExecutor: options.sandboxCommandExecutor,
+        execute: async (sandboxName, command, timeoutMs) => {
+          const completed = await options.sandboxCommandExecutor.runBuffered({
+            sandboxName,
+            target: namedTarget,
+            command: ["sh", "-lc", command],
+            timeoutMilliseconds: timeoutMs,
+          });
+          return completed.outcome.kind === "completed"
+            ? {
+                status: completed.outcome.exitCode,
+                stdout: completed.stdout,
+                stderr: completed.stderr,
+              }
+            : null;
+        },
+      },
+    );
+    if (!result.ok) throw new Error(`Native Bedrock sandbox inference failed: ${result.detail}`);
+    options.beforeSuccess?.();
+    console.log("  ✓ Bedrock responds through its attached native provider");
+    return;
+  }
+  if (options.nativeCompatibleProviderAttachment && options.forceCanonicalRoute !== true) {
+    const receipt = requireMatchingNativeCompatibleAttachment(
+      options.nativeCompatibleProviderAttachment,
+      {
+        provider: options.provider,
+        endpointUrl: options.endpointUrl,
+        preferredInferenceApi: options.nativeCompatibleProviderAttachment.api,
+      },
+    );
+    if (!receipt)
+      throw new Error("Native compatible smoke requires its selected provider receipt.");
+    await verifyNativeCompatibleProviderAttachment({
+      adapter,
+      target,
+      sandboxName: options.sandboxName,
+      expected: receipt,
+    });
+    if (agentName === "openclaw") {
+      const route = getNativeCompatibleSandboxInferenceConfig({
+        provider: options.provider,
+        model: options.model,
+        endpointUrl: receipt.endpointUrl,
+        preferredInferenceApi: receipt.api,
+        receipt,
+      });
+      const config = await options.sandboxCommandExecutor.runBuffered({
+        sandboxName: options.sandboxName,
+        target,
+        command: ["sh", "-lc", buildNativeCompatibleOpenClawConfigSmokeScript(route)],
+        timeoutMilliseconds: 30_000,
+      });
+      if (
+        config.outcome.kind !== "completed" ||
+        config.outcome.exitCode !== 0 ||
+        config.stdout.trim() !== "OPENCLAW_NATIVE_CONFIG_OK"
+      ) {
+        throw new Error(
+          "Native compatible OpenClaw configuration does not match the selected inference route.",
+        );
+      }
+    }
+    const result = await probeSandboxInferenceInvocation(
+      {
+        sandboxName: options.sandboxName,
+        agentName,
+        provider: options.provider,
+        model: options.model,
+        preferredInferenceApi: receipt.api,
+        nativeCompatibleProviderAttachment: receipt,
+      },
+      {
+        commandExecutor: options.sandboxCommandExecutor,
+        execute: async (sandboxName, command, timeoutMs) => {
+          const completed = await options.sandboxCommandExecutor.runBuffered({
+            sandboxName,
+            target,
+            command: ["sh", "-lc", command],
+            timeoutMilliseconds: timeoutMs,
+          });
+          return completed.outcome.kind === "completed"
+            ? {
+                status: completed.outcome.exitCode,
+                stdout: completed.stdout,
+                stderr: completed.stderr,
+              }
+            : null;
+        },
+      },
+    );
+    if (!result.ok) throw new Error(`Native compatible sandbox inference failed: ${result.detail}`);
+    options.beforeSuccess?.();
+    console.log("  ✓ Compatible endpoint responds through its attached native provider");
+    return;
+  }
   const providerResult = await adapter.getProvider({
     target,
     providerName: options.provider,

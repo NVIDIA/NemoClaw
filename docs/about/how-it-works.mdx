@@ -212,6 +212,8 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 Most managed providers send model requests through `inference.local` instead of directly to an upstream endpoint.
 NVIDIA Endpoints uses a sandbox-attached OpenShell provider that permits approved requests to `integrate.api.nvidia.com`.
+Authenticated hosted OpenAI-compatible and Anthropic-compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to the selected HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 During onboarding, NemoClaw validates the selected provider and model, configures the applicable OpenShell route or provider attachment, and writes the matching model reference into the managed agent configuration.
 In both paths, OpenShell keeps the provider credential outside the sandbox and sends only approved requests to the upstream endpoint.
 When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from a configured model pool available through NVIDIA Endpoints for each request.

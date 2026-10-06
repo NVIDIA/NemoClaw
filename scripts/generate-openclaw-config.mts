@@ -965,10 +965,26 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     });
   }
+  const nativeCompatibleCredential =
+    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(
+      env.NEMOCLAW_UPSTREAM_PROVIDER ?? "",
+    ) &&
+    inferenceBaseUrl.startsWith("https://") &&
+    new URL(inferenceBaseUrl).hostname !== "inference.local";
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey:
+        upstreamProvider === "compatible-anthropic-endpoint" &&
+        /^http:\/\/host\.openshell\.internal:[1-9][0-9]{0,4}\/v1$/.test(inferenceBaseUrl) &&
+        Number(new URL(inferenceBaseUrl).port || "80") <= 65535
+          ? "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN}"
+          : nativeCompatibleCredential
+            ? "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}"
+            : upstreamProvider === "nvidia-prod" &&
+                inferenceBaseUrl === "https://integrate.api.nvidia.com/v1"
+              ? "${NVIDIA_INFERENCE_API_KEY}"
+              : "unused",
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

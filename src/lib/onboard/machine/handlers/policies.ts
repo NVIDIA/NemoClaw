@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeBedrockProviderAttachment } from "../../../inference/native-bedrock/contract";
+
+import type { NativeCompatibleProviderAttachment } from "../../../inference/native-compatible/contract";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
@@ -19,6 +22,8 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
+  nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   messaging?: { plan: SandboxMessagingPlan } | null;
 }
 
@@ -65,6 +70,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       provider: string;
       model: string;
       endpointUrl: string | null;
+      nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
+      nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
       credentialEnv: string | null;
       messagingChannels: string[];
       agent: Agent;
@@ -185,6 +192,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       provider,
       model,
       endpointUrl,
+      nativeBedrockProviderAttachment: activeSandbox?.nativeBedrockProviderAttachment,
+      nativeCompatibleProviderAttachment: activeSandbox?.nativeCompatibleProviderAttachment,
       credentialEnv,
       messagingChannels: policyMessagingChannels,
       agent,

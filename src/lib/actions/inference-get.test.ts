@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeBedrockIdentity } from "../inference/native-bedrock/contract";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../inference/bedrock-runtime";
 import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import fs from "node:fs";
 import os from "node:os";
@@ -1152,5 +1154,114 @@ describe("runInferenceGet", () => {
         "NemoClaw rejected the inference route lookup for gateway 'nemoclaw-19090' before observation. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
     });
     expect(deps.log).not.toHaveBeenCalled();
+  });
+});
+
+function nativeBedrockGetFixture() {
+  const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
+  const binding = {
+    endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    region: "us-east-1",
+    adapterGeneration: "a".repeat(32),
+    adapterBaseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+    gatewayName: "nemoclaw",
+  };
+  const receipt = {
+    ...binding,
+    ...nativeBedrockIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-bedrock",
+  };
+  const sandbox: NonNullable<ReturnType<NonNullable<InferenceGetDeps["getSandbox"]>>> = {
+    name: "bedrock",
+    gatewayName: "nemoclaw",
+    provider: "compatible-anthropic-endpoint",
+    model: "anthropic.claude",
+    endpointUrl: binding.endpointUrl,
+    preferredInferenceApi: "openai-completions",
+    nativeBedrockProviderAttachment: receipt,
+  };
+  const verify = vi.fn(async () => undefined);
+  deps.getDefaultSandbox = () => "bedrock";
+  deps.getSandbox = () => sandbox;
+  deps.verifyNativeBedrockAttachment = verify;
+  return { deps, receipt, sandbox, verify };
+}
+
+describe("native Bedrock inference get", () => {
+  it.each([{ quiet: true }, { json: true }, {}])(
+    "observes native ownership without shared-route reads (%j)",
+    async (options) => {
+      const f = nativeBedrockGetFixture();
+      await expect(runInferenceGet(options, f.deps)).resolves.toEqual({
+        provider: "compatible-anthropic-endpoint",
+        model: "anthropic.claude",
+        endpointUrl: f.receipt.endpointUrl,
+      });
+      expect(f.verify).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw",
+        sandboxName: "bedrock",
+        expected: f.receipt,
+      });
+      expect(f.deps.observeInferenceRoute).not.toHaveBeenCalled();
+      expect(f.deps.listSandboxes).not.toHaveBeenCalled();
+      expect(JSON.stringify(f.deps.log.mock.calls)).not.toMatch(
+        /adapterGeneration|providerId|TOKEN|inference\.local/,
+      );
+    },
+  );
+  it.each([
+    {
+      label: "missing receipt",
+      mutate: (f: ReturnType<typeof nativeBedrockGetFixture>) => {
+        f.sandbox.nativeBedrockProviderAttachment = undefined;
+      },
+    },
+    {
+      label: "wrong endpoint",
+      mutate: (f: ReturnType<typeof nativeBedrockGetFixture>) => {
+        f.sandbox.endpointUrl = "https://bedrock-runtime.us-west-2.amazonaws.com";
+      },
+    },
+    {
+      label: "wrong registry gateway",
+      mutate: (f: ReturnType<typeof nativeBedrockGetFixture>) => {
+        f.sandbox.gatewayName = "other";
+      },
+    },
+    {
+      label: "wrong resolved gateway",
+      mutate: (f: ReturnType<typeof nativeBedrockGetFixture>) => {
+        f.deps.getSandboxTargetGatewayName.mockReturnValue("other");
+      },
+    },
+    {
+      label: "wrong profile identity",
+      mutate: (f: ReturnType<typeof nativeBedrockGetFixture>) => {
+        f.sandbox.nativeBedrockProviderAttachment = {
+          ...f.receipt,
+          adapterGeneration: "b".repeat(32),
+        };
+      },
+    },
+  ])("refuses $label before observation or shared-route lookup", async ({ mutate }) => {
+    const f = nativeBedrockGetFixture();
+    mutate(f);
+    await expect(runInferenceGet({ json: true }, f.deps)).rejects.toThrow(
+      "native Bedrock provider could not be verified",
+    );
+    expect(f.verify).not.toHaveBeenCalled();
+    expect(f.deps.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(f.deps.log).not.toHaveBeenCalled();
+  });
+  it("does not leak verifier errors or fall back when the adapter generation is unavailable", async () => {
+    const f = nativeBedrockGetFixture();
+    const credential = "sensitive-adapter-token-canary";
+    f.verify.mockRejectedValue(new Error(credential));
+    const failure = runInferenceGet({ json: true }, f.deps);
+    await expect(failure).rejects.toThrow("native Bedrock provider could not be verified");
+    await expect(failure).rejects.not.toThrow(credential);
+    expect(f.deps.log).not.toHaveBeenCalled();
+    expect(f.deps.observeInferenceRoute).not.toHaveBeenCalled();
   });
 });

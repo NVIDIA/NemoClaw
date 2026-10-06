@@ -150,11 +150,7 @@ const os = require("os");
 const path = require("path");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
-const {
-  applyExtraProviderReconciliation,
-  planRegisteredExtraProviders,
-  runSandboxProviderPreDeleteCleanup,
-} =
+const sandboxProviderCleanup =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
@@ -1432,7 +1428,7 @@ const sandboxCreateOrchestrationRuntime = {
   SCRIPTS,
   agentDefs,
   agentOnboard,
-  applyExtraProviderReconciliation,
+  applyExtraProviderReconciliation: sandboxProviderCleanup.applyExtraProviderReconciliation,
   assessHost,
   baseImageResolutionFlow,
   cliDisplayName,
@@ -1488,7 +1484,7 @@ const sandboxCreateOrchestrationRuntime = {
   onboardSessionBootstrap,
   openshellArgv,
   path,
-  planRegisteredExtraProviders,
+  planRegisteredExtraProviders: sandboxProviderCleanup.planRegisteredExtraProviders,
   preparedDcodeRebuild,
   promptValidatedSandboxName,
   promptYesNoOrDefault,
@@ -1500,7 +1496,9 @@ const sandboxCreateOrchestrationRuntime = {
   resolveSandboxGpuConfig,
   runCaptureOpenshell,
   runOpenshell,
-  runSandboxProviderPreDeleteCleanup,
+  runSandboxProviderPreDeleteCleanup: sandboxProviderCleanup.runSandboxProviderPreDeleteCleanup,
+  sandboxProviderCleanup,
+  gatewayRouteMutationLock,
   sandboxAgent,
   sandboxBuildPatchConfig,
   sandboxCommandExecutor: sandboxExec,
@@ -3106,7 +3104,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
             listRegistrySandboxes: registry.listSandboxes,
             planRegisteredExtraProviders: (gatewayName) =>
-              planRegisteredExtraProviders(gatewayName, { runOpenshell }),
+              sandboxProviderCleanup.planRegisteredExtraProviders(gatewayName, { runOpenshell }),
             resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
             createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
               withSandboxPortReservationScope((dashboardPortReservationScope) =>

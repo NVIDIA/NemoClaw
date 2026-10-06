@@ -266,6 +266,8 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 }
 
 export interface SandboxGpuCreateFlowDeps {
+  /** Called only when proven native absence is followed by abandonment before retry. */
+  onTerminalSandboxAbsenceConfirmed?(): void | Promise<void>;
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   runOpenshell: RunOpenshell;
@@ -403,6 +405,7 @@ export async function runSandboxGpuCreateFlow(
     ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
     : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
         runAttempt: attemptRunner.runAttempt,
+        onTerminalSandboxAbsenceConfirmed: deps.onTerminalSandboxAbsenceConfirmed,
         captureNativeFailure: (failure) => {
           const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
           const diagnostics = collectDockerGpuPatchDiagnostics(

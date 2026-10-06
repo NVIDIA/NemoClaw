@@ -130,3 +130,5 @@ export {
   requireMatchingNativeCompatibleAttachment,
   isNativeCompatibleSelection,
 } from "./native-compatible/contract";
+
+export { requireMatchingNativeBedrockAttachment } from "./native-bedrock/contract";

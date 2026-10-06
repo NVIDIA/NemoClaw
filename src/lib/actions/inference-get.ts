@@ -5,6 +5,7 @@ import {
   isNativeCompatibleHostedSelection,
   requireMatchingNativeCompatibleAttachment,
 } from "../inference/native-compatible/contract";
+import { verifyNativeBedrockStatusAttachment } from "./sandbox/inference-route-health";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
 import type {
@@ -14,6 +15,8 @@ import type {
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import {
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
   getLlamaCppRouteDetails,
   sanitizeRouteValueForDisplay,
   type LlamaCppRouteDetails,
@@ -75,6 +78,7 @@ export interface InferenceGetDeps {
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   listSandboxes: typeof listPersistedSandboxTargets;
   log: (message?: string) => void;
+  verifyNativeBedrockAttachment?: typeof verifyNativeBedrockStatusAttachment;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
@@ -317,6 +321,41 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
+  if (selectedSandbox && isNativeBedrockSelection(selectedSandbox)) {
+    let receipt;
+    try {
+      receipt = requireMatchingNativeBedrockAttachment(
+        selectedSandbox.nativeBedrockProviderAttachment,
+        selectedSandbox,
+      );
+      if (!receipt || !selectedSandboxName) throw new Error("Missing native Bedrock receipt.");
+      const gatewayName = deps.getSandboxTargetGatewayName(selectedSandboxName);
+      if (gatewayName !== receipt.gatewayName) throw new Error("Native Bedrock gateway mismatch.");
+      await (deps.verifyNativeBedrockAttachment ?? verifyNativeBedrockStatusAttachment)({
+        gatewayName,
+        sandboxName: selectedSandboxName,
+        expected: receipt,
+      });
+    } catch {
+      throw new InferenceGetError(
+        "The selected sandbox's native Bedrock provider could not be verified. Check its recorded adapter generation and gateway attachment before using inference.",
+      );
+    }
+    const payload: InferenceGetResult = {
+      provider: selectedSandbox.provider ?? null,
+      model: selectedSandbox.model ?? null,
+      endpointUrl: receipt.endpointUrl,
+    };
+    if (!options.quiet) {
+      if (options.json) deps.log(JSON.stringify(payload, null, 2));
+      else {
+        deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
+        deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+        deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl ?? null)}`);
+      }
+    }
+    return payload;
+  }
   if (selectedSandbox && isNativeCompatibleHostedSelection(selectedSandbox)) {
     let receipt;
     try {
@@ -347,7 +386,7 @@ export async function runInferenceGet(
         deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
         deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
         if (payload.endpointUrl)
-          deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+          deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl ?? null)}`);
         else {
           deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
           deps.log(`Action:   ${payload.endpointRecovery}`);

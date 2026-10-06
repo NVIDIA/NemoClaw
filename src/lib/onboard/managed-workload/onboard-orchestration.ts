@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  applyNativeBedrockStartupRoute,
+  type NativeBedrockProviderAttachment,
+} from "../managed-startup/onboard-profile";
+
 import { applyNativeCompatibleStartupRoute } from "../managed-startup/onboard-profile";
 import type { NativeCompatibleProviderAttachment } from "../../inference/native-compatible/contract";
 import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent/candidate";
@@ -204,6 +209,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   readonly nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
@@ -412,21 +418,35 @@ export function createManagedWorkloadOnboardRuntime(
             selectedProvider,
             input.preferredInferenceApi,
           );
-    const inference: SandboxInferenceConfig = input.nativeCompatibleProviderAttachment
-      ? applyNativeCompatibleStartupRoute(
+    const inference: SandboxInferenceConfig = input.nativeBedrockProviderAttachment
+      ? applyNativeBedrockStartupRoute(
           dependencies.getSandboxInferenceConfig(
             selectedModel,
             selectedProvider,
-            input.nativeCompatibleProviderAttachment.api,
+            "openai-completions",
           ),
           {
             provider: selectedProvider ?? "",
             endpointUrl: input.endpointUrl ?? "",
-            preferredInferenceApi: inferenceApi ?? input.nativeCompatibleProviderAttachment.api,
-            receipt: input.nativeCompatibleProviderAttachment,
+            gatewayName: input.nativeBedrockProviderAttachment.gatewayName,
+            receipt: input.nativeBedrockProviderAttachment,
           },
         )
-      : dependencies.getSandboxInferenceConfig(selectedModel, selectedProvider, inferenceApi);
+      : input.nativeCompatibleProviderAttachment
+        ? applyNativeCompatibleStartupRoute(
+            dependencies.getSandboxInferenceConfig(
+              selectedModel,
+              selectedProvider,
+              input.nativeCompatibleProviderAttachment.api,
+            ),
+            {
+              provider: selectedProvider ?? "",
+              endpointUrl: input.endpointUrl ?? "",
+              preferredInferenceApi: inferenceApi ?? input.nativeCompatibleProviderAttachment.api,
+              receipt: input.nativeCompatibleProviderAttachment,
+            },
+          )
+        : dependencies.getSandboxInferenceConfig(selectedModel, selectedProvider, inferenceApi);
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:

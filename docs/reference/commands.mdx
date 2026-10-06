@@ -1638,7 +1638,9 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Most providers use `https://inference.local`; NVIDIA Endpoints uses the sandbox-attached OpenShell provider for `https://integrate.api.nvidia.com/v1`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. `doctor` still classifies an HTTP `401` or `403` route response as reachable, so correct the provider credential when `start` reports one of those statuses.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Most providers use `https://inference.local`; NVIDIA Endpoints uses the sandbox-attached OpenShell provider for `https://integrate.api.nvidia.com/v1`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. `doctor` still classifies an HTTP `401` or `403` route response as reachable, so correct the provider credential when `start` reports one of those statuses.
 
 ### `$$nemoclaw <name> status`
 
@@ -1687,7 +1689,9 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. Most providers use `https://inference.local/v1`; NVIDIA Endpoints uses the sandbox-attached provider for `https://integrate.api.nvidia.com/v1`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. Most providers use `https://inference.local/v1`; NVIDIA Endpoints uses the sandbox-attached provider for `https://integrate.api.nvidia.com/v1`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State | Meaning |
 | --- | --- |
@@ -1843,7 +1847,9 @@ The `Registered gateway binding` result depends on the sandbox registry:
 - For an unregistered sandbox name, `doctor` uses the gateway selected by `NEMOCLAW_GATEWAY_PORT` for its other gateway checks and omits the `Registered gateway binding` check.
 
 
-For inference health, `doctor` treats the selected provider path inside the sandbox as authoritative. Most providers probe `https://inference.local/v1/models`; NVIDIA Endpoints probes its sandbox-attached provider at `https://integrate.api.nvidia.com/v1/models`. HTTP responses from `200` through `499`, including `401` and `403`, pass this check. HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. Host-side upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox path is reachable. For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process. This result does not fail the readiness check. Terminal runtimes omit it because they have no long-running gateway process. The `Inference` `Route` check warns when either the provider or model is unknown. After the gateway is healthy, run `$$nemoclaw <name> status` to refresh the route information.
+For inference health, `doctor` treats the selected provider path inside the sandbox as authoritative. Most providers probe `https://inference.local/v1/models`; NVIDIA Endpoints probes its sandbox-attached provider at `https://integrate.api.nvidia.com/v1/models`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+For shared routes, HTTP responses from `200` through `499`, including `401` and `403`, pass the route reachability check. Native compatible and Bedrock routes require a successful inference request after ownership verification. HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. Host-side upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox path is reachable. For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process. This result does not fail the readiness check. Terminal runtimes omit it because they have no long-running gateway process. The `Inference` `Route` check warns when either the provider or model is unknown. After the gateway is healthy, run `$$nemoclaw <name> status` to refresh the route information.
 
 Warnings do not make the command fail. Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate. Use `--json` for machine-readable output. For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`. The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials. Because the check has `info` status, it does not change the command's exit status.
 
@@ -2039,7 +2045,8 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 
 </AgentOnly>
 
@@ -3209,7 +3216,9 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. Most providers use `inference.local`; NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. Most providers use `inference.local`; NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 
@@ -3503,7 +3512,8 @@ Switch the active inference provider or model for a NemoClaw-managed Hermes sand
 
 By default, the command syncs the default registered sandbox.
 
-For providers other than NVIDIA Endpoints, each OpenShell gateway exposes one shared inference route to every sandbox registered on that gateway. NVIDIA Endpoints instead uses a sandbox-attached provider and does not change the shared route.
+Providers that use `inference.local` share one inference route across every sandbox registered on the same OpenShell gateway. NVIDIA Endpoints and authenticated hosted compatible endpoints other than AWS Bedrock use sandbox-attached providers and do not change that shared route.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.

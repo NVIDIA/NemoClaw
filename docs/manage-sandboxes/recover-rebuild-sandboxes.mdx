@@ -191,6 +191,8 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 Configured inference must return HTTP 2xx from the semantic probe for the selected provider path.
 Shared-route providers use `inference.local`.
 NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`.
+Authenticated hosted compatible endpoints other than AWS Bedrock use their endpoint-restricted sandbox attachments.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">

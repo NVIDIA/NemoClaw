@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeBedrockProviderAttachment } from "../inference/native-bedrock/contract";
+
 import type { NativeCompatibleProviderAttachment } from "../inference/native-compatible/contract";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
@@ -29,6 +31,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
@@ -149,6 +152,7 @@ export function createSandboxCreateIntentResolver<
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
       nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
+      nativeBedrockProviderAttachment: input.nativeBedrockProviderAttachment,
       nativeCompatibleProviderAttachment: input.nativeCompatibleProviderAttachment,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,

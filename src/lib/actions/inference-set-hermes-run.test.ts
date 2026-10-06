@@ -11,6 +11,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   ...(await importOriginal()),
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
+import { nativeBedrockSwitchFixture } from "../inference/native-bedrock/switch.test-support";
 import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
@@ -400,7 +401,7 @@ describe("runInferenceSet Hermes routing", () => {
       default: "claude-sonnet-proxy",
       provider: "custom",
       base_url: "https://anthropic-compatible.example/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      api_key: "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}",
     });
     // The upstream annotation must track the selected provider together with
     // the API-family field, so the two cannot drift apart on later switches.
@@ -506,17 +507,21 @@ describe("runInferenceSet Hermes routing", () => {
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for Hermes switches", async () => {
+    const native = nativeBedrockSwitchFixture();
     const config: ConfigObject = {
       model: {
         default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
         provider: "custom",
-        base_url: "https://inference.local/v1",
+        base_url: native.receipt.adapterBaseUrl,
       },
     };
     const deps = createDeps({
       config,
+      providerAdapter: native.providerAdapter,
       entry: {
         name: "hermes",
+        gatewayName: native.receipt.gatewayName,
+        nativeBedrockProviderAttachment: native.receipt,
         agent: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
@@ -536,6 +541,8 @@ describe("runInferenceSet Hermes routing", () => {
       }),
     });
 
+    deps.verifyBedrockAdapterGeneration = vi.fn(async () => {});
+    const sharedRoute = vi.spyOn(deps.inferenceRouteMutator, "setInferenceRoute");
     const result = await runInferenceSet(
       {
         provider: "compatible-anthropic-endpoint",
@@ -549,9 +556,18 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config.model).toEqual({
       default: "anthropic.claude-sonnet-4-6-20260101-v1:0",
       provider: "custom",
-      base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      base_url: native.receipt.adapterBaseUrl,
+      api_key: "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN}",
     });
+    expect(sharedRoute).not.toHaveBeenCalled();
+    expect(deps.verifyBedrockAdapterGeneration).toHaveBeenCalledWith(native.receipt);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        nativeBedrockProviderAttachment: native.receipt,
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
     expect(result).toMatchObject({
       providerKey: "inference",
       primaryModelRef: "inference/anthropic.claude-sonnet-4-6-20260101-v1:0",

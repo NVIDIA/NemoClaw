@@ -126,6 +126,24 @@ export async function startFakeHttpsCompatibleServer(options: {
         res.end();
         return;
       }
+      const payload = JSON.parse(body) as { stream?: boolean };
+      if (payload.stream === true) {
+        const chunk = (delta: object, finishReason: string | null) =>
+          JSON.stringify({
+            id: "chatcmpl-https-pin",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: options.model,
+            choices: [{ index: 0, delta, finish_reason: finishReason }],
+          });
+        const response = `data: ${chunk({ role: "assistant", content: chatContent }, null)}\n\ndata: ${chunk({}, "stop")}\n\ndata: [DONE]\n\n`;
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Content-Length": Buffer.byteLength(response),
+        });
+        res.end(response);
+        return;
+      }
       jsonResponse(res, 200, {
         id: "chatcmpl-https-pin",
         object: "chat.completion",

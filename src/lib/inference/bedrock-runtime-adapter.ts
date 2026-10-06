@@ -521,6 +521,8 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
   credentialEnv: string;
   token: string;
   region: string;
+  endpointUrl: string;
+  generation: string;
 }> {
   validateRuntimeAdapterPort("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT", BEDROCK_RUNTIME_ADAPTER_PORT);
   const region = resolveBedrockRuntimeRegion(options.classification);
@@ -574,7 +576,7 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
         priorState,
       ) !== null;
   }
-  if (priorToken && reusableProcessValidated) {
+  if (priorToken && reusableProcessValidated && isBedrockRuntimeAdapterState(priorState)) {
     process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = priorToken;
     return {
       baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
@@ -583,6 +585,8 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
       credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
       token: priorToken,
       region,
+      endpointUrl,
+      generation: priorState.generation,
     };
   }
 
@@ -667,6 +671,11 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
         `Bedrock Runtime adapter did not become healthy on ${BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
       );
     }
+    if (
+      observeBedrockRuntimeAdapterProcess(child.pid!, processRuntime, lifecycleIdentity) === null
+    ) {
+      throw new Error("Bedrock Runtime adapter generation changed during startup.");
+    }
   } catch (err) {
     if (durableUninstallAuthorityPublished) throw err;
     lifecycleIdentity ??= captureSpawnedBedrockRuntimeAdapterIdentity(
@@ -711,6 +720,8 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
     credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
     token,
     region,
+    endpointUrl,
+    generation,
   };
 }
 
@@ -724,6 +735,8 @@ export async function ensureBedrockRuntimeAdapter(options: {
   credentialEnv: string;
   token: string;
   region: string;
+  endpointUrl: string;
+  generation: string;
 }> {
   const home = process.env.HOME || os.homedir();
   const lifecycle = resolveBedrockRuntimeAdapterLifecyclePaths(home, GATEWAY_PORT);
@@ -751,3 +764,48 @@ export const __test = {
   adapterProcessNeedle: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   getAdapterScriptPath,
 };
+
+/** Observe an existing adapter generation without starting it or hydrating AWS credentials. */
+export async function verifyBedrockRuntimeAdapterGeneration(expected: {
+  endpointUrl: string;
+  region: string;
+  adapterGeneration: string;
+  adapterBaseUrl: string;
+}): Promise<void> {
+  const lifecycle = resolveBedrockRuntimeAdapterLifecyclePaths(
+    process.env.HOME || os.homedir(),
+    GATEWAY_PORT,
+  );
+  await withBedrockRuntimeAdapterLifecycleLockAsync(lifecycle, async () => {
+    const state = readLocalAdapterJsonFile(STATE_PATH);
+    const token = readLocalAdapterTextFile(TOKEN_PATH);
+    const pid = canonicalPid(readLocalAdapterTextFile(PID_PATH) ?? "");
+    if (
+      fs.existsSync(lifecycle.journalPath) ||
+      !isBedrockRuntimeAdapterState(state) ||
+      !token ||
+      pid !== state.pid ||
+      state.uid !== process.getuid?.() ||
+      state.user !== os.userInfo().username ||
+      canonicalPath(state.executablePath) !== canonicalPath(process.execPath) ||
+      canonicalPath(state.scriptPath) !== canonicalPath(getAdapterScriptPath()) ||
+      state.adapterPort !== BEDROCK_RUNTIME_ADAPTER_PORT ||
+      state.tokenHash !== adapterTokenHash(token) ||
+      state.endpointUrl !== expected.endpointUrl ||
+      state.region !== expected.region ||
+      state.generation !== expected.adapterGeneration ||
+      expected.adapterBaseUrl !== BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL ||
+      !observeBedrockRuntimeAdapterProcess(
+        state.pid,
+        bedrockRuntimeAdapterProcessRuntime(),
+        state,
+      ) ||
+      !(await probeAdapterHealth({ tokenHash: state.tokenHash })) ||
+      !observeBedrockRuntimeAdapterProcess(state.pid, bedrockRuntimeAdapterProcessRuntime(), state)
+    ) {
+      throw new Error(
+        "Recorded Bedrock adapter generation could not be verified. No provider was changed.",
+      );
+    }
+  });
+}

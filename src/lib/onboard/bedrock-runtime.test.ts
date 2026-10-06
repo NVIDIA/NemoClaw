@@ -16,14 +16,6 @@ const BEDROCK_SUCCESS_LOG = `  ✓ Inference route set: ${BEDROCK_PROVIDER} / ${
 
 type BedrockSetupOptions = Parameters<typeof setupBedrockRuntimeInference>[0];
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 function createBedrockRuntimeDependencies() {
   return {
     exitProcess: vi.fn((code: number): never => {
@@ -75,6 +67,8 @@ function createBedrockSetupHarness(
       credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
       token: "adapter-token",
       region: "us-east-1",
+      endpointUrl: BEDROCK_URL,
+      generation: "a".repeat(32),
     })),
     updateSandbox,
   };
@@ -219,59 +213,17 @@ describe("Bedrock Runtime onboarding helper", () => {
     });
   });
 
-  it("waits for async smoke validation before persisting Bedrock route success (#3771)", async () => {
-    const smoke = deferred();
-    const verifyOnboardInferenceSmoke = vi.fn(() => smoke.promise);
-    const { log, options, updateSandbox } = createBedrockSetupHarness(verifyOnboardInferenceSmoke);
-
-    const setup = setupBedrockRuntimeInference(options);
-    await vi.waitFor(() => expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce());
-
-    expect(updateSandbox).not.toHaveBeenCalled();
-    expect(log).not.toHaveBeenCalledWith(BEDROCK_SUCCESS_LOG);
-
-    smoke.resolve();
-    await expect(setup).resolves.toEqual({ handled: true, result: { ok: true } });
-    expect(updateSandbox).toHaveBeenCalledWith("alpha", {
-      model: BEDROCK_MODEL,
-      provider: BEDROCK_PROVIDER,
-    });
-    expect(log).toHaveBeenCalledWith(BEDROCK_SUCCESS_LOG);
-  });
-
-  it("does not persist Bedrock route success when async smoke validation rejects (#3771)", async () => {
-    const verifyOnboardInferenceSmoke = vi.fn(async () => {
-      throw new Error("bedrock smoke rejected");
-    });
-    const { log, options, updateSandbox } = createBedrockSetupHarness(verifyOnboardInferenceSmoke);
-
-    await expect(setupBedrockRuntimeInference(options)).rejects.toThrow("bedrock smoke rejected");
-    expect(updateSandbox).not.toHaveBeenCalled();
-    expect(log).not.toHaveBeenCalledWith(BEDROCK_SUCCESS_LOG);
-  });
-
-  it("stops without retry or success publication after an ambiguous Bedrock route update", async () => {
-    const { options, updateSandbox } = createBedrockSetupHarness(vi.fn());
-    const setInferenceRoute = vi.fn(async () => ({
-      ok: false as const,
-      ambiguous: true,
-      error: {
-        kind: "command" as const,
-        reason: "indeterminate" as const,
-        exitCode: null,
-        message: "route result unknown",
-      },
-    }));
-    options.inferenceRouteMutator = { setInferenceRoute };
-
-    await expect(setupBedrockRuntimeInference(options)).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(setInferenceRoute).toHaveBeenCalledOnce();
+  it("refuses the legacy setup entry point without adapter, provider, shared-route, or success effects", async () => {
+    const { options, updateSandbox, log } = createBedrockSetupHarness(vi.fn());
+    await expect(setupBedrockRuntimeInference(options)).rejects.toThrow(
+      "requires native sandbox provider setup",
+    );
+    expect(options.ensureAdapter).not.toHaveBeenCalled();
+    expect(options.upsertProvider).not.toHaveBeenCalled();
+    expect(options.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
     expect(options.verifyInferenceRoute).not.toHaveBeenCalled();
     expect(options.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
-    expect(options.error).toHaveBeenCalledWith(
-      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
-    );
+    expect(log).not.toHaveBeenCalledWith(BEDROCK_SUCCESS_LOG);
   });
 });

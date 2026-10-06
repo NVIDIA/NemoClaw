@@ -8,11 +8,16 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", () => ({
-  remediateReviewedOpenClawPluginArchive: vi.fn(() => {
-    throw new Error("Official npm installs must not remediate a discarded archive.");
-  }),
-}));
+vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
+  return {
+    ...actual,
+    remediateReviewedOpenClawPluginArchive: vi.fn(() => {
+      throw new Error("Official npm installs must not remediate a discarded archive.");
+    }),
+  };
+});
 
 import {
   applyMessagingBuildPhase,
@@ -23,12 +28,12 @@ import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/
 import type { ChannelManifest } from "../../../src/lib/messaging/manifest/types";
 const TEST_PATH = process.env.PATH || "/usr/bin:/bin";
 
-function officialPluginFixture(channelId: string) {
+function officialPluginFixture(channelId: string, version = "2026.9.1") {
   const manifest: ChannelManifest = BUILT_IN_CHANNEL_MANIFESTS.find(
     (entry) => entry.id === channelId,
   )!;
   const pkg = manifest.agentPackages!.find((entry) => entry.agent === "openclaw")!;
-  const packageSpec = pkg.spec.replace("npm:", "").replace("{{openclaw.version}}", "2026.9.1");
+  const packageSpec = pkg.spec.replace("npm:", "").replace("{{openclaw.version}}", version);
   const pluginId = manifest.runtime!.openclaw!.channelName!;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-official-npm-"));
   const tracePath = path.join(tmp, "commands.trace");
@@ -42,7 +47,7 @@ function officialPluginFixture(channelId: string) {
       'fs.appendFileSync(process.env.OPENCLAW_TRACE, `npm|${command}|${packageSpec}|${fieldOrFlag || ""}\\n`);',
       'if (command === "view" && fieldOrFlag === "dist.integrity") { process.stdout.write(`${process.env.OPENCLAW_PLUGIN_INTEGRITY}\\n`); process.exit(0); }',
       'if (command === "view" && fieldOrFlag === "dist.tarball") { process.stdout.write(`${process.env.OPENCLAW_PLUGIN_TARBALL}\\n`); process.exit(0); }',
-      'if (command === "pack") { fs.appendFileSync(process.env.OPENCLAW_PACKED_DIRECTORIES, destination + "\\n"); const name = `${process.env.OPENCLAW_PLUGIN_ID}-2026.9.1.tgz`; fs.writeFileSync(path.join(destination, name), "reviewed googlechat archive"); process.stdout.write(JSON.stringify([{ filename: name, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY }]) + "\\n"); process.exit(0); }',
+      'if (command === "pack") { fs.appendFileSync(process.env.OPENCLAW_PACKED_DIRECTORIES, destination + "\\n"); const name = `${process.env.OPENCLAW_PLUGIN_ID}-${process.env.OPENCLAW_VERSION}.tgz`; fs.writeFileSync(path.join(destination, name), "reviewed googlechat archive"); process.stdout.write(JSON.stringify([{ filename: name, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY }]) + "\\n"); process.exit(0); }',
       "process.exit(1);",
       "",
     ].join("\n"),
@@ -59,7 +64,7 @@ function officialPluginFixture(channelId: string) {
       'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.stdout.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stderr.write("npm error code ENOTCACHED\\nnpm error request to https://registry.npmjs.org/@openclaw%2fdiscord?token=" + process.env.OPENCLAW_INSPECTION_CANARY); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
       'if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { setInterval(() => {}, 1000); return; }',
-      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
+      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY, installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH } })); process.exit(0); }',
       "process.exit(42);",
       "",
     ].join("\n"),
@@ -92,11 +97,11 @@ function officialPluginFixture(channelId: string) {
     PATH: `${tmp}:${TEST_PATH}`,
     OPENCLAW_TRACE: tracePath,
     OPENCLAW_PACKED_DIRECTORIES: packedDirectories,
-    OPENCLAW_PLUGIN_INTEGRITY: pkg.integrityByVersion!["2026.9.1"]!,
+    OPENCLAW_PLUGIN_INTEGRITY: pkg.integrityByVersion![version]!,
     OPENCLAW_PLUGIN_ID: pluginId,
     OPENCLAW_PLUGIN_SPEC: packageSpec,
-    OPENCLAW_PLUGIN_TARBALL: pkg.tarballUrlByVersion!["2026.9.1"]!,
-    OPENCLAW_VERSION: "2026.9.1",
+    OPENCLAW_PLUGIN_TARBALL: pkg.tarballUrlByVersion![version]!,
+    OPENCLAW_VERSION: version,
     npm_config_offline: "false",
     NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
   };
@@ -198,3 +203,95 @@ it("bounds a hung official-plugin inspection and removes its packed archive", ()
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }, 75_000);
+
+it("patches the installed official Slack bundle only after registry provenance is verified", async () => {
+  const fixture = officialPluginFixture("slack", "2026.9.2");
+  const installed = path.join(
+    fixture.tmp,
+    ".openclaw",
+    "npm",
+    "projects",
+    "openclaw-slack-b25c10c1bd",
+    "node_modules",
+    "@openclaw",
+    "slack",
+  );
+  const target = path.join(installed, "node_modules/@slack/bolt/node_modules/proxy-addr");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(
+    path.join(installed, "package.json"),
+    JSON.stringify({ name: "@openclaw/slack", version: "2026.9.2" }),
+  );
+  const metadata = {
+    name: "proxy-addr",
+    dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+  };
+  fs.writeFileSync(
+    path.join(target, "package.json"),
+    JSON.stringify({ ...metadata, version: "2.0.7" }),
+  );
+  fs.writeFileSync(path.join(target, "index.js"), "vulnerable");
+  const outside = path.join(fixture.tmp, "outside");
+  fs.cpSync(installed, outside, { recursive: true });
+  const env = {
+    ...fixture.env,
+    HOME: fixture.tmp,
+    OPENCLAW_PLUGIN_INSTALL_PATH: installed,
+    NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
+      import.meta.dirname,
+      "../../fixtures/npm/proxy-addr-2.0.8",
+    ),
+  };
+
+  try {
+    expect(() =>
+      applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
+        ...env,
+        OPENCLAW_TRUSTED: "false",
+      }),
+    ).toThrow("did not retain trusted exact registry provenance");
+    expect(JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")).version).toBe(
+      "2.0.7",
+    );
+    expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe("vulnerable");
+    applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", env);
+    expect(JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")).version).toBe(
+      "2.0.8",
+    );
+    const expectedContent = spawnSync(
+      "tar",
+      [
+        "-xOf",
+        path.join(env.NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR, "proxy-addr-2.0.8.tgz"),
+        "package/index.js",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(expectedContent.status, expectedContent.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe(expectedContent.stdout);
+    expect(() =>
+      applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
+        ...env,
+        OPENCLAW_PLUGIN_INSTALL_PATH: outside,
+      }),
+    ).toThrow("outside its trusted plugin root");
+    const alias = path.join(path.dirname(installed), "slack-alias");
+    fs.symlinkSync(installed, alias, "dir");
+    expect(() =>
+      applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
+        ...env,
+        OPENCLAW_PLUGIN_INSTALL_PATH: alias,
+      }),
+    ).toThrow("outside its trusted plugin root");
+    const outsideDependency = path.join(
+      outside,
+      "node_modules/@slack/bolt/node_modules/proxy-addr",
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(outsideDependency, "package.json"), "utf8")).version,
+    ).toBe("2.0.7");
+    expect(fs.readFileSync(path.join(outsideDependency, "index.js"), "utf8")).toBe("vulnerable");
+  } finally {
+    fs.rmSync(fixture.tmp, { force: true, recursive: true });
+  }
+});

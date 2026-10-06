@@ -93,7 +93,9 @@ describe("Hermes inference switch command shape", () => {
     const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain(' -H "$AUTH_HEADER"');
+    expect(command).not.toContain("nemoclaw-openshell-provider");
     expect(command).not.toContain("inference.local");
   });
 
@@ -154,10 +156,22 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
+  });
+
+  it.each([
+    ["api_key: ${NVIDIA_INFERENCE_API_KEY}", 0],
+    ['api_key: "${NVIDIA_INFERENCE_API_KEY}"', 0],
+    ["api_key: '${NVIDIA_INFERENCE_API_KEY}'", 0],
+    ["api_key: sk-OPENSHELL-PROXY-REWRITE", 1],
+    ["api_key: ${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}", 1],
+    ["api_key: ${NVIDIA_INFERENCE_API_KEY} trailing", 1],
+  ] as const)("checks native NVIDIA config scalar %s", (line, status) => {
+    const command = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
+    expect(spawnSync("grep", command.slice(1, 3), { input: `${line}\n` }).status).toBe(status);
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {

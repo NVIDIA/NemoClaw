@@ -291,3 +291,27 @@ export function applyNativeCompatibleStartupRoute(
   if (!receipt) throw new Error("Native startup inference requires its provider receipt.");
   return { ...route, inferenceBaseUrl: receipt.endpointUrl, inferenceApi: receipt.api };
 }
+
+import {
+  requireMatchingNativeBedrockAttachment,
+  type NativeBedrockProviderAttachment,
+} from "../../inference/native-bedrock/contract";
+export type { NativeBedrockProviderAttachment };
+export function applyNativeBedrockStartupRoute(
+  route: import("../../inference/config").SandboxInferenceConfig,
+  input: {
+    provider: string;
+    endpointUrl: string;
+    gatewayName: string;
+    receipt: NativeBedrockProviderAttachment;
+  },
+) {
+  const receipt = requireMatchingNativeBedrockAttachment(input.receipt, input);
+  if (!receipt) throw new Error("Native startup inference requires its provider receipt.");
+  return {
+    ...route,
+    inferenceBaseUrl: receipt.adapterBaseUrl,
+    inferenceApi: "openai-completions",
+    inferenceCredentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+  };
+}

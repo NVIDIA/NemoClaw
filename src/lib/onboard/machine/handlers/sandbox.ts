@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+} from "../../../inference/gateway-route-compatibility";
+
+import {
   normalizeNativeCompatibleProviderAttachment,
   isNativeCompatibleSelection,
 } from "../../../inference/gateway-route-compatibility";
@@ -140,17 +145,26 @@ function nativeNvidiaCreateIntentFields(
 ): {
   inferenceProvider: string | null;
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
   nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
 } {
+  const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+    entry?.nativeBedrockProviderAttachment,
+    { ...entry, provider },
+  );
+  if (entry && isNativeBedrockSelection({ ...entry, provider }) && !nativeBedrockProviderAttachment)
+    throw new Error("Recreate this beta sandbox before using native Bedrock inference.");
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
   return {
-    inferenceProvider:
-      isNativeCompatibleSelection(provider) && entry?.nativeCompatibleProviderAttachment
+    inferenceProvider: nativeBedrockProviderAttachment
+      ? nativeBedrockProviderAttachment.providerName
+      : isNativeCompatibleSelection(provider) && entry?.nativeCompatibleProviderAttachment
         ? (normalizeNativeCompatibleProviderAttachment(entry.nativeCompatibleProviderAttachment)
             ?.providerName ?? null)
         : nativeInferenceProviderForSandbox(provider),
+    ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
     ...(entry?.nativeCompatibleProviderAttachment
       ? { nativeCompatibleProviderAttachment: entry.nativeCompatibleProviderAttachment }
       : {}),

@@ -504,3 +504,9 @@ export {
   normalizeNativeCompatibleProviderAttachment,
   isNativeCompatibleSelection,
 } from "./native-compatible/contract";
+
+export {
+  normalizeNativeBedrockProviderAttachment,
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+} from "./native-bedrock/contract";

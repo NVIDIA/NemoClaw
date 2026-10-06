@@ -269,7 +269,8 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`.
+Deep Agents Code does not expose a dashboard URL or gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 
 </AgentOnly>
 

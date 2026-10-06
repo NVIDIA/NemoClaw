@@ -13,6 +13,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
 import {
   planInferenceRouteReconcile,
+  isNativeBedrockSelection,
   isNativeCompatibleHostedSelection,
 } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
@@ -832,7 +833,10 @@ async function captureLaunchIdentity(
   const inference = registry.getSandboxEntryInference(entry);
   const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
   let liveInference: { provider: string; model: string } | null = null;
-  if (!nativeNvidia && !isNativeCompatibleHostedSelection(entry)) {
+  if (
+    !nativeNvidia &&
+    !(isNativeCompatibleHostedSelection(entry) || isNativeBedrockSelection(entry))
+  ) {
     const inferenceGetStartedAt = performance.now();
     let inferenceResult: Awaited<
       ReturnType<

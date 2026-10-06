@@ -1074,6 +1074,35 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_inference_api_key() -> str:
+    """Use only the issued handle for the root-owned native inference route."""
+    base_url = managed_inference_base_url()
+    parsed = urlparse(base_url)
+    credential_env = None
+    if (
+        _managed_upstream_provider() == "compatible-anthropic-endpoint"
+        and re.fullmatch(r"http://host\.openshell\.internal:[1-9][0-9]{0,4}/v1", base_url)
+        and parsed.port is not None and 1 <= parsed.port <= 65535
+    ):
+        credential_env = "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"
+    elif _managed_upstream_provider() == "nvidia-prod" and base_url == "https://integrate.api.nvidia.com/v1":
+        credential_env = "NVIDIA_INFERENCE_API_KEY"
+    elif (
+        _managed_upstream_provider() in {"compatible-endpoint", "compatible-anthropic-endpoint"}
+        and parsed.scheme == "https"
+        and parsed.hostname != "inference.local"
+    ):
+        credential_env = "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"
+    if credential_env is None:
+        return "nemoclaw-managed-inference"
+    value = os.environ.get(credential_env, "")
+    if re.fullmatch(
+        rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{credential_env}", value
+    ) is None:
+        raise RuntimeError("Native inference requires an issued OpenShell credential handle")
+    return value
+
+
 def managed_fetch_proxy_url() -> str | None:
     """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
 

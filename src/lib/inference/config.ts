@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireMatchingNativeBedrockAttachment,
+  type NativeBedrockProviderAttachment,
+} from "./native-bedrock/contract";
+import { BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "./bedrock-runtime";
+
 /**
  * Inference provider selection, model resolution, and route reconciliation.
  * All functions are pure.
@@ -15,6 +21,8 @@ import {
 } from "./llama-cpp/contract";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./native-compatible/endpoint";
 export { getCompatibleAnthropicOpenAiSurfaceBaseUrl };
+export { retireNativeCompatibleProvider } from "./native-compatible/retire";
+export { clearNativeCompatibleProviderAuthority } from "../state/registry/native-compatible-provider-authority";
 import {
   requireMatchingNativeCompatibleAttachment,
   type NativeCompatibleProviderAttachment,
@@ -204,6 +212,7 @@ export interface SandboxInferenceConfig {
   inferenceBaseUrl: string;
   inferenceApi: string;
   inferenceCompat: Record<string, unknown> | null;
+  inferenceCredentialEnv?: string;
 }
 
 /**
@@ -424,7 +433,14 @@ export function getSandboxInferenceConfig(
       break;
   }
 
-  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
+  return {
+    providerKey,
+    primaryModelRef,
+    inferenceBaseUrl,
+    inferenceApi,
+    inferenceCompat,
+    ...(provider === "nvidia-prod" ? { inferenceCredentialEnv: "NVIDIA_INFERENCE_API_KEY" } : {}),
+  };
 }
 
 /**
@@ -527,5 +543,36 @@ export function getNativeCompatibleSandboxInferenceConfig(input: {
   const receipt = requireMatchingNativeCompatibleAttachment(input.receipt, input);
   if (!receipt) throw new Error("Native compatible inference requires its provider receipt.");
   const route = getSandboxInferenceConfig(input.model, input.provider, receipt.api);
-  return { ...route, inferenceBaseUrl: receipt.endpointUrl, inferenceApi: receipt.api };
+  return {
+    ...route,
+    inferenceBaseUrl: receipt.endpointUrl,
+    inferenceApi: receipt.api,
+    inferenceCredentialEnv: "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY",
+  };
 }
+
+export function getNativeBedrockSandboxInferenceConfig(input: {
+  provider: string;
+  model: string;
+  endpointUrl: string;
+  gatewayName: string;
+  receipt: NativeBedrockProviderAttachment;
+}): SandboxInferenceConfig {
+  const receipt = requireMatchingNativeBedrockAttachment(input.receipt, input);
+  if (!receipt) throw new Error("Native Bedrock inference requires its provider receipt.");
+  return {
+    ...getSandboxInferenceConfig(input.model, input.provider, "openai-completions"),
+    inferenceBaseUrl: receipt.adapterBaseUrl,
+    inferenceApi: "openai-completions",
+    inferenceCredentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+  };
+}
+
+export {
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+  normalizeNativeBedrockProviderAttachment,
+  type NativeBedrockProviderAttachment,
+} from "./native-bedrock/contract";
+
+export { isBedrockRuntimeEndpoint } from "./bedrock-runtime";

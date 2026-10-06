@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ensureNativeBedrockProviderAttached } from "../../inference/native-bedrock/profile";
+
 import { ensureNativeCompatibleProviderAttached } from "../../inference/native-compatible/profile";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
@@ -267,4 +269,27 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       deps,
     );
   }
+}
+
+export function usesNativeBedrockProvider(value: string | null): boolean {
+  return typeof value === "string" && /^nemoclaw-bedrock-[0-9a-f]{64}-v1$/u.test(value);
+}
+export async function verifyNativeBedrockAttachmentAfterCreate(input: {
+  sandboxName: string;
+  gatewayName: string;
+  inferenceProvider: string | null;
+  expected: SandboxEntry["nativeBedrockProviderAttachment"];
+  deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (
+    !input.expected ||
+    input.expected.providerName !== input.inferenceProvider ||
+    input.expected.gatewayName !== input.gatewayName
+  )
+    throw new Error("Sandbox is missing its matching native Bedrock provider receipt.");
+  await ensureNativeBedrockProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
 }

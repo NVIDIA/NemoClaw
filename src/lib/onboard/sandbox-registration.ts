@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireMatchingNativeBedrockAttachment } from "../inference/native-bedrock/contract";
+
 import { requireMatchingNativeCompatibleAttachment } from "../inference/native-compatible/contract";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
@@ -71,6 +73,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
   nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
@@ -210,6 +213,10 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+    input.nativeBedrockProviderAttachment,
+    { ...input.inferenceSelection, gatewayName: input.gatewayName },
+  );
   const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
     input.nativeCompatibleProviderAttachment,
     input.inferenceSelection,
@@ -272,6 +279,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
     ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
@@ -354,6 +362,8 @@ export function prepareCreatedSandboxRegistration(
       : pending?.nativeNvidiaProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    nativeBedrockProviderAttachment:
+      input.nativeBedrockProviderAttachment ?? pending?.nativeBedrockProviderAttachment,
     nativeCompatibleProviderAttachment:
       input.nativeCompatibleProviderAttachment ?? pending?.nativeCompatibleProviderAttachment,
     inferenceSelection: pendingRoute

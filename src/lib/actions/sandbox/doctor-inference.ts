@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isNativeBedrockSelection,
+  normalizeNativeBedrockProviderAttachment,
+  requireMatchingNativeBedrockAttachment,
+  type NativeBedrockProviderAttachment,
+} from "../../inference/native-bedrock/contract";
+import {
   isNativeCompatibleHostedSelection,
   normalizeNativeCompatibleProviderAttachment,
   requireMatchingNativeCompatibleAttachment,
@@ -26,6 +32,8 @@ import {
 } from "./connect-inference-route-probe";
 import type { DoctorCheck } from "./doctor-report";
 import {
+  verifyNativeBedrockStatusAttachment,
+  type VerifyNativeBedrockStatusAttachment,
   verifyNativeCompatibleStatusAttachment,
   type VerifyNativeCompatibleStatusAttachment,
   probeSandboxInferenceGatewayHealth,
@@ -34,6 +42,7 @@ import {
 } from "./inference-route-health";
 
 export type DoctorInferenceRoute = {
+  pendingRouteReservation?: true;
   model: string;
   provider: string;
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
@@ -41,6 +50,7 @@ export type DoctorInferenceRoute = {
   recordedEndpointUrl?: string | null;
   agentName?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   preferredInferenceApi?: string | null;
   credentialEnv?: string | null;
@@ -91,6 +101,7 @@ export function collectManagedLlamaCppDoctorChecks(
 
 type DoctorInferenceDeps = {
   gatewayName?: string | null;
+  verifyNativeBedrockProviderAttachmentImpl?: VerifyNativeBedrockStatusAttachment;
   verifyNativeCompatibleProviderAttachmentImpl?: VerifyNativeCompatibleStatusAttachment;
   probeSandboxInferenceInvocationImpl?: typeof probeSandboxInferenceInvocation;
   probeProviderHealthImpl?: typeof probeProviderHealth;
@@ -107,13 +118,16 @@ async function collectNativeCompatibleRouteProbe(
   sandboxReachable: boolean,
   deps: DoctorInferenceDeps,
 ): Promise<ProviderHealthStatus> {
+  const bedrock = isNativeBedrockSelection({ ...route, endpointUrl: route.recordedEndpointUrl });
   const base = {
     ok: false,
     probed: false,
-    providerLabel: "Native compatible route",
-    endpoint:
-      normalizeNativeCompatibleProviderAttachment(route.nativeCompatibleProviderAttachment)
-        ?.endpointUrl ?? "",
+    providerLabel: bedrock ? "Native Bedrock route" : "Native compatible route",
+    endpoint: bedrock
+      ? (normalizeNativeBedrockProviderAttachment(route.nativeBedrockProviderAttachment)
+          ?.adapterBaseUrl ?? "")
+      : (normalizeNativeCompatibleProviderAttachment(route.nativeCompatibleProviderAttachment)
+          ?.endpointUrl ?? ""),
     probeLabel: "native compatible",
   };
   if (!sandboxReachable)
@@ -122,20 +136,40 @@ async function collectNativeCompatibleRouteProbe(
       detail: "skipped because the sandbox is not reachable through its named gateway",
     };
   try {
-    const receipt = requireMatchingNativeCompatibleAttachment(
-      route.nativeCompatibleProviderAttachment,
-      { ...route, endpointUrl: route.recordedEndpointUrl },
-    );
-    if (!deps.gatewayName || !receipt)
+    if (bedrock && route.pendingRouteReservation === true)
+      throw new Error("Native Bedrock selection is pending.");
+    const selection = {
+      ...route,
+      endpointUrl: route.recordedEndpointUrl,
+      gatewayName: deps.gatewayName,
+    };
+    const bedrockReceipt = bedrock
+      ? requireMatchingNativeBedrockAttachment(route.nativeBedrockProviderAttachment, selection)
+      : undefined;
+    const receipt = bedrock
+      ? undefined
+      : requireMatchingNativeCompatibleAttachment(
+          route.nativeCompatibleProviderAttachment,
+          selection,
+        );
+    if (!deps.gatewayName || !(bedrockReceipt || receipt))
       throw new Error(
         "Native endpoint ownership receipt or gateway binding is missing. Recreate the sandbox.",
       );
-    await verifyNativeCompatibleStatusAttachment({
-      gatewayName: deps.gatewayName,
-      sandboxName,
-      expected: receipt,
-      verify: deps.verifyNativeCompatibleProviderAttachmentImpl,
-    });
+    if (bedrockReceipt)
+      await verifyNativeBedrockStatusAttachment({
+        gatewayName: deps.gatewayName,
+        sandboxName,
+        expected: bedrockReceipt,
+        verify: deps.verifyNativeBedrockProviderAttachmentImpl,
+      });
+    else if (receipt)
+      await verifyNativeCompatibleStatusAttachment({
+        gatewayName: deps.gatewayName,
+        sandboxName,
+        expected: receipt,
+        verify: deps.verifyNativeCompatibleProviderAttachmentImpl,
+      });
     const result = await (
       deps.probeSandboxInferenceInvocationImpl ?? probeSandboxInferenceInvocation
     )({
@@ -143,8 +177,10 @@ async function collectNativeCompatibleRouteProbe(
       gatewayName: deps.gatewayName,
       provider: route.provider,
       model: route.model,
-      preferredInferenceApi: receipt.api,
-      nativeCompatibleProviderAttachment: receipt,
+      preferredInferenceApi: bedrockReceipt ? "openai-completions" : (receipt?.api ?? null),
+      ...(bedrockReceipt
+        ? { nativeBedrockProviderAttachment: bedrockReceipt }
+        : { nativeCompatibleProviderAttachment: receipt }),
       ...(route.agentName === "langchain-deepagents-code" ? { agentName: route.agentName } : {}),
     });
     return result.ok
@@ -401,22 +437,29 @@ export async function collectInferenceChecks(
     ...route,
     endpointUrl: route.recordedEndpointUrl,
   });
-  const routeProbe = nativeCompatible
-    ? await collectNativeCompatibleRouteProbe(sandboxName, route, sandboxReachable, deps)
-    : nativeNvidia
-      ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
-      : await collectInferenceRouteProbe(
-          sandboxName,
-          sandboxReachable,
-          deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
-          deps.gatewayName,
-        );
-  pushInferenceHealthCheck(checks, routeProbe, {
-    label: nativeCompatible
-      ? "Inference route (native compatible)"
+  const nativeBedrock = isNativeBedrockSelection({
+    ...route,
+    endpointUrl: route.recordedEndpointUrl,
+  });
+  const routeProbe =
+    nativeCompatible || nativeBedrock
+      ? await collectNativeCompatibleRouteProbe(sandboxName, route, sandboxReachable, deps)
       : nativeNvidia
-        ? "Inference route (native NVIDIA)"
-        : "Inference route (gateway)",
+        ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
+        : await collectInferenceRouteProbe(
+            sandboxName,
+            sandboxReachable,
+            deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+            deps.gatewayName,
+          );
+  pushInferenceHealthCheck(checks, routeProbe, {
+    label: nativeBedrock
+      ? "Inference route (native Bedrock)"
+      : nativeCompatible
+        ? "Inference route (native compatible)"
+        : nativeNvidia
+          ? "Inference route (native NVIDIA)"
+          : "Inference route (gateway)",
   });
   for (const diagnostic of collectProviderHealthDiagnostics(
     route,
@@ -440,3 +483,5 @@ export async function collectInferenceChecks(
 }
 
 export { isNativeCompatibleHostedSelection, normalizeNativeCompatibleProviderAttachment };
+
+export { isNativeBedrockSelection, normalizeNativeBedrockProviderAttachment };

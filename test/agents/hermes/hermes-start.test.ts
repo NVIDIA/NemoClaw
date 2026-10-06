@@ -315,6 +315,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "ensure_hermes_runtime_api_server_key() { :; }",
       "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
+      "validate_hermes_native_inference_credential() { :; }",
       "configure_messaging_channels() { :; }",
       "prepare_hermes_nonroot_runtime() { prepare_tirith_marker_retry; }",
       "prepare_hermes_root_runtime() { prepare_tirith_marker_retry; }",
@@ -371,6 +372,7 @@ function runHermesRootStartupMutableRootPreflight(initialMode = 0o750) {
       'validate_hermes_runtime_env_secret_boundary() { printf "runtime-boundary mode=%s\\n" "$(dir_mode)"; }',
       'migrate_legacy_hermes_dashboard_state() { printf "dashboard-migration mode=%s\\n" "$(dir_mode)"; }',
       "refresh_hermes_provider_placeholders() { :; }",
+      "validate_hermes_native_inference_credential() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
       "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
@@ -1118,6 +1120,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
           "refresh_hermes_provider_placeholders() { trace placeholders; }",
+          "validate_hermes_native_inference_credential() { trace native-credential; }",
           'refresh_hermes_runtime_config_hashes() { trace "hashes:$1:${2:-preserve}"; hash_state=current; }',
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
@@ -1142,6 +1145,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       "hashes:compat:preserve",
       "channels",
       "tirith",
+      "native-credential",
     ]);
   });
   it("rejects bare API-named raw values without printing the value", () => {

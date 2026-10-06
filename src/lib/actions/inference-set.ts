@@ -13,6 +13,8 @@ import {
   detachNativeCompatibleProvider,
 } from "../inference/config";
 import { getNativeCompatibleSandboxInferenceConfig } from "../inference/config";
+import { retireNativeCompatibleProvider } from "../inference/config";
+import { clearNativeCompatibleProviderAuthority } from "../inference/config";
 import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
 import type {
   OpenShellInferenceRouteObservation,
@@ -21,7 +23,21 @@ import type {
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
 import { applyHermesManagedRoute } from "../hermes-managed-route";
-import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import {
+  isBedrockRuntimeEndpoint,
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+  getNativeBedrockSandboxInferenceConfig,
+  type NativeBedrockProviderAttachment,
+} from "../inference/config";
+import {
+  prepareNativeBedrockSelection,
+  detachNativeBedrockProvider,
+  retireUnusedBedrockProvider,
+  hasOtherNativeProviderReference,
+  rollbackNativeBedrockSelection,
+  type NativeBedrockSwitchDeps,
+} from "../inference/native-bedrock/switch";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -183,7 +199,7 @@ function providerCommitFailureAfterSelection(options: {
   );
 }
 
-export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+export interface InferenceSetDeps extends InferenceGatewayRestartDeps, NativeBedrockSwitchDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => {
@@ -194,6 +210,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveNativeCompatibleEndpointHost?: import("../security/trusted-private-endpoint").EndpointDnsLookupFn;
   getNativeCompatibleProviderAuthority?: typeof registry.getNativeCompatibleProviderAuthority;
   setNativeCompatibleProviderAuthority?: typeof registry.setNativeCompatibleProviderAuthority;
+  clearNativeCompatibleProviderAuthority?: typeof clearNativeCompatibleProviderAuthority;
   setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
@@ -330,6 +347,7 @@ function defaultDeps(): InferenceSetDeps {
     getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     getNativeCompatibleProviderAuthority: registry.getNativeCompatibleProviderAuthority,
     setNativeCompatibleProviderAuthority: registry.setNativeCompatibleProviderAuthority,
+    clearNativeCompatibleProviderAuthority,
     setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
@@ -706,7 +724,15 @@ function buildProviderConfig(
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
-    apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
+    apiKey: route.inferenceCredentialEnv
+      ? `\${${route.inferenceCredentialEnv}}`
+      : typeof existing.apiKey === "string" &&
+          existing.apiKey &&
+          existing.apiKey !== "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}" &&
+          existing.apiKey !== "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN}" &&
+          existing.apiKey !== "${NVIDIA_INFERENCE_API_KEY}"
+        ? existing.apiKey
+        : "unused",
     api: route.inferenceApi,
     models:
       selectedIndex < 0
@@ -728,17 +754,26 @@ export function patchOpenClawInferenceConfig(
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
   inheritPrimaryReplyBudget = true,
   nativeCompatibleReceipt?: NativeCompatibleProviderAttachment,
+  nativeBedrockReceipt?: NativeBedrockProviderAttachment,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
-  const route = nativeCompatibleReceipt
-    ? getNativeCompatibleSandboxInferenceConfig({
+  const route = nativeBedrockReceipt
+    ? getNativeBedrockSandboxInferenceConfig({
         model,
         provider,
-        preferredInferenceApi: preferredInferenceApi ?? nativeCompatibleReceipt.api,
-        endpointUrl: nativeCompatibleReceipt.endpointUrl,
-        receipt: nativeCompatibleReceipt,
+        endpointUrl: nativeBedrockReceipt.endpointUrl,
+        gatewayName: nativeBedrockReceipt.gatewayName,
+        receipt: nativeBedrockReceipt,
       })
-    : getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+    : nativeCompatibleReceipt
+      ? getNativeCompatibleSandboxInferenceConfig({
+          model,
+          provider,
+          preferredInferenceApi: preferredInferenceApi ?? nativeCompatibleReceipt.api,
+          endpointUrl: nativeCompatibleReceipt.endpointUrl,
+          receipt: nativeCompatibleReceipt,
+        })
+      : getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   const inheritedMaxTokens = inheritPrimaryReplyBudget
     ? readOpenClawPrimaryReplyBudget(config)
     : undefined;
@@ -748,6 +783,20 @@ export function patchOpenClawInferenceConfig(
   const models = ensureObject(config, "models");
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
+  for (const [key, value] of Object.entries(providers)) {
+    if (!isConfigObject(value)) continue;
+    const saved = value;
+    if (
+      key !== route.providerKey &&
+      [
+        "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}",
+        "${NVIDIA_INFERENCE_API_KEY}",
+        "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN}",
+      ].includes(String(saved.apiKey))
+    ) {
+      saved.apiKey = "unused";
+    }
+  }
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
   providers[route.providerKey] = buildProviderConfig(
     existingProvider,
@@ -839,20 +888,30 @@ export function patchHermesInferenceConfig(
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
   nativeCompatibleReceipt?: NativeCompatibleProviderAttachment,
+  nativeBedrockReceipt?: NativeBedrockProviderAttachment,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
-  const route = nativeCompatibleReceipt
-    ? getNativeCompatibleSandboxInferenceConfig({
+  const route = nativeBedrockReceipt
+    ? getNativeBedrockSandboxInferenceConfig({
         model,
         provider,
-        preferredInferenceApi: preferredInferenceApi ?? nativeCompatibleReceipt.api,
-        endpointUrl: nativeCompatibleReceipt.endpointUrl,
-        receipt: nativeCompatibleReceipt,
+        endpointUrl: nativeBedrockReceipt.endpointUrl,
+        gatewayName: nativeBedrockReceipt.gatewayName,
+        receipt: nativeBedrockReceipt,
       })
-    : getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+    : nativeCompatibleReceipt
+      ? getNativeCompatibleSandboxInferenceConfig({
+          model,
+          provider,
+          preferredInferenceApi: preferredInferenceApi ?? nativeCompatibleReceipt.api,
+          endpointUrl: nativeCompatibleReceipt.endpointUrl,
+          receipt: nativeCompatibleReceipt,
+        })
+      : getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   applyHermesManagedRoute(config, {
     model,
     baseUrl: route.inferenceBaseUrl,
+    credentialEnv: route.inferenceCredentialEnv,
     upstreamProvider: provider,
     inferenceApi: route.inferenceApi,
     contextWindow,
@@ -1345,6 +1404,39 @@ async function prepareNativeCompatibleSelection(input: {
   return { attachment: ensured, changed: attached.changed };
 }
 
+async function retireUnusedCompatibleProvider(
+  attachment: NativeCompatibleProviderAttachment,
+  gatewayName: string,
+  deps: InferenceSetDeps,
+  sandboxName?: string,
+): Promise<void> {
+  if (
+    hasOtherNativeProviderReference({
+      sandboxes: deps.listSandboxes().sandboxes,
+      gatewayName,
+      sandboxName,
+      expected: attachment,
+    })
+  )
+    return;
+  try {
+    await retireNativeCompatibleProvider({
+      adapter: deps.providerAdapter,
+      target: { kind: "named", gatewayName },
+      expected: attachment,
+      clearAuthority: () =>
+        (deps.clearNativeCompatibleProviderAuthority ?? clearNativeCompatibleProviderAuthority)(
+          gatewayName,
+          attachment,
+        ),
+    });
+  } catch {
+    deps.log(
+      "  Warning: unused compatible provider removal was not confirmed; ownership is retained for credential reset.",
+    );
+  }
+}
+
 async function rollbackNativeCompatibleSelection(input: {
   committed: boolean;
   changed: boolean;
@@ -1365,6 +1457,17 @@ async function rollbackNativeCompatibleSelection(input: {
     await detachNativeCompatibleProvider({ ...common, expected: input.attachment });
   if (input.previousDetached && input.previousAttachment)
     await ensureNativeCompatibleProviderAttached({ ...common, expected: input.previousAttachment });
+  if (
+    input.changed &&
+    input.attachment &&
+    input.attachment.providerId !== input.previousAttachment?.providerId
+  )
+    await retireUnusedCompatibleProvider(
+      input.attachment,
+      input.gatewayName,
+      input.deps,
+      input.sandboxName,
+    );
 }
 
 function validateLocalProviderBeforeSelection(provider: string, deps: InferenceSetDeps): boolean {
@@ -1387,6 +1490,38 @@ function validateLocalProviderBeforeSelection(provider: string, deps: InferenceS
       }${localValidation.diagnostic ? `\n  Diagnostic: ${localValidation.diagnostic}` : ""}`,
       1,
     );
+  }
+}
+
+async function retireSupersededHttpsPinRoute(input: {
+  priorHttpsPinRouteId: string | null;
+  endpointUrl: string | null | undefined;
+  sandboxName: string;
+  deps: InferenceSetDeps;
+}): Promise<void> {
+  const { priorHttpsPinRouteId, endpointUrl, sandboxName, deps } = input;
+  const currentHttpsPinRouteId = parseHttpsPinRouteId(endpointUrl);
+  if (priorHttpsPinRouteId && priorHttpsPinRouteId !== currentHttpsPinRouteId) {
+    try {
+      const peerStillReferencesRoute = deps
+        .listSandboxes()
+        .sandboxes.some(
+          (candidate) =>
+            candidate.name !== sandboxName &&
+            parseHttpsPinRouteId(candidate.endpointUrl) === priorHttpsPinRouteId,
+        );
+      if (!peerStillReferencesRoute) {
+        const revoked = await deps.revokeHttpsPinRuntimeAdapterRoute(priorHttpsPinRouteId);
+        if (!revoked) throw new Error("the adapter did not confirm route revocation");
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      deps.log(
+        `  Warning: the new inference route is committed, but superseded HTTPS Pin Runtime route ` +
+          `'${priorHttpsPinRouteId}' could not be revoked: ${detail}. The raw upstream endpoint was not restored; ` +
+          `uninstall NemoClaw to stop the adapter and purge its in-memory credentials if this persists.`,
+      );
+    }
   }
 }
 
@@ -1502,7 +1637,23 @@ async function runInferenceSetWithoutHostLock(
       preparedRoute.preliminaryRegistryMetadata.endpointUrl,
     credentialEnv: preparedRoute.preliminaryRegistryMetadata.credentialEnv,
   });
-  const selectingNative = selectingNativeNvidia || selectingNativeCompatible;
+  const selectingNativeBedrock = isNativeBedrockSelection({
+    provider,
+    endpointUrl:
+      preparedRoute.preliminaryExplicitSourceEndpointUrl ??
+      preparedRoute.preliminaryRegistryMetadata.endpointUrl,
+  });
+  if (
+    selectingNativeBedrock &&
+    explicitInferenceApi &&
+    explicitInferenceApi !== "openai-completions"
+  )
+    throw new InferenceSetError(
+      "Bedrock Runtime requires the supported OpenAI-compatible frontend.",
+      2,
+    );
+  const selectingNative =
+    selectingNativeNvidia || selectingNativeCompatible || selectingNativeBedrock;
   if (!selectingNative)
     preparedRoute = prepareInferenceSetRoute({
       ...routeInput,
@@ -1536,49 +1687,50 @@ async function runInferenceSetWithoutHostLock(
     directProviderBinding,
     httpsPinProviderBinding,
     routeImpactWarning,
-  } = selectingNativeCompatible
-    ? {
-        registryMetadata: {
-          ...preparedRoute.preliminaryRegistryMetadata,
-          endpointUrl:
-            preparedRoute.preliminaryExplicitSourceEndpointUrl ??
-            preparedRoute.preliminaryRegistryMetadata.endpointUrl,
-        },
-        explicitPreferredInferenceApi:
-          preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
-        directProviderBinding: null,
-        httpsPinProviderBinding: null,
-        routeImpactWarning: null,
-      }
-    : await finalizeInferenceSetRoute({
-        prepared: preparedRoute,
-        sandboxName,
-        provider,
-        model,
-        canReuseRecordedRoute:
-          entry.provider === provider &&
-          typeof entry.endpointUrl === "string" &&
-          entry.endpointUrl.trim().length > 0 &&
-          typeof entry.preferredInferenceApi === "string" &&
-          entry.preferredInferenceApi.trim().length > 0,
-        onboardEndpointUrl:
-          entry.provider === provider && entry.endpointSource === "onboard"
-            ? (entry.endpointUrl ?? null)
-            : null,
-        getSandboxes: () => deps.listSandboxes().sandboxes,
-        rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
-        resolveCredentialValue: deps.resolveCredentialValue,
-        ensureHttpsPinRuntimeAdapter: (adapterOptions) =>
-          deps.ensureHttpsPinRuntimeAdapter({
-            ...adapterOptions,
-            discoverAllowedSourceCidrs: () =>
-              runtimeProvider.gateway
-                .observeHostRuntime({ environment: process.env, platform: process.platform })
-                .network.sandboxSourceCidrs(),
-          }),
-        effectiveInferenceApi:
-          preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
-      });
+  } =
+    selectingNativeCompatible || selectingNativeBedrock
+      ? {
+          registryMetadata: {
+            ...preparedRoute.preliminaryRegistryMetadata,
+            endpointUrl:
+              preparedRoute.preliminaryExplicitSourceEndpointUrl ??
+              preparedRoute.preliminaryRegistryMetadata.endpointUrl,
+          },
+          explicitPreferredInferenceApi:
+            preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
+          directProviderBinding: null,
+          httpsPinProviderBinding: null,
+          routeImpactWarning: null,
+        }
+      : await finalizeInferenceSetRoute({
+          prepared: preparedRoute,
+          sandboxName,
+          provider,
+          model,
+          canReuseRecordedRoute:
+            entry.provider === provider &&
+            typeof entry.endpointUrl === "string" &&
+            entry.endpointUrl.trim().length > 0 &&
+            typeof entry.preferredInferenceApi === "string" &&
+            entry.preferredInferenceApi.trim().length > 0,
+          onboardEndpointUrl:
+            entry.provider === provider && entry.endpointSource === "onboard"
+              ? (entry.endpointUrl ?? null)
+              : null,
+          getSandboxes: () => deps.listSandboxes().sandboxes,
+          rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
+          resolveCredentialValue: deps.resolveCredentialValue,
+          ensureHttpsPinRuntimeAdapter: (adapterOptions) =>
+            deps.ensureHttpsPinRuntimeAdapter({
+              ...adapterOptions,
+              discoverAllowedSourceCidrs: () =>
+                runtimeProvider.gateway
+                  .observeHostRuntime({ environment: process.env, platform: process.platform })
+                  .network.sandboxSourceCidrs(),
+            }),
+          effectiveInferenceApi:
+            preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
+        });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
@@ -1635,16 +1787,17 @@ async function runInferenceSetWithoutHostLock(
     target,
     agentName === "openclaw" ? preparedRoute.gatewayName : undefined,
   );
-  const preMutationInferenceApi =
-    explicitPreferredInferenceApi ??
-    resolveRuntimeInferenceApi({
-      agentName,
-      config,
-      currentProvider: entry.provider,
-      provider,
-      sandboxName,
-      session,
-    });
+  const preMutationInferenceApi = selectingNativeBedrock
+    ? "openai-completions"
+    : (explicitPreferredInferenceApi ??
+      resolveRuntimeInferenceApi({
+        agentName,
+        config,
+        currentProvider: entry.provider,
+        provider,
+        sandboxName,
+        session,
+      }));
   const previousInferenceApi = resolveRuntimeInferenceApi({
     agentName,
     config,
@@ -1713,6 +1866,18 @@ async function runInferenceSetWithoutHostLock(
     entry.nativeCompatibleProviderAttachment,
     entry,
   );
+  const previousNativeBedrockAttachment = requireMatchingNativeBedrockAttachment(
+    entry.nativeBedrockProviderAttachment,
+    { ...entry, gatewayName: preparedRoute.gatewayName },
+  );
+  if (isNativeBedrockSelection(entry) && !previousNativeBedrockAttachment)
+    throw new InferenceSetError(
+      "Recreate this beta sandbox before switching native Bedrock inference.",
+      2,
+    );
+  let nativeBedrockProviderAttachment: NativeBedrockProviderAttachment | undefined;
+  let nativeBedrockAttachmentChanged = false;
+  let previousNativeBedrockDetached = false;
   let nativeCompatibleProviderAttachment: NativeCompatibleProviderAttachment | undefined;
   let nativeCompatibleAttachmentChanged = false;
   let nativeCompatibleRegistryCommitted = false;
@@ -1723,7 +1888,12 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeNvidiaDetached = false;
   let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (selectingNative || previousNativeNvidiaAttachment || previousNativeCompatibleAttachment) {
+    if (
+      selectingNative ||
+      previousNativeNvidiaAttachment ||
+      previousNativeCompatibleAttachment ||
+      previousNativeBedrockAttachment
+    ) {
       appliedInferenceSelection = false;
       return null;
     }
@@ -1753,6 +1923,17 @@ async function runInferenceSetWithoutHostLock(
     return null;
   };
   try {
+    const bedrockSelection = await prepareNativeBedrockSelection({
+      selected: selectingNativeBedrock,
+      endpointUrl: registryMetadata.endpointUrl,
+      credentialEnv: registryMetadata.credentialEnv,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      previousAttachment: previousNativeBedrockAttachment,
+      deps,
+    });
+    nativeBedrockProviderAttachment = bedrockSelection.attachment;
+    nativeBedrockAttachmentChanged = bedrockSelection.changed;
     const compatibleSelection = await prepareNativeCompatibleSelection({
       selected: selectingNativeCompatible,
       provider,
@@ -1878,6 +2059,7 @@ async function runInferenceSetWithoutHostLock(
               preferredInferenceApi: preMutationInferenceApi,
               ...(selectingNative ? { nativeProvider: true } : {}),
               ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
+              ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
             },
             previousProvider,
             previousModel,
@@ -1944,6 +2126,17 @@ async function runInferenceSetWithoutHostLock(
       });
       previousNativeCompatibleDetached = true;
     }
+    if (
+      previousNativeBedrockAttachment &&
+      previousNativeBedrockAttachment.providerName !== nativeBedrockProviderAttachment?.providerName
+    ) {
+      await detachNativeBedrockProvider({
+        adapter: deps.providerAdapter,
+        sandboxName,
+        expected: previousNativeBedrockAttachment,
+      });
+      previousNativeBedrockDetached = true;
+    }
     previousNativeNvidiaDetached = await detachPreviousNativeNvidiaBeforePublish({
       selectingNativeNvidia,
       previousAttachment: previousNativeNvidiaAttachment,
@@ -1972,6 +2165,7 @@ async function runInferenceSetWithoutHostLock(
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       nativeCompatibleProviderAttachment,
+      nativeBedrockProviderAttachment,
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       ...nativeNvidiaDepartureRegistryFields(previousNativeNvidiaDetached),
     });
@@ -1979,11 +2173,13 @@ async function runInferenceSetWithoutHostLock(
       !deps.updateSandbox(
         sandboxName,
         registryFields(
-          resolveAgentInferenceApi(
-            agentName,
-            provider,
-            registryMetadata.preferredInferenceApi ?? null,
-          ),
+          selectingNativeBedrock
+            ? "openai-completions"
+            : resolveAgentInferenceApi(
+                agentName,
+                provider,
+                registryMetadata.preferredInferenceApi ?? null,
+              ),
         ),
       )
     ) {
@@ -1992,19 +2188,29 @@ async function runInferenceSetWithoutHostLock(
       );
     }
     nativeCompatibleRegistryCommitted = true;
+    if (previousNativeBedrockDetached && previousNativeBedrockAttachment)
+      await retireUnusedBedrockProvider(previousNativeBedrockAttachment, deps, sandboxName);
+    if (previousNativeCompatibleDetached && previousNativeCompatibleAttachment)
+      await retireUnusedCompatibleProvider(
+        previousNativeCompatibleAttachment,
+        preparedRoute.gatewayName,
+        deps,
+        sandboxName,
+      );
     nativeNvidiaRegistryCommitted = Boolean(nativeNvidiaProviderAttachment);
     previousNativeNvidiaDetachCommitted = previousNativeNvidiaDetached;
 
-    const preferredInferenceApi =
-      explicitPreferredInferenceApi ??
-      resolveRuntimeInferenceApi({
-        agentName,
-        config,
-        currentProvider: entry.provider,
-        provider,
-        sandboxName,
-        session,
-      });
+    const preferredInferenceApi = selectingNativeBedrock
+      ? "openai-completions"
+      : (explicitPreferredInferenceApi ??
+        resolveRuntimeInferenceApi({
+          agentName,
+          config,
+          currentProvider: entry.provider,
+          provider,
+          sandboxName,
+          session,
+        }));
     const effectiveRegistryMetadata: RegistryInferenceMetadata = {
       ...registryMetadata,
       preferredInferenceApi,
@@ -2018,29 +2224,12 @@ async function runInferenceSetWithoutHostLock(
       );
     }
 
-    const currentHttpsPinRouteId = parseHttpsPinRouteId(registryMetadata.endpointUrl);
-    if (priorHttpsPinRouteId && priorHttpsPinRouteId !== currentHttpsPinRouteId) {
-      try {
-        const peerStillReferencesRoute = deps
-          .listSandboxes()
-          .sandboxes.some(
-            (candidate) =>
-              candidate.name !== sandboxName &&
-              parseHttpsPinRouteId(candidate.endpointUrl) === priorHttpsPinRouteId,
-          );
-        if (!peerStillReferencesRoute) {
-          const revoked = await deps.revokeHttpsPinRuntimeAdapterRoute(priorHttpsPinRouteId);
-          if (!revoked) throw new Error("the adapter did not confirm route revocation");
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        deps.log(
-          `  Warning: the new inference route is committed, but superseded HTTPS Pin Runtime route ` +
-            `'${priorHttpsPinRouteId}' could not be revoked: ${detail}. The raw upstream endpoint was not restored; ` +
-            `uninstall NemoClaw to stop the adapter and purge its in-memory credentials if this persists.`,
-        );
-      }
-    }
+    await retireSupersededHttpsPinRoute({
+      priorHttpsPinRouteId,
+      endpointUrl: registryMetadata.endpointUrl,
+      sandboxName,
+      deps,
+    });
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
@@ -2052,6 +2241,7 @@ async function runInferenceSetWithoutHostLock(
         preferredInferenceApi,
         contextWindow,
         nativeCompatibleProviderAttachment,
+        nativeBedrockProviderAttachment,
       );
     } else {
       // Recompute the context window for the model being switched to, so it does
@@ -2075,6 +2265,7 @@ async function runInferenceSetWithoutHostLock(
         reasoningEffortRequest,
         true,
         nativeCompatibleProviderAttachment,
+        nativeBedrockProviderAttachment,
       );
     }
 
@@ -2176,6 +2367,15 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    await rollbackNativeBedrockSelection({
+      committed: nativeCompatibleRegistryCommitted,
+      changed: nativeBedrockAttachmentChanged,
+      attachment: nativeBedrockProviderAttachment,
+      previousDetached: previousNativeBedrockDetached,
+      previousAttachment: previousNativeBedrockAttachment,
+      sandboxName,
+      deps,
+    });
     await rollbackNativeCompatibleSelection({
       committed: nativeCompatibleRegistryCommitted,
       changed: nativeCompatibleAttachmentChanged,

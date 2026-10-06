@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireNativeBedrockProvider } from "../../inference/native-bedrock/retire";
+import { hasOtherNativeProviderReference } from "../../inference/native-provider/retirement-references";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import { load } from "../../state/registry/persistence";
+import {
+  getNativeBedrockProviderAuthority,
+  clearNativeBedrockProviderAuthority,
+} from "../../state/registry/native-bedrock-provider-authority";
 import {
   clearNativeCompatibleProviderAuthority,
   getNativeCompatibleProviderAuthority,
@@ -43,7 +51,13 @@ export type CredentialsResetResult = {
 };
 
 export type CredentialsResetDeps = Readonly<{
+  listSandboxes?: () => {
+    sandboxes: Parameters<typeof hasOtherNativeProviderReference>[0]["sandboxes"];
+  };
+  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   providerAdapter?: OpenShellProviderAdapter;
+  getNativeBedrockProviderAuthority?: typeof getNativeBedrockProviderAuthority;
+  clearNativeBedrockProviderAuthority?: typeof clearNativeBedrockProviderAuthority;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
   getNativeCompatibleProviderAuthority?: typeof getNativeCompatibleProviderAuthority;
   clearNativeCompatibleProviderAuthority?: typeof clearNativeCompatibleProviderAuthority;
@@ -137,73 +151,134 @@ export async function runCredentialsResetAction(
   });
   if (!target) return fail(recoveryFailureLines);
 
-  const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const compatibleAuthority = nativeCompatibleProvider
-    ? (deps.getNativeCompatibleProviderAuthority ?? getNativeCompatibleProviderAuthority)(
-        target.gatewayName,
-        key,
-      )
-    : undefined;
-  if (nativeCompatibleProvider) {
-    if (!compatibleAuthority)
-      return fail(["  Native compatible provider ownership is missing; no provider was removed."]);
-    const observed = await providerAdapter.getProvider({ target, providerName });
-    if (observed.ok) {
-      if (
-        observed.value.revision?.id !== compatibleAuthority.providerId ||
-        observed.value.type !== compatibleAuthority.profileId ||
-        observed.value.name !== compatibleAuthority.providerName
-      )
-        return fail(["  Native compatible provider identity changed; no provider was removed."]);
-    } else if (!(observed.error.kind === "command" && observed.error.reason === "not_found"))
+  const performReset = async (): Promise<CredentialsResetResult> => {
+    const nativeBedrockProvider = /^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key);
+    if (
+      (nativeCompatibleProvider || nativeBedrockProvider) &&
+      hasOtherNativeProviderReference({
+        sandboxes: deps.listSandboxes
+          ? deps.listSandboxes().sandboxes
+          : Object.values(load().sandboxes),
+        gatewayName: target.gatewayName,
+        expected: { providerName: key, profileId: key },
+      })
+    )
       return fail([
-        "  Native compatible provider identity could not be observed; no provider was removed.",
+        "  Native provider is referenced by a sandbox or pending onboarding; ownership was retained.",
       ]);
-  }
-  const clearCompatibleAuthority = () => {
-    if (compatibleAuthority)
-      (deps.clearNativeCompatibleProviderAuthority ?? clearNativeCompatibleProviderAuthority)(
-        target.gatewayName,
-        compatibleAuthority,
-      );
-  };
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: !nativeNvidiaProvider && !nativeCompatibleProvider,
-  });
+    const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
+    if (/^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key)) {
+      const authority = (
+        deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority
+      )(target.gatewayName, key);
+      if (
+        !authority ||
+        authority.gatewayName !== target.gatewayName ||
+        authority.providerName !== key
+      )
+        return fail(["  Native Bedrock provider ownership is missing; no provider was removed."]);
+      let removed = false;
+      try {
+        await retireNativeBedrockProvider({
+          adapter: providerAdapter,
+          expected: authority,
+          clearAuthority: () => {
+            (deps.clearNativeBedrockProviderAuthority ?? clearNativeBedrockProviderAuthority)(
+              target.gatewayName,
+              authority,
+            );
+            removed = true;
+          },
+        });
+      } catch {
+        return fail([
+          "  Native Bedrock provider removal was not confirmed; ownership and recovery state were retained.",
+        ]);
+      }
+      return removed
+        ? ok([
+            `  Removed provider '${key}' from the OpenShell gateway.`,
+            `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
+          ])
+        : fail([
+            "  Native Bedrock provider is still attached; destroy or switch the owning sandbox before resetting it.",
+          ]);
+    }
+    const compatibleAuthority = nativeCompatibleProvider
+      ? (deps.getNativeCompatibleProviderAuthority ?? getNativeCompatibleProviderAuthority)(
+          target.gatewayName,
+          key,
+        )
+      : undefined;
+    if (nativeCompatibleProvider) {
+      if (!compatibleAuthority)
+        return fail([
+          "  Native compatible provider ownership is missing; no provider was removed.",
+        ]);
+      const observed = await providerAdapter.getProvider({ target, providerName });
+      if (observed.ok) {
+        if (
+          observed.value.revision?.id !== compatibleAuthority.providerId ||
+          observed.value.type !== compatibleAuthority.profileId ||
+          observed.value.name !== compatibleAuthority.providerName
+        )
+          return fail(["  Native compatible provider identity changed; no provider was removed."]);
+      } else if (!(observed.error.kind === "command" && observed.error.reason === "not_found"))
+        return fail([
+          "  Native compatible provider identity could not be observed; no provider was removed.",
+        ]);
+    }
+    const clearCompatibleAuthority = () => {
+      if (compatibleAuthority)
+        (deps.clearNativeCompatibleProviderAuthority ?? clearNativeCompatibleProviderAuthority)(
+          target.gatewayName,
+          compatibleAuthority,
+        );
+    };
+    const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+      detachAttached: !nativeNvidiaProvider && !nativeCompatibleProvider,
+    });
 
-  if (
-    !recovery.ok &&
-    !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
-    recovery.error?.kind === "command" &&
-    recovery.error.reason === "not_found"
-  ) {
+    if (
+      !recovery.ok &&
+      !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
+      recovery.error?.kind === "command" &&
+      recovery.error.reason === "not_found"
+    ) {
+      clearCompatibleAuthority();
+      if (nativeNvidiaProvider) {
+        (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+          target.gatewayName,
+        );
+      }
+      const removedLocal = forgetExtraProvider(key);
+      return ok([
+        removedLocal
+          ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
+          : `  Provider '${key}' is already absent from the OpenShell gateway.`,
+        `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+      ]);
+    }
+
+    const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
+    if (!outcome.ok) return fail(outcome.lines);
+
     clearCompatibleAuthority();
+    forgetExtraProvider(publicKey);
     if (nativeNvidiaProvider) {
       (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
         target.gatewayName,
       );
     }
-    const removedLocal = forgetExtraProvider(key);
-    return ok([
-      removedLocal
-        ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
-        : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-      `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
-      ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
-    ]);
-  }
-
-  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
-  if (!outcome.ok) return fail(outcome.lines);
-
-  clearCompatibleAuthority();
-  forgetExtraProvider(publicKey);
-  if (nativeNvidiaProvider) {
-    (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-      target.gatewayName,
-    );
-  }
-  return ok(outcome.lines);
+    return ok(outcome.lines);
+  };
+  return nativeCompatibleProvider || /^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key)
+    ? (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+        target.gatewayName,
+        performReset,
+      )
+    : performReset();
 }
 
 /** Build the user-facing result after a provider delete attempt. */

@@ -14,7 +14,10 @@ content:
 Use the custom Anthropic-compatible provider to configure a custom base URL and model with `COMPATIBLE_ANTHROPIC_API_KEY`.
 The runtime API differs by agent capability.
 For hosted endpoints other than AWS Bedrock, the agent calls the configured endpoint through a sandbox-attached OpenShell provider restricted to that endpoint and API.
-Host-local and AWS Bedrock routes retain their existing routing behavior.
+Direct hosted native endpoints must use HTTPS. NemoClaw rejects HTTP before creating the provider.
+Host-local endpoints retain their existing routing behavior.
+AWS Bedrock uses a sandbox-attached OpenShell provider to reach NemoClaw’s verified host adapter.
+The adapter retains its OpenAI-compatible frontend and existing AWS authentication.
 Run `$$nemoclaw <name> status` and a short agent request after onboarding to verify the attached provider.
 Existing hosted sandboxes without a native provider ownership receipt must be recreated before using this path.
 
@@ -39,7 +42,7 @@ Use any non-empty placeholder such as `dummy` when the endpoint does not require
 
 ## Understand OpenClaw Validation
 
-OpenClaw uses the native Anthropic Messages frontend for this provider.
+For endpoints other than AWS Bedrock, OpenClaw uses the native Anthropic Messages frontend for this provider.
 NemoClaw validates the endpoint with a non-streaming `/v1/messages` request and then a `stream: true` request to the same path.
 
 The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` in a well-formed server-sent event sequence.
@@ -62,9 +65,10 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 ## Understand Hermes Routing
 
 Hermes uses the endpoint's OpenAI Chat Completions frontend for this provider.
-For hosted endpoints, NemoClaw validates `/v1/chat/completions` and configures the endpoint's `/v1` base URL through the attached provider.
+For hosted endpoints other than AWS Bedrock, NemoClaw validates `/v1/chat/completions` and configures the endpoint's `/v1` base URL through the attached provider.
 Host-local endpoints retain the managed frontend at `https://inference.local/v1`.
-The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+For endpoints other than AWS Bedrock, the route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+For AWS Bedrock, OpenShell supplies the adapter token; AWS credential discovery stays in the host adapter.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 This path avoids duplicate Anthropic SSE `message_start` events.
@@ -81,7 +85,8 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
 NemoClaw validates `/v1/chat/completions` and selects `openai-completions`.
-For hosted endpoints, the agent configuration uses the endpoint's `/v1` base URL.
+For hosted endpoints other than AWS Bedrock, the agent configuration uses the endpoint's `/v1` base URL.
+AWS Bedrock uses the host adapter's OpenAI-compatible base URL through its attached provider.
 Host-local routes retain `https://inference.local/v1`.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 

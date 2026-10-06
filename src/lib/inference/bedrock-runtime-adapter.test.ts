@@ -61,6 +61,7 @@ import {
   createBedrockRuntimeAdapterServer,
   createOpenAiChatCompletion,
   ensureBedrockRuntimeAdapter,
+  verifyBedrockRuntimeAdapterGeneration,
   streamOpenAiChatCompletion,
 } from "./bedrock-runtime-adapter";
 import {
@@ -766,6 +767,18 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
   });
 
+  it("withholds a fresh generation when process identity changes after health", async () => {
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    vi.mocked(observeBedrockRuntimeAdapterProcess).mockReturnValueOnce(null);
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("generation changed during startup");
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 4242, generation: expect.stringMatching(/^[a-f0-9]{32}$/u) }),
+      expect.any(Object),
+    );
+  });
+
   it("does not replace a running PID whose stable identity disagrees with lifecycle state", async () => {
     const token = "prior-token";
     vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
@@ -868,7 +881,12 @@ describe("Bedrock Runtime OpenAI adapter", () => {
 
     await expect(
       ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
-    ).resolves.toMatchObject({ token, region: "us-east-1" });
+    ).resolves.toMatchObject({
+      token,
+      region: "us-east-1",
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      generation: priorState.generation,
+    });
 
     expect(observeBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
       4242,
@@ -991,5 +1009,82 @@ describe("Bedrock Runtime OpenAI adapter", () => {
         process.env.AWS_SHARED_CREDENTIALS_FILE = savedSharedCredentials;
       }
     }
+  });
+});
+
+describe("native Bedrock generation observer", () => {
+  it("observes the retained generation without starting or reading current AWS credential configuration", async () => {
+    const token = "prior-token";
+    const priorState = {
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    };
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+
+    vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(true);
+    await expect(
+      verifyBedrockRuntimeAdapterGeneration({
+        endpointUrl: priorState.endpointUrl,
+        region: priorState.region,
+        adapterGeneration: priorState.generation,
+        adapterBaseUrl: "http://host.openshell.internal:11436/v1",
+      }),
+    ).resolves.toBeUndefined();
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(writeLocalAdapterSecretFile).not.toHaveBeenCalled();
+  });
+  it("rejects another generation without creating a replacement", async () => {
+    const token = "prior-token";
+    const priorState = {
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    };
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+
+    await expect(
+      verifyBedrockRuntimeAdapterGeneration({
+        endpointUrl: priorState.endpointUrl,
+        region: priorState.region,
+        adapterGeneration: "2".repeat(32),
+        adapterBaseUrl: "http://host.openshell.internal:11436/v1",
+      }),
+    ).rejects.toThrow("generation could not be verified");
+    expect(probeLocalAdapterHealth).not.toHaveBeenCalled();
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(killLocalAdapterPid).not.toHaveBeenCalled();
   });
 });

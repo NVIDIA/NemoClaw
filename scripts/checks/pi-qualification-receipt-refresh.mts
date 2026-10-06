@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Requires both Pi qualification receipts when a Pi image input changes. */
+/** Validates Pi receipt authority locally and requires source parity in CI. */
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -214,7 +214,7 @@ function validateReceiptPair(
   imageSourcePaths: readonly string[],
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
-  comparisonRevision: string | null,
+  comparisonRevision: string | null | undefined,
 ): void {
   const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
   const contracts = validated.map(({ contract }) => contract);
@@ -231,12 +231,14 @@ function validateReceiptPair(
   ) {
     throw new Error("Pi candidate receipt authority must exactly match both published receipts");
   }
-  requireReceiptSourceParity(
-    git,
-    contracts[0]!.source.revision,
-    comparisonRevision,
-    imageSourcePaths,
-  );
+  if (comparisonRevision !== undefined) {
+    requireReceiptSourceParity(
+      git,
+      contracts[0]!.source.revision,
+      comparisonRevision,
+      imageSourcePaths,
+    );
+  }
 }
 
 type PiReceiptRefreshCheckOptions = {
@@ -275,8 +277,12 @@ export function checkPiQualificationReceiptRefresh(
   );
   if (!imageInputsChanged && !receiptAuthorityChanged) return;
 
+  // Candidate images are built from published source. Local commits must be
+  // possible before those builds produce receipts; CI remains the merge gate.
+  // Always validate receipt contents and authority, including inherited receipts.
+  const requireSourceParity = process.env.GITHUB_ACTIONS === "true" || process.env.CI === "true";
   const missingReceipts = receiptPaths.filter((receipt) => !changedPaths.includes(receipt));
-  if (imageInputsChanged && missingReceipts.length > 0) {
+  if (requireSourceParity && imageInputsChanged && missingReceipts.length > 0) {
     throw new Error(
       [
         "Pi image inputs changed without refreshing both qualification receipts.",
@@ -293,7 +299,7 @@ export function checkPiQualificationReceiptRefresh(
     imageSourcePaths,
     receipts,
     acceptedDigests,
-    receiptComparisonRevision(git, options.headRevision),
+    requireSourceParity ? receiptComparisonRevision(git, options.headRevision) : undefined,
   );
 }
 

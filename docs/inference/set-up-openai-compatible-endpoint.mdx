@@ -15,6 +15,7 @@ Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/c
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
 For authenticated hosted endpoints, the agent uses the endpoint URL configured during onboarding.
+Hosted native endpoints must use HTTPS. NemoClaw rejects HTTP before creating the provider.
 NemoClaw attaches an OpenShell provider restricted to that endpoint and selected API to the sandbox.
 Host-local endpoints, including the supported no-authentication loopback option, retain their existing `inference.local` route.
 

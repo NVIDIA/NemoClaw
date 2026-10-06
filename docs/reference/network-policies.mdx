@@ -217,7 +217,9 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-Most providers use the OpenShell-managed `inference.local` route. NVIDIA Endpoints instead uses its least-privilege, sandbox-attached OpenShell provider at `integrate.api.nvidia.com`. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
+Most providers use the OpenShell-managed `inference.local` route. NVIDIA Endpoints instead uses its least-privilege, sandbox-attached OpenShell provider at `integrate.api.nvidia.com`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="deepagents">
 

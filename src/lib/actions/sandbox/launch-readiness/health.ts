@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+} from "../../../inference/native-bedrock/contract";
+import { verifyNativeBedrockProviderAttachment } from "../../../inference/native-bedrock/profile";
+import {
   isNativeCompatibleHostedSelection,
   requireMatchingNativeCompatibleAttachment,
 } from "../../../inference/native-compatible/contract";
@@ -84,6 +89,7 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  verifyNativeBedrockAttachment?: typeof verifyNativeBedrockProviderAttachment;
   verifyNativeCompatibleAttachment?: typeof verifyNativeCompatibleProviderAttachment;
   verifyNativeNvidiaAttachment?: (input: {
     sandboxName: string;
@@ -265,6 +271,35 @@ export async function requireNativeNvidiaInferenceHealth(input: {
 export async function requireNativeCompatibleInferenceHealth(
   input: Parameters<typeof requireNativeNvidiaInferenceHealth>[0],
 ): Promise<boolean> {
+  if (isNativeBedrockSelection(input.entry)) {
+    if (input.entry.pendingRouteReservation === true) throw new LaunchReadinessEvidenceError();
+    const expected = requireMatchingNativeBedrockAttachment(
+      input.entry.nativeBedrockProviderAttachment,
+      input.entry,
+    );
+    const provider = normalizedString(input.entry.provider);
+    const model = normalizedString(input.entry.model);
+    if (!expected || !provider || !model || expected.gatewayName !== input.gatewayName)
+      throw new LaunchReadinessEvidenceError();
+    await (input.deps.verifyNativeBedrockAttachment ?? verifyNativeBedrockProviderAttachment)({
+      adapter: createCliOpenShellProviderAdapter(),
+      sandboxName: input.sandboxName,
+      expected,
+    });
+    const invocation = await (
+      input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+    )({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      agentName: input.agentName,
+      provider,
+      model,
+      preferredInferenceApi: "openai-completions",
+      nativeBedrockProviderAttachment: expected,
+    });
+    if (!invocation.ok) throw new LaunchReadinessObservationError("health", "inference request");
+    return true;
+  }
   if (!isNativeCompatibleHostedSelection(input.entry)) return false;
   const expected = requireMatchingNativeCompatibleAttachment(
     input.entry.nativeCompatibleProviderAttachment,
@@ -389,10 +424,14 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeNvidiaProviderAttachment(entry) || isNativeCompatibleHostedSelection(entry)) {
+    if (
+      getNativeNvidiaProviderAttachment(entry) ||
+      isNativeCompatibleHostedSelection(entry) ||
+      isNativeBedrockSelection(entry)
+    ) {
       try {
         await (
-          isNativeCompatibleHostedSelection(entry)
+          isNativeCompatibleHostedSelection(entry) || isNativeBedrockSelection(entry)
             ? requireNativeCompatibleInferenceHealth
             : requireNativeNvidiaInferenceHealth
         )({

@@ -1,3 +1,4 @@
+import type { NativeCompatibleProviderAttachment } from "../inference/native-compatible/contract";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -305,7 +306,7 @@ describe("runInferenceSet compatible providers", () => {
     ["openai-completions", "https://compatible.example/v1"],
     ["openai-responses", "https://compatible.example/v1"],
     ["anthropic-messages", "https://compatible.example/v1"],
-    ["openai-completions", "http://compatible.example/v1"],
+    ["openai-completions", "https://compatible.example/v1"],
     ["openai-completions", "https://93.184.216.34/v1"],
   ] as const)(
     "creates a scoped hosted provider for %s at %s and preserves its native endpoint",
@@ -372,6 +373,109 @@ describe("runInferenceSet compatible providers", () => {
       expect(JSON.stringify(config)).not.toContain("inference.local");
     },
   );
+
+  it("retires the superseded provider only after successful commit", async () => {
+    const f = await nativeCompatibleRotationFixture();
+    f.attachments.delete("beta");
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      model: "old-model",
+      endpointUrl: f.previous.profile.endpoint,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: f.previous.profile.api,
+      nativeCompatibleProviderAttachment: f.previous.receipt,
+    };
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: f.previous.profile.api, models: [] } } },
+      },
+      entry,
+      providerAdapter: f.adapter,
+      resolveNativeCompatibleEndpointHost: f.lookup,
+    });
+    deps.getNativeCompatibleProviderAuthority = (_gateway, profileId) =>
+      f.authorities.get(profileId);
+    deps.setNativeCompatibleProviderAuthority = (_gateway, receipt) => {
+      f.authorities.set(receipt.profileId, receipt);
+    };
+    const clear = vi.fn((_gateway: string, receipt: NativeCompatibleProviderAttachment) => {
+      f.authorities.delete(receipt.profileId);
+    });
+    deps.clearNativeCompatibleProviderAuthority = clear;
+    const run = runInferenceSet(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: entry.endpointUrl,
+        credentialEnv: entry.credentialEnv,
+        inferenceApi: entry.preferredInferenceApi,
+      },
+      deps,
+    );
+    await run;
+    expect(clear).toHaveBeenCalledWith("nemoclaw", f.previous.receipt);
+    expect(f.authorities.has(f.previous.profile.profileId)).toBe(false);
+    expect([...f.attachments.get("alpha")!]).toEqual([f.next.providerName]);
+    expect(deps.calls.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      f.adapter.deleteProvider.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("restores the old provider before retiring a failed new selection", async () => {
+    const f = await nativeCompatibleRotationFixture();
+    f.attachments.delete("beta");
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      model: "old-model",
+      endpointUrl: f.previous.profile.endpoint,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: f.previous.profile.api,
+      nativeCompatibleProviderAttachment: f.previous.receipt,
+    };
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: f.previous.profile.api, models: [] } } },
+      },
+      entry,
+      providerAdapter: f.adapter,
+      resolveNativeCompatibleEndpointHost: f.lookup,
+    });
+    deps.getNativeCompatibleProviderAuthority = (_gateway, profileId) =>
+      f.authorities.get(profileId);
+    deps.setNativeCompatibleProviderAuthority = (_gateway, receipt) => {
+      f.authorities.set(receipt.profileId, receipt);
+    };
+    const clear = vi.fn((_gateway: string, receipt: NativeCompatibleProviderAttachment) => {
+      f.authorities.delete(receipt.profileId);
+    });
+    deps.clearNativeCompatibleProviderAuthority = clear;
+    deps.updateSandbox = vi.fn(() => false);
+    const run = runInferenceSet(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: entry.endpointUrl,
+        credentialEnv: entry.credentialEnv,
+        inferenceApi: entry.preferredInferenceApi,
+      },
+      deps,
+    );
+    await expect(run).rejects.toThrow("Failed to update NemoClaw registry");
+    expect([...f.attachments.get("alpha")!]).toEqual([f.previous.profile.providerName]);
+    expect(clear).toHaveBeenCalledWith("nemoclaw", f.nextReceipt);
+    expect(f.authorities.get(f.previous.profile.profileId)).toEqual(f.previous.receipt);
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: f.previous.profile.providerName }),
+    );
+  });
 
   it("refreshes changed DNS pins only for the selected sandbox and retains prior ownership", async () => {
     const { previous, lookup, next, nextReceipt, attachments, authorities, adapter } =
@@ -615,7 +719,7 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("detaches a newly selected endpoint after failed verification and retains recovery authority", async () => {
+  it("removes a newly selected endpoint after failed verification and clears confirmed authority", async () => {
     const native = await nativeCompatibleFixture(undefined, undefined, false);
     const deps = createDeps({
       config: {},
@@ -639,7 +743,11 @@ describe("runInferenceSet compatible providers", () => {
       expect.objectContaining({ sandboxName: "alpha", providerName: native.profile.providerName }),
     );
     expect(native.attached.size).toBe(0);
-    expect(native.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(native.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(deps.clearNativeCompatibleProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      native.receipt,
+    );
     expect(deps.setNativeCompatibleProviderAuthority).toHaveBeenCalledWith(
       "nemoclaw",
       native.receipt,
@@ -1056,11 +1164,11 @@ describe("runInferenceSet compatible providers", () => {
       [
         ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],
         ["localhost", "http://localhost:8000/v1", "93.184.216.34"],
-        ["link-local", "http://169.254.169.254/latest", "93.184.216.34"],
-        ["RFC1918", "http://10.0.0.1:8000/v1", "93.184.216.34"],
+        ["link-local", "https://169.254.169.254/latest", "93.184.216.34"],
+        ["RFC1918", "https://10.0.0.1:8000/v1", "93.184.216.34"],
         [
           "non-allowlisted internal",
-          "http://evil.host.openshell.internal:18767/v1",
+          "https://evil.host.openshell.internal:18767/v1",
           "93.184.216.34",
         ],
         ["HTTPS bridge", "https://host.openshell.internal:18767/v1", "93.184.216.34"],

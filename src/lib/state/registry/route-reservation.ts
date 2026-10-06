@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireMatchingNativeBedrockAttachment } from "../../inference/native-bedrock/contract";
+
 import { requireMatchingNativeCompatibleAttachment } from "../../inference/native-compatible/contract";
 import { isDeepStrictEqual } from "node:util";
 
@@ -25,6 +27,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "name",
   "nativeNvidiaProviderAttachment",
   "nativeCompatibleProviderAttachment",
+  "nativeBedrockProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",
@@ -73,6 +76,7 @@ function withVerifiedCreateCheckpoint(
 
 function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   try {
+    requireMatchingNativeBedrockAttachment(entry.nativeBedrockProviderAttachment, entry);
     requireMatchingNativeCompatibleAttachment(entry.nativeCompatibleProviderAttachment, entry);
   } catch {
     return false;

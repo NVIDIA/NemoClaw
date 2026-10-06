@@ -53,6 +53,8 @@ export type SandboxGpuCreateAttemptResult<T> =
 export type SandboxGpuCreatePlanFailure = SandboxGpuCreateAttemptFailure & {
   cleanupRefused?: string;
   preparationRefused?: string;
+  /** Native sandbox absence was proven and no compatibility create was submitted. */
+  terminalSandboxAbsenceConfirmed?: true;
 };
 
 export type SandboxGpuCreatePlanResult<T> =
@@ -278,6 +280,8 @@ export type SandboxGpuCreatePlanDeps<T> = {
   prepareCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   /** Apply compatibility side effects only after native cleanup is proven safe. */
   activateCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
+  /** Retire unused preparation only after proven absence and abandonment of the retry. */
+  onTerminalSandboxAbsenceConfirmed?(): void | Promise<void>;
   traceEvent?(name: string, attributes?: Record<string, unknown>): void;
 };
 
@@ -325,9 +329,11 @@ export async function executeSandboxGpuCreatePlan<T>(
   try {
     await deps.activateCompatibilityAttempt(first);
   } catch (error) {
+    await deps.onTerminalSandboxAbsenceConfirmed?.();
     return {
       ...first,
       preparationRefused: error instanceof Error ? error.message : String(error),
+      terminalSandboxAbsenceConfirmed: true,
     };
   }
   deps.traceEvent?.("gpu_compatibility_fallback", {

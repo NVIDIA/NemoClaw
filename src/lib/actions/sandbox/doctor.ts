@@ -36,6 +36,8 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
+  isNativeBedrockSelection,
+  normalizeNativeBedrockProviderAttachment,
   isNativeCompatibleHostedSelection,
   normalizeNativeCompatibleProviderAttachment,
   collectInferenceChecks,
@@ -394,7 +396,7 @@ async function resolveInferenceRoute(
   let live: { provider: string; model: string } | null = null;
   if (
     !recordedNativeNvidia &&
-    !(sb && isNativeCompatibleHostedSelection(sb)) &&
+    !(sb && (isNativeCompatibleHostedSelection(sb) || isNativeBedrockSelection(sb))) &&
     openshellBin &&
     openshellConnected &&
     gatewayName
@@ -412,8 +414,12 @@ async function resolveInferenceRoute(
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
+    pendingRouteReservation: sb?.pendingRouteReservation,
     credentialEnv: sb?.credentialEnv,
     preferredInferenceApi: sb?.preferredInferenceApi,
+    nativeBedrockProviderAttachment: normalizeNativeBedrockProviderAttachment(
+      sb?.nativeBedrockProviderAttachment,
+    ),
     nativeCompatibleProviderAttachment: normalizeNativeCompatibleProviderAttachment(
       sb?.nativeCompatibleProviderAttachment,
     ),

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeBedrockProviderAttachment } from "../../inference/native-bedrock/contract";
+import type { NativeBedrockProviderAuthorities } from "./native-bedrock-provider-authority-state";
 import type { NativeCompatibleProviderAttachment } from "../../inference/native-compatible/contract";
 import type { NativeCompatibleProviderAuthorities } from "./native-compatible-provider-authority-state";
 import type { InferenceSelection } from "../../inference/selection";
@@ -137,6 +139,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
@@ -239,5 +242,6 @@ export interface SandboxRegistry {
   extraProviders?: string[];
   /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
   nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
+  nativeBedrockProviderAuthorities?: NativeBedrockProviderAuthorities;
   nativeCompatibleProviderAuthorities?: NativeCompatibleProviderAuthorities;
 }

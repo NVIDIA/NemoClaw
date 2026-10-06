@@ -141,6 +141,19 @@ def _resolve_gateway_env_path(guard_path: str) -> str:
     return os.path.join(_self_dir(), ".env")
 
 
+def _resolve_native_inference_guard() -> str | None:
+    installed = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
+    if os.path.isfile(installed):
+        return installed
+    if os.path.abspath(__file__) == "/usr/local/bin/hermes":
+        return installed
+    local = os.path.join(_self_dir(), "runtime-config-guard.py")
+    return local if os.path.isfile(local) else None
+
+
+_NATIVE_INFERENCE_HASH_FILE = "/etc/nemoclaw/hermes.config-hash"
+
+
 def _resolve_cli_adapter() -> str:
     if os.path.isfile(_INSTALLED_CLI_ADAPTER):
         return _INSTALLED_CLI_ADAPTER
@@ -812,6 +825,23 @@ def main(argv: list[str]) -> int:
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
+        native_guard = _resolve_native_inference_guard()
+        if (
+            native_guard is not None
+            and argv not in (["-h"], ["--help"], ["--version"], ["-V"], ["chat", "-h"], ["chat", "--help"])
+            and (argv[:1] == ["gateway"] or _parse_managed_invocation(argv, adapter) is not None)
+        ):
+            python3 = _resolve_trusted_python3()
+            if python3 is None:
+                print("[SECURITY] Native inference credential validation is unavailable", file=sys.stderr)
+                return 1
+            result = subprocess.run(
+                [python3, "-I", native_guard, "native-inference-credential",
+                 "--hermes-dir", _MANAGED_HERMES_HOME,
+                 "--hash-file", _NATIVE_INFERENCE_HASH_FILE], check=False
+            )
+            if result.returncode != 0:
+                return result.returncode
         if adapter_result == "translated":
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
     except _AmbiguousProviderModelSession:

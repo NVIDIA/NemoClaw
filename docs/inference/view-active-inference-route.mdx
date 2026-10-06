@@ -22,7 +22,7 @@ This command reports configuration state and does not authenticate a model reque
 
 ## Read a Sandbox-Attached Route
 
-For native NVIDIA and authenticated hosted compatible endpoints, use the sandbox-first command:
+For native NVIDIA, authenticated hosted compatible endpoints, and AWS Bedrock, use the sandbox-first command:
 
 ```bash
 $$nemoclaw <name> inference get
@@ -33,6 +33,10 @@ It includes the endpoint URL only when it passes the credential-free display che
 A different shared gateway route does not override this selection.
 For compatible endpoints, a missing or mismatched ownership receipt stops the command instead of falling back to the shared route.
 Recreate a legacy hosted sandbox when the error reports that its receipt is missing.
+
+For AWS Bedrock, the command verifies the recorded adapter generation, provider profile, and attachment on the sandbox’s gateway.
+It reports the original AWS endpoint URL, not the host adapter URL.
+If verification fails, the command stops without reading the shared route.
 
 ## Read the Shared Route
 

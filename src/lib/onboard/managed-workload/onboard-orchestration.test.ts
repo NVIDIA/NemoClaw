@@ -60,6 +60,8 @@ vi.mock("../../core/version", () => ({
   getVersion: () => "v0.0.0",
 }));
 
+import { nativeBedrockIdentity } from "../../inference/native-bedrock/contract";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../inference/bedrock-runtime";
 import { mapManagedStartupProfileToAgentEnvironment } from "../managed-startup/agent-environment";
 import { buildManagedStartupOnboardProfile } from "../managed-startup/onboard-profile";
 import {
@@ -292,6 +294,97 @@ describe("managed workload onboard orchestration", () => {
       source: { kind: "managed-image" },
     } as never);
 
+    expect(built?.profile.dashboard).toEqual({
+      agent: "hermes",
+      mode: "loopback-forwarded",
+      url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
+      publicPort: 19_189,
+      internalPort: 29_189,
+      tuiEnabled: false,
+    });
+    expect(
+      mapManagedStartupProfileToAgentEnvironment(built!.profile).runtimeEnvironment.CHAT_UI_URL,
+    ).toBe("https://hermes.example.test:19189");
+  });
+
+  it("builds the managed Bedrock startup route from its retained receipt", () => {
+    const binding = {
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      adapterGeneration: "a".repeat(32),
+      adapterBaseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+      gatewayName: "gateway",
+    };
+    const receipt = {
+      ...binding,
+      ...nativeBedrockIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned",
+    };
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker" },
+        managedWorkloadRebuild: null,
+        tempManagedRuntime: false,
+        stockManagedRuntime: true,
+        tempManagedRuntimeCatalog: null,
+        agentName: "hermes",
+        legacyDockerfilePath: "agents/hermes/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: releaseRoot,
+        model: "moonshotai/kimi-k2.6",
+        provider: "compatible-anthropic-endpoint",
+        nativeBedrockProviderAttachment: receipt,
+        preferredInferenceApi: null,
+        endpointUrl: binding.endpointUrl,
+        startupProfile: {
+          chatUiUrl: "https://hermes.example.test:19189",
+          effectiveDashboardPort: 19_189,
+          manageDashboard: true,
+          dashboardBindAddress: undefined,
+          wslExposure: false,
+          hermesDashboardState: {
+            config: {
+              enabled: true,
+              port: 19_189,
+              internalPort: 29_189,
+              tuiEnabled: false,
+            },
+            enabled: true,
+          },
+          webSearch: null,
+          toolDisclosure: "progressive",
+          hermesToolGateways: [],
+          messagingPlan: null,
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+          environment: {},
+        },
+        note: vi.fn(),
+        fallbackBuildEstimate: () => null,
+      } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+      {
+        resolveAgentInferenceApi: vi.fn(() => "openai-completions"),
+        getSandboxInferenceConfig: vi.fn(() => ({
+          providerKey: "inference",
+          inferenceBaseUrl: "https://inference.local/v1",
+          inferenceApi: "openai-completions",
+          primaryModelRef: "inference/moonshotai/kimi-k2.6",
+          inferenceCompat: {},
+        })),
+      },
+    );
+
+    const built = runtime.ensurePreparedProfile({
+      source: { kind: "managed-image" },
+    } as never);
+
+    expect(built?.profile.inference).toMatchObject({
+      routedBaseUrl: binding.adapterBaseUrl,
+      api: "openai-completions",
+    });
+    expect(JSON.stringify(built?.profile)).not.toContain("inference.local");
     expect(built?.profile.dashboard).toEqual({
       agent: "hermes",
       mode: "loopback-forwarded",

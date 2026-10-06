@@ -28,6 +28,16 @@ The agent addresses the NVIDIA API hostname, but OpenShell still intercepts the 
 Sandbox agent -> integrate.api.nvidia.com -> sandbox-attached OpenShell provider -> NVIDIA
 ```
 
+Authenticated hosted OpenAI-compatible and Anthropic-compatible endpoints other than AWS Bedrock also use sandbox-attached providers.
+The agent addresses the configured HTTPS endpoint. OpenShell supplies its credential only for the validated destination and API paths.
+Each sandbox keeps its own provider attachment; selecting one of these endpoints does not change the shared route.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+For Bedrock, the adapter accesses AWS credentials on the host; OpenShell supplies only the adapter credential.
+
+```text
+Sandbox agent -> sandbox-attached OpenShell provider -> verified host adapter -> AWS Bedrock
+```
+
 Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
 The sandbox uses `inference.local` for those services instead of calling their host ports directly.
 
@@ -46,6 +56,8 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 ## Deep Agents Configuration
 
 For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Most providers use `https://inference.local/v1`. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox at `https://integrate.api.nvidia.com/v1`.
+Authenticated hosted compatible endpoints other than AWS Bedrock use their configured HTTPS endpoint through an endpoint-restricted provider attached to the sandbox.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

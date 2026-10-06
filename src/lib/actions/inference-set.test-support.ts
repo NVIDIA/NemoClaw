@@ -459,6 +459,7 @@ export function createDeps(options: {
     resolveNativeCompatibleEndpointHost: options.resolveNativeCompatibleEndpointHost,
     getNativeCompatibleProviderAuthority: () => undefined,
     setNativeCompatibleProviderAuthority: vi.fn(),
+    clearNativeCompatibleProviderAuthority: vi.fn(),
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
     isLocalInferenceProvider: (provider) =>

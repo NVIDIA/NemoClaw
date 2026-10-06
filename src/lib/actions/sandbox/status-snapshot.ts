@@ -18,6 +18,9 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  isNativeBedrockSelection,
+  normalizeNativeBedrockProviderAttachment,
+  requireMatchingNativeBedrockAttachment,
   isNativeCompatibleHostedSelection,
   normalizeNativeCompatibleProviderAttachment,
   requireMatchingNativeCompatibleAttachment,
@@ -57,6 +60,8 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  verifyNativeBedrockStatusAttachment,
+  type VerifyNativeBedrockStatusAttachment,
   verifyNativeCompatibleStatusAttachment,
   type VerifyNativeCompatibleStatusAttachment,
   buildSandboxInferenceRouteHealth,
@@ -339,6 +344,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
   verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
+  verifyNativeBedrockProviderAttachmentImpl?: VerifyNativeBedrockStatusAttachment;
   verifyNativeCompatibleProviderAttachmentImpl?: VerifyNativeCompatibleStatusAttachment;
 }
 
@@ -568,11 +574,15 @@ export async function collectSandboxStatusSnapshot(
   const nativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
     sb?.nativeNvidiaProviderAttachment,
   );
+  const nativeBedrock = sb ? isNativeBedrockSelection(sb) : false;
+  const bedrockReceipt = normalizeNativeBedrockProviderAttachment(
+    sb?.nativeBedrockProviderAttachment,
+  );
   const nativeCompatible = sb ? isNativeCompatibleHostedSelection(sb) : false;
   const compatibleReceipt = normalizeNativeCompatibleProviderAttachment(
     sb?.nativeCompatibleProviderAttachment,
   );
-  const nativeNvidia = Boolean(nativeNvidiaAttachment) || nativeCompatible;
+  const nativeNvidia = Boolean(nativeNvidiaAttachment) || nativeCompatible || nativeBedrock;
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -624,19 +634,37 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
-  const nativeProviderLabel = nativeCompatible
-    ? "Native compatible provider"
-    : "Native NVIDIA provider";
+  const nativeProviderLabel = nativeBedrock
+    ? "Native Bedrock provider"
+    : nativeCompatible
+      ? "Native compatible provider"
+      : "Native NVIDIA provider";
   let nativeNvidiaAttachmentFailure: string | null = null;
   if (!suppressInferenceProbe && lookup.state === "present" && nativeNvidia && sb) {
-    const expected = nativeCompatible ? compatibleReceipt : nativeNvidiaAttachment;
-    if (!gatewayName || !expected) {
+    const expected = nativeBedrock
+      ? bedrockReceipt
+      : nativeCompatible
+        ? compatibleReceipt
+        : nativeNvidiaAttachment;
+    if (!gatewayName || !expected || (nativeBedrock && sb.pendingRouteReservation === true)) {
       nativeNvidiaAttachmentFailure =
         `${nativeProviderLabel} attachment is unavailable for sandbox '${sandboxName}'. ` +
         "Recreate the sandbox to restore native inference.";
     } else {
       try {
-        if (nativeCompatible) {
+        if (nativeBedrock) {
+          const receipt = requireMatchingNativeBedrockAttachment(
+            sb.nativeBedrockProviderAttachment,
+            sb,
+          );
+          if (!receipt) throw new Error("Native Bedrock provider ownership is missing.");
+          await verifyNativeBedrockStatusAttachment({
+            gatewayName,
+            sandboxName,
+            expected: receipt,
+            verify: opts.deps?.verifyNativeBedrockProviderAttachmentImpl,
+          });
+        } else if (nativeCompatible) {
           const receipt = requireMatchingNativeCompatibleAttachment(
             sb.nativeCompatibleProviderAttachment,
             sb,
@@ -772,6 +800,7 @@ export async function collectSandboxStatusSnapshot(
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
                     ...(nativeNvidia ? { nativeProvider: true } : {}),
+                    ...(bedrockReceipt ? { nativeBedrockProviderAttachment: bedrockReceipt } : {}),
                     ...(compatibleReceipt
                       ? { nativeCompatibleProviderAttachment: compatibleReceipt }
                       : {}),
@@ -827,7 +856,10 @@ export async function collectSandboxStatusSnapshot(
           ok: false,
           probed: false,
           providerLabel: `${nativeProviderLabel} attachment`,
-          endpoint: compatibleReceipt?.endpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+          endpoint:
+            bedrockReceipt?.adapterBaseUrl ??
+            compatibleReceipt?.endpointUrl ??
+            NVIDIA_HOSTED_NATIVE_ENDPOINT,
           detail: nativeNvidiaAttachmentFailure,
           failureLabel: "unreachable",
           probeLabel: "provider attachment",
@@ -836,7 +868,11 @@ export async function collectSandboxStatusSnapshot(
           agentName: sb?.agent ?? null,
           provider: invocationRoute.provider ?? null,
           nativeNvidia,
-          ...(compatibleReceipt ? { nativeCompatibleEndpoint: compatibleReceipt.endpointUrl } : {}),
+          ...(bedrockReceipt
+            ? { nativeCompatibleEndpoint: bedrockReceipt.adapterBaseUrl }
+            : compatibleReceipt
+              ? { nativeCompatibleEndpoint: compatibleReceipt.endpointUrl }
+              : {}),
         });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
@@ -951,7 +987,7 @@ async function buildSandboxStatusReport(
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const nativeNvidia =
     Boolean(normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment)) ||
-    (sb ? isNativeCompatibleHostedSelection(sb) : false);
+    (sb ? isNativeCompatibleHostedSelection(sb) || isNativeBedrockSelection(sb) : false);
   return {
     schemaVersion: 1,
     name: sandboxName,

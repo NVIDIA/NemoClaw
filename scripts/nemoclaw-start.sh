@@ -613,6 +613,9 @@ def add_key(value):
 
 def walk(value):
     if isinstance(value, str):
+        for native_key in ("NVIDIA_INFERENCE_API_KEY", "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY", "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"):
+            if value == "${" + native_key + "}":
+                add_key(native_key)
         if value.startswith(prefix):
             add_key(value[len(prefix) :])
         alias_index = value.find(alias_marker)
@@ -883,6 +886,14 @@ replacement_patterns = [
 
 def rewrite(value):
     if isinstance(value, str):
+        for native_key in ("NVIDIA_INFERENCE_API_KEY", "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY", "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"):
+            if value == "${" + native_key + "}":
+                state = runtime_state(native_key)
+                handle = state.get("value", "")
+                if state.get("kind") != "placeholder" or not re.fullmatch(
+                    rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{native_key}", handle
+                ):
+                    raise SystemExit("[SECURITY] Native inference requires an issued OpenShell credential handle")
         for pattern, key, new in replacement_patterns:
             updated, count = pattern.subn(new, value)
             if count:

@@ -8,6 +8,29 @@ import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-te
 import { handlePoliciesState } from "./policies";
 
 describe("policy state handler", () => {
+  it("passes the active sandbox native receipt to the inference smoke owner", async () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: "profile",
+      providerName: "provider",
+      providerId: "owned",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions" as const,
+      addresses: ["93.184.216.34"],
+    };
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: () => ({ nativeCompatibleProviderAttachment: receipt }),
+    });
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      provider: "compatible-endpoint",
+      endpointUrl: receipt.endpointUrl,
+    });
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeCompatibleProviderAttachment: receipt }),
+    );
+  });
+
   it("resumes from the live OpenShell preset selection", async () => {
     const prepare = vi.fn(() => ({
       policyPresets: ["npm"],

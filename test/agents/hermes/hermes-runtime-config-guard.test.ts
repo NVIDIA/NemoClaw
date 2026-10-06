@@ -1062,3 +1062,44 @@ print(json.dumps(captured))
     });
   });
 });
+
+describe("native inference integrity anchor authority", () => {
+  it.each([
+    [true, 0, false, "strict"],
+    [true, 1000, false, "compat"],
+    [true, null, false, "strict"],
+    [false, null, true, "compat"],
+    [false, null, false, "strict"],
+  ])("selects only the proven runtime anchor case %#", (direct, uid, supervised, expected) => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json, os, pathlib, tempfile, types
+case = json.loads(${JSON.stringify(JSON.stringify({ direct, uid, supervised, expected }))})
+guard._pid1_is_nemoclaw_start = lambda: case["direct"]
+guard._process_effective_uid = lambda _pid: case["uid"]
+guard.pwd.getpwnam = lambda _name: types.SimpleNamespace(pw_uid=1000)
+guard._openshell_supervised_nonroot_start_is_live = lambda *_args: case["supervised"]
+with tempfile.TemporaryDirectory() as root:
+    home = pathlib.Path(root)
+    config = home / "config.yaml"
+    env = home / ".env"
+    strict = home / "strict"
+    compat = home / ".config-hash"
+    config.write_text(json.dumps({"model": {"api_key": "$" + "{NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}"}}))
+    env.write_text("")
+    digest, _, _ = guard._hash_text(str(config), str(env))
+    strict.write_text("invalid strict anchor")
+    compat.write_text(digest)
+    selected = str(compat) if case["expected"] == "compat" else str(strict)
+    assert guard._native_inference_hash_file(root, str(strict)) == selected
+    os.environ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"] = "openshell:resolve:env:v42_NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"
+    try:
+        guard.validate_native_inference_credential(root, str(strict))
+        outcome = "compat"
+    except guard.UnsafePathError as error:
+        assert str(error) == "Native inference requires an intact managed route and an issued OpenShell credential handle"
+        outcome = "strict"
+    assert outcome == case["expected"]
+`);
+    expect(result.status, result.stderr).toBe(0);
+  });
+});

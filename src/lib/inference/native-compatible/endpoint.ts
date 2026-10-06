@@ -63,6 +63,9 @@ export async function prepareNativeCompatibleEndpoint(input: {
   const identity = nativeCompatibleEndpointIdentity(input);
   const { endpoint, api } = identity;
   const url = new URL(endpoint);
+  if (url.protocol !== "https:") {
+    throw new Error("Native hosted inference requires an HTTPS endpoint.");
+  }
   const validation = await assertEndpointResolvesPublic(endpoint, input.lookup, input.trust);
   if (!validation.ok) {
     throw new Error("The hosted endpoint failed network validation.");

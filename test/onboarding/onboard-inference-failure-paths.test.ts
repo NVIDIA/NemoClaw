@@ -41,15 +41,34 @@ function successfulBedrockAdapter() {
     credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
     token: "adapter-token",
     region: "us-east-1",
+    endpointUrl: BEDROCK_ENDPOINT,
+    generation: "a".repeat(32),
     logPath: "/tmp/bedrock-adapter.log",
   };
 }
 
-function withBedrockAdapter(ensureAdapter: EnsureBedrockRuntimeAdapter) {
+function nativeBedrockDependencies(ensureAdapter: EnsureBedrockRuntimeAdapter) {
   return {
-    setupBedrockRuntimeInference: (
-      input: Parameters<typeof bedrockRuntimeOnboard.setupBedrockRuntimeInference>[0],
-    ) => bedrockRuntimeOnboard.setupBedrockRuntimeInference({ ...input, ensureAdapter }),
+    ensureBedrockRuntimeAdapter: ensureAdapter,
+    providerAdapter: {
+      getProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: { kind: "command" as const, reason: "not_found" as const, message: "missing" },
+      })),
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      createProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "failed" as const,
+          message: "provider denied",
+          exitCode: 23,
+        },
+      })),
+    } as unknown as NonNullable<SetupInferenceDeps["providerAdapter"]>,
+    getNativeBedrockProviderAuthority: () => undefined,
+    setNativeBedrockProviderAuthority: vi.fn(),
+    hydrateCredentialEnv: (key: string) => process.env[key] || "",
   };
 }
 
@@ -605,7 +624,7 @@ describe("setupInference dependency failures", () => {
         isNonInteractive: () => true,
         exitProcess,
         upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+        ...nativeBedrockDependencies(ensureAdapter),
       },
     });
 
@@ -641,7 +660,7 @@ describe("setupInference dependency failures", () => {
       overrides: {
         exitProcess,
         upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+        ...nativeBedrockDependencies(ensureAdapter),
       },
     });
 
@@ -677,7 +696,7 @@ describe("setupInference dependency failures", () => {
         isNonInteractive: () => true,
         exitProcess,
         upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+        ...nativeBedrockDependencies(ensureAdapter),
       },
     });
 
@@ -702,164 +721,36 @@ describe("setupInference dependency failures", () => {
     expectNoPostFailureSideEffects(harness);
   });
 
-  it("preserves the provider status through the injected Bedrock exit boundary", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({
-      ok: false,
-      status: 23,
-      message: "Bedrock provider registration failed",
-    }));
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
-      },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:23");
-
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(23);
-    expect(harness.errors).toContain("  Bedrock provider registration failed");
-    expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
-  });
-
-  it("falls back to status 1 when Bedrock provider registration returns status 0", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({
-      ok: false,
-      status: 0,
-      message: "Bedrock provider registration failed without status",
-    }));
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
-      },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(1);
-    expect(harness.errors).toContain("  Bedrock provider registration failed without status");
-    expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
-  });
-
-  it("preserves the inference-set status through the injected Bedrock exit boundary", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) =>
-        args.slice(0, 2).join(" ") === "inference set"
-          ? { status: 37, stdout: "", stderr: "route denied" }
-          : undefined,
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
-      },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:37");
-
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(37);
-    expect(harness.errors).toContain("  route denied");
-    expect(harness.logs).toEqual([
-      "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
-    ]);
-    expectNoPostFailureSideEffects(harness, [
-      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
-    ]);
-  });
-
-  it("falls back to status 1 and a generic error when Bedrock inference set has no status", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) =>
-        args.slice(0, 2).join(" ") === "inference set"
-          ? { status: null, stdout: "", stderr: "" }
-          : undefined,
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
-      },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(1);
-    expect(harness.errors).toContain(
-      "  OpenShell inference route update returned an inconclusive result.",
-    );
-    expect(harness.logs).toEqual([
-      "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
-    ]);
-    expectNoPostFailureSideEffects(harness, [
-      `inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model ${BEDROCK_MODEL} --timeout 180`,
-    ]);
-  });
-
+  it.each([23, 0])(
+    "refuses native creation failure with exit code %s without publishing a shared route",
+    async (exitCode) => {
+      vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
+      const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
+      const native = nativeBedrockDependencies(ensureAdapter);
+      vi.mocked(native.providerAdapter.createProvider).mockResolvedValue({
+        ok: false,
+        error: { kind: "command", reason: "failed", message: "provider denied", exitCode },
+      } as never);
+      const upsertProvider = vi.fn();
+      const harness = createDirectSetupInferenceHarness({
+        overrides: { ...native, upsertProvider, isNonInteractive: () => true },
+      });
+      await expect(
+        harness.setupInference(
+          "test-box",
+          BEDROCK_MODEL,
+          "compatible-anthropic-endpoint",
+          BEDROCK_ENDPOINT,
+          BEDROCK_CREDENTIAL_ENV,
+        ),
+      ).rejects.toThrow("provider denied");
+      expect(ensureAdapter).toHaveBeenCalledOnce();
+      expect(native.providerAdapter.createProvider).toHaveBeenCalledOnce();
+      expect(native.setNativeBedrockProviderAuthority).not.toHaveBeenCalled();
+      expect(upsertProvider).not.toHaveBeenCalled();
+      expectNoPostFailureSideEffects(harness);
+    },
+  );
   it("uses an injected Hermes DNS lookup before rejecting an unpinnable HTTPS endpoint", async () => {
     const exitProcess = createInjectedExit();
     const lookup = vi.fn<NonNullable<SetupInferenceDeps["lookup"]>>(async () => [

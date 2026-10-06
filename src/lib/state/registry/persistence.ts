@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  normalizeNativeBedrockProviderAuthorities,
+  readNativeBedrockProviderAuthority,
+  applyNativeBedrockProviderAuthority,
+} from "./native-bedrock-provider-authority-state";
+import { requireMatchingNativeBedrockAttachment } from "../../inference/native-bedrock/contract";
+
+import {
   normalizeNativeCompatibleProviderAuthorities,
   readNativeCompatibleProviderAuthority,
 } from "./native-compatible-provider-authority-state";
@@ -156,6 +163,11 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
   );
   if (nativeCompatibleProviderAuthorities)
     base.nativeCompatibleProviderAuthorities = nativeCompatibleProviderAuthorities;
+  const nativeBedrockProviderAuthorities = normalizeNativeBedrockProviderAuthorities(
+    data.nativeBedrockProviderAuthorities,
+  );
+  if (nativeBedrockProviderAuthorities)
+    base.nativeBedrockProviderAuthorities = nativeBedrockProviderAuthorities;
   return base;
 }
 
@@ -191,6 +203,11 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   );
   if (nativeCompatibleProviderAuthorities)
     base.nativeCompatibleProviderAuthorities = nativeCompatibleProviderAuthorities;
+  const nativeBedrockProviderAuthorities = normalizeNativeBedrockProviderAuthorities(
+    data.nativeBedrockProviderAuthorities,
+  );
+  if (nativeBedrockProviderAuthorities)
+    base.nativeBedrockProviderAuthorities = nativeBedrockProviderAuthorities;
   return base;
 }
 
@@ -230,6 +247,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
+      rest.nativeBedrockProviderAttachment,
+      rest,
+    ),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
@@ -294,6 +315,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
+      rest.nativeBedrockProviderAttachment,
+      rest,
+    ),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
@@ -311,4 +336,9 @@ export {
 
 export function getNativeCompatibleProviderAuthority(gatewayName: string, profileId: string) {
   return readNativeCompatibleProviderAuthority(load(), gatewayName, profileId);
+}
+
+export { applyNativeBedrockProviderAuthority };
+export function getNativeBedrockProviderAuthority(gatewayName: string, profileId: string) {
+  return readNativeBedrockProviderAuthority(load(), gatewayName, profileId);
 }

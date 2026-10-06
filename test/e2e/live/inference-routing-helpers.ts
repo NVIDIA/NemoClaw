@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeInferenceProbeAuthScript } from "../../../src/lib/inference/probe/native-inference-probe-auth.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -358,31 +359,47 @@ function anthropicContent(json: unknown): string {
   return openAiContent(json);
 }
 
+/** Use only the supervisor-issued non-secret handle, never a host credential. */
+export function nativeCompatibleCurlCommand(args: readonly string[]): string[] {
+  return [
+    "sh",
+    "-c",
+    [
+      ...nativeInferenceProbeAuthScript("NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"),
+      'exec curl "$@" -H "$AUTH_HEADER"',
+    ].join("\n"),
+    "native-compatible-probe",
+    ...args,
+  ];
+}
+
 async function expectOpenAiChatThroughSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
   model: string,
   redactionValues: readonly string[],
   artifactName: string,
+  endpointUrl = "https://inference.local/v1",
+  nativeCompatible = false,
 ): Promise<void> {
   const payload = JSON.stringify({
     model,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
     max_tokens: OPENAI_CHAT_PROBE_MAX_TOKENS,
   });
+  const curlArgs = [
+    "-sS",
+    "--max-time",
+    "60",
+    `${endpointUrl}/chat/completions`,
+    "-H",
+    "Content-Type: application/json",
+    "--data-raw",
+    payload,
+  ];
   const response = await sandbox.exec(
     sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
+    nativeCompatible ? nativeCompatibleCurlCommand(curlArgs) : ["curl", ...curlArgs],
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),

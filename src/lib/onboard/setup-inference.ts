@@ -11,7 +11,25 @@ import {
 } from "./inference-providers";
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
-import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import {
+  ensureBedrockRuntimeAdapter,
+  getCompatibleAnthropicCredentialForBedrock,
+} from "./inference-providers";
+import { ensureNativeBedrockProvider } from "./inference-providers";
+import {
+  nativeBedrockIdentity,
+  normalizeNativeBedrockProviderAttachment,
+  type NativeBedrockProviderAttachment,
+} from "./inference-providers";
+import {
+  getNativeBedrockProviderAuthority,
+  setNativeBedrockProviderAuthority,
+} from "./inference-providers";
+import {
+  classifyCustomAnthropicEndpoint,
+  hasBedrockRuntimeAwsAuthEnv,
+  isBedrockRuntimeEndpoint,
+} from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
@@ -244,6 +262,9 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  ensureBedrockRuntimeAdapter?: typeof ensureBedrockRuntimeAdapter;
+  getNativeBedrockProviderAuthority?: typeof getNativeBedrockProviderAuthority;
+  setNativeBedrockProviderAuthority?: typeof setNativeBedrockProviderAuthority;
   getNativeCompatibleProviderAuthority?: typeof import("../state/registry").getNativeCompatibleProviderAuthority;
   setNativeCompatibleProviderAuthority?: typeof import("../state/registry").setNativeCompatibleProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
@@ -695,7 +716,11 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        if (!isNativeNvidiaProvider(provider) && !nativeCompatibleEndpoint) {
+        if (
+          !isNativeNvidiaProvider(provider) &&
+          !nativeCompatibleEndpoint &&
+          !usesBedrockRuntimeAdapter
+        ) {
           const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
             target: { kind: "named", gatewayName },
           });
@@ -790,6 +815,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeBedrockProviderAttachment: NativeBedrockProviderAttachment | undefined;
         let nativeCompatibleProviderAttachment: NativeCompatibleProviderAttachment | undefined;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
@@ -811,6 +837,9 @@ export function createSetupInference(
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
             ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+            ...(nativeBedrockProviderAttachment
+              ? { nativeBedrockProviderAttachment, preferredInferenceApi: "openai-completions" }
+              : {}),
             ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
@@ -978,6 +1007,71 @@ export function createSetupInference(
                 lookup: deps.lookup,
               },
             );
+          }
+
+          if (usesBedrockRuntimeAdapter && endpointUrl) {
+            const classification = classifyCustomAnthropicEndpoint(endpointUrl);
+            if (classification.kind !== "bedrock-runtime" || !deps.providerAdapter)
+              throw new Error("Native Bedrock setup requires its endpoint and provider adapter.");
+            endpointUrl = classification.endpointUrl;
+            const recorded = sandboxName ? deps.getSandbox?.(sandboxName) : null;
+            const recordedReceipt = normalizeNativeBedrockProviderAttachment(
+              recorded?.nativeBedrockProviderAttachment,
+            );
+            if (
+              recorded &&
+              !recorded.pendingRouteReservation &&
+              isBedrockRuntimeEndpoint(recorded.endpointUrl) &&
+              !recordedReceipt
+            )
+              throw new Error("Recreate this beta sandbox before using native Bedrock inference.");
+            const compatibleCredential = credentialEnv
+              ? deps.hydrateCredentialEnv(credentialEnv)
+              : getCompatibleAnthropicCredentialForBedrock();
+            if (!compatibleCredential && !hasBedrockRuntimeAwsAuthEnv()) {
+              deps.error(
+                "  AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, IAM environment credentials, or an explicitly exported Bedrock-compatible endpoint key is required for a Bedrock Runtime endpoint.",
+              );
+              if (deps.isNonInteractive()) return deps.exitProcess(1);
+              return { retry: "selection" };
+            }
+            let adapter: Awaited<ReturnType<typeof ensureBedrockRuntimeAdapter>>;
+            try {
+              adapter = await (deps.ensureBedrockRuntimeAdapter ?? ensureBedrockRuntimeAdapter)({
+                classification,
+                compatibleCredential,
+              });
+            } catch (error) {
+              deps.error(
+                `  Failed to start Bedrock Runtime adapter: ${deps.redact(error instanceof Error ? error.message : String(error))}`,
+              );
+              if (deps.isNonInteractive()) return deps.exitProcess(1);
+              return { retry: "selection" };
+            }
+            const binding = {
+              endpointUrl: adapter.endpointUrl,
+              region: adapter.region,
+              adapterGeneration: adapter.generation,
+              adapterBaseUrl: adapter.baseUrl,
+              gatewayName,
+            };
+            const identity = nativeBedrockIdentity(binding);
+            nativeBedrockProviderAttachment = await ensureNativeBedrockProvider({
+              adapter: deps.providerAdapter,
+              binding,
+              credentialValue: adapter.token,
+              expected:
+                (deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority)(
+                  gatewayName,
+                  identity.profileId,
+                ) ??
+                (recordedReceipt?.profileId === identity.profileId ? recordedReceipt : undefined),
+            });
+            (deps.setNativeBedrockProviderAuthority ?? setNativeBedrockProviderAuthority)(
+              gatewayName,
+              nativeBedrockProviderAttachment,
+            );
+            return null;
           }
 
           if (nativeCompatibleEndpoint && endpointUrl) {
@@ -1264,9 +1358,15 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          if (!nativeNvidiaProviderAttachment && !nativeCompatibleProviderAttachment)
+          if (
+            !nativeNvidiaProviderAttachment &&
+            !nativeCompatibleProviderAttachment &&
+            !nativeBedrockProviderAttachment
+          )
             commonDeps.verifyInferenceRoute(provider, model);
-          if (hostLocalRoute) {
+          if (nativeBedrockProviderAttachment) {
+            deps.log("  Deferring native Bedrock smoke until its sandbox attachment is verified.");
+          } else if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
             );

@@ -45,6 +45,9 @@ import {
   emitProviderDetachResidualHint,
   deleteSandboxProviderRegistrations,
   removeManagedAgentStateVolumes,
+  retireDestroyedSandboxCompatibleProvider,
+  retireDestroyedSandboxBedrockProvider,
+  hasOtherNativeProviderReference,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
 import {
@@ -1109,6 +1112,44 @@ async function destroySandboxUnlocked(
     }
   }
   try {
+    if (deleteSucceededOrAlreadyGone && sandbox?.nativeCompatibleProviderAttachment) {
+      await withGatewayRouteMutationLock(cleanupGatewayName, () => {
+        if (
+          hasOtherNativeProviderReference({
+            sandboxes: listRegisteredSandboxes().sandboxes,
+            gatewayName: cleanupGatewayName,
+            sandboxName,
+            expected: sandbox.nativeCompatibleProviderAttachment!,
+          })
+        )
+          return;
+        return retireDestroyedSandboxCompatibleProvider(
+          {
+            deletionConfirmed: deleteSucceededOrAlreadyGone,
+            gatewayName: cleanupGatewayName,
+            expected: sandbox.nativeCompatibleProviderAttachment,
+          },
+          { runOpenshell: cleanupRunOpenshell },
+        );
+      });
+    }
+    if (deleteSucceededOrAlreadyGone && sandbox?.nativeBedrockProviderAttachment) {
+      await withGatewayRouteMutationLock(cleanupGatewayName, () => {
+        if (
+          hasOtherNativeProviderReference({
+            sandboxes: listRegisteredSandboxes().sandboxes,
+            gatewayName: cleanupGatewayName,
+            sandboxName,
+            expected: sandbox.nativeBedrockProviderAttachment!,
+          })
+        )
+          return;
+        return retireDestroyedSandboxBedrockProvider(
+          { gatewayName: cleanupGatewayName, expected: sandbox.nativeBedrockProviderAttachment! },
+          { runOpenshell: cleanupRunOpenshell },
+        );
+      });
+    }
     const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
       deleteSucceededOrAlreadyGone,
       registeredSandboxCount: listRegisteredSandboxes().sandboxes.length,

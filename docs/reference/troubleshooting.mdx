@@ -1988,7 +1988,9 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes the selected provider path from inside the sandbox and then sends an inference request over the same path, so it reflects the route the agent uses. Most providers use `https://inference.local`. NVIDIA Endpoints uses the sandbox-attached OpenShell provider at `https://integrate.api.nvidia.com/v1/chat/completions`. When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line probes the selected provider path from inside the sandbox and then sends an inference request over the same path, so it reflects the route the agent uses. Most providers use `https://inference.local`. NVIDIA Endpoints uses the sandbox-attached OpenShell provider at `https://integrate.api.nvidia.com/v1/chat/completions`. Authenticated hosted compatible endpoints other than AWS Bedrock also use sandbox-attached providers restricted to their configured HTTPS endpoint and API.
+AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -1997,6 +1999,11 @@ On non-WSL hosts that front Ollama with the auth proxy, run `$$nemoclaw <name> c
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection. Then verify the credential and base URL for the provider you selected during onboarding.
 
 If you entered an AWS Bedrock Runtime URL such as `https://bedrock-runtime.us-east-1.amazonaws.com` in the **Other Anthropic-compatible endpoint** flow, NemoClaw auto-detects it and routes sandbox traffic through a host-local adapter. Use the raw Bedrock Runtime host, not an Anthropic `/v1/messages` path, and verify that the model ID or inference profile ID is valid for that region. For auth, export `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, or standard IAM environment credentials before onboarding; if you paste a key at the `COMPATIBLE_ANTHROPIC_API_KEY` prompt, NemoClaw uses it only as the adapter's Bedrock bearer token. Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAULT_REGION`, or the model/inference profile ID do not match.
+
+NemoClaw reuses the existing adapter only when its endpoint, region, credential identity, process identity, and health match.
+If existing lifecycle evidence cannot be reused, onboarding stops instead of replacing the adapter.
+Status and readiness checks also require the recorded adapter generation and sandbox attachment to match.
+These checks do not restart a stale adapter or fall back to the shared inference route.
 
 The adapter advertises model IDs to readiness checks only after that running adapter completes a successful inference request for them.
 Onboarding performs this request before checking sandbox readiness; failed requests do not add a model to the catalog.
@@ -2182,7 +2189,7 @@ Fix the streaming layer on the endpoint or gateway, or onboard with a different 
 
 This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. NemoClaw accepts `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance input only while managed Dockerfile callers transition, but it does not emit an OpenClaw device-auth bypass key. Changing the input before or after a build does not skip device pairing.
 
-Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
+Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/security-controls/gateway-authentication-controls).
 
 ### OpenClaw Config Is Empty After Legacy or Manual Damage
 

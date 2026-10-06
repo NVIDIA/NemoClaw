@@ -70,6 +70,7 @@ describe("executeSandboxGpuCreatePlan", () => {
     const prepareCompatibilityAttempt = vi.fn();
     const activateCompatibilityAttempt = vi.fn();
     const traceEvent = vi.fn();
+    const onTerminalSandboxAbsenceConfirmed = vi.fn();
 
     await expect(
       execute(
@@ -79,6 +80,7 @@ describe("executeSandboxGpuCreatePlan", () => {
           prepareCompatibilityAttempt,
           activateCompatibilityAttempt,
           traceEvent,
+          onTerminalSandboxAbsenceConfirmed,
         }),
       ),
     ).resolves.toEqual({ ok: true, route: "native", value: "native-ready" });
@@ -89,6 +91,7 @@ describe("executeSandboxGpuCreatePlan", () => {
     expect(cleanupNativeFailure).not.toHaveBeenCalled();
     expect(prepareCompatibilityAttempt).not.toHaveBeenCalled();
     expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
+    expect(onTerminalSandboxAbsenceConfirmed).not.toHaveBeenCalled();
     expect(traceEvent).toHaveBeenCalledWith("gpu_native_success", { route: "native" });
   });
 
@@ -103,6 +106,7 @@ describe("executeSandboxGpuCreatePlan", () => {
           : { ok: true as const, route, value: "compatibility-ready" };
       });
       const traceEvent = vi.fn((name: string) => order.push(`trace:${name}`));
+      const onTerminalSandboxAbsenceConfirmed = vi.fn();
 
       const result = await execute({
         runAttempt,
@@ -111,7 +115,9 @@ describe("executeSandboxGpuCreatePlan", () => {
         prepareCompatibilityAttempt: async () => record(order, "prepare-compatibility"),
         activateCompatibilityAttempt: async () => record(order, "activate-compatibility"),
         traceEvent,
+        onTerminalSandboxAbsenceConfirmed,
       });
+      expect(onTerminalSandboxAbsenceConfirmed).not.toHaveBeenCalled();
 
       expect(result).toEqual({
         ok: true,
@@ -166,6 +172,7 @@ describe("executeSandboxGpuCreatePlan", () => {
     const prepareCompatibilityAttempt = vi.fn();
     const activateCompatibilityAttempt = vi.fn();
     const traceEvent = vi.fn();
+    const onTerminalSandboxAbsenceConfirmed = vi.fn();
 
     const result = await execute(
       planDeps(runAttempt, {
@@ -179,6 +186,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         prepareCompatibilityAttempt,
         activateCompatibilityAttempt,
         traceEvent,
+        onTerminalSandboxAbsenceConfirmed,
       }),
     );
 
@@ -190,12 +198,14 @@ describe("executeSandboxGpuCreatePlan", () => {
     expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(prepareCompatibilityAttempt).toHaveBeenCalledOnce();
     expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
+    expect(onTerminalSandboxAbsenceConfirmed).not.toHaveBeenCalled();
     expect(traceEvent).not.toHaveBeenCalledWith("gpu_compatibility_fallback", expect.anything());
   });
 
   it("keeps the failed native sandbox when compatibility retry preparation fails", async () => {
     const cleanupNativeFailure = vi.fn(async () => SAFE_CLEANUP);
     const activateCompatibilityAttempt = vi.fn();
+    const onTerminalSandboxAbsenceConfirmed = vi.fn();
     const result = await execute(
       planDeps(
         vi.fn(async () => nativeFailure("readiness")),
@@ -205,14 +215,60 @@ describe("executeSandboxGpuCreatePlan", () => {
           }),
           activateCompatibilityAttempt,
           cleanupNativeFailure,
+          onTerminalSandboxAbsenceConfirmed,
         },
       ),
     );
 
+    expect(onTerminalSandboxAbsenceConfirmed).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("terminalSandboxAbsenceConfirmed");
     expect(result.ok).toBe(false);
     expect(result).toMatchObject({ ok: false, preparationRefused: "no reusable image" });
     expect(cleanupNativeFailure).not.toHaveBeenCalled();
     expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
+  });
+
+  it("retires abandoned preparation only after proven absence and activation failure", async () => {
+    const order: string[] = [];
+    const runAttempt = vi.fn(async () => nativeFailure("readiness"));
+    const onTerminalSandboxAbsenceConfirmed = vi.fn(async () => {
+      order.push("retire-unused-provider");
+    });
+    const result = await execute(
+      planDeps(runAttempt, {
+        cleanupNativeFailure: async () => record(order, "confirmed-absent", SAFE_CLEANUP),
+        activateCompatibilityAttempt: () => {
+          order.push("activation-refused");
+          throw new Error("network preparation failed");
+        },
+        onTerminalSandboxAbsenceConfirmed,
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      preparationRefused: "network preparation failed",
+      terminalSandboxAbsenceConfirmed: true,
+    });
+    expect(order).toEqual(["confirmed-absent", "activation-refused", "retire-unused-provider"]);
+    expect(onTerminalSandboxAbsenceConfirmed).toHaveBeenCalledOnce();
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates retirement refusal without submitting a compatibility create", async () => {
+    const runAttempt = vi.fn(async () => nativeFailure("readiness"));
+    await expect(
+      execute(
+        planDeps(runAttempt, {
+          activateCompatibilityAttempt: () => {
+            throw new Error("activation failed");
+          },
+          onTerminalSandboxAbsenceConfirmed: () => {
+            throw new Error("provider retirement refused");
+          },
+        }),
+      ),
+    ).rejects.toThrow("provider retirement refused");
+    expect(runAttempt).toHaveBeenCalledTimes(1);
   });
 
   it("returns a compatibility failure without attempting a third route", async () => {
@@ -227,7 +283,10 @@ describe("executeSandboxGpuCreatePlan", () => {
       route === "native" ? nativeFailure("create") : compatibilityFailure,
     );
 
-    const result = await execute(planDeps(runAttempt));
+    const onTerminalSandboxAbsenceConfirmed = vi.fn();
+    const result = await execute(planDeps(runAttempt, { onTerminalSandboxAbsenceConfirmed }));
+    expect(onTerminalSandboxAbsenceConfirmed).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("terminalSandboxAbsenceConfirmed");
 
     expect(result).toBe(compatibilityFailure);
     expect(attemptedRoutes(runAttempt)).toEqual(["native", "compatibility"]);

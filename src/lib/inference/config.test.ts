@@ -391,6 +391,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
       inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: { supportsStore: false },
     });
@@ -413,6 +414,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
       inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: { supportsStore: false },
     });

@@ -86,12 +86,12 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
   });
 
-  it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
+  it("uses the NVIDIA runtime credential environment for native inference (#12558)", () => {
     const config = runGenerator({
       NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
     });
 
-    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
@@ -247,7 +247,9 @@ describe("LangChain Deep Agents Code config generator", () => {
   });
 
   it("rejects an unsupported reasoning effort before writing config (#7938)", () => {
-    const result = runGeneratorProcess({ NEMOCLAW_REASONING_EFFORT: "extreme" });
+    const result = runGeneratorProcess({
+      NEMOCLAW_REASONING_EFFORT: "extreme",
+    });
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain(
@@ -257,7 +259,9 @@ describe("LangChain Deep Agents Code config generator", () => {
   });
 
   it("preserves colons that belong to the model ID", () => {
-    const config = runGenerator({ NEMOCLAW_MODEL: "minimax/minimax-m2.5:free" });
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "minimax/minimax-m2.5:free",
+    });
 
     expect(config).toContain('default = "openai:minimax/minimax-m2.5:free"');
     expect(config).toContain('models = ["minimax/minimax-m2.5:free"]');
@@ -344,4 +348,33 @@ describe("LangChain Deep Agents Code config generator", () => {
     );
     expect(config).toContain("[models.providers.openai]");
   });
+});
+
+describe("native compatible credential selection", () => {
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "uses the issued credential environment for hosted %s",
+    (provider) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://models.example/v1",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://models.example/v1",
+      });
+      expect(config).toContain('api_key_env = "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"');
+      expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+      const legacy = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_UPSTREAM_ENDPOINT_URL: "http://localhost:8000/v1",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      });
+      expect(legacy).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+    },
+  );
+});
+
+it.each([11436, 21436])("selects the Bedrock adapter issued handle at port %s", (port) => {
+  const config = runGenerator({
+    NEMOCLAW_UPSTREAM_PROVIDER: "compatible-anthropic-endpoint",
+    NEMOCLAW_INFERENCE_BASE_URL: `http://host.openshell.internal:${port}/v1`,
+  });
+  expect(config).toContain('api_key_env = "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"');
 });

@@ -288,6 +288,21 @@ export function buildHermesManagedPolicy(
       upstreamProvider: settings.upstreamProvider,
       inferenceApi: settings.inferenceApi,
       contextWindow: settings.contextWindow,
+      credentialEnv:
+        settings.upstreamProvider === "compatible-anthropic-endpoint" &&
+        /^http:\/\/host\.openshell\.internal:[1-9][0-9]{0,4}\/v1$/.test(settings.baseUrl) &&
+        Number(new URL(settings.baseUrl).port || "80") <= 65535
+          ? "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"
+          : settings.upstreamProvider === "nvidia-prod" &&
+              settings.baseUrl === "https://integrate.api.nvidia.com/v1"
+            ? "NVIDIA_INFERENCE_API_KEY"
+            : ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(
+                  settings.upstreamProvider,
+                ) &&
+                new URL(settings.baseUrl).protocol === "https:" &&
+                new URL(settings.baseUrl).hostname !== "inference.local"
+              ? "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"
+              : undefined,
     });
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

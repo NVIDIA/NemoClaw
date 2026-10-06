@@ -92,7 +92,9 @@ describe("Hermes managed policy", () => {
   });
   it("serializes one versioned policy with resolver-only credentials (#8008)", () => {
     const rawSecret = "raw-secret-must-not-appear";
-    const policy = buildHermesManagedPolicy(SETTINGS, { DISCORD_BOT_TOKEN: rawSecret });
+    const policy = buildHermesManagedPolicy(SETTINGS, {
+      DISCORD_BOT_TOKEN: rawSecret,
+    });
     const serialized = JSON.stringify(policy);
 
     expect(policy.schema_version).toBe(HERMES_MANAGED_POLICY_SCHEMA_VERSION);
@@ -153,5 +155,40 @@ describe("Hermes managed policy", () => {
       timeout: 5000,
     });
     expect(patcher.status, patcher.stderr).toBe(0);
+  });
+});
+
+describe("native inference credential references", () => {
+  it.each([
+    ["compatible-endpoint", "https://models.example/v1", "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+    [
+      "compatible-anthropic-endpoint",
+      "https://models.example/v1",
+      "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "http://host.openshell.internal:11436/v1",
+      "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "http://host.openshell.internal:21436/v1",
+      "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+    ],
+    ["nvidia-prod", "https://integrate.api.nvidia.com/v1", "NVIDIA_INFERENCE_API_KEY"],
+  ])("references issued runtime credentials in every %s route leaf", (provider, baseUrl, key) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, upstreamProvider: provider, baseUrl },
+      {},
+    );
+    const reference = "$" + "{" + key + "}";
+    expect(policy.config.model?.api_key).toBe(reference);
+    expect(Object.values(policy.config.providers ?? {}).map((value) => value.api_key)).toEqual([
+      reference,
+    ]);
+    expect(policy.config.custom_providers?.map((value) => value.api_key)).toEqual([reference]);
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
   });
 });

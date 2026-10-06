@@ -12,7 +12,6 @@ import {
 import { ensureBedrockRuntimeAdapter } from "../inference/bedrock-runtime-adapter";
 import type { BackToSelection } from "../navigation";
 import * as registry from "../state/registry";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
 import type { UpsertProvider } from "./inference-providers/types";
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
@@ -137,87 +136,13 @@ export async function setupBedrockRuntimeInference(
     updateSandbox?: typeof registry.updateSandbox;
   } & BedrockRuntimeDependencies,
 ): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
-  const { error, exitProcess, log } = options;
   const classification =
     options.provider === "compatible-anthropic-endpoint" && options.endpointUrl
       ? classifyCustomAnthropicEndpoint(options.endpointUrl)
       : null;
   if (classification?.kind !== "bedrock-runtime") return { handled: false };
 
-  const credentialEnv = options.credentialEnv || BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV;
-  const compatibleCredential = getExplicitCompatibleCredential(credentialEnv);
-  if (!hasBedrockRuntimeAwsAuthEnv() && !compatibleCredential) {
-    printMissingBedrockAuth(error);
-    if (options.isNonInteractive()) return exitProcess(1);
-    return { handled: true, result: { retry: "selection" } };
-  }
-
-  let adapter: Awaited<ReturnType<typeof ensureBedrockRuntimeAdapter>>;
-  try {
-    adapter = await (options.ensureAdapter ?? ensureBedrockRuntimeAdapter)({
-      classification,
-      compatibleCredential,
-    });
-  } catch (err) {
-    error(
-      `  Failed to start Bedrock Runtime adapter: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    if (options.isNonInteractive()) return exitProcess(1);
-    return { handled: true, result: { retry: "selection" } };
-  }
-
-  const providerResult = await options.upsertProvider(
-    options.provider,
-    "openai",
-    adapter.credentialEnv,
-    adapter.baseUrl,
-    { [adapter.credentialEnv]: adapter.token },
+  throw new Error(
+    "Bedrock Runtime requires native sandbox provider setup. Re-run onboarding through the native inference setup owner; the shared inference route was not changed.",
   );
-  if (!providerResult.ok) {
-    error(`  ${providerResult.message}`);
-    if (options.isNonInteractive()) return exitProcess(providerResult.status || 1);
-    return { handled: true, result: { retry: "selection" } };
-  }
-  log(
-    `  Bedrock Runtime adapter ready: region ${adapter.region}, sandbox route ${adapter.baseUrl}, host log ${adapter.logPath}`,
-  );
-
-  const applyResult = await options.inferenceRouteMutator.setInferenceRoute({
-    target: { kind: "named", gatewayName: options.gatewayName },
-    route: { provider: options.provider, model: options.model },
-    verification: "skip",
-    verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS,
-  });
-  if (!applyResult.ok) {
-    error(`  ${applyResult.error.message}`);
-    if (applyResult.ambiguous) {
-      error(
-        `  The route update result is unknown. Inspect gateway '${options.gatewayName}' before retrying onboarding.`,
-      );
-      return exitProcess(1);
-    }
-    if (options.isNonInteractive()) {
-      return exitProcess(
-        applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
-      );
-    }
-    return { handled: true, result: { retry: "selection" } };
-  }
-
-  options.verifyInferenceRoute(options.provider, options.model);
-  await options.verifyOnboardInferenceSmoke({
-    provider: options.provider,
-    model: options.model,
-    endpointUrl: adapter.localBaseUrl,
-    credentialEnv: adapter.credentialEnv,
-    forceOpenAiLike: true,
-  });
-  if (options.sandboxName) {
-    (options.updateSandbox ?? registry.updateSandbox)(options.sandboxName, {
-      model: options.model,
-      provider: options.provider,
-    });
-  }
-  log(`  ✓ Inference route set: ${options.provider} / ${options.model}`);
-  return { handled: true, result: { ok: true } };
 }

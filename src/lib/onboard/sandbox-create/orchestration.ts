@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  usesNativeBedrockProvider,
+  verifyNativeBedrockAttachmentAfterCreate,
+} from "./provider-publication";
+
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
@@ -1418,6 +1423,7 @@ export function createProviderEffectBoundary(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expectedNativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
   readonly expectedNativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
@@ -1440,6 +1446,19 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeNvidiaProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (usesNativeBedrockProvider(input.preparationInput.inferenceProvider)) {
+      context.revalidateSandboxIdentity(
+        `attaching native Bedrock provider for sandbox '${input.sandboxName}'`,
+      );
+      await verifyNativeBedrockAttachmentAfterCreate({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        inferenceProvider: input.preparationInput.inferenceProvider,
+        expected: input.expectedNativeBedrockProviderAttachment,
+        deps: input.preparationDeps,
+      });
+      return;
+    }
     if (usesNativeCompatibleProvider(input.preparationInput.inferenceProvider)) {
       context.revalidateSandboxIdentity(
         `attaching native compatible provider for sandbox '${input.sandboxName}'`,
@@ -1473,6 +1492,7 @@ export function createProviderEffectBoundary(input: {
         await publish();
       },
       runAfterVerifiedCreate:
+        usesNativeBedrockProvider(input.preparationInput.inferenceProvider) ||
         usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
         usesNativeCompatibleProvider(input.preparationInput.inferenceProvider)
           ? attachAndVerifyNativeNvidiaProvider
@@ -1829,6 +1849,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       runCaptureOpenshell,
       runOpenshell,
       runSandboxProviderPreDeleteCleanup,
+      sandboxProviderCleanup,
+      gatewayRouteMutationLock,
       sandboxAgent,
       sandboxBuildPatchConfig,
       sandboxCancelRollback,
@@ -2053,6 +2075,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeBedrockProviderAttachment: resolvedCreateIntent.nativeBedrockProviderAttachment,
           nativeCompatibleProviderAttachment:
             resolvedCreateIntent.nativeCompatibleProviderAttachment,
           startupProfile: {
@@ -2707,6 +2730,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 chatUiUrl,
                 provider,
                 endpointUrl: createIntent?.endpointUrl ?? null,
+                nativeBedrockProviderAttachment:
+                  resolvedCreateIntent.nativeBedrockProviderAttachment,
                 nativeCompatibleProviderAttachment:
                   resolvedCreateIntent.nativeCompatibleProviderAttachment,
                 compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning,
@@ -3431,6 +3456,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ...agentCreateInput,
             },
             {
+              onTerminalSandboxAbsenceConfirmed: () =>
+                sandboxProviderCleanup.retireAbsentSandboxNativeProviders(
+                  {
+                    sandboxName,
+                    gatewayName: GATEWAY_NAME,
+                    compatible: resolvedCreateIntent.nativeCompatibleProviderAttachment,
+                    bedrock: resolvedCreateIntent.nativeBedrockProviderAttachment,
+                  },
+                  {
+                    withGatewayRouteMutationLock:
+                      gatewayRouteMutationLock.withGatewayRouteMutationLock,
+                    listSandboxes: () => registry.listSandboxes().sandboxes,
+                    retireCompatible:
+                      sandboxProviderCleanup.retireDestroyedSandboxCompatibleProvider,
+                    retireBedrock: sandboxProviderCleanup.retireDestroyedSandboxBedrockProvider,
+                    runOpenshell,
+                  },
+                ),
               commandExecutor: sandboxCommandExecutor,
               openShellGpuDiagnostics: createFlowOpenShellGpuDiagnostics,
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
@@ -3599,6 +3642,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxName,
       gatewayName: GATEWAY_NAME,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
+      expectedNativeBedrockProviderAttachment: resolvedCreateIntent.nativeBedrockProviderAttachment,
       expectedNativeCompatibleProviderAttachment:
         resolvedCreateIntent.nativeCompatibleProviderAttachment,
       preparationInput: providerPreparationInput,

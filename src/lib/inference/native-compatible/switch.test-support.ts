@@ -102,10 +102,11 @@ export async function nativeCompatibleRotationFixture() {
     [previous.receipt.profileId, previous.receipt],
   ]);
   let created = false;
+  let previousPresent = true;
   const adapter = {
     ...previous.providerAdapter,
     getProvider: vi.fn(async ({ providerName }: { providerName: string }) => {
-      if (providerName === previous.profile.providerName)
+      if (providerName === previous.profile.providerName && previousPresent)
         return { ok: true as const, value: previous.metadata };
       if (providerName === next.providerName && created)
         return {
@@ -126,6 +127,25 @@ export async function nativeCompatibleRotationFixture() {
           message: "not found",
         },
       };
+    }),
+    deleteProvider: vi.fn(async ({ providerName }: { providerName: string }) => {
+      const peers = [...attachments]
+        .filter(([, names]) => names.has(providerName))
+        .map(([name]) => name);
+      if (peers.length)
+        return {
+          ok: false as const,
+          error: {
+            kind: "command" as const,
+            reason: "attached" as const,
+            exitCode: 1,
+            message: "Provider remains attached",
+            attachedSandboxes: peers,
+          },
+        };
+      if (providerName === previous.profile.providerName) previousPresent = false;
+      else if (providerName === next.providerName) created = false;
+      return { ok: true as const };
     }),
     createProvider: vi.fn(async () => {
       created = true;

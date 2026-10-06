@@ -112,6 +112,74 @@ describe("Pi managed model catalog generation", () => {
     return { home, status: result.status, stderr: result.stderr };
   }
 
+  it.each([
+    [
+      "compatible-anthropic-endpoint",
+      "http://host.openshell.internal:11436/v1",
+      "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "http://host.openshell.internal:21436/v1",
+      "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+    ],
+    ["nvidia-prod", "https://integrate.api.nvidia.com/v1", "NVIDIA_INFERENCE_API_KEY"],
+    ["compatible-endpoint", "https://models.example/v1", "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+  ])(
+    "resolves %s credentials at request time without baking secrets",
+    (provider, endpoint, key) => {
+      const { home, status, stderr } = generate({
+        NEMOCLAW_MODEL: "selected",
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+        [key]: "raw-secret-do-not-copy",
+      });
+      try {
+        expect(status, stderr).toBe(0);
+        const text = fs.readFileSync(path.join(home, ".pi/agent/models.json"), "utf8");
+        expect(JSON.parse(text).providers.openshell.apiKey).toBe(
+          `!/usr/local/bin/node /opt/nemoclaw-pi/resolve-native-credential.ts ${key}`,
+        );
+        expect(text).not.toContain("raw-secret-do-not-copy");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  describe.each([
+    "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY",
+    "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+  ])("runtime resolver %s", (key) => {
+    it.each([
+      ["revision", true],
+      ["stable", true],
+      ["missing", false],
+      ["raw", false],
+      ["canonical", false],
+      ["newline", false],
+    ] as const)("checks %s", (kind, valid) => {
+      const values = {
+        revision: `openshell:resolve:env:v42_${key}`,
+        stable: `openshell:resolve:env:s${"a".repeat(64)}_${key}`,
+        missing: "",
+        raw: "raw-secret-do-not-copy",
+        canonical: `openshell:resolve:env:${key}`,
+        newline: `openshell:resolve:env:v42_${key}\n`,
+      };
+      const value = values[kind];
+      const run = spawnSync(
+        process.execPath,
+        [path.join(root, "agents/pi/resolve-native-credential.ts"), key],
+        { encoding: "utf8", env: { PATH: process.env.PATH, [key]: value } },
+      );
+      expect(run.status).toBe(valid ? 0 : 1);
+      expect(run.stdout).toBe(valid ? value : "");
+      expect(run.stderr).not.toContain("raw-secret-do-not-copy");
+    });
+  });
+
   it("writes an owner-only catalog that routes the managed model", () => {
     const { home, status, stderr } = generate({
       NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",

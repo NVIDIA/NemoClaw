@@ -506,7 +506,11 @@ check("disabled", False)
     const tempDir = createPatchedPackageFixture();
     const run = (candidateName: string, candidateValue: string) =>
       spawnSync("python3", ["-m", "deepagents_code"], {
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          [candidateName]: candidateValue,
+        },
         encoding: "utf8",
       });
     const result = run(name, value);
@@ -551,7 +555,9 @@ check("disabled", False)
 
     const valid = validate({ mcpServers: { github: validServer } });
     expect(valid.status, valid.stderr).toBe(0);
-    expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
+    expect(JSON.parse(valid.stdout)).toEqual({
+      mcpServers: { github: validServer },
+    });
 
     [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
@@ -563,7 +569,10 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, headers: { Authorization: "Bearer raw-secret-value" } },
+          github: {
+            ...validServer,
+            headers: { Authorization: "Bearer raw-secret-value" },
+          },
         },
       },
       {
@@ -583,17 +592,26 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com:443/mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com:443/mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/a/../mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/a/../mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/mcp path/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/mcp path/",
+          },
         },
       },
       ...[
@@ -685,7 +703,9 @@ check("disabled", False)
         },
       };
 
-      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, {
+        mode: 0o600,
+      });
 
       const result = spawnSync(
         "python3",

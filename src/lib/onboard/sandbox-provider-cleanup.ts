@@ -1,6 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hasOtherNativeProviderReference } from "../inference/native-provider/retirement-references";
+export { hasOtherNativeProviderReference } from "../inference/native-provider/retirement-references";
+import type { NativeBedrockProviderAttachment } from "../inference/native-bedrock/contract";
+import { retireNativeBedrockProvider } from "../inference/native-bedrock/retire";
+import {
+  getNativeBedrockProviderAuthority,
+  clearNativeBedrockProviderAuthority,
+} from "../state/registry/native-bedrock-provider-authority";
+import { isDeepStrictEqual } from "node:util";
+import type { NativeCompatibleProviderAttachment } from "../inference/native-compatible/contract";
+import { retireNativeCompatibleProvider } from "../inference/native-compatible/retire";
+import {
+  getNativeCompatibleProviderAuthority,
+  clearNativeCompatibleProviderAuthority,
+} from "../state/registry/native-compatible-provider-authority";
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
@@ -233,4 +248,107 @@ export function emitProviderDetachResidualHint(
   emit(
     `  Run 'openshell sandbox provider detach ${sandboxName} <name>' then 'openshell provider delete <name>' for each before the next onboard.`,
   );
+}
+
+/** Preserve recovery state until exact, unused provider removal is observed. */
+export async function retireDestroyedSandboxCompatibleProvider(
+  input: {
+    deletionConfirmed: boolean;
+    gatewayName: string;
+    expected?: NativeCompatibleProviderAttachment;
+  },
+  deps: {
+    runOpenshell?: SandboxProviderRunOpenshell;
+    providerAdapter?: OpenShellProviderAdapter;
+    getAuthority?: typeof getNativeCompatibleProviderAuthority;
+    clearAuthority?: typeof clearNativeCompatibleProviderAuthority;
+  } = {},
+): Promise<void> {
+  if (!input.deletionConfirmed || !input.expected) return;
+  const { expected, gatewayName } = input;
+  const authority = (deps.getAuthority ?? getNativeCompatibleProviderAuthority)(
+    gatewayName,
+    expected.profileId,
+  );
+  if (!isDeepStrictEqual(authority, expected))
+    throw new Error("Compatible provider ownership changed; sandbox recovery state retained.");
+  await retireNativeCompatibleProvider({
+    adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
+    target: { kind: "named", gatewayName },
+    expected,
+    clearAuthority: () =>
+      (deps.clearAuthority ?? clearNativeCompatibleProviderAuthority)(gatewayName, expected),
+  });
+}
+
+/** Provider removal does not authorize stopping a shared Bedrock adapter. */
+export async function retireDestroyedSandboxBedrockProvider(
+  input: { gatewayName: string; expected: NativeBedrockProviderAttachment },
+  deps: {
+    runOpenshell?: SandboxProviderRunOpenshell;
+    providerAdapter?: OpenShellProviderAdapter;
+    getAuthority?: typeof getNativeBedrockProviderAuthority;
+    clearAuthority?: typeof clearNativeBedrockProviderAuthority;
+  } = {},
+): Promise<void> {
+  const { expected, gatewayName } = input;
+  const authority = (deps.getAuthority ?? getNativeBedrockProviderAuthority)(
+    gatewayName,
+    expected.profileId,
+  );
+  if (expected.gatewayName !== gatewayName || !isDeepStrictEqual(authority, expected))
+    throw new Error("Bedrock provider ownership changed; sandbox recovery state retained.");
+  await retireNativeBedrockProvider({
+    adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
+    expected,
+    clearAuthority: () =>
+      (deps.clearAuthority ?? clearNativeBedrockProviderAuthority)(gatewayName, expected),
+  });
+}
+
+/** Called only after terminal create cleanup proves sandbox absence. */
+export async function retireAbsentSandboxNativeProviders(
+  input: {
+    sandboxName: string;
+    gatewayName: string;
+    compatible?: NativeCompatibleProviderAttachment;
+    bedrock?: NativeBedrockProviderAttachment;
+  },
+  deps: {
+    withGatewayRouteMutationLock: (
+      gatewayName: string,
+      operation: () => Promise<void>,
+    ) => Promise<void>;
+    listSandboxes: () => Parameters<
+      typeof import("../inference/native-provider/retirement-references").hasOtherNativeProviderReference
+    >[0]["sandboxes"];
+    retireCompatible: typeof retireDestroyedSandboxCompatibleProvider;
+    retireBedrock: typeof retireDestroyedSandboxBedrockProvider;
+    runOpenshell?: SandboxProviderRunOpenshell;
+  },
+): Promise<void> {
+  if (!input.compatible && !input.bedrock) return;
+  await deps.withGatewayRouteMutationLock(input.gatewayName, async () => {
+    const sandboxes = deps.listSandboxes();
+    const shared = {
+      gatewayName: input.gatewayName,
+      sandboxName: input.sandboxName,
+      sandboxes,
+    };
+    if (
+      input.compatible &&
+      !hasOtherNativeProviderReference({ ...shared, expected: input.compatible })
+    ) {
+      await deps.retireCompatible(
+        { deletionConfirmed: true, gatewayName: input.gatewayName, expected: input.compatible },
+        { runOpenshell: deps.runOpenshell },
+      );
+    }
+    if (input.bedrock && !hasOtherNativeProviderReference({ ...shared, expected: input.bedrock })) {
+      await deps.retireBedrock(
+        { gatewayName: input.gatewayName, expected: input.bedrock },
+        { runOpenshell: deps.runOpenshell },
+      );
+    }
+  });
 }

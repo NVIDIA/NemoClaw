@@ -47,6 +47,22 @@ describe("native compatible endpoint preparation", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "http://api.example.com/v1",
+    "http://93.184.216.34/v1",
+    "http://api.example.com:443/v1",
+  ])("rejects cleartext hosted endpoint %s before DNS", async (endpointUrl) => {
+    const resolve = vi.fn(lookup);
+    await expect(
+      prepareNativeCompatibleEndpoint({
+        endpointUrl,
+        api: "openai-completions",
+        lookup: resolve,
+      }),
+    ).rejects.toThrow("Native hosted inference requires an HTTPS endpoint.");
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("rejects a private DNS answer", async () => {
     await expect(
       prepareNativeCompatibleEndpoint({

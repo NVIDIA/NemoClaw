@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeInferenceProbeAuthScript } from "../../inference/probe/native-inference-probe-auth";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -15,6 +16,8 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import {
   getSandboxInferenceConfig,
   getNativeCompatibleSandboxInferenceConfig,
+  getNativeBedrockSandboxInferenceConfig,
+  type NativeBedrockProviderAttachment,
   type NativeCompatibleProviderAttachment,
 } from "../../inference/config";
 import {
@@ -45,6 +48,7 @@ import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
   nativeCompatibleProviderAttachment?: NativeCompatibleProviderAttachment;
+  nativeBedrockProviderAttachment?: NativeBedrockProviderAttachment;
   sandboxName: string;
   gatewayName?: string;
   runtimeSelection?: OpenShellRuntimeSelection;
@@ -86,16 +90,24 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   headers: string[];
   payload: Record<string, unknown>;
 } {
-  const config = input.nativeCompatibleProviderAttachment
-    ? getNativeCompatibleSandboxInferenceConfig({
+  const config = input.nativeBedrockProviderAttachment
+    ? getNativeBedrockSandboxInferenceConfig({
         provider: input.provider,
         model: input.model,
-        endpointUrl: input.nativeCompatibleProviderAttachment.endpointUrl,
-        preferredInferenceApi:
-          input.preferredInferenceApi ?? input.nativeCompatibleProviderAttachment.api,
-        receipt: input.nativeCompatibleProviderAttachment,
+        endpointUrl: input.nativeBedrockProviderAttachment.endpointUrl,
+        gatewayName: input.gatewayName ?? "",
+        receipt: input.nativeBedrockProviderAttachment,
       })
-    : getSandboxInferenceConfig(input.model, input.provider, input.preferredInferenceApi);
+    : input.nativeCompatibleProviderAttachment
+      ? getNativeCompatibleSandboxInferenceConfig({
+          provider: input.provider,
+          model: input.model,
+          endpointUrl: input.nativeCompatibleProviderAttachment.endpointUrl,
+          preferredInferenceApi:
+            input.preferredInferenceApi ?? input.nativeCompatibleProviderAttachment.api,
+          receipt: input.nativeCompatibleProviderAttachment,
+        })
+      : getSandboxInferenceConfig(input.model, input.provider, input.preferredInferenceApi);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const baseUrl = (
     useNativeNvidia
@@ -134,7 +146,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: useNativeNvidia ? ["Authorization: Bearer nemoclaw-openshell-provider"] : [],
+    headers: [],
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
@@ -158,13 +170,28 @@ export function buildSandboxInferenceInvocationCommand(
   const headerArgs = ["Content-Type: application/json", ...request.headers]
     .map((header) => `-H ${shellQuote(header)}`)
     .join(" ");
+  const nativeCredentialEnv = input.nativeBedrockProviderAttachment
+    ? "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"
+    : input.nativeCompatibleProviderAttachment
+      ? "NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"
+      : input.nativeProvider === true && isNativeNvidiaProvider(input.provider)
+        ? "NVIDIA_INFERENCE_API_KEY"
+        : null;
+  const authScript = nativeCredentialEnv
+    ? nativeInferenceProbeAuthScript(
+        nativeCredentialEnv,
+        request.headers.includes("anthropic-version: 2023-06-01"),
+      )
+    : [];
+  const authArg = nativeCredentialEnv ? ' -H "$AUTH_HEADER"' : "";
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...authScript,
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
-    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs}${authArg} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already
@@ -268,7 +295,9 @@ export async function probeSandboxInferenceInvocation(
     const inferenceApi = getSandboxInferenceConfig(
       input.model,
       input.provider,
-      input.nativeCompatibleProviderAttachment?.api ?? input.preferredInferenceApi,
+      input.nativeBedrockProviderAttachment
+        ? "openai-completions"
+        : (input.nativeCompatibleProviderAttachment?.api ?? input.preferredInferenceApi),
     ).inferenceApi;
     if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
       return { ok: true };
