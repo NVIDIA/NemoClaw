@@ -129,6 +129,10 @@ An HTTPS endpoint requires the external gateway's mTLS client files under the de
 | `stateDir/tls/client/tls.key` | Client private key used for mTLS. |
 
 All three paths must be readable regular files.
+For SDK-backed commands, including `config export`, NemoClaw reads the mTLS bundle from the declared `stateDir`.
+That directory must be a real, current-user-owned directory with mode `0700`, and each parent must be current-user- or root-owned without group or world write access.
+It does not require the NemoClaw-managed state marker for an externally supervised directory.
+If `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` is set, it must resolve to the same directory or NemoClaw stops before it connects.
 NemoClaw uses this bundle for the mTLS gRPC health request at the declared endpoint path `/openshell.v1.OpenShell/Health`.
 For an HTTP endpoint, NemoClaw sends the readiness request to the declared origin.
 
