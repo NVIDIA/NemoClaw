@@ -29,7 +29,14 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "proxy-addr" | "undici";
+  kind:
+    | "axios"
+    | "core"
+    | "current-core"
+    | "jaeger"
+    | "legacy-core"
+    | "slack-proxy-addr"
+    | "undici";
   version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2";
 }>;
 
@@ -78,10 +85,6 @@ const TAR_VERSION = "7.5.21";
 const TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
-const PROXY_ADDR_VERSION = "2.0.8";
-const PROXY_ADDR_INTEGRITY =
-  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
-const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
 const LEGACY_BAILEYS_VERSION = "7.0.0-rc.9";
 const LEGACY_BAILEYS_INTEGRITY =
   "sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==";
@@ -131,11 +134,16 @@ const OTEL_CORE_INTEGRITY =
   "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
+const PROXY_ADDR_VERSION = "2.0.8";
+const PROXY_ADDR_INTEGRITY =
+  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
+const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
+
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/slack@2026.9.2": {
     expectedPatchedTreeIntegrity:
       "sha512-li/y4SFf6t3Z6JvP2R2H8dfauu0eybiwzd408QMCR9+zzi6oVVVffi+LGRDDYMh2TFCGgQ8Pnv2a5FiXMmPt1A==",
-    kind: "proxy-addr",
+    kind: "slack-proxy-addr",
     version: "2026.9.2",
   },
   "@openclaw/diagnostics-otel@2026.6.10": {
@@ -1189,7 +1197,7 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "proxy-addr") {
+  if (remediation.kind === "slack-proxy-addr") {
     const archive = packReplacement(
       `proxy-addr@${PROXY_ADDR_VERSION}`,
       PROXY_ADDR_INTEGRITY,
@@ -1685,7 +1693,7 @@ export function remediateReviewedOpenClawPluginArchive(
 export function remediateInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedPluginRoot: string }>,
 ): void {
-  if (REMEDIATIONS[request.packageSpec]?.kind !== "proxy-addr") return;
+  if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
   if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
     throw new Error("Official plugin remediation requires its verified install path");
   }
