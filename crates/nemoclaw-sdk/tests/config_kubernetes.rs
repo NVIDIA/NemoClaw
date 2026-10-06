@@ -66,22 +66,6 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
 }
 
 #[test]
-fn default_kubernetes_distribution_preserves_existing_intent_and_platform_identity() {
-    let implicit = Document::parse(managed_document().to_string().as_bytes()).unwrap();
-    let mut explicit = managed_document();
-    explicit["spec"]["gateway"]["kubernetes"]["distribution"] = json!("kubernetes");
-    let explicit = Document::parse(explicit.to_string().as_bytes()).unwrap();
-    assert_eq!(explicit, implicit);
-    assert_eq!(explicit.digest(), implicit.digest());
-    assert_eq!(explicit.yaml().unwrap(), implicit.yaml().unwrap());
-    assert!(
-        serde_json::to_value(explicit).unwrap()["spec"]["gateway"]["kubernetes"]
-            .get("distribution")
-            .is_none()
-    );
-}
-
-#[test]
 fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for (parent, field) in [

@@ -3,7 +3,7 @@
 
 use nemoclaw_sdk::{
     compile::{compile, compile_runtime, runtime_targets},
-    config::{ComputeDriver, Document, KubernetesDistribution, schema},
+    config::{ComputeDriver, Document, schema},
 };
 use serde_json::{Value, json};
 
@@ -17,7 +17,6 @@ fn input(managed: bool) -> Value {
         input["spec"]["gateway"] = json!({
             "management": "managed", "runtime": {"provider": "openshift"}, "endpoint": "https://127.0.0.1:17671",
             "kubernetes": {
-                "distribution":"openshift",
                 "kubeconfig":{"env":"TEST_OPENSHIFT_CONFIG"},
                 "context":"explicit-openshift", "namespace":"owned-agents",
                 "prerequisites":{"agentSandbox":{"management":"existing"}},
@@ -50,41 +49,30 @@ fn openshift_preserves_authored_profile_and_uses_the_upstream_kubernetes_driver(
         assert_eq!(imported.digest(), document.digest());
         assert_eq!(serde_json::to_value(imported).unwrap(), input);
         if managed {
-            assert_eq!(
-                document.spec.gateway.as_kubernetes().unwrap().distribution,
-                KubernetesDistribution::OpenShift
-            );
+            assert!(document.spec.gateway.as_kubernetes().is_some());
             assert!(document.spec.gateway.as_local_managed().is_none());
         }
     }
 }
 
 #[test]
-fn managed_openshift_rejects_mismatched_or_omitted_distribution_and_mixed_drivers() {
+fn the_runtime_alone_selects_openshift() {
     let schema = schema::input_schema();
-    for distribution in [None, Some(json!("kubernetes")), Some(json!("unknown"))] {
+    // The Kubernetes target has no separate platform field to disagree with.
+    let mut value = input(true);
+    value["spec"]["gateway"]["kubernetes"]["distribution"] = json!("openshift");
+    assert!(!jsonschema::is_valid(&schema, &value));
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    // A managed cluster target accepts only the two cluster runtimes.
+    for provider in ["docker", "podman"] {
         let mut value = input(true);
-        match distribution {
-            Some(distribution) => {
-                value["spec"]["gateway"]["kubernetes"]["distribution"] = distribution;
-            }
-            None => {
-                value["spec"]["gateway"]["kubernetes"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("distribution");
-            }
-        }
-        assert!(!jsonschema::is_valid(&schema, &value));
-        assert!(Document::parse(value.to_string().as_bytes()).is_err());
-        if let Ok(document) = serde_json::from_value::<Document>(value) {
-            assert!(document.validate().is_err());
-        }
+        value["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
+        assert!(!jsonschema::is_valid(&schema, &value), "{provider}");
+        assert!(
+            Document::parse(value.to_string().as_bytes()).is_err(),
+            "{provider}"
+        );
     }
-    let mut wrong_driver = input(true);
-    wrong_driver["spec"]["gateway"]["runtime"]["provider"] = json!("kubernetes");
-    assert!(!jsonschema::is_valid(&schema, &wrong_driver));
-    assert!(Document::parse(wrong_driver.to_string().as_bytes()).is_err());
 }
 
 #[test]
@@ -135,7 +123,7 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
             assert_eq!(targets.len(), 2);
             for target in targets {
                 let spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
-                assert_eq!(spec["settings"]["kubernetes"]["distribution"], "openshift");
+                assert_eq!(spec["settings"]["runtime"]["provider"], "openshift");
             }
             let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
             assert_eq!(platform["provider"]["nemoclaw"]["platform_only"], true);

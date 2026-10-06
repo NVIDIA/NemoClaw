@@ -4,14 +4,10 @@
 use super::Credential;
 use serde::{Deserialize, Serialize};
 
-/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context.
+/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context. `runtime.provider: openshift` selects the OpenShift profile.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
-    /// Platform profile. OpenShift requires explicit platform-owned security prerequisites; it uses OpenShell's Kubernetes driver.
-    #[serde(default, skip_serializing_if = "KubernetesDistribution::is_kubernetes")]
-    #[schemars(default)]
-    pub distribution: KubernetesDistribution,
     /// Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.
     pub kubeconfig: Credential,
     /// Exact kubeconfig context used for every cluster operation.
@@ -30,24 +26,6 @@ pub struct ManagedKubernetes {
     pub prerequisites: KubernetesPrerequisites,
     /// Explicit generated development authentication profile; this is not a production identity service.
     pub authentication: KubernetesAuthentication,
-}
-
-/// Kubernetes platform profile, preserved in the managed resource identity.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "lowercase")]
-#[schemars(inline)]
-pub enum KubernetesDistribution {
-    #[default]
-    Kubernetes,
-    OpenShift,
-}
-
-impl KubernetesDistribution {
-    pub fn is_kubernetes(&self) -> bool {
-        *self == Self::Kubernetes
-    }
 }
 
 /// Installation policy for the pinned Kubernetes prerequisites.

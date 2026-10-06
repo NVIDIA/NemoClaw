@@ -18,7 +18,6 @@ spec:
     # The SDK opens this loopback tunnel only for the duration of each command.
     endpoint: https://127.0.0.1:17671
     kubernetes:
-      distribution: openshift
       kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
       context: replace-with-explicit-openshift-context
       namespace: nemoclaw-openshift-development
