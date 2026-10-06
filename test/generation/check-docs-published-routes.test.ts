@@ -750,12 +750,16 @@ describe("published page coverage (#12328)", () => {
     expect(violations).toEqual([]);
   });
 
-  it("checks every other link on a page with a pending link fix (#12326)", () => {
-    const violations = findBrokenPublishedRoutes("get-started/quickstart-hermes.mdx", index);
-    expect(violations).toEqual([
-      expect.objectContaining({
-        target: "../inference/set-up-ollama#use-portable-ollama-with-hermes",
-      }),
-    ]);
+  it("retains other violations when a pending link fix is exempted (#12326)", () => {
+    const pending = {
+      sourcePath: "get-started/quickstart-hermes.mdx",
+      fromRoute: "/user-guide/hermes/get-started/quickstart",
+      text: "Portable Ollama prerequisites",
+      target: "../inference/set-up-ollama#use-portable-ollama-with-hermes",
+      line: 1,
+      resolved: "/user-guide/hermes/inference/set-up-ollama",
+    };
+    const other = { ...pending, target: "../inference/missing-page" };
+    expect(withoutPendingLinkFixes([pending, other])).toEqual([other]);
   });
 });
