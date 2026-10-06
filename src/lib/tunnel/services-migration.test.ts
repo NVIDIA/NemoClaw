@@ -125,6 +125,13 @@ describe("legacy tunnel state migration (#11628)", () => {
     expect(resolveTunnelPidDir({ sandboxName: "legacy" })).toBe(targetPidDir);
   });
 
+  it("prefers the explicit gateway environment over sandbox ownership", () => {
+    writeRegistry(gatewayPort + 1, "legacy");
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(gatewayPort));
+
+    expect(resolveTunnelPidDir({ sandboxName: "legacy" })).toBe(targetPidDir);
+  });
+
   it("fails closed when tunnel state lookup finds the sandbox in multiple gateway roots", () => {
     writeRegistry(gatewayPort, "legacy");
     writeRegistry(gatewayPort + 1, "legacy");

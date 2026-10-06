@@ -37,6 +37,7 @@ import {
 } from "../state/registry/cross-port";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
+import { resolveExplicitGatewayPortEnv } from "./gateway-port-resolution";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 
@@ -241,7 +242,7 @@ export function findUnmanagedCloudflaredPids(
   });
 }
 
-function nemoClawManagedCloudflaredPids(): number[] | null {
+function nemoClawManagedCloudflaredPids(): number[] {
   try {
     const home = resolveHome();
     const sandboxNames = new Set([
@@ -260,8 +261,11 @@ function nemoClawManagedCloudflaredPids(): number[] | null {
       const state = readCloudflaredState(pidDir);
       return state.kind === "running" || state.kind === "unverified-pid-process" ? [state.pid] : [];
     });
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(
+      "Cannot inspect NemoClaw cloudflared ownership; refusing to continue tunnel operation.",
+      { cause: error },
+    );
   }
 }
 
@@ -271,7 +275,6 @@ export function findHostUnmanagedCloudflaredPids(
   captureProcessList?: () => string,
 ): number[] {
   const ownedPids = nemoClawManagedCloudflaredPids();
-  if (ownedPids === null) return [];
   return findUnmanagedCloudflaredPids(
     [...(managedPid === null ? [] : [managedPid]), ...ownedPids],
     captureProcessList,
@@ -817,8 +820,9 @@ function validateSandboxName(name: string): string {
 
 function resolvePidDir(opts: ServiceOptions): string {
   if (opts.pidDir) return opts.pidDir;
-  if (opts.gatewayPort !== undefined) {
-    return join(resolveNemoclawStateDir(undefined, opts.gatewayPort), "tunnel");
+  const gatewayPort = opts.gatewayPort ?? resolveExplicitGatewayPortEnv();
+  if (gatewayPort !== null) {
+    return join(resolveNemoclawStateDir(undefined, gatewayPort), "tunnel");
   }
   const sandboxGatewayPort = opts.sandboxName
     ? (findSandboxAcrossGatewayRoots(opts.sandboxName)?.gatewayPort ?? undefined)

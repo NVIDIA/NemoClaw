@@ -36,7 +36,7 @@ describe("findUnmanagedCloudflaredPids", () => {
     ).toEqual([]);
   });
 
-  it("skips process discovery when NemoClaw PID ownership is unreadable", () => {
+  it("fails closed when NemoClaw PID ownership is unreadable", () => {
     const home = mkdtempSync(join(tmpdir(), "nemoclaw-owned-pid-discovery-"));
     const gatewaysDir = join(home, ".nemoclaw", "gateways");
     mkdirSync(gatewaysDir, { recursive: true });
@@ -44,9 +44,11 @@ describe("findUnmanagedCloudflaredPids", () => {
     vi.stubEnv("HOME", home);
 
     try {
-      expect(
+      expect(() =>
         findHostUnmanagedCloudflaredPids(null, () => "  4242 cloudflared cloudflared tunnel run"),
-      ).toEqual([]);
+      ).toThrow(
+        "Cannot inspect NemoClaw cloudflared ownership; refusing to continue tunnel operation.",
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
