@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,7 @@ import { testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
 import { officialPluginInspectionShell } from "./official-plugin-inspection-fixture";
+import { createSlackRemediationFixture } from "../../support/slack-remediation-fixture";
 
 const { applySlackProxyAddrRemediation } = vi.hoisted(() => ({
   applySlackProxyAddrRemediation: vi.fn(),
@@ -91,6 +93,33 @@ function thrownMessage(run: () => void): string {
 }
 
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
+  it("replaces the installed Slack package after inspecting its unpatched tree", async () => {
+    const fixture = await createSlackRemediationFixture();
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+        { cwd: REPO_ROOT, env: fixture.env, encoding: "utf8", timeout: 10_000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        createHash("sha256")
+          .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "package.json")))
+          .digest("hex"),
+      ).toBe("b2e305ca817ae4e8b088e07f38c5df1d7ad77aa3473809e4c37a9a1c83600225");
+      expect(
+        createHash("sha256")
+          .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
+          .digest("hex"),
+      ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+      expect(fs.readFileSync(fixture.trace, "utf8")).toBe("installed\ninspected-unpatched\n");
+      expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("loads the real build applier from the Hermes image module boundary", () => {
     const dockerfile = fs.readFileSync(
       path.join(REPO_ROOT, "agents", "hermes", "Dockerfile"),

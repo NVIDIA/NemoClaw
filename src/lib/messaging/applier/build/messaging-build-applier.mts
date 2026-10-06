@@ -186,6 +186,16 @@ class OfficialPluginProvenanceError extends MessagingBuildApplierError {
 
 class MessagingBuildCommandError extends MessagingBuildApplierError {}
 class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
+class SlackProxyAddrRemediationError extends MessagingBuildApplierError {
+  readonly commandUnavailable: boolean;
+
+  constructor(error: unknown) {
+    super("OpenClaw Slack proxy-addr remediation failed.");
+    this.commandUnavailable =
+      error instanceof Error &&
+      error.message === "OpenClaw npm remediation command could not start";
+  }
+}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -829,14 +839,19 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           inspection,
         );
         if (install.npmPackageSpec === "@openclaw/slack@2026.9.2") {
-          applyOpenClawSlackProxyAddrRemediation({
-            env: installEnv as NodeJS.ProcessEnv,
-            packageDirectory: validatedSlackInstallDirectory(
-              verifiedInstall.installPath,
-              commandEnv,
-            ),
-            workingDirectory: packed.rootDir,
-          });
+          const packageDirectory = validatedSlackInstallDirectory(
+            verifiedInstall.installPath,
+            commandEnv,
+          );
+          try {
+            applyOpenClawSlackProxyAddrRemediation({
+              env: installEnv as NodeJS.ProcessEnv,
+              packageDirectory,
+              workingDirectory: packed.rootDir,
+            });
+          } catch (error) {
+            throw new SlackProxyAddrRemediationError(error);
+          }
         }
       }
       if (install.runtimeLock) {
@@ -2273,6 +2288,11 @@ function isMainModule(): boolean {
 }
 
 function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof SlackProxyAddrRemediationError) {
+    return error.commandUnavailable
+      ? "OpenClaw Slack proxy-addr remediation could not start a required command."
+      : "OpenClaw Slack proxy-addr remediation failed.";
+  }
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }

@@ -1783,11 +1783,10 @@ export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (
-    message === "OpenClaw npm remediation command failed" ||
-    message === "OpenClaw npm remediation command could not start" ||
-    message.includes(" failed:")
-  ) {
+  if (message === "OpenClaw npm remediation command could not start") {
+    return "OpenClaw npm remediation could not start a required command.";
+  }
+  if (message === "OpenClaw npm remediation command failed" || message.includes(" failed:")) {
     return "OpenClaw npm remediation command failed.";
   }
   if (
