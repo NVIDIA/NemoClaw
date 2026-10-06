@@ -141,7 +141,12 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
         .as_str()
         .ok_or("image manifest has no config")?
         .to_owned();
-    blobs.insert(config.clone(), blob(&config)?);
+    let config_raw = blob(&config)?;
+    let configuration = json(&config_raw)?;
+    if configuration["os"] != os || configuration["architecture"] != architecture {
+        return Err(format!("image manifest config does not match {platform}"));
+    }
+    blobs.insert(config, config_raw);
     serde_json::to_vec(
         &serde_json::json!({"schema_version": 1, "manifest_digest": manifest, "blobs": blobs}),
     )

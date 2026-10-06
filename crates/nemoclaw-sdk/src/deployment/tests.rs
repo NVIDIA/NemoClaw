@@ -23,6 +23,61 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
 }
 
 #[test]
+fn relative_kubeconfig_keeps_its_callers_meaning_in_provider_directories() {
+    struct Kubeconfig(String);
+    impl Secrets for Kubeconfig {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            assert_eq!(name, "TEST_KUBECONFIG");
+            Ok(self.0.clone())
+        }
+    }
+    // Do not change the process working directory: other tests run in parallel.
+    let caller = std::env::current_dir().unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix(".kubeconfig-test-")
+        .tempdir_in(&caller)
+        .unwrap();
+    let config = directory.path().join("cluster.json");
+    save_json(&config, &json!({
+        "apiVersion": "v1", "kind": "Config", "current-context": "test-cluster",
+        "clusters": [{"name": "fixture", "cluster": {"server": "https://127.0.0.1:9"}}],
+        "contexts": [{"name": "test-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
+        "users": [{"name": "fixture", "user": {}}],
+    })).unwrap();
+    let relative = config.strip_prefix(&caller).unwrap().to_path_buf();
+    let direct = crate::kubernetes::ClusterTarget {
+        kubeconfig: relative.clone(),
+        context: "test-cluster".into(),
+    };
+    let selected = crate::kubernetes::server(&direct).unwrap();
+    let deployment = Deployment::new(&directory.path().join("state"), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(Kubeconfig(
+            relative.to_string_lossy().into_owned(),
+        )));
+    let (document, _) = kubernetes_context();
+    for stage in ["runtime", ".export-copy"] {
+        let working_directory = directory.path().join("state").join(stage);
+        let environment = deployment
+            .provider_environment(&document, &working_directory, true)
+            .unwrap();
+        for name in [
+            "TEST_KUBECONFIG",
+            crate::kubernetes::gateway::KUBECONFIG_ENV,
+        ] {
+            let provider_target = crate::kubernetes::ClusterTarget {
+                kubeconfig: working_directory.join(&environment[name]),
+                context: "test-cluster".into(),
+            };
+            assert_eq!(
+                crate::kubernetes::server(&provider_target).ok(),
+                Some(selected.clone()),
+                "the {stage} provider must resolve {name} to the caller's selected cluster"
+            );
+        }
+    }
+}
+
+#[test]
 fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
     struct ProvisioningOnly;
     impl Secrets for ProvisioningOnly {

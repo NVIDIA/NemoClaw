@@ -58,16 +58,24 @@ where
 {
     let dial = std::sync::Arc::new(dial);
     AbortOnDropHandle::new(tokio::spawn(async move {
+        // Aborting the listener also drops this set, closing accepted streams
+        // and cancelling dials that have not opened their remote stream yet.
+        let mut streams = tokio::task::JoinSet::new();
         loop {
-            let Ok((mut local, _)) = listener.accept().await else {
-                continue;
-            };
-            let dial = dial.clone();
-            tokio::spawn(async move {
-                if let Ok(mut remote) = dial().await {
-                    let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((mut local, _)) = accepted else {
+                        continue;
+                    };
+                    let dial = dial.clone();
+                    streams.spawn(async move {
+                        if let Ok(mut remote) = dial().await {
+                            let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                        }
+                    });
                 }
-            });
+                _ = streams.join_next(), if !streams.is_empty() => {}
+            }
         }
     }))
 }

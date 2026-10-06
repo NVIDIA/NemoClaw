@@ -22,7 +22,8 @@ cargo ci live-kind
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
-It expects apply to fail only at `data.nemoclaw_sandbox_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)); destroy then retains gateway storage.
+It supplies a caller-relative kubeconfig and expects apply to fail only at `data.nemoclaw_sandbox_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
+Export must still reproduce the authored configuration without readiness checks; destroy then retains gateway storage.
 The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
 These three live tests request no inference and need no GPU or credentials.
 The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.

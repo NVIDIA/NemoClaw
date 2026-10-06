@@ -35,8 +35,8 @@ It then runs three live tests and both chart-render tests in the `live-kind` nex
 The render tests check that Kubernetes keeps the chart's gateway UID and OpenShift uses the observed namespace UID and group while retaining `runAsNonRoot`.
 The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
 It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
-The agent test applies through the public SDK, creates a sandbox, and requires apply to stop only at the agent health check, which the pinned Fabric reports as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
-It then destroys the deployment while retaining gateway storage.
+The agent test applies through the public SDK with a caller-relative kubeconfig, creates a sandbox, and requires apply to stop only at the agent health check, which the pinned Fabric reports as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
+It exports the authored configuration without readiness checks, then destroys the deployment while retaining gateway storage.
 The OpenShift-profile test writes namespace UID-range annotations on kind and checks the gateway and sandbox pod UIDs through the same SDK flow.
 Kind does not enforce OpenShift security context constraints, so this does not qualify OpenShift admission or platform compatibility.
 The step deletes the cluster and removes its built image tag whether or not the tests pass; pulled images and build caches remain.

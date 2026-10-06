@@ -9,7 +9,7 @@
 use super::connection::{self, Connection};
 use super::{
     AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
-    auth::Development,
+    auth::{Development, Material},
     cluster::{Cluster, Owned},
     gateway::Identity,
     issuer,
@@ -147,7 +147,7 @@ impl Operations {
     ) -> Result<Response, ObservationError> {
         let response = match spec.kind.as_str() {
             STORAGE_KIND => self.read_storage(spec).await?,
-            AUTH_KIND => self.read_auth(spec, removing).await?,
+            AUTH_KIND => self.read_auth(spec, removing).await?.0,
             GATEWAY_KIND => self.read_gateway(spec, true).await?,
             _ => return Err(ObservationError::Query),
         };
@@ -178,13 +178,24 @@ impl Operations {
         })
     }
 
-    async fn read_auth(&self, spec: &Spec, removing: bool) -> Result<Response, ObservationError> {
+    async fn read_auth(
+        &self,
+        spec: &Spec,
+        removing: bool,
+    ) -> Result<(Response, Option<Material>), ObservationError> {
         let Some(receipt) = self.receipt(spec)? else {
-            return Ok(Response::default());
+            return Ok((Response::default(), None));
         };
         if self.read_storage(spec).await?.running != Some(true) {
             return Err(ObservationError::Incomplete);
         }
+        // Ordinary refresh must not initialize or rotate an existing issuer.
+        // Removal only needs recorded object identities and release absence.
+        let material = if !removing && !receipt.issuer.is_empty() {
+            Some(self.development(spec)?.load()?)
+        } else {
+            None
+        };
         let cluster = self.cluster(spec);
         for owned in &receipt.issuer {
             // A successful delete can precede an interrupted receipt write.
@@ -193,7 +204,31 @@ impl Operations {
             if removing && cluster.get(owned).await?.is_none() {
                 continue;
             }
-            cluster.verify(owned).await?;
+            let object = cluster.verify(owned).await?;
+            if let Some(material) = &material
+                && owned.kind == "ConfigMap"
+            {
+                let data = &object.data["data"];
+                let issuer = format!("{}-oidc", spec.name);
+                if owned.name == format!("{issuer}-ca")
+                    && data["ca.crt"].as_str() != Some(material.ca_pem())
+                {
+                    return Err(ObservationError::BindingMismatch);
+                }
+                if owned.name == issuer {
+                    for (field, expected) in [
+                        ("jwks", material.jwks()),
+                        ("openid-configuration", material.discovery()),
+                    ] {
+                        let observed = data[field].as_str().and_then(|value| {
+                            serde_json::from_str::<serde_json::Value>(value).ok()
+                        });
+                        if observed.as_ref() != Some(&expected) {
+                            return Err(ObservationError::BindingMismatch);
+                        }
+                    }
+                }
+            }
         }
         // Ordinary refresh must stop before Helm can recreate a missing
         // StatefulSet or change one with a substituted identity.
@@ -220,12 +255,16 @@ impl Operations {
         } else {
             None
         };
-        Ok(Response {
-            id: receipt.issuer.first().map(|owned| owned.uid.clone()),
-            running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready && identity_ready),
-            release_present: Some(self.release_present(spec).await?),
-            gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
-        })
+        Ok((
+            Response {
+                id: receipt.issuer.first().map(|owned| owned.uid.clone()),
+                running: (!receipt.issuer.is_empty())
+                    .then_some(receipt.issuer_ready && identity_ready),
+                release_present: Some(self.release_present(spec).await?),
+                gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
+            },
+            material,
+        ))
     }
 
     async fn release_present(&self, spec: &Spec) -> Result<bool, ObservationError> {
@@ -342,7 +381,12 @@ impl Operations {
                     receipt.namespace_identity = Some(identity);
                     receipt.save(&self.state)?;
                 }
-                let material = self.development(spec)?.ensure()?;
+                let development = self.development(spec)?;
+                let material = if receipt.issuer.is_empty() {
+                    development.ensure()?
+                } else {
+                    development.load()?
+                };
                 let namespace = self.target(spec)?.namespace.clone();
                 for object in issuer::objects(&material, &spec.name, &namespace) {
                     let address = Owned::new(&object, "");
@@ -366,7 +410,7 @@ impl Operations {
             }
             GATEWAY_KIND => {
                 let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
-                if self.read_auth(spec, false).await?.running != Some(true) {
+                if self.read_auth(spec, false).await?.0.running != Some(true) {
                     return Err(ObservationError::Incomplete);
                 }
                 self.read(spec, prior).await?;
@@ -412,6 +456,11 @@ impl Operations {
     /// the authored loopback port to the gateway pod, and supply its client
     /// certificate and a development token.
     pub async fn connect(&self, spec: &Spec) -> Result<Connection, Error> {
+        let (authentication, material) = self.read_auth(spec, false).await?;
+        if authentication.running != Some(true) {
+            return Err(ObservationError::Incomplete.into());
+        }
+        let material = material.ok_or(ObservationError::Incomplete)?;
         let gateway = self.read(&spec.with_kind(GATEWAY_KIND), None).await?;
         if gateway.running != Some(true) {
             return Err(ObservationError::Backend(
@@ -459,7 +508,7 @@ impl Operations {
             environment.insert(name.to_owned(), path.to_string_lossy().into_owned());
         }
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let token = self.development(spec)?.ensure()?.token(now);
+        let token = material.token(now);
         environment.insert(super::TOKEN_ENV.to_owned(), token);
         let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
             kube::Api::namespaced(self.client.clone(), &target.namespace);

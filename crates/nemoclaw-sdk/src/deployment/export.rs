@@ -50,13 +50,13 @@ impl Deployment {
             stage.directory.join("terraform.tfstate"),
         )
         .map_err(|_| Error::State("export requires readable deployment state"))?;
-        self.initialize(
-            bundle,
-            &stage,
-            &json!({"terraform":graph["terraform"], "provider":graph["provider"]}),
-            cancel,
-        )
-        .await?;
+        let mut configuration =
+            json!({"terraform":graph["terraform"], "provider":graph["provider"]});
+        if let Some(variables) = graph.get("variable") {
+            configuration["variable"] = variables.clone();
+        }
+        self.initialize(bundle, &stage, &configuration, cancel)
+            .await?;
         let schema_environment = crate::state::schema_environment(&stage.directory);
         let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
         settled(&bindings)?;
@@ -366,6 +366,113 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "uses the verified native bundle named by NEMOCLAW_TEST_BUNDLE"]
+    async fn runtime_export_declares_the_native_helm_provider_inputs() {
+        struct Kubeconfig(String);
+        impl Secrets for Kubeconfig {
+            fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+                assert_eq!(name, "TEST_KUBECONFIG");
+                Ok(self.0.clone())
+            }
+        }
+        let bundle = Bundle::open(Path::new(
+            &std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit verified bundle"),
+        ))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let kubeconfig = directory.path().join("synthetic.kubeconfig");
+        save_json(&kubeconfig, &json!({
+            "apiVersion": "v1", "kind": "Config", "current-context": "test-cluster",
+            "clusters": [{"name": "fixture", "cluster": {"server": "https://127.0.0.1:9"}}],
+            "contexts": [{"name": "test-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
+            "users": [{"name": "fixture", "user": {}}],
+        })).unwrap();
+        let deployment = Deployment::new(directory.path(), &bundle.directory).with_secrets(
+            Arc::new(Kubeconfig(kubeconfig.to_string_lossy().into_owned())),
+        );
+        let (document, _) = crate::deployment::tests::kubernetes_context();
+        let record = Record::new(document).unwrap();
+        let (graph, targets) = compile::compiled_runtime(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+        )
+        .unwrap();
+        let stage = Store::open(&directory.path().join("runtime")).unwrap();
+        let cancel = CancellationToken::new();
+        deployment
+            .initialize(&bundle, &stage, &graph, &cancel)
+            .await
+            .unwrap();
+        let schema: Value = serde_json::from_slice(
+            &crate::process::run(
+                &stage.directory,
+                &bundle.tofu(),
+                &["providers", "schema", "-json"],
+                &crate::state::schema_environment(&stage.directory),
+                &cancel,
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        let resources: Vec<Value> = targets.iter().map(|target| {
+            let (kind, name) = target.address.split_once('.').unwrap();
+            let provider = if kind == "helm_release" {
+                crate::kubernetes::gateway::PROVIDER_ADDRESS
+            } else {
+                compile::PROVIDER_ADDRESS
+            };
+            let resource_schema = &schema["provider_schemas"][provider]["resource_schemas"][kind];
+            let mut attributes: serde_json::Map<String, Value> = resource_schema["block"]["attributes"]
+                .as_object().unwrap().keys().map(|name| (name.clone(), Value::Null)).collect();
+            for (name, value) in &target.values {
+                attributes.insert(name.clone(), json!(value));
+            }
+            attributes.insert("id".into(), json!(if kind == "helm_release" { target.values["name"].as_str() } else { kind }));
+            if kind != "helm_release" {
+                attributes.insert("running".into(), json!("true"));
+            }
+            if target.kind == crate::kubernetes::AUTH_KIND {
+                attributes.insert("release_present".into(), json!("true"));
+                attributes.insert("gateway_values".into(), json!("{}"));
+            }
+            json!({
+                "mode": "managed", "type": kind, "name": name,
+                "provider": format!("provider[\"{provider}\"]"),
+                "instances": [{"schema_version": resource_schema["version"], "attributes": attributes, "sensitive_attributes": []}],
+            })
+        }).collect();
+        let state_path = stage.directory.join("terraform.tfstate");
+        save_json(&state_path, &json!({
+            "version": 4, "terraform_version": compile::OPENTOFU_VERSION, "serial": 1,
+            "lineage": "11111111-1111-4111-8111-111111111111", "outputs": {}, "resources": resources,
+        })).unwrap();
+        assert_eq!(
+            stage.bindings(&bundle.tofu(), &cancel).await.unwrap().len(),
+            4
+        );
+        let before = fs::read(&state_path).unwrap();
+        let error = deployment
+            .export_observations(&bundle, &stage, &record, true, &cancel)
+            .await
+            .expect_err("the fixture has no reachable Kubernetes API");
+        assert_eq!(
+            fs::read(&state_path).unwrap(),
+            before,
+            "export preserves source state"
+        );
+        assert!(
+            !error.to_string().contains("undeclared input variable"),
+            "native export must declare its provider inputs before refreshing: {error}"
+        );
+        assert!(
+            error.to_string().contains("Resource observation"),
+            "native export must reach provider observation: {error}"
+        );
+    }
 
     #[test]
     fn export_requires_shared_definition_registrations_to_agree_on_credentials() {

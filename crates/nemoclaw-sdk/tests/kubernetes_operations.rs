@@ -105,6 +105,212 @@ async fn observing_an_installed_gateway_does_not_invoke_helm() {
 }
 
 #[tokio::test]
+async fn missing_bound_auth_files_fail_without_regeneration() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+    let auth = operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
+    ready_gateway(&objects);
+    operations.ensure(&spec(GATEWAY_KIND), None).await.unwrap();
+    objects.insert(json!({
+        "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/tls",
+        "metadata": {"name": format!("{NAME}-client-tls"), "namespace": "agents"},
+        "data": {
+            "ca.crt": STANDARD.encode("synthetic gateway CA"),
+            "tls.crt": STANDARD.encode("synthetic client certificate"),
+            "tls.key": STANDARD.encode("synthetic client key"),
+        },
+    }));
+    let before = objects.0.lock().unwrap().clone();
+    let receipt = std::fs::read(operations.state.join("receipt.json")).unwrap();
+    let authentication = operations.state.join("auth");
+    std::fs::remove_dir_all(&authentication).unwrap();
+
+    let read = operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await;
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut gateway = spec(GATEWAY_KIND);
+    gateway.settings.endpoint = format!("https://127.0.0.1:{port}");
+    let connection = operations.connect(&gateway).await;
+    let refresh_failed = read.is_err();
+    let connection_failed = connection.is_err();
+    let material_regenerated = authentication.exists();
+    drop(connection);
+
+    assert!(
+        *objects.0.lock().unwrap() == before,
+        "lost local authentication must not change existing cluster objects"
+    );
+    assert!(
+        std::fs::read(operations.state.join("receipt.json")).unwrap() == receipt,
+        "lost local authentication must preserve the bound receipt"
+    );
+    assert!(
+        refresh_failed && connection_failed && !material_regenerated,
+        "bound issuer material is missing: refresh_failed={refresh_failed}, connection_failed={connection_failed}, material_regenerated={material_regenerated}"
+    );
+}
+
+#[tokio::test]
+async fn substituted_local_authentication_material_is_refused() {
+    use nemoclaw_sdk::kubernetes::auth::Development;
+
+    for files in [
+        &["ca.key"][..],
+        &["ca.crt"][..],
+        &["server.key"][..],
+        &["server.crt"][..],
+        &["signing.pk8"][..],
+        &["ca.key", "ca.crt"][..],
+        &["server.key", "server.crt"][..],
+        &[
+            "ca.key",
+            "ca.crt",
+            "server.key",
+            "server.crt",
+            "signing.pk8",
+        ][..],
+    ] {
+        let objects = cluster();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path()).await;
+        operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+        let auth = operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
+        let replacement = directory.path().join("replacement");
+        Development::new(replacement.clone(), NAME, "agents", OWNER)
+            .ensure()
+            .unwrap();
+        for file in files {
+            std::fs::copy(
+                replacement.join(file),
+                operations.state.join("auth").join(file),
+            )
+            .unwrap();
+        }
+        let before = objects.0.lock().unwrap().clone();
+        let receipt = std::fs::read(operations.state.join("receipt.json")).unwrap();
+        assert!(
+            operations
+                .read(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+                .is_err(),
+            "refresh must refuse substituted {files:?}"
+        );
+        assert!(
+            operations
+                .ensure(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+                .is_err(),
+            "apply must refuse substituted {files:?}"
+        );
+        assert!(
+            *objects.0.lock().unwrap() == before,
+            "cluster objects stay unchanged"
+        );
+        assert!(
+            std::fs::read(operations.state.join("receipt.json")).unwrap() == receipt,
+            "the original receipt stays unchanged"
+        );
+    }
+}
+
+#[tokio::test]
+async fn substituted_issuer_trust_is_refused_before_reconciliation() {
+    for (suffix, field, replacement) in [
+        ("-ca", "ca.crt", "another CA"),
+        ("", "jwks", r#"{"keys":[]}"#),
+        (
+            "",
+            "openid-configuration",
+            r#"{"issuer":"https://another.example"}"#,
+        ),
+    ] {
+        let objects = cluster();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path()).await;
+        operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+        let auth = operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
+        let mut changed = objects
+            .get("v1", "ConfigMap", "agents", &format!("{NAME}-oidc{suffix}"))
+            .unwrap();
+        changed["data"][field] = json!(replacement);
+        objects.insert(changed);
+        let before = objects.0.lock().unwrap().clone();
+        assert_eq!(
+            operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
+            Err(ObservationError::BindingMismatch),
+            "refresh must refuse a substituted issuer {field}"
+        );
+        assert_eq!(
+            operations
+                .ensure(&spec(AUTH_KIND), auth.id.as_deref())
+                .await,
+            Err(ObservationError::BindingMismatch),
+            "apply must not overwrite a substituted issuer {field}"
+        );
+        assert!(
+            *objects.0.lock().unwrap() == before,
+            "cluster objects stay unchanged"
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_local_authentication_does_not_block_confirmed_issuer_cleanup() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    let storage = operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+    let auth = operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
+    ready_gateway(&objects);
+    operations.ensure(&spec(GATEWAY_KIND), None).await.unwrap();
+    let authentication = operations.state.join("auth");
+    std::fs::remove_dir_all(&authentication).unwrap();
+    let before = objects.0.lock().unwrap().clone();
+    assert_eq!(
+        operations
+            .remove(&spec(AUTH_KIND), auth.id.as_deref())
+            .await,
+        Err(ObservationError::Incomplete),
+        "the gateway must be absent before issuer removal"
+    );
+    assert!(*objects.0.lock().unwrap() == before);
+    objects
+        .0
+        .lock()
+        .unwrap()
+        .retain(|path, _| !path.contains("/statefulsets/"));
+    operations
+        .remove(&spec(AUTH_KIND), auth.id.as_deref())
+        .await
+        .unwrap();
+    assert!(
+        Receipt::load(&operations.state, OWNER, NAME)
+            .unwrap()
+            .unwrap()
+            .issuer
+            .is_empty()
+    );
+    assert_eq!(
+        operations
+            .read(&spec(STORAGE_KIND), storage.id.as_deref())
+            .await
+            .unwrap(),
+        storage
+    );
+    assert!(
+        !authentication.exists(),
+        "cleanup must not recreate local credentials"
+    );
+}
+
+#[tokio::test]
 async fn storage_and_authentication_are_prepared_before_the_gateway_is_observed() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();

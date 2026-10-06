@@ -473,8 +473,8 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then an agent sandbox from an image built from this checkout.
 /// Apply stops at the agent's health check, which the pinned Fabric reports
-/// as unsupported (#12443); destroy then removes everything but the
-/// gateway's storage.
+/// as unsupported (#12443); export must still recover the authored document,
+/// and destroy then removes everything but the gateway's storage.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the native bundle
@@ -555,10 +555,27 @@ spec:
     );
     let document = Document::parse(yaml.as_bytes()).unwrap();
     let state = tempfile::tempdir().unwrap();
+    // Live kind runs on Linux. Supply a caller-relative kubeconfig through
+    // the public SDK while keeping the private fixture outside the checkout.
+    let caller = std::env::current_dir().unwrap();
+    let from_root: PathBuf = caller.ancestors().skip(1).map(|_| "..").collect();
+    let kubeconfig = std::path::absolute(required("NEMOCLAW_TEST_KUBECONFIG")).unwrap();
+    let relative = from_root.join(kubeconfig.strip_prefix("/").unwrap());
+    let credentials = Values(BTreeMap::from([
+        (
+            "NEMOCLAW_TEST_KUBECONFIG".into(),
+            relative.to_string_lossy().into_owned(),
+        ),
+        (
+            "NEMOCLAW_TEST_AGENT_METADATA".into(),
+            required("NEMOCLAW_TEST_AGENT_METADATA"),
+        ),
+    ]));
     let deployment = Deployment::new(
         state.path(),
         std::path::Path::new(&required("NEMOCLAW_TEST_BUNDLE")),
-    );
+    )
+    .with_secrets(Arc::new(credentials));
     let cancel = CancellationToken::new();
 
     let (applied, ()) = tokio::join!(
@@ -578,6 +595,10 @@ spec:
         other => panic!("apply must stop at the agent's health check, not earlier: {other}"),
     }
 
+    // A readiness failure retains a complete deployment that must be
+    // exportable. Clean up before asserting so failed export retains no live
+    // workload after this test.
+    let exported = deployment.export(&cancel).await;
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     for change in &destroyed.changes {
         assert!(
@@ -586,6 +607,11 @@ spec:
             change.resource
         );
     }
+    assert_eq!(
+        exported.expect("export after the expected health-check failure must succeed"),
+        document,
+        "export recovers the authored configuration without readiness checks"
+    );
 }
 
 #[tokio::test]

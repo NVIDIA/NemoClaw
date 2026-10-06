@@ -123,7 +123,14 @@ impl Development {
         Ok(())
     }
 
-    fn load(&self) -> Result<Material, ObservationError> {
+    /// Read existing material without creating files. Once an issuer is bound,
+    /// missing or inconsistent material requires recovery from the original set.
+    pub(super) fn load(&self) -> Result<Material, ObservationError> {
+        use rustls::{
+            client::danger::ServerCertVerifier,
+            pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime, pem::PemObject},
+        };
+
         let read = |file: &str| {
             std::fs::read(self.directory.join(file)).map_err(|_| ObservationError::Authentication)
         };
@@ -134,12 +141,49 @@ impl Development {
         };
         let signing = Ed25519KeyPair::from_pkcs8(&read("signing.pk8")?)
             .map_err(|_| ObservationError::Authentication)?;
+        let ca = text("ca.crt")?;
+        let certificate = text("server.crt")?;
+        let key = text("server.key")?;
+        let ca_key = text("ca.key")?;
+        let provider = rustls::crypto::ring::default_provider();
+        for (certificate, key) in [(&ca, &ca_key), (&certificate, &key)] {
+            let certificate = CertificateDer::from_pem_slice(certificate.as_bytes())
+                .map_err(|_| ObservationError::Authentication)?;
+            let key = PrivateKeyDer::from_pem_slice(key.as_bytes())
+                .map_err(|_| ObservationError::Authentication)?;
+            rustls::sign::CertifiedKey::from_der(vec![certificate], key, &provider)
+                .and_then(|pair| pair.keys_match())
+                .map_err(|_| ObservationError::Authentication)?;
+        }
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(
+                CertificateDer::from_pem_slice(ca.as_bytes())
+                    .map_err(|_| ObservationError::Authentication)?,
+            )
+            .map_err(|_| ObservationError::Authentication)?;
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            roots.into(),
+            std::sync::Arc::new(provider),
+        )
+        .build()
+        .map_err(|_| ObservationError::Authentication)?;
+        verifier
+            .verify_server_cert(
+                &CertificateDer::from_pem_slice(certificate.as_bytes())
+                    .map_err(|_| ObservationError::Authentication)?,
+                &[],
+                &ServerName::try_from(self.host()).map_err(|_| ObservationError::Authentication)?,
+                &[],
+                UnixTime::now(),
+            )
+            .map_err(|_| ObservationError::Authentication)?;
         Ok(Material {
             issuer: format!("https://{}:8443", self.host()),
             owner: self.owner.clone(),
-            ca: text("ca.crt")?,
-            certificate: text("server.crt")?,
-            key: text("server.key")?,
+            ca,
+            certificate,
+            key,
             signing,
         })
     }

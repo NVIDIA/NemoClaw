@@ -95,6 +95,11 @@ pub struct ClusterTarget {
     pub context: String,
 }
 
+// Resolve before handing the path to children that run in a state directory.
+pub(crate) fn kubeconfig_path(value: &str) -> Result<PathBuf, ObservationError> {
+    std::path::absolute(value).map_err(|_| ObservationError::Authentication)
+}
+
 /// Connect to the target's context. The kubeconfig's exec credential plugins
 /// run as written, with the caller's environment.
 pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, ObservationError> {
@@ -144,7 +149,7 @@ pub async fn connection(
     };
     spec.validate()?;
     let cluster = ClusterTarget {
-        kubeconfig: secrets.resolve(&target.kubeconfig.env)?.into(),
+        kubeconfig: kubeconfig_path(&secrets.resolve(&target.kubeconfig.env)?)?,
         context: target.context.clone(),
     };
     let state = std::path::absolute(state_directory)

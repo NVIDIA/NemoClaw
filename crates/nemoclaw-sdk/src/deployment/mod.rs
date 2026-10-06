@@ -201,16 +201,18 @@ impl Deployment {
                 state.to_string_lossy().into_owned(),
             );
             environment.extend(self.operation_environment.clone());
-            if document.spec.gateway.as_managed().is_some() {
-                let kubeconfig = environment
+            let kubeconfig = crate::kubernetes::kubeconfig_path(
+                environment
                     .get(&target.kubeconfig.env)
-                    .ok_or(Error::State("explicit Kubernetes credential is missing"))?
-                    .clone();
-                environment.insert(
-                    crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
-                    kubeconfig,
-                );
-            }
+                    .ok_or(Error::State("explicit Kubernetes credential is missing"))?,
+            )?
+            .to_string_lossy()
+            .into_owned();
+            environment.insert(target.kubeconfig.env.clone(), kubeconfig.clone());
+            environment.insert(
+                crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
+                kubeconfig,
+            );
         }
         Ok(environment)
     }

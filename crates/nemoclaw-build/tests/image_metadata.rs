@@ -13,7 +13,20 @@ fn digest(bytes: &[u8]) -> String {
 /// An OCI layout as `docker image save` writes it: an outer index naming
 /// the image's own index, which lists one manifest and an attestation.
 fn layout(catalog: &str) -> (Vec<u8>, String) {
-    let config = json!({"os": "linux", "architecture": "arm64",
+    layout_with_root(catalog, true)
+}
+
+fn layout_with_root(catalog: &str, indexed: bool) -> (Vec<u8>, String) {
+    layout_with_config_platform(catalog, indexed, "linux", "arm64")
+}
+
+fn layout_with_config_platform(
+    catalog: &str,
+    indexed: bool,
+    os: &str,
+    architecture: &str,
+) -> (Vec<u8>, String) {
+    let config = json!({"os": os, "architecture": architecture,
         "config": {"Labels": {"io.nemoclaw.fabric.catalog": catalog}}})
     .to_string();
     let manifest = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -28,8 +41,14 @@ fn layout(catalog: &str) -> (Vec<u8>, String) {
          "platform": {"architecture": "unknown", "os": "unknown"},
          "annotations": {"vnd.docker.reference.type": "attestation-manifest"}},
     ]}).to_string();
+    let root = if indexed { &index } else { &manifest };
+    let media_type = if indexed {
+        "application/vnd.oci.image.index.v1+json"
+    } else {
+        "application/vnd.oci.image.manifest.v1+json"
+    };
     let outer = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
-        {"mediaType": "application/vnd.oci.image.index.v1+json", "digest": digest(index.as_bytes()), "size": index.len()}]}).to_string();
+        {"mediaType": media_type, "digest": digest(root.as_bytes()), "size": root.len()}]}).to_string();
     let mut archive = tar::Builder::new(Vec::new());
     let mut add = |path: &str, bytes: &[u8]| {
         let mut header = tar::Header::new_gnu();
@@ -46,7 +65,7 @@ fn layout(catalog: &str) -> (Vec<u8>, String) {
     }
     add("blobs/sha256/layerlayerlayer", b"layer");
     add("index.json", outer.as_bytes());
-    (archive.into_inner().unwrap(), digest(index.as_bytes()))
+    (archive.into_inner().unwrap(), digest(root.as_bytes()))
 }
 
 #[test]
@@ -78,6 +97,29 @@ fn the_bundle_holds_the_index_manifest_and_config_only() {
 fn an_image_without_the_requested_platform_is_refused() {
     let (archive, _) = layout("{}");
     assert!(metadata_bundle(&archive, "linux/amd64").is_err());
+}
+
+#[test]
+fn a_direct_manifest_without_the_requested_platform_is_refused() {
+    let (archive, _) = layout_with_root("{}", false);
+    assert!(metadata_bundle(&archive, "linux/arm64").is_ok());
+    for platform in ["linux/amd64", "windows/arm64"] {
+        assert!(
+            metadata_bundle(&archive, platform).is_err(),
+            "a direct linux/arm64 manifest cannot satisfy {platform}"
+        );
+    }
+}
+
+#[test]
+fn an_index_cannot_override_the_platform_in_its_manifest_config() {
+    for (os, architecture) in [("linux", "amd64"), ("windows", "arm64")] {
+        let (archive, _) = layout_with_config_platform("{}", true, os, architecture);
+        assert!(
+            metadata_bundle(&archive, "linux/arm64").is_err(),
+            "a linux/arm64 index entry cannot select a {os}/{architecture} manifest config"
+        );
+    }
 }
 
 #[test]
