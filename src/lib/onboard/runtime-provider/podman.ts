@@ -107,6 +107,9 @@ const QUALIFIED_EXTERNAL_IMAGE_SUPPORT = {
   agents: EXTERNAL_IMAGE_AGENTS,
 } as const;
 
+const EXTERNAL_IMAGE_INSPECT_FORMAT =
+  '[{"Id":{{json .Id}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
+
 function acceptsManagedWorkloadReceipt(
   receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
   externalImages: boolean,
@@ -454,7 +457,7 @@ export function createPodmanRuntimeProviderBundle(
               if (existence.status === 1) return { status: "absent" };
               if (existence.status !== 0) return { status: "failed" };
               const inspection = externalImagePreparation.capture(
-                ["image", "inspect", reference],
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
                 timeoutMs,
               );
               if (inspection.error) return { status: "failed", error: inspection.error };
@@ -465,7 +468,10 @@ export function createPodmanRuntimeProviderBundle(
             pull: (reference, timeoutMs) =>
               externalImagePreparation.capture(["pull", "--retry=0", reference], timeoutMs),
             inspectPulled: (reference, timeoutMs) =>
-              externalImagePreparation.capture(["image", "inspect", reference], timeoutMs),
+              externalImagePreparation.capture(
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                timeoutMs,
+              ),
             normalizeContentId: (value) => {
               if (typeof value !== "string") return null;
               if (/^sha256:[0-9a-f]{64}$/u.test(value)) return value;

@@ -22,7 +22,6 @@ import {
   type ExternalImageAgent,
 } from "../../../src/lib/onboard/workload/source.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -36,9 +35,10 @@ import {
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
-  type DockerBuildGuard,
-  assertNoDockerfileBuild,
-  createDockerBuildGuard,
+  type ContainerBuildGuard,
+  assertNoLocalImageBuild,
+  countLocalImageBuildCommands,
+  createContainerBuildGuard,
 } from "../fixtures/docker-build-guard.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
@@ -200,7 +200,7 @@ function exactCatalog(
 }
 
 function commandEnv(
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
 ): NodeJS.ProcessEnv {
@@ -864,7 +864,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
 
 async function qualifyAgent(
   fixtures: RuntimeFixtures,
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
@@ -979,7 +979,7 @@ async function qualifyAgent(
 
 async function qualifyExternalImage(
   fixtures: RuntimeFixtures,
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
   containerEngine: ContainerEngine,
   catalogPath: string,
   endpointUrl: string,
@@ -1150,11 +1150,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   const contracts = exactCatalog(catalogPath);
   const containerEngine: ContainerEngine =
     process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
-  const guard: DockerBuildGuard =
-    containerEngine === "docker"
-      ? createDockerBuildGuard()
-      : { env: buildAvailabilityProbeEnv(), tracePath: "", dispose: () => undefined };
-  cleanup.trackDisposable("remove managed activation build guard", guard.dispose);
+  const guard = createContainerBuildGuard(containerEngine);
+  cleanup.trackDisposable(
+    `remove managed activation ${containerEngine} build guard`,
+    guard.dispose,
+  );
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
   const runtimeInfo = await host.command(containerEngine, ["info"], {
     artifactName: `managed-activation-${containerEngine}-info`,
@@ -1215,11 +1215,12 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     );
   }
   const trace = fs.existsSync(guard.tracePath) ? fs.readFileSync(guard.tracePath, "utf8") : "";
-  assertNoDockerfileBuild(trace);
-  await artifacts.writeText("docker-argv.log", trace);
+  const buildCommands = countLocalImageBuildCommands(trace);
+  assertNoLocalImageBuild(trace, containerEngine);
+  await artifacts.writeText(`${containerEngine}-argv.log`, trace);
   await artifacts.writeJson("external-image-activation-summary.json", {
     agents: externalImages,
-    buildCommands: 0,
+    buildCommands,
     containerEngine,
   });
   const chatRequests = inference
@@ -1235,7 +1236,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     agentTurns: chatRequests.length,
-    buildCommands: 0,
+    buildCommands,
     containerEngine,
     catalog: [...contracts.values()].map((contract) => ({
       agent: contract.agent,
@@ -1262,7 +1263,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   await artifacts.target.complete({
     id: "managed-image-activation",
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
-    buildCommands: 0,
+    buildCommands,
     exactPublishedDigests: [...contracts.values()].map((contract) => contract.reference),
     externalImageDigests: externalImages.map((image) => image.reference),
   });

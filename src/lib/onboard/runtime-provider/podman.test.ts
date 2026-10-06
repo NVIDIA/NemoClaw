@@ -728,7 +728,15 @@ describe("managed Podman runtime provider", () => {
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["image", "exists", reference],
       ["pull", "--retry=0", reference],
-      ["image", "inspect", reference],
+      [
+        "image",
+        "inspect",
+        "--format",
+        expect.stringMatching(
+          /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
+        ),
+        reference,
+      ],
     ]);
   });
 
