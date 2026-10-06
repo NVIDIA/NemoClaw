@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
 
 const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"`;
 const MACOS_METHOD_END = "esac\n";
@@ -129,4 +130,104 @@ export function extractPreparedRelease(repoRoot: string, root: string, format = 
     ],
     { encoding: "utf8" },
   );
+}
+
+export type FixtureMode =
+  | "allowlisted-alternate-version"
+  | "brev-bypassed-comparison"
+  | "brev-changed-asset"
+  | "brev-changed-extraction-target"
+  | "brev-changed-url"
+  | "brev-comment-decoy"
+  | "brev-dead-code-decoy"
+  | "brev-decoy-table"
+  | "brev-bypassed-verifier-call"
+  | "brev-extra-download"
+  | "brev-indirect-selector-override"
+  | "brev-later-selector-override"
+  | "brev-literalized-pin-selector"
+  | "brev-mismatch"
+  | "brev-sha-command-bypass"
+  | "complete"
+  | "duplicate-brev-pin"
+  | "duplicate-installer-pin"
+  | "failure"
+  | "formula-mismatch"
+  | "formula-pin-mismatch"
+  | "formula-self-authorized"
+  | "incomplete-trusted-allowlist"
+  | "installer-max-version-drift"
+  | "installer-bypassed-comparison"
+  | "installer-changed-asset"
+  | "installer-changed-checksum"
+  | "installer-changed-extraction-target"
+  | "installer-changed-url"
+  | "installer-comment-decoy"
+  | "installer-dead-code-decoy"
+  | "installer-decoy-table"
+  | "installer-dev-min-version-drift"
+  | "installer-extra-download"
+  | "installer-indirect-selector-override"
+  | "installer-later-min-selector-override"
+  | "installer-later-selector-override"
+  | "installer-literalized-pin-input"
+  | "installer-min-version-drift"
+  | "installer-homebrew-untrust-cleanup-drift"
+  | "installer-homebrew-trust-transition-drift"
+  | "installer-homebrew-trust-transition-stable-leak"
+  | "installer-homebrew-trust-transition-complete-current"
+  | "installer-pin-selector-drift"
+  | "installer-sha-command-bypass"
+  | "mismatched-table-versions"
+  | "missing-brev-pin"
+  | "missing-trusted-formula"
+  | "malformed-trusted-formula"
+  | "mismatched-trusted-formula-url"
+  | "multiple-installer-versions"
+  | "non-regular-brev-input"
+  | "official-but-unexpected-brev-asset"
+  | "official-but-unexpected-installer-asset"
+  | "oversized-installer-input"
+  | "partial"
+  | "partial-asset-missing"
+  | "partial-manifest-missing"
+  | "pr-checker-bypass"
+  | "pr-parser-bypass"
+  | "brev-stable-version-drift"
+  | "runtime-consumers-newer-than-tables"
+  | "stable-gnu-v00116"
+  | "symlink-installer-input"
+  | "symlink-scripts-parent"
+  | "duplicate-trusted-release"
+  | "trusted-formula-mismatch";
+
+// Historical prospective templates are authorized for 0.0.116 only.
+// Keep their fixtures on that release even when the checkout selects 0.1.2.
+export function supervisorV00116Fixtures(selected: {
+  blueprint: string;
+  brevInstaller: string;
+  installer: string;
+  supervisorRuntime: string;
+}) {
+  const pins = v00116Pins("installer");
+  const restorePins = (source: string) =>
+    v012Pins("installer").reduce((result, pin) => {
+      const original = pins.find((entry) => entry.asset === pin.asset);
+      assert.ok(original, "0.0.116 fixture pin must exist");
+      return result.replaceAll(pin.sha256, original.sha256);
+    }, source);
+  return {
+    blueprint: selected.blueprint.replaceAll(
+      'openshell_version: "0.1.2"',
+      'openshell_version: "0.0.116"',
+    ),
+    brevInstaller: restorePins(selected.brevInstaller).replaceAll("0.1.2", "0.0.116"),
+    installer: restorePins(installerReleaseTemplate(selected.installer, "0.0.116"))
+      .replaceAll('VERSION="0.1.2"', 'VERSION="0.0.116"')
+      .replaceAll("v0.1.2:", "v0.0.116:"),
+    supervisorRuntime: selected.supervisorRuntime.replace(
+      'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+      'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
+    ),
+  };
 }

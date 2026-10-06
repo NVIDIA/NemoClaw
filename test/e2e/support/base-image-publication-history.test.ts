@@ -30,6 +30,7 @@ function historyResponse(args: string[], checkedOutSha: string, firstParentShas:
     ["rev-parse:--is-shallow-repository", "false"],
     ["log:--first-parent", RELEVANT_SHA],
     ["rev-list:--first-parent", firstParentShas],
+    [`merge-base:${EXPECTED_SHA}`, RELEVANT_SHA],
   ]);
   return required(responses.get(`${args[0]}:${args[1]}`));
 }
@@ -137,7 +138,7 @@ describe("base-image publication first-parent history", () => {
     ).toEqual({ state: "missing" });
   });
 
-  it("rejects an older PR base outside the checked-out first-parent history", () => {
+  it("rejects a PR base that is not an ancestor of the checked-out commit", () => {
     expect(() =>
       resolveFirstParentHistory(
         EXPECTED_SHA,
@@ -145,6 +146,6 @@ describe("base-image publication first-parent history", () => {
         (args) => historyResponse(args, DESCENDANT_SHA, `${DESCENDANT_SHA}\n${RELEVANT_SHA}`),
         { allowCheckedOutDescendant: true },
       ),
-    ).toThrow(/expected SHA is not on the checked-out first-parent history/u);
+    ).toThrow(/expected SHA is not an ancestor of the checked-out commit/u);
   });
 });

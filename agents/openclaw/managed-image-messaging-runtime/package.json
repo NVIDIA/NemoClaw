@@ -1,5 +1,4 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw-managed-image-messaging-runtime",
   "version": "0.0.0",
   "private": true,
@@ -25,10 +24,8 @@
     "openclaw": "2026.9.2",
     "undici": "8.10.2"
   },
-  "engines": {
-    "node": ">=22.19.0"
-  },
   "overrides": {
+    "@modelcontextprotocol/sdk": "1.31.0",
     "@openclaw/discord@2026.9.2": {
       "@discord/embedded-app-sdk@2.5.0": {
         "uuid": "14.0.2"
@@ -39,6 +36,11 @@
         "file-type": "22.0.2",
         "protobufjs": "8.7.2"
       }
-    }
-  }
+    },
+    "proxy-addr": "2.0.8"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0"
 }
