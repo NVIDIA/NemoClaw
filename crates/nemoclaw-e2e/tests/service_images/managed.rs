@@ -6,7 +6,7 @@
 use super::support::Scenario;
 use nemoclaw_sdk::config::Document;
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::fs;
 
 /// Complete engine observation, kept opaque so tests describe preservation intent.
 #[derive(Debug, PartialEq)]
@@ -20,9 +20,11 @@ impl ManagedService {
     pub async fn start(scenario: &mut Scenario) -> Self {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("bin")).unwrap();
-        let ssh = root.path().join("bin/ssh");
-        fs::write(&ssh, include_bytes!("../fixtures/remote_ssh.py")).unwrap();
-        fs::set_permissions(ssh, fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::fs::symlink(
+            env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
+            root.path().join("bin/ssh"),
+        )
+        .unwrap();
         let endpoint = scenario
             .managed_model_endpoint(root.path().join("engine.json"))
             .await;

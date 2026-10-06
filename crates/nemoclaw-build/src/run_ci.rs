@@ -6,6 +6,9 @@ use super::*;
 use nemoclaw_build::ci::{self, Step};
 use std::{ffi::OsString, time::Instant};
 
+#[path = "run_ci/live_docker.rs"]
+mod live_docker;
+
 const TOOLS: &str = ".tools";
 
 /// The host's bundle platform, matching the SDK's detection without needing it.
@@ -161,6 +164,9 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
     };
     match step {
         Step::Tools => unreachable!("tools install in-process"),
+        Step::LiveDocker => {
+            return live_docker::run_live_docker(tools.pins, platform, &configure);
+        }
         Step::Schema | Step::Bundle => {
             let mut command = Command::new(tool("nemoclaw-build"));
             configure(&mut command);

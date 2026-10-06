@@ -7,7 +7,7 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
-Deployment planning currently requires a Unix client; see [engine connection limits](engine-assumptions.md#connections-and-identity).
+Deployment planning currently requires a Unix client; see [engine connection limits](design/execution-targets.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
@@ -50,15 +50,15 @@ Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share
 
 Declare managed services under `spec.services` and select their connections with `inferenceProviders[].serviceRef`.
 Every declared service is installed and checked, even without an inference consumer.
+Services run on the gateway's Docker engine by default, or on another host through [SSH placement](remote-service.md).
 See [service constraints](inference.md#combine-local-and-hosted-providers) for multiple Ollama/vLLM services and [models](models.md) for hardware contracts and optional [recipes](recipes.md).
 
 ## Use a Managed Podman Gateway
 
 Use a local rootless Linux Podman engine through its Unix API socket.
-[Linux ARM64 qualification](validation/rust-managed-podman-linux-arm64.md) covers Podman 5.8.7, Deep Agents, and an existing Qwen3-4B inference service.
-Rootful operation, remote Podman engines, and other operating systems remain unqualified.
+Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Select `runtime.provider: podman` for every sandbox and set `gateway.engine` to the local Podman API service's Unix socket.
+Set `gateway.runtime.provider: podman` and set `gateway.engine` to the local Podman API service's Unix socket.
 See [the Podman example](../examples/managed-podman.yaml).
 The API service is an operator prerequisite; NemoClaw manages its gateway, network, and credential storage through that service.
 Load the harness image into the selected Podman image store and use the digest reported there.
@@ -87,10 +87,9 @@ The pinned Fabric has no health API, so the bridge returns unsupported with its 
 The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
 **Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
 A reachable bridge or remembered runtime handle does not establish agent health.
-Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
+Real adapters report health as unsupported until Fabric's health API is pinned ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
 
-Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata or stdin input support leaves compatibility unknown.
-Such an image rejects configuration from this provider before changing its runtime.
+Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
@@ -180,11 +179,6 @@ Docker gateway and disposable service compute follow Docker-provider state and m
 Model caches use native Docker volume reconciliation, including its name-based reuse; they have no immutable creation-time binding.
 There is no migration or lost-state adoption workflow for credentials or gateway storage.
 
-The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.
-For a new deployment, omit those fields and use a fresh UID and state directory.
-Retained intent containing them is not migrated by editing input YAML; keep the original bundle and state for recovery or teardown of that deployment.
-Do not edit or delete its state to bypass this rejection.
-
 ## Editor Schema Assistance
 
 Add a schema comment for editor completion, descriptions, and diagnostics:
@@ -219,7 +213,6 @@ Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
 Ordinary apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
 Use separate deployments when you need independent teardown.
-Existing state needs the [named-resource transition](state.md#named-sandbox-resources).
 
 ### Choose the Change Path
 
@@ -354,7 +347,3 @@ See [retention details](state.md#deletion-and-retention) for surviving resources
 
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.
 OpenShell deletes by name without an ID/version condition, so a concurrent replacement between the final identity check and delete cannot be eliminated by this client.
-
-## Remote Model Service
-
-Use [the SSH model service guide](remote-service.md) for placement, publication, host prerequisites, and qualification limits.

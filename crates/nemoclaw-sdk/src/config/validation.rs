@@ -157,7 +157,7 @@ impl Document {
                 crate::services::validate_route(
                     self,
                     provider,
-                    sandbox.runtime.provider,
+                    self.spec.gateway.runtime().provider,
                     &route.overrides.model,
                 )?;
             }

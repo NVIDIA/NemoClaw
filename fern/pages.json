@@ -9,7 +9,8 @@
         {"title": "Check prerequisites", "source": "docs/prerequisites.md", "slug": "prerequisites"},
         {"title": "Deploy OpenClaw with existing services", "source": "docs/get-started.md", "slug": "get-started"},
         {"title": "Assess migration", "source": "docs/migration.md", "slug": "migration"},
-        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"}
+        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"},
+        {"title": "Check current limits", "source": "docs/limits.md", "slug": "limits"}
       ]
     },
     {
@@ -49,13 +50,12 @@
     {
       "title": "Develop and validate",
       "pages": [
-        {"title": "Tests", "source": "docs/testing.md", "slug": "testing"},
-        {"title": "Run integration tests", "source": "docs/testing/fixtures.md", "slug": "testing/fixtures"},
-        {"title": "Run live tests", "source": "docs/testing/live.md", "slug": "testing/live"},
-        {"title": "Recorded test results", "source": "docs/validation/README.md", "slug": "validation"},
-        {"title": "Contribute documentation", "source": "docs/CONTRIBUTING.md", "slug": "contributing"},
-        {"title": "Maintain the configuration schema", "source": "docs/configuration-schema.md", "slug": "configuration-schema"},
-        {"title": "Build and publish documentation", "source": "docs/AUTOMATION.md", "slug": "documentation-build"}
+        {"title": "Tests", "source": "docs/contributing/testing.md", "slug": "testing"},
+        {"title": "Run integration tests", "source": "docs/contributing/integration-tests.md", "slug": "testing/fixtures"},
+        {"title": "Run live tests", "source": "docs/contributing/live-tests.md", "slug": "testing/live"},
+        {"title": "Contribute documentation", "source": "docs/contributing/documentation.md", "slug": "contributing"},
+        {"title": "Maintain the configuration schema", "source": "docs/contributing/configuration-schema.md", "slug": "configuration-schema"},
+        {"title": "Build and publish documentation", "source": "docs/contributing/documentation-build.md", "slug": "documentation-build"}
       ]
     }
   ]

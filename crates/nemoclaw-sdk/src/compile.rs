@@ -347,7 +347,7 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
 
 fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
     let provider = gateway_provider(&document.spec.gateway);
-    let drivers = crate::discovery::gateway_drivers(document);
+    let drivers = [document.spec.gateway.runtime().provider];
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":{},

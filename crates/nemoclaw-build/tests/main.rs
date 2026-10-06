@@ -13,6 +13,9 @@ mod catalog_sources;
 mod ci;
 #[path = "docs.rs"]
 mod docs;
+#[cfg(feature = "sdk")]
+#[path = "fern.rs"]
+mod fern;
 #[path = "images.rs"]
 mod images;
 #[path = "runtime_engine.rs"]

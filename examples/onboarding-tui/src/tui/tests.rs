@@ -528,7 +528,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
         {
             break;
         }
@@ -593,7 +593,7 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
         {
             break;
         }
@@ -605,7 +605,7 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
         wizard
             .state
             .values()
-            .pointer("/spec/sandboxes/0/runtime/provider"),
+            .pointer("/spec/gateway/runtime/provider"),
         Some(&serde_json::json!("podman"))
     );
     assert_eq!(

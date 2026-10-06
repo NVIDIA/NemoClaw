@@ -471,6 +471,10 @@
               "description": "Canonical private IPv4 /24 for a managed gateway.",
               "type": "string",
               "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+            },
+            "runtime": {
+              "$ref": "#/$defs/Runtime",
+              "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
             }
           },
           "required": [
@@ -510,6 +514,10 @@
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
+            },
+            "runtime": {
+              "$ref": "#/$defs/Runtime",
+              "description": "Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports."
             },
             "tls": {
               "$ref": "#/$defs/TLS",
@@ -1902,7 +1910,7 @@
     },
     "Runtime": {
       "additionalProperties": false,
-      "description": "Sandbox runtime selected through OpenShell.",
+      "description": "The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.",
       "properties": {
         "provider": {
           "default": "docker",
@@ -2008,10 +2016,6 @@
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
-        },
-        "runtime": {
-          "$ref": "#/$defs/Runtime",
-          "description": "Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver."
         }
       },
       "required": [
@@ -3044,28 +3048,26 @@
           "properties": {
             "spec": {
               "properties": {
-                "sandboxes": {
-                  "items": {
-                    "properties": {
-                      "runtime": {
-                        "properties": {
-                          "provider": {
-                            "const": "podman"
-                          }
-                        },
-                        "required": [
-                          "provider"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "runtime"
-                    ]
-                  }
+                "gateway": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "const": "podman"
+                        }
+                      },
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "runtime"
+                  ]
                 }
               },
               "required": [
-                "sandboxes"
+                "gateway"
               ]
             }
           },
@@ -3091,90 +3093,6 @@
             }
           }
         }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "management": {
-                    "const": "managed"
-                  }
-                },
-                "required": [
-                  "management"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "anyOf": [
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "const": "docker"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "const": "podman"
-                            }
-                          },
-                          "required": [
-                            "provider"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "runtime"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          }
-        ]
       }
     }
   ],

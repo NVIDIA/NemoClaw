@@ -161,8 +161,3 @@ Use [inference verification](../inference.md#verify-the-result) to interpret suc
 An export observation failure does not replace an existing file selected by `--output`.
 Shell redirection can truncate a file before the CLI runs; check success before using redirected output.
 See [recovery](../usage.md#updates-and-recovery) for interrupted operations and preserved state.
-
-## Earlier Commands
-
-The current CLI does not expose `launch`, `status`, `doctor`, `backup-all`, `rebuild`, or `config export`.
-Use [migration](../migration.md) to find current task owners and **TBD** workflows.

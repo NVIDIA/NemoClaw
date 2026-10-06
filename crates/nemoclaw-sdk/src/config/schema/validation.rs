@@ -302,16 +302,9 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     crate::services::constrain_schema(defs, normalized);
 
     root["allOf"] = json!([{
-        "if": {"not": at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)},
+        "if": {"not": at("spec/gateway/runtime/provider", json!({"const":"podman"}), true)},
         "then": at("spec/gateway/imagePullPolicy", json!({"enum":["IfNotPresent", "Never"]}), false)
     }]);
-    root["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at("spec/gateway/management", json!({"const":"managed"}), true),
-        "then": {"anyOf": [
-            at("spec/sandboxes/[]/runtime/provider", json!({"const":"docker"}), false),
-            at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
-        ]}
-    }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",

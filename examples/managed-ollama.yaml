@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17671
     engine: unix:///var/run/docker.sock
     image:
@@ -33,8 +35,6 @@ spec:
       serviceRef: ollama-server
   sandboxes:
     - name: assistant
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

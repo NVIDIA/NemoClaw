@@ -39,4 +39,4 @@ Group repeated findings and separate writing preferences from errors affecting b
 Only those consequential errors should block on writing grounds.
 An audit alone does not authorize unrelated edits.
 
-[Contribute documentation](docs/CONTRIBUTING.md) covers page ownership, procedures, and validation.
+[Contribute documentation](docs/contributing/documentation.md) covers page ownership, procedures, and validation.

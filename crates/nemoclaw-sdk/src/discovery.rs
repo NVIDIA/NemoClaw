@@ -39,16 +39,6 @@ pub enum DiscoveryQuery {
     },
 }
 
-/// The compute drivers the gateway must support for `document`'s sandboxes.
-pub(crate) fn gateway_drivers(document: &Document) -> std::collections::BTreeSet<ComputeDriver> {
-    document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| sandbox.runtime.provider)
-        .collect()
-}
-
 /// The reads a plan makes of the target for `document`, in the order it names
 /// them: the gateway, each external inference endpoint, the hardware of every
 /// engine that services or a managed gateway use, a managed gateway's engine,
@@ -58,7 +48,7 @@ pub(crate) fn gateway_drivers(document: &Document) -> std::collections::BTreeSet
 pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
     let mut queries = vec![DiscoveryQuery::Gateway {
         gateway: document.spec.gateway.clone(),
-        compute_drivers: gateway_drivers(document).into_iter().collect(),
+        compute_drivers: vec![document.spec.gateway.runtime().provider],
     }];
     queries.extend(
         crate::inference_discovery::endpoint_requests(document)
@@ -85,7 +75,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
         .as_managed()
         .map(|_| DiscoveryRequest {
             engine: engine.clone(),
-            compute_driver: document.spec.sandboxes[0].runtime.provider,
+            compute_driver: document.spec.gateway.runtime().provider,
         });
     queries.extend(platform.clone().map(DiscoveryQuery::Engine));
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();

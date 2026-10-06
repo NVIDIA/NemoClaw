@@ -498,7 +498,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .expect("runtime apply must record provider-owned readiness");
     assert_eq!(readiness["instances"][0]["attributes"]["compatible"], true);
     drop(stage);
-    let docker = document.spec.sandboxes[0].runtime.provider == ComputeDriver::Docker;
+    let docker = document.spec.gateway.runtime().provider == ComputeDriver::Docker;
     let compute = if docker {
         "docker_container.managed_gateway_runtime"
     } else {

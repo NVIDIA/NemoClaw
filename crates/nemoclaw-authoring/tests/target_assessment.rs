@@ -268,7 +268,7 @@ fn editing_the_target_leaves_only_the_edited_observation_unfound() {
             before: document(),
             engine_observed: true,
             change: |document| {
-                document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+                document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
             },
             engine_unobserved: true,
             // The image is read through the same driver.
@@ -372,7 +372,7 @@ fn external_document(engine: &str) -> Document {
     }))
     .unwrap();
     // The image store need not run the gateway's selected compute driver.
-    document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+    document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
     document
 }
 

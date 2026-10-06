@@ -508,12 +508,12 @@ fn invalid_optional_sdk_leaf_can_be_omitted_without_guidance() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    values["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("unsupported");
+    values["spec"]["gateway"]["runtime"]["provider"] = json!("unsupported");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("repair-optional", base)
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/sandboxes/0/runtime/provider";
+    let path = "/spec/gateway/runtime/provider";
     let question = state
         .resolve(&capabilities)
         .unwrap()
@@ -1354,13 +1354,13 @@ fn runtime_question_uses_finite_sdk_schema_choices() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
     let question = state
         .resolve(&capabilities)
         .unwrap()
-        .question("/spec/sandboxes/0/runtime/provider")
+        .question("/spec/gateway/runtime/provider")
         .unwrap()
         .clone();
     assert!(question.choices().contains(&json!("docker")));
@@ -1374,7 +1374,7 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
     let podman = "unix:///run/user/501/podman/podman.sock";
@@ -1385,7 +1385,7 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();
@@ -1411,12 +1411,12 @@ fn a_runtime_no_local_engine_answered_for_gets_no_guessed_engine() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
     let docker = "unix:///home/me/.colima/docker.sock";
     crate::support::found_local_engines(&mut state, &[(docker, ComputeDriver::Docker)]);
-    let runtime = "/spec/sandboxes/0/runtime/provider";
+    let runtime = "/spec/gateway/runtime/provider";
     state
         .answer(&capabilities, runtime, Some(json!("docker")))
         .unwrap();
@@ -1469,11 +1469,11 @@ fn first_target_reason(
 fn a_runtime_no_local_engine_answered_for_is_reported_first() {
     let capabilities = Capabilities::available();
     let (mut state, observations) =
-        docker_only_journey(&capabilities, &["/spec/sandboxes/0/runtime/provider"]);
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider"]);
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();
@@ -1490,12 +1490,12 @@ fn an_explicit_gateway_engine_is_not_reported_as_missing() {
     let capabilities = Capabilities::available();
     let (mut state, observations) = docker_only_journey(
         &capabilities,
-        &["/spec/sandboxes/0/runtime/provider", "/spec/gateway/engine"],
+        &["/spec/gateway/runtime/provider", "/spec/gateway/engine"],
     );
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();
@@ -2415,7 +2415,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
     let fields = [
         "/metadata/name",
         "/spec/sandboxes/0/harness/kind",
-        "/spec/sandboxes/0/runtime/provider",
+        "/spec/gateway/runtime/provider",
         "/spec/inferenceProviders/0/provider",
         "/spec/inferenceProviders/0/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
@@ -3424,10 +3424,7 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("switch-gateway", base)
-        .ask([
-            "/spec/sandboxes/0/runtime/provider",
-            "/spec/gateway/management",
-        ])
+        .ask(["/spec/gateway/runtime/provider", "/spec/gateway/management"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
@@ -3448,7 +3445,7 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
     journey
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();

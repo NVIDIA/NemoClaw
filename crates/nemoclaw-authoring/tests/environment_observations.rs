@@ -24,7 +24,7 @@ struct RecordedHost {
     observations: DiscoveryObservations,
 }
 
-const RUNTIME: &str = "/spec/sandboxes/0/runtime/provider";
+const RUNTIME: &str = "/spec/gateway/runtime/provider";
 
 const PODMAN_ONLY: &str = include_str!("fixtures/observations/podman-only.json");
 

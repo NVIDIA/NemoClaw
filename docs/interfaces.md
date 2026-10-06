@@ -23,7 +23,7 @@ The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
-Provisioning a new authenticated profile, including its issuer or mTLS client certificates, remains **TBD** pending a qualified operator procedure.
+Creating a new authenticated profile, including its issuer or mTLS client certificates, is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 
@@ -60,7 +60,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 The selected Fabric adapter owns interface settings, authentication, and native process startup.
 NemoClaw preserves these settings and manages sandbox access through OpenShell.
 The [dashboard example](../examples/openclaw-dashboard.yaml) declares OpenClaw's native gateway configuration under `harness.settings.native_config.gateway`.
-Use the exact adapter identifier `nvidia.fabric.openclaw`; `harness.interfaces` is no longer a configuration field.
+Use the exact adapter identifier `nvidia.fabric.openclaw`.
 
 A native listener does not publish a host port automatically.
 Keep host forwarding bound to loopback and follow the adapter's authentication requirements.
@@ -76,11 +76,10 @@ cargo images build --platform linux/arm64 openclaw
 ```
 
 Select `linux/amd64` on an AMD64 builder.
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), including image availability on the sandbox compute daemon.
+Follow the [image build](build.md#build-agent-images), including image availability on the sandbox compute daemon.
 Replace the dashboard example's image digest, deployment UID, endpoint, and model values, then use the [desired-state workflow](usage.md).
 Changes to public Fabric configuration reconcile through the owned agent-configuration resource and restart the runtime inside its existing sandbox.
 Image or sandbox policy changes retain the ordinary replacement protections.
-These operations do not migrate retained native data from older images.
 
 ## Connect through OpenShell
 
@@ -96,7 +95,7 @@ Open `http://127.0.0.1:18800` in your browser after verifying that the native se
 Stop forwarding with Ctrl-C.
 
 Native token provisioning, browser pairing, and token rotation belong to the selected Fabric adapter.
-A qualified browser-access procedure for the migrated adapter is **TBD**; older NemoClaw token-file paths and `interfaces.py` commands are not part of this runtime contract.
+A rehearsed browser-access procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 Do not disable native authentication to work around an incomplete procedure.
 Keep credentials out of YAML, command arguments, recorded terminals, and shared URLs.
 
@@ -110,9 +109,8 @@ NemoClaw compares the retained public Fabric configuration with the runtime host
 Fabric owns native file validation and service diagnostics.
 Configuration failures name the sandbox and report a fixed stage, code, and runtime state; raw exception messages and details are omitted.
 For `pi_model_unknown`, check the selected route's [Pi model metadata](../examples/fabric-pi.yaml) or choose a model present in the native catalog.
-These codes require the matching bundle and an agent image rebuilt with the updated bridge and Fabric error-code patch; older images can report only a generic code.
+These codes require an agent image built from the bundle's source revision.
 A successful descriptor plan does not establish membership in Pi's runtime model catalog.
-The [runtime-failure qualification](validation/fabric-runtime-failure-linux-arm64.md) records the tested error and recovery paths.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.
 Offline configuration tests do not qualify browser rendering or public dashboard access.
 
@@ -141,7 +139,7 @@ See [native controls](agents.md#native-controls-at-initialization) for their own
 
 ### Build and Connect
 
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and build from the repository root:
+Follow the [image build prerequisites](build.md#build-agent-images) and build from the repository root:
 
 ```sh
 cargo images build --platform linux/arm64 hermes
@@ -157,5 +155,5 @@ openshell forward service assistant --target-port 8643 --local 127.0.0.1:8643
 
 Keep forwarding bound to loopback.
 Follow the installed Fabric adapter's authentication contract before using either service.
-Native browser login, session continuity, and credential rotation for this migration remain **TBD** pending qualification.
+Native browser login, session continuity and credential rotation have not been tested ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 Stopping a client forward does not stop the managed sandbox or Fabric runtime.

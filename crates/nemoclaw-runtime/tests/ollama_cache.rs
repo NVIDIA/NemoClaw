@@ -127,6 +127,24 @@ async fn pinned_ollama_reads_verified_cache_and_matches_declared_version() {
     docker(&["start", &container.0]);
     let port = docker(&["port", &container.0, "11434/tcp"]);
     let endpoint = format!("http://{port}");
+    // Docker's published port accepts and then resets connections until Ollama
+    // listens. The runtime probes inside the container, where a closed port
+    // refuses instead, so wait here for Ollama before checking readiness.
+    let probe = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while probe
+        .get(format!("{endpoint}/api/version"))
+        .send()
+        .await
+        .is_err()
+    {
+        assert!(std::time::Instant::now() < deadline, "Ollama did not start");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     let models = Models::new(&format!("{endpoint}/v1")).unwrap();
     models.ready(name).await.unwrap();
     let observed = models.read(name).await.unwrap().expect("installed model");

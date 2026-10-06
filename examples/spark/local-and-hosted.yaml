@@ -11,6 +11,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17805
     networkCIDR: 172.30.165.0/24
   services:
@@ -52,8 +54,6 @@ spec:
     - name: assistant
       image:
         ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

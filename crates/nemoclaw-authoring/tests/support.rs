@@ -27,7 +27,7 @@ pub fn target(document: &Document) -> Target {
             Gateway::Managed(gateway) => gateway.engine.clone(),
             Gateway::External(gateway) => gateway.engine.clone(),
         },
-        compute_driver: sandbox.runtime.provider,
+        compute_driver: document.spec.gateway.runtime().provider,
         image: sandbox.image.ref_.clone(),
     }
 }

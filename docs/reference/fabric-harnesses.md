@@ -31,12 +31,11 @@ The external Ollama proxy uses OpenAI Completions; Fabric metadata determines ad
 The inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
 External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
-Build an image for the selected harness using [the Fabric image procedure](../inference.md#build-an-image-with-the-configuration-interface).
+Build an image for the selected harness using [the agent image procedure](../build.md#build-agent-images).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
 Hermes service mode is selected explicitly through its Fabric settings; [Relay tracing](../agents.md#hermes-relay-tracing) does not change the adapter identifier.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-sdk/src/fabric_capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-[Recorded test results](../validation/README.md) distinguish native protocol fixtures from live inference at specific revisions.
-Complete first-message procedures and a release-qualified harness/model/platform matrix: **TBD**.
+First-message procedures are tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642), and a tested harness, model and platform matrix in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

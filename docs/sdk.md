@@ -220,7 +220,7 @@ Keep each selected bundle immutable while operations use it.
 Use a separate bundle copy for a deployment operation when rebuilding development artifacts.
 There is no SDK auto-retry of ambiguous mutations and no background reconciliation loop.
 
-See [lifecycle behavior](usage.md) and [tests](testing.md).
+See [lifecycle behavior](usage.md) and [tests](contributing/testing.md).
 If an unfinished apply reports different intent, retry the original document with retained state before requesting another change.
 If destroy is unfinished, resume destroy; cancellation is not a rollback or a lost-state recovery mechanism.
 
@@ -242,7 +242,7 @@ Service placement selects this transport independently of the OpenShell gateway.
 Explicit capacity observation uses the provider's host collector to read the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem.
 The collector rejects a Docker context pointing to another host and checks the daemon identity before accepting measurements.
 Collector failure never substitutes the client's hardware.
-For that observation, Python 3, Docker and `nvidia-smi` must already be available on that host.
+For that observation, a POSIX shell, Docker and `nvidia-smi` must already be available on that host.
 No packages are installed.
 
 This transport does not tunnel inference traffic.
@@ -253,8 +253,7 @@ The public Rust API is exported from [the SDK crate](../crates/nemoclaw-sdk/src/
 The [deployment implementation](../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
 See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI reference](reference/cli.md) for terminal access.
 
-Published package installation and version-selection instructions: **TBD**.
+The SDK crate is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Generate the API reference from the repository root with `cargo doc --locked -p nemoclaw-sdk --no-deps`; open `target/doc/nemoclaw_sdk/index.html` locally.
 The examples above can be compiled as a local application without contacting live resources; running the preview requires the declared services and credentials.
-Hosted Rust API reference and a live rehearsal of the application/secret-store integration: **TBD**.
-Compatibility policy across SDK releases and migration from the earlier TypeScript lifecycle package: **TBD**.
+A hosted API reference, a live rehearsal of the application and secret-store integration, and a compatibility policy across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).

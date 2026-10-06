@@ -31,7 +31,7 @@ use crate::{
 
 const ROUTE_SELECTION: &str = "route:selection";
 const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
-const RUNTIME_PROVIDER: &str = "/spec/sandboxes/0/runtime/provider";
+const RUNTIME_PROVIDER: &str = "/spec/gateway/runtime/provider";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

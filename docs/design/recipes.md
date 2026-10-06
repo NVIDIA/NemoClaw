@@ -51,6 +51,4 @@ Execution and downloads remain direct operations.
 
 ## Validation
 
-[Inline recipe results](../validation/rust-inline-recipes-linux-arm64.json) cover verified cache import, unchanged apply, export/reapply, and actual agent responses for the recorded DGX Spark images.
-[Built-in recipe removal](../validation/rust-recipe-removal-linux-arm64.json) records rejection of retired compatibility paths and validation of rebuilt artifacts.
-These results do not establish native-agent state migration, arbitrary recipe compatibility, or other GPUs.
+Native-agent state migration, arbitrary recipe compatibility, and GPUs other than DGX Spark are unqualified.

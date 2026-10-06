@@ -178,6 +178,93 @@ mod fixture_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    /// A `docker` executable that re-runs this test binary as the fake below.
+    /// The test harness writes its own lines to stdout, so the fake leaves its
+    /// answer in a file and its exit status in another, and this wrapper
+    /// relays both.
+    fn fake_docker(root: &Path) -> std::path::PathBuf {
+        let docker = root.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nrm -f {out} {code}\nNEMOCLAW_BUILD_FAKE_DOCKER={root} {test} --exact runtime::image::fixture_tests::fake_docker_entry --quiet -- \"$@\" >/dev/null 2>&1\n[ -f {out} ] && cat {out}\nexit \"$(cat {code})\"\n",
+                root = shell_quote(root.to_str().unwrap()),
+                out = shell_quote(root.join("answer").to_str().unwrap()),
+                code = shell_quote(root.join("status").to_str().unwrap()),
+                test = shell_quote(std::env::current_exe().unwrap().to_str().unwrap()),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
+        docker
+    }
+
+    fn shell_quote(text: &str) -> String {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+
+    /// Records each call and answers build, load, and inspect from fixture
+    /// files, failing where `failure` says. Does nothing in ordinary runs.
+    #[test]
+    fn fake_docker_entry() {
+        let Some(root) = std::env::var_os("NEMOCLAW_BUILD_FAKE_DOCKER") else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let args: Vec<String> = std::env::args()
+            .skip_while(|arg| arg != "--")
+            .skip(1)
+            .collect();
+        let mut calls = fs::read_to_string(root.join("calls")).unwrap_or_default();
+        calls.push_str(&args.join(" "));
+        calls.push('\n');
+        fs::write(root.join("calls"), calls).unwrap();
+        let failure = fs::read_to_string(root.join("failure")).unwrap();
+        let exit = |code: u8| fs::write(root.join("status"), code.to_string()).unwrap();
+        let status = match args[0].as_str() {
+            "buildx" if failure == "build" => 1,
+            "buildx" => {
+                let at = args
+                    .iter()
+                    .position(|arg| arg == "--metadata-file")
+                    .unwrap();
+                let metadata = if failure == "metadata" {
+                    "{}".to_owned()
+                } else {
+                    fs::read_to_string(root.join("metadata.json")).unwrap()
+                };
+                fs::write(&args[at + 1], metadata).unwrap();
+                0
+            }
+            "load" if failure == "load" => 1,
+            "load" => 0,
+            "image" => {
+                let reference = &args[4];
+                let answer = if reference == "fixture:test" && failure == "digest" {
+                    Some(
+                        r#"{"Id":"image","RepoDigests":[],"Os":"linux","Architecture":"arm64"}"#
+                            .to_owned(),
+                    )
+                } else if reference == "fixture:test" {
+                    Some(fs::read_to_string(root.join("tag.json")).unwrap())
+                } else if reference.starts_with("fixture@sha256:") {
+                    Some(fs::read_to_string(root.join("digest.json")).unwrap())
+                } else {
+                    None
+                };
+                match answer {
+                    Some(answer) => {
+                        fs::write(root.join("answer"), answer).unwrap();
+                        0
+                    }
+                    None => 2,
+                }
+            }
+            _ => 2,
+        };
+        exit(status);
+    }
+
     #[test]
     fn runtime_load_requires_the_exported_digest_and_platform() {
         for failure in [
@@ -192,9 +279,7 @@ mod fixture_tests {
             "wrong_version",
         ] {
             let root = tempfile::tempdir().unwrap();
-            let docker = root.path().join("docker");
-            fs::write(&docker, include_str!("image_fixture.sh")).unwrap();
-            fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
+            let docker = fake_docker(root.path());
             fs::write(root.path().join("failure"), failure).unwrap();
             let digest = format!("sha256:{}", "a".repeat(64));
             let reference = format!("fixture@{digest}");

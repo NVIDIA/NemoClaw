@@ -261,6 +261,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl Gateway {
+    /// The compute driver this gateway runs every sandbox with.
+    pub fn runtime(&self) -> &Runtime {
+        match self {
+            Self::Managed(gateway) => &gateway.runtime,
+            Self::External(gateway) => &gateway.runtime,
+        }
+    }
+    /// The compute driver setting, for changing it.
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        match self {
+            Self::Managed(gateway) => &mut gateway.runtime,
+            Self::External(gateway) => &mut gateway.runtime,
+        }
+    }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {
         match self {

@@ -25,11 +25,9 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
       - name: Test documentation generation and publication guards
-        run: |
-          cargo test --locked -p nemoclaw-build --test integration docs::
-          python3 -B -m unittest discover -s tools/docs -p 'test_*.py'
+        run: "cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::"
       - name: Check generated reference, local links, and Fern routes
-        run: python3 tools/docs/fern.py check
+        run: cargo run --locked -p nemoclaw-build -- fern check
 
   preview:
     name: PR preview
@@ -58,7 +56,7 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: nemoclaw-v1-pr-${{ github.event.pull_request.number }}
-        run: python3 tools/docs/fern.py preview --id "$PREVIEW_ID"
+        run: cargo run --locked -p nemoclaw-build -- fern preview --id "$PREVIEW_ID"
       - name: Comment with preview URL
         if: steps.available.outputs.enabled == 'true'
         env:
@@ -66,18 +64,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_URL: ${{ steps.publish.outputs.preview_url }}
-        run: |
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess
-          repo, number = os.environ['GH_REPO'], os.environ['PR_NUMBER']
-          marker = '<!-- fern-preview-docs-v1 -->'
-          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments']))
-          comment = next((c for page in pages for c in page if c['user']['login'] == 'github-actions[bot]' and marker in c['body']), None)
-          body = pathlib.Path(os.environ['RUNNER_TEMP']) / 'docs-preview-comment.json'
-          body.write_text(json.dumps({'body': f'**v1 documentation preview:** {os.environ["PREVIEW_URL"]}\n\n{marker}'}))
-          endpoint = f'repos/{repo}/issues/comments/{comment["id"]}' if comment else f'repos/{repo}/issues/{number}/comments'
-          subprocess.run(['gh', 'api', endpoint, '--method', 'PATCH' if comment else 'POST', '--input', str(body)], check=True)
-          PY
+        run: >-
+          cargo run --locked -p nemoclaw-build -- fern comment
+          --repository "$GH_REPO" --pull-request "$PR_NUMBER" --url "$PREVIEW_URL"
 
   staging:
     name: Staging
@@ -97,23 +86,16 @@ jobs:
       - name: Publish v1 without replacing main staging
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: python3 tools/docs/fern.py preview --id nemoclaw-v1
+        run: cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1
       - name: Remove merged v1 PR previews
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: |
-          python3 - <<'PY'
-          import json, os, subprocess
-          endpoint = f'repos/{os.environ["GH_REPO"]}/commits/{os.environ["COMMIT_SHA"]}/pulls'
-          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp', endpoint]))
-          for page in pages:
-              for pr in page:
-                  if pr.get('merged_at') and pr['base']['ref'] == 'v1':
-                      subprocess.run(['python3', 'tools/docs/fern.py', 'delete', '--id', f'nemoclaw-v1-pr-{int(pr["number"])}'], check=True)
-          PY
+        run: >-
+          cargo run --locked -p nemoclaw-build -- fern delete-merged
+          --repository "$GH_REPO" --commit "$COMMIT_SHA"
 
   public:
     name: Release
@@ -136,4 +118,4 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           FERN_V1_PUBLIC_ENABLED: ${{ vars.FERN_V1_PUBLIC_ENABLED }}
-        run: python3 tools/docs/fern.py public
+        run: cargo run --locked -p nemoclaw-build -- fern public
