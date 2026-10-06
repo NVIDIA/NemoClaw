@@ -34,12 +34,12 @@ Select review evidence for the publication state before every agent-managed push
 - Before updating an open PR:
 
   1. Follow [Stabilize](../../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../../_shared/pr-follow-up.md#collect), and [Decide](../../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
-  2. Route only returned in-scope root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
+  2. Route only returned PR-blocker root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
   3. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
   4. Create one local repair commit and record it as the expected publication SHA.
-  5. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
+  5. Mark each PR-blocker repair group resolved by the inspected local repair, subject to trusted validation.
   6. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
-  7. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
+  7. Do not push while the original collection is pending, a finding is unclassified, a PR-blocker group lacks an inspected repair, or validation is unresolved.
   8. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
   9. Require the push tool's expected commit to equal the local publication SHA.
 

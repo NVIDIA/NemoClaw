@@ -16,7 +16,7 @@ result while other automated evidence is pending.
 |---|---|
 | Mechanical conflict or classified PR blocker | Repair it now when the task permits local changes and a push. |
 | Valid but pre-existing, adjacent, or optional problem | Defer it. Do not expand the PR. |
-| Advisor check remains blocked after a false-positive or out-of-scope disposition | Report an automation defect. Do not change product code only to make the check pass. |
+| Advisor check remains blocked after a false-positive or out-of-scope disposition | Record the candidate SHA and affected check or workflow run identifiers. Report an automation defect to the workflow owner or a NemoClaw maintainer for a repair, policy-backed rerun, or deferral decision. Do not change product code only to make the check pass. |
 | Intent is not clear, or the repair needs a design decision | Ask the contributor or user. |
 | The repair crosses accepted scope or multiple systems | Stop and report the required owner or decision. |
 
