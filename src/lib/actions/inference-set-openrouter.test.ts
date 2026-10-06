@@ -5,12 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
+import {
+  probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationDeps,
+} from "./sandbox/inference-invocation-probe";
 
 const ULTRA = "nvidia/nemotron-3-ultra-550b-a55b";
 const SUPER = "nvidia/nemotron-3-super-120b-a12b";
 
-function openRouterDeps() {
+function openRouterDeps(probeSandboxRoute?: Parameters<typeof createDeps>[0]["probeSandboxRoute"]) {
   return createDeps({
+    probeSandboxRoute,
     config: {
       agents: { defaults: { model: { primary: `inference/${ULTRA}` } } },
       models: { providers: { inference: { api: "openai-completions", models: [] } } },
@@ -45,6 +51,87 @@ function expectNoConfigCommit(deps: ReturnType<typeof openRouterDeps>) {
 }
 
 describe("OpenRouter model switch verification", () => {
+  it("commits a switch after the real sandbox probe accepts the completion (#12628)", async () => {
+    const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+      stderr: "",
+    }));
+    const deps = openRouterDeps((input) =>
+      probeSandboxInferenceInvocation(
+        input,
+        { execute },
+        READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+      ),
+    );
+
+    await expect(
+      runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
+    ).resolves.toMatchObject({ model: SUPER });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining("https://inference.local/v1/chat/completions"),
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+      { gatewayName: "nemoclaw-18085" },
+    );
+    expect(execute.mock.calls[0]?.[1]).toContain(`"model":"${SUPER}"`);
+    expect(execute.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.calls.updateSandbox.mock.invocationCallOrder[0],
+    );
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ model: SUPER }),
+    );
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining([
+        { dotpath: "agents.defaults.model.primary", value: `inference/${SUPER}` },
+      ]),
+      "nemoclaw-18085",
+    );
+  });
+
+  it.each([
+    { label: "HTTP 401", status: 1, stdout: "401\n", error: "HTTP 401" },
+    {
+      label: "an invalid HTTP 200 body",
+      status: 0,
+      stdout: "200\n{}",
+      error: "invalid response body",
+    },
+  ])(
+    "restores Ultra when the real sandbox probe receives $label (#12628)",
+    async ({ status, stdout, error }) => {
+      const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
+        status,
+        stdout,
+        stderr: "",
+      }));
+      const deps = openRouterDeps((input) =>
+        probeSandboxInferenceInvocation(
+          input,
+          { execute },
+          READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+        ),
+      );
+
+      await expect(
+        runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
+      ).rejects.toThrow(error);
+
+      expect(execute).toHaveBeenCalledWith(
+        "alpha",
+        expect.stringContaining(`"model":"${SUPER}"`),
+        READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+        { gatewayName: "nemoclaw-18085" },
+      );
+      expect(routeSelections(deps).map((args) => args.at(-1))).toEqual([SUPER, ULTRA]);
+      expectNoConfigCommit(deps);
+    },
+  );
+
   it.each([
     { model: SUPER, delays: [[6_000]] },
     { model: ULTRA, delays: [] },
