@@ -323,6 +323,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
+| `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
 
 ### Alternative 2
 
@@ -335,6 +336,7 @@ An existing gateway managed outside this deployment.
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
+| `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
 ## HardwareProfile
@@ -959,13 +961,13 @@ Paths:
 
 ## Runtime
 
-Sandbox runtime selected through OpenShell.
+The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.sandboxes[].runtime`
+- `spec.gateway.runtime`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -993,7 +995,6 @@ Paths:
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
-| `runtime` | [Runtime](#runtime) | No | — | Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver. |
 
 ## SearchProvider
 

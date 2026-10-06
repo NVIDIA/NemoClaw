@@ -49,10 +49,11 @@ pub(crate) fn populate(
         crate::config::Gateway::External(gateway) => &gateway.engine,
     });
     let managed = document.spec.gateway.as_local_managed().is_some();
+    let kubernetes = document.spec.gateway.runtime().provider.is_kubernetes();
     if managed {
         graph["data"]["nemoclaw_engine_capabilities"]["current"] = json!({
             "engine": engine,
-            "compute_driver": document.spec.sandboxes[0].runtime.provider,
+            "compute_driver": document.spec.gateway.runtime().provider,
             "lifecycle": { "postcondition": [{
                 "condition": "${self.status != \"unavailable\"}",
                 "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
@@ -83,7 +84,7 @@ pub(crate) fn populate(
         );
 
         graph["data"]["nemoclaw_fabric_capabilities"][&name] = json!({
-            "engine": if sandbox.runtime.provider.is_kubernetes() { "" } else { &engine },
+            "engine": if kubernetes { "" } else { &engine },
             "image": literal(&sandbox.image.ref_),
             "requirements_json": literal(&serde_json::to_string(&requirements).expect("Fabric requirements")),
             "lifecycle": { "postcondition": [{
@@ -91,14 +92,14 @@ pub(crate) fn populate(
                 "error_message": rejection
             }, {
                 "condition": "${self.runtime_json != \"\"}",
-                "error_message": if sandbox.runtime.provider.is_kubernetes() {
+                "error_message": if kubernetes {
                     format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
                 } else {
                     format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
                 }
             }] }
         });
-        if sandbox.runtime.provider.is_kubernetes() {
+        if kubernetes {
             // Destroy does not need image metadata, so a document without it
             // still compiles. Deployment discovery rejects the empty reference;
             // teardown removes these data sources without reading the image.

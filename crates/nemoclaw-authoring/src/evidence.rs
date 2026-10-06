@@ -70,7 +70,7 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
             Gateway::External(gateway) => gateway.engine.clone(),
         },
         managed_gateway: document.spec.gateway.as_managed().is_some(),
-        compute_driver: sandbox.runtime.provider,
+        compute_driver: document.spec.gateway.runtime().provider,
         image: sandbox.image.ref_.clone(),
         harness,
     })

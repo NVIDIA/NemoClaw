@@ -174,7 +174,7 @@ fn switching_runtime_preserves_the_selected_model() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
@@ -182,7 +182,7 @@ fn switching_runtime_preserves_the_selected_model() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();

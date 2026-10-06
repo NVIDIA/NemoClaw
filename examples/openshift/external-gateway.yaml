@@ -12,6 +12,8 @@ spec:
   # Supply the existing OpenShift cluster's OpenShell gateway.
   gateway:
     management: external
+    runtime:
+      provider: openshift
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
     tls:
@@ -31,8 +33,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         tier: isolated
       harness:
@@ -44,8 +44,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         tier: isolated
       harness:
@@ -57,8 +55,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         tier: isolated
       harness:

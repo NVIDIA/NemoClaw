@@ -13,6 +13,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: openshift
     # The SDK opens this loopback tunnel only for the duration of each command.
     endpoint: https://127.0.0.1:17671
     kubernetes:
@@ -40,8 +42,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         policy:
           explicit:
@@ -72,8 +72,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         policy:
           explicit:
@@ -104,8 +102,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: openshift
       network:
         policy:
           explicit:

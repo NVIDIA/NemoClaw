@@ -123,6 +123,10 @@ impl Default for Gateway {
 #[serde(default, deny_unknown_fields)]
 /// Installation settings for a managed gateway. Without kubernetes, use a local Docker or rootless Linux Podman engine. Kubernetes requires an explicit existing-cluster target and the development authentication profile.
 pub struct ManagedGateway {
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the gateway runs every sandbox with; omission selects Docker.
+    pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
     /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.
@@ -158,6 +162,10 @@ pub struct ManagedGateway {
 #[serde(default, deny_unknown_fields)]
 /// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
 pub struct ExternalGateway {
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports.
+    pub runtime: Runtime,
     /// Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -252,10 +260,6 @@ pub struct Sandbox {
     #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
     /// Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
     pub image: Image,
-    #[serde(rename = "runtime")]
-    #[schemars(default)]
-    /// Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver.
-    pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
@@ -284,7 +288,7 @@ pub struct Image {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Sandbox runtime selected through OpenShell.
+/// The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
 pub struct Runtime {
     #[serde(rename = "provider")]
     #[schemars(default)]

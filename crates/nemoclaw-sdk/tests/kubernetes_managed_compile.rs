@@ -19,7 +19,7 @@ fn document() -> Document {
             "authentication":{"profile":"development"}
         }
     });
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    value["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
     value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }

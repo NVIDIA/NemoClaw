@@ -210,8 +210,9 @@ impl Document {
         for service in self.spec.services.values_mut() {
             crate::services::defaults(service);
         }
-        for sandbox in &mut self.spec.sandboxes {
-            if !sandbox.runtime.provider.is_kubernetes() {
+        // Cluster sandboxes have no engine-supplied default image.
+        if !self.spec.gateway.runtime().provider.is_kubernetes() {
+            for sandbox in &mut self.spec.sandboxes {
                 default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
             }
         }
@@ -277,6 +278,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl Gateway {
+    /// The compute driver this gateway runs every sandbox with.
+    pub fn runtime(&self) -> &Runtime {
+        match self {
+            Self::Managed(gateway) => &gateway.runtime,
+            Self::External(gateway) => &gateway.runtime,
+        }
+    }
+    /// The compute driver setting, for changing it.
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        match self {
+            Self::Managed(gateway) => &mut gateway.runtime,
+            Self::External(gateway) => &mut gateway.runtime,
+        }
+    }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {
         match self {

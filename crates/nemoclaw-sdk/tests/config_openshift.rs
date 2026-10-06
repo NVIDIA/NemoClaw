@@ -11,11 +11,11 @@ fn input(managed: bool) -> Value {
     let original =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(original).unwrap();
-    input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("openshift");
+    input["spec"]["gateway"]["runtime"] = json!({"provider": "openshift"});
     input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
     if managed {
         input["spec"]["gateway"] = json!({
-            "management": "managed", "endpoint": "https://127.0.0.1:17671",
+            "management": "managed", "runtime": {"provider": "openshift"}, "endpoint": "https://127.0.0.1:17671",
             "kubernetes": {
                 "distribution":"openshift",
                 "kubeconfig":{"env":"TEST_OPENSHIFT_CONFIG"},
@@ -41,7 +41,7 @@ fn openshift_preserves_authored_profile_and_uses_the_upstream_kubernetes_driver(
         assert!(jsonschema::is_valid(&schema::input_schema(), &input));
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert_eq!(
-            document.spec.sandboxes[0].runtime.provider,
+            document.spec.gateway.runtime().provider,
             ComputeDriver::OpenShift
         );
         let exported = document.yaml().unwrap();
@@ -81,22 +81,8 @@ fn managed_openshift_rejects_mismatched_or_omitted_distribution_and_mixed_driver
             assert!(document.validate().is_err());
         }
     }
-    for managed in [false, true] {
-        for other_driver in ["docker", "podman", "kubernetes"] {
-            let mut value = input(managed);
-            let mut sandbox = value["spec"]["sandboxes"][0].clone();
-            sandbox["name"] = json!("other");
-            sandbox["runtime"]["provider"] = json!(other_driver);
-            value["spec"]["sandboxes"]
-                .as_array_mut()
-                .unwrap()
-                .push(sandbox);
-            assert!(!jsonschema::is_valid(&schema, &value));
-            assert!(Document::parse(value.to_string().as_bytes()).is_err());
-        }
-    }
     let mut wrong_driver = input(true);
-    wrong_driver["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    wrong_driver["spec"]["gateway"]["runtime"]["provider"] = json!("kubernetes");
     assert!(!jsonschema::is_valid(&schema, &wrong_driver));
     assert!(Document::parse(wrong_driver.to_string().as_bytes()).is_err());
 }

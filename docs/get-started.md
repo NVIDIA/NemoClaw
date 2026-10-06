@@ -71,7 +71,7 @@ Edit the copied YAML before executing it:
 | `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
 | `spec.inferenceProviders[0].credential` | An environment reference when the endpoint needs a key |
 | `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
-| `spec.sandboxes[0].runtime.provider` | `docker` or `podman`, matching the gateway's compute driver |
+| `spec.gateway.runtime.provider` | `docker` or `podman`, matching your gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |
 | Other route `overrides` | Limits and reasoning settings supported by that model; remove optional tuning you have not verified |
 

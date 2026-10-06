@@ -117,7 +117,8 @@ impl Document {
         let mut sandbox_names = std::collections::BTreeSet::new();
         for sandbox in &self.spec.sandboxes {
             require(
-                sandbox.runtime.provider.is_kubernetes() || sandbox.image.metadata.is_none(),
+                self.spec.gateway.runtime().provider.is_kubernetes()
+                    || sandbox.image.metadata.is_none(),
                 "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
             )?;
             credential(&sandbox.image.metadata)?;
@@ -162,7 +163,7 @@ impl Document {
                 crate::services::validate_route(
                     self,
                     provider,
-                    sandbox.runtime.provider,
+                    self.spec.gateway.runtime().provider,
                     &route.overrides.model,
                 )?;
             }

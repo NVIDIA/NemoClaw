@@ -99,7 +99,10 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let sandbox = &document.spec.sandboxes[0];
     assert!(sandbox.image.ref_.contains("@sha256:"));
     assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
-    assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
+    assert_eq!(
+        document.spec.gateway.runtime().provider,
+        ComputeDriver::Docker
+    );
     let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {
         panic!("expected explicit policy");
     };

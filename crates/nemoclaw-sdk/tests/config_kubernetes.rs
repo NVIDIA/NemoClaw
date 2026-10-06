@@ -7,7 +7,7 @@ fn external_document() -> Value {
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
-    input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    input["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
     input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
     input
 }
@@ -16,6 +16,7 @@ fn managed_document() -> Value {
     let mut input = external_document();
     input["spec"]["gateway"] = json!({
         "management": "managed",
+        "runtime": {"provider": "kubernetes"},
         "endpoint": "https://127.0.0.1:17671",
         "kubernetes": {
             "kubeconfig": {"env": "CLUSTER_KUBECONFIG"},
@@ -160,7 +161,7 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
             "/spec/gateway/kubernetes/prerequisites/agentSandbox/management",
             json!("auto"),
         ),
-        ("/spec/sandboxes/0/runtime/provider", json!("docker")),
+        ("/spec/gateway/runtime/provider", json!("docker")),
     ] {
         let mut input = managed_document();
         *input.pointer_mut(path).unwrap() = value;
@@ -199,28 +200,12 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
 }
 
 #[test]
-fn managed_kubernetes_accepts_explicit_port_boundaries_and_rejects_mixed_drivers() {
+fn managed_kubernetes_accepts_explicit_port_boundaries() {
     for port in [1, 443, 65535] {
         let mut input = managed_document();
         input["spec"]["gateway"]["endpoint"] = json!(format!("https://127.0.0.1:{port}"));
         Document::parse(input.to_string().as_bytes()).unwrap();
     }
-    let mut input = managed_document();
-    let mut docker = input["spec"]["sandboxes"][0].clone();
-    docker["name"] = json!("docker-assistant");
-    docker["runtime"]["provider"] = json!("docker");
-    input["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(docker);
-    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
-    assert!(Document::parse(input.to_string().as_bytes()).is_err());
-    assert!(
-        serde_json::from_value::<Document>(input)
-            .unwrap()
-            .validate()
-            .is_err()
-    );
 }
 
 #[test]
@@ -335,7 +320,7 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
         "GOOGLE_APPLICATION_CREDENTIALS",
     ] {
         let mut input = external_document();
-        input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("docker");
+        input["spec"]["gateway"]["runtime"]["provider"] = json!("docker");
         input["spec"]["sandboxes"][0]["image"]
             .as_object_mut()
             .unwrap()
@@ -371,7 +356,7 @@ fn kubernetes_selects_the_gateway_driver_and_preserves_it_on_export() {
     let input = external_document();
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     assert_eq!(
-        document.spec.sandboxes[0].runtime.provider.as_str(),
+        document.spec.gateway.runtime().provider.as_str(),
         "kubernetes"
     );
     assert!(jsonschema::is_valid(&schema::input_schema(), &input));
@@ -379,7 +364,7 @@ fn kubernetes_selects_the_gateway_driver_and_preserves_it_on_export() {
     let imported = Document::parse(exported.as_bytes()).unwrap();
     assert_eq!(imported.digest(), document.digest());
     assert_eq!(
-        imported.spec.sandboxes[0].runtime.provider.to_string(),
+        imported.spec.gateway.runtime().provider.to_string(),
         "kubernetes"
     );
 }
@@ -414,29 +399,6 @@ fn directly_constructed_kubernetes_sandboxes_never_default_their_image() {
 }
 
 #[test]
-fn kubernetes_image_requirement_preserves_other_sandbox_defaults() {
-    let mut input = external_document();
-    let mut docker = input["spec"]["sandboxes"][0].clone();
-    docker["name"] = json!("docker-assistant");
-    docker["runtime"]["provider"] = json!("docker");
-    docker.as_object_mut().unwrap().remove("image");
-    input["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(docker);
-    assert!(jsonschema::is_valid(&schema::input_schema(), &input));
-    let document = Document::parse(input.to_string().as_bytes()).unwrap();
-    assert!(!document.spec.sandboxes[1].image.ref_.is_empty());
-
-    input["spec"]["sandboxes"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("image");
-    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
-    assert!(Document::parse(input.to_string().as_bytes()).is_err());
-}
-
-#[test]
 fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
     let mut input = external_document();
     input["spec"]["gateway"] = json!({"management": "managed"});
@@ -445,7 +407,7 @@ fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
 
     let mut document =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
-    document.spec.sandboxes[0].runtime =
+    *document.spec.gateway.runtime_mut() =
         serde_json::from_value::<Runtime>(json!({"provider": "kubernetes"})).unwrap();
     assert!(document.validate().is_err());
 }

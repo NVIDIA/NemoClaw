@@ -530,6 +530,10 @@
               "description": "Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
+            },
+            "runtime": {
+              "$ref": "#/$defs/Runtime",
+              "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
             }
           },
           "required": [
@@ -608,6 +612,10 @@
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
+            },
+            "runtime": {
+              "$ref": "#/$defs/Runtime",
+              "description": "Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports."
             },
             "tls": {
               "$ref": "#/$defs/TLS",
@@ -2130,7 +2138,7 @@
     },
     "Runtime": {
       "additionalProperties": false,
-      "description": "Sandbox runtime selected through OpenShell.",
+      "description": "The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.",
       "properties": {
         "provider": {
           "default": "docker",
@@ -2149,60 +2157,6 @@
     "Sandbox": {
       "additionalProperties": false,
       "allOf": [
-        {
-          "else": {
-            "properties": {
-              "image": {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "metadata"
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "if": {
-            "properties": {
-              "runtime": {
-                "properties": {
-                  "provider": {
-                    "enum": [
-                      "kubernetes",
-                      "openshift"
-                    ]
-                  }
-                },
-                "required": [
-                  "provider"
-                ]
-              }
-            },
-            "required": [
-              "runtime"
-            ]
-          },
-          "then": {
-            "properties": {
-              "image": {
-                "properties": {
-                  "ref": {
-                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
-                  }
-                },
-                "required": [
-                  "ref"
-                ]
-              }
-            },
-            "required": [
-              "image"
-            ]
-          }
-        },
         {
           "oneOf": [
             {
@@ -2293,10 +2247,6 @@
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
-        },
-        "runtime": {
-          "$ref": "#/$defs/Runtime",
-          "description": "Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver."
         }
       },
       "required": [
@@ -3329,28 +3279,26 @@
           "properties": {
             "spec": {
               "properties": {
-                "sandboxes": {
-                  "items": {
-                    "properties": {
-                      "runtime": {
-                        "properties": {
-                          "provider": {
-                            "const": "podman"
-                          }
-                        },
-                        "required": [
-                          "provider"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "runtime"
-                    ]
-                  }
+                "gateway": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "const": "podman"
+                        }
+                      },
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "runtime"
+                  ]
                 }
               },
               "required": [
-                "sandboxes"
+                "gateway"
               ]
             }
           },
@@ -3405,62 +3353,26 @@
       },
       "then": {
         "else": {
-          "anyOf": [
-            {
+          "properties": {
+            "spec": {
               "properties": {
-                "spec": {
+                "gateway": {
                   "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "runtime": {
-                            "properties": {
-                              "provider": {
-                                "const": "docker"
-                              }
-                            }
-                          }
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "enum": [
+                            "docker",
+                            "podman"
+                          ]
                         }
                       }
                     }
                   }
                 }
               }
-            },
-            {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "runtime": {
-                            "properties": {
-                              "provider": {
-                                "const": "podman"
-                              }
-                            },
-                            "required": [
-                              "provider"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "runtime"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
             }
-          ]
+          }
         },
         "if": {
           "properties": {
@@ -3486,28 +3398,26 @@
             "properties": {
               "spec": {
                 "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "const": "kubernetes"
-                            }
-                          },
-                          "required": [
-                            "provider"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "runtime"
-                      ]
-                    }
+                  "gateway": {
+                    "properties": {
+                      "runtime": {
+                        "properties": {
+                          "provider": {
+                            "const": "kubernetes"
+                          }
+                        },
+                        "required": [
+                          "provider"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "runtime"
+                    ]
                   }
                 },
                 "required": [
-                  "sandboxes"
+                  "gateway"
                 ]
               }
             },
@@ -3550,28 +3460,26 @@
             "properties": {
               "spec": {
                 "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "const": "openshift"
-                            }
-                          },
-                          "required": [
-                            "provider"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "runtime"
-                      ]
-                    }
+                  "gateway": {
+                    "properties": {
+                      "runtime": {
+                        "properties": {
+                          "provider": {
+                            "const": "openshift"
+                          }
+                        },
+                        "required": [
+                          "provider"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "runtime"
+                    ]
                   }
                 },
                 "required": [
-                  "sandboxes"
+                  "gateway"
                 ]
               }
             },
@@ -3583,35 +3491,127 @@
       }
     },
     {
-      "if": {
+      "else": {
         "properties": {
           "spec": {
             "properties": {
               "sandboxes": {
-                "contains": {
+                "items": {
                   "properties": {
-                    "runtime": {
+                    "image": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "metadata"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "enum": [
+                          "kubernetes",
+                          "openshift"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "image": {
                       "properties": {
-                        "provider": {
-                          "enum": [
-                            "kubernetes",
-                            "openshift"
-                          ]
+                        "ref": {
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
                         }
                       },
                       "required": [
-                        "provider"
+                        "ref"
                       ]
                     }
                   },
                   "required": [
-                    "runtime"
+                    "image"
                   ]
                 }
               }
             },
             "required": [
               "sandboxes"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "enum": [
+                          "kubernetes",
+                          "openshift"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
             ]
           }
         },
@@ -3688,75 +3688,6 @@
         ],
         "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
       }
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "sandboxes": {
-                "contains": {
-                  "properties": {
-                    "runtime": {
-                      "properties": {
-                        "provider": {
-                          "const": "openshift"
-                        }
-                      },
-                      "required": [
-                        "provider"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "runtime"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "sandboxes"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "sandboxes": {
-                "items": {
-                  "properties": {
-                    "runtime": {
-                      "properties": {
-                        "provider": {
-                          "const": "openshift"
-                        }
-                      },
-                      "required": [
-                        "provider"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "runtime"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "sandboxes"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "x-nemoclaw-error": "OpenShift deployments require the matching platform profile for every sandbox"
     }
   ],
   "description": "Desired configuration for one deployment. Fields describe authored input before SDK normalization.",

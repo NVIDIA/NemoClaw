@@ -69,6 +69,7 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
             certificate: reference("CERT"),
             key: reference("KEY"),
         }),
+        ..Default::default()
     });
     let desired = [
         ("name".into(), "workspace".into()),

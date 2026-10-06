@@ -136,11 +136,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "sandboxes",
         json!({"minItems":1,"maxItems":32}),
     );
-    defs["Sandbox"]["allOf"] = json!([{
-        "if": at("runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("image/ref", json!({"pattern":c::IMAGE}), true),
-        "else": at("image", forbid(&["metadata"]), false)
-    }]);
+    defs["Sandbox"]["allOf"] = json!([]);
     optional_string(
         &mut defs["Image"],
         "ref",
@@ -344,7 +340,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     crate::services::constrain_schema(defs, normalized);
 
     root["allOf"] = json!([{
-        "if": {"not": at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)},
+        "if": {"not": at("spec/gateway/runtime/provider", json!({"const":"podman"}), true)},
         "then": at("spec/gateway/imagePullPolicy", json!({"enum":["IfNotPresent", "Never"]}), false)
     }]);
     root["allOf"].as_array_mut().unwrap().push(json!({
@@ -353,19 +349,21 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "if": at("spec/gateway", json!({"required":["kubernetes"]}), true),
             "then": {
                 "if": at("spec/gateway/kubernetes/distribution", json!({"const":"openshift"}), true),
-                "then": at("spec/sandboxes/[]/runtime/provider", json!({"const":"openshift"}), true),
-                "else": at("spec/sandboxes/[]/runtime/provider", json!({"const":"kubernetes"}), true)
+                "then": at("spec/gateway/runtime/provider", json!({"const":"openshift"}), true),
+                "else": at("spec/gateway/runtime/provider", json!({"const":"kubernetes"}), true)
             },
-            "else": {"anyOf": [
-                at("spec/sandboxes/[]/runtime/provider", json!({"const":"docker"}), false),
-                at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
-            ]}
+            "else": at("spec/gateway/runtime/provider", json!({"enum":["docker", "podman"]}), false)
         }
     }));
+    // Cluster sandboxes need an explicit image, since no local engine supplies
+    // a default; image metadata stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at("spec/sandboxes", json!({
-            "contains": at("runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true)
-        }), true),
+        "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
+        "then": at("spec/sandboxes/[]/image/ref", json!({"pattern":c::IMAGE}), true),
+        "else": at("spec/sandboxes/[]/image", forbid(&["metadata"]), false)
+    }));
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
         "then": {
             "allOf": [
                 {"anyOf": [
@@ -376,13 +374,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             ],
             "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
         }
-    }));
-    root["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at("spec/sandboxes", json!({
-            "contains": at("runtime/provider", json!({"const":"openshift"}), true)
-        }), true),
-        "then": at("spec/sandboxes/[]/runtime/provider", json!({"const":"openshift"}), true),
-        "x-nemoclaw-error": "OpenShift deployments require the matching platform profile for every sandbox"
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",

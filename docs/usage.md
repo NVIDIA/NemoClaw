@@ -58,7 +58,7 @@ See [service constraints](inference.md#combine-local-and-hosted-providers) for m
 Use a local rootless Linux Podman engine through its Unix API socket.
 Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Select `runtime.provider: podman` for every sandbox and set `gateway.engine` to the local Podman API service's Unix socket.
+Set `gateway.runtime.provider: podman` and set `gateway.engine` to the local Podman API service's Unix socket.
 See [the Podman example](../examples/managed-podman.yaml).
 The API service is an operator prerequisite; NemoClaw manages its gateway, network, and credential storage through that service.
 Load the harness image into the selected Podman image store and use the digest reported there.

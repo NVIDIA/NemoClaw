@@ -13,6 +13,8 @@ spec:
   # Supply the existing Kubernetes cluster's OpenShell gateway.
   gateway:
     management: external
+    runtime:
+      provider: kubernetes
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
     tls:
@@ -34,8 +36,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: kubernetes
       network:
         policy:
           explicit:
@@ -69,8 +69,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: kubernetes
       network:
         policy:
           explicit:
@@ -104,8 +102,6 @@ spec:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: kubernetes
       network:
         policy:
           explicit:

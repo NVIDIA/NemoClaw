@@ -167,7 +167,7 @@ async fn lifecycle(
     }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     value["spec"]["services"]["qwen"]["placement"] =
         json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =
