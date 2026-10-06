@@ -39,6 +39,7 @@
         "file-type": "22.0.2",
         "protobufjs": "8.7.2"
       }
-    }
+    },
+    "proxy-addr": "2.0.8"
   }
 }

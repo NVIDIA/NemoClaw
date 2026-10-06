@@ -8,6 +8,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { fatalOpenClawNpmRemediationDiagnostic } from "../../scripts/lib/openclaw-npm-remediation.mts";
+
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "../..");
 const MESSAGING_BUILD_APPLIER = path.join(
   REPOSITORY_ROOT,
@@ -45,6 +47,25 @@ function encodedMessagingPlan(renderTarget: string | null): string {
 }
 
 describe("fatal process diagnostics", () => {
+  it.each([
+    "OpenClaw npm remediation command failed",
+    "OpenClaw npm remediation command could not start",
+  ])("classifies the fixed command diagnostic %s", (message) => {
+    expect(fatalOpenClawNpmRemediationDiagnostic(new Error(message))).toBe(
+      "OpenClaw npm remediation command failed.",
+    );
+  });
+
+  it.each([
+    `OpenClaw npm remediation command failed ${CREDENTIAL_CANARY}`,
+    `OpenClaw npm remediation command could not start ${CREDENTIAL_CANARY}`,
+    CREDENTIAL_CANARY,
+  ])("keeps unrecognized error text behind the generic diagnostic", (message) => {
+    const diagnostic = fatalOpenClawNpmRemediationDiagnostic(new Error(message));
+    expect(diagnostic).toBe("OpenClaw npm remediation failed.");
+    expect(diagnostic).not.toContain(CREDENTIAL_CANARY);
+  });
+
   it("omits messaging plan credentials from a build failure (#11673)", () => {
     const result = spawnSync(
       process.execPath,
