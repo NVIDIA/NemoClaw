@@ -16,6 +16,8 @@ fn unknown_steps_and_platforms_are_rejected_before_any_work() {
 fn live_docker_is_an_explicit_step_outside_the_default_run() {
     assert_eq!(Step::parse("live-docker"), Some(Step::LiveDocker));
     assert!(!Step::ALL.contains(&Step::LiveDocker));
+    assert_eq!(Step::parse("live-kind"), Some(Step::LiveKind));
+    assert!(!Step::ALL.contains(&Step::LiveKind));
 }
 
 #[test]

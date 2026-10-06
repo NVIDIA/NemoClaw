@@ -27,6 +27,15 @@ Afterward it removes the images it built and every container, volume, and networ
 It requests no inference and needs no GPU or credentials.
 A run on Linux ARM64 takes about five minutes after the build.
 
+On Linux with Docker, `cargo ci live-kind` runs the Kubernetes live tests; plain `cargo ci` never selects it either.
+It downloads the pinned kind and helm by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
+It then runs the `live-kind` nextest profile against that cluster.
+The test installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
+It then removes the gateway, checks that storage remains, and installs the gateway again on the kept storage.
+The step deletes the cluster whether or not the test passes.
+It needs no images built by this repository, no GPU and no credentials.
+A run on Linux ARM64 takes about 90 seconds after the build.
+
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
 
 ## CI Workflows
@@ -38,6 +47,7 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Docker | `Live / Docker / linux_arm64`, `Live / Docker / linux_amd64` on `v1` pushes, `run-live-docker/` branch pushes, and manual runs, through `cargo ci live-docker` |
+| Live / Kind | `Live / Kind / linux_arm64`, `Live / Kind / linux_amd64` on `v1` pushes, `run-live-kind/` branch pushes, and manual runs, through `cargo ci live-kind` |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.

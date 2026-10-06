@@ -25,6 +25,8 @@ pub enum Step {
     Lifecycle,
     /// Docker live tests; opt-in, never part of the default run.
     LiveDocker,
+    /// Kubernetes live tests on a temporary kind cluster; opt-in.
+    LiveKind,
 }
 
 impl Step {
@@ -50,13 +52,14 @@ impl Step {
             Step::Bundle => "bundle",
             Step::Lifecycle => "lifecycle",
             Step::LiveDocker => "live-docker",
+            Step::LiveKind => "live-kind",
         }
     }
 
     pub fn parse(name: &str) -> Option<Step> {
         Step::ALL
             .into_iter()
-            .chain([Step::LiveDocker])
+            .chain([Step::LiveDocker, Step::LiveKind])
             .find(|step| step.name() == name)
     }
 
@@ -65,6 +68,17 @@ impl Step {
     pub fn cargo_args(self) -> &'static [&'static [&'static str]] {
         match self {
             Step::Tools | Step::Schema | Step::Bundle => &[],
+            Step::LiveKind => &[&[
+                "nextest",
+                "run",
+                "--locked",
+                "--workspace",
+                "--all-targets",
+                "--profile",
+                "live-kind",
+                "--run-ignored",
+                "only",
+            ]],
             // Selected by the live-docker nextest profile; the runner adds inputs.
             Step::LiveDocker => &[&[
                 "nextest",

@@ -5,6 +5,14 @@
   "ollama": "0.34.0",
   "platforms": {
     "linux_arm64": {
+      "kind": {
+          "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-arm64",
+          "sha256": "20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
+      },
+      "helm": {
+          "url": "https://get.helm.sh/helm-v3.22.0-linux-arm64.tar.gz",
+          "sha256": "f14e804dfee240f55525b667488fe9adca349e63e00c9af634c0beb1421ac310"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_arm64.zip",
         "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
@@ -23,6 +31,14 @@
       }
     },
     "linux_amd64": {
+      "kind": {
+          "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64",
+          "sha256": "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+      },
+      "helm": {
+          "url": "https://get.helm.sh/helm-v3.22.0-linux-amd64.tar.gz",
+          "sha256": "1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_amd64.zip",
         "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
@@ -105,7 +121,8 @@
     "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
     "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f",
     "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:7a714bbbbcef7b5ed8dac599e89e89df12eb623fa4454d22f89df41d6f047e2a",
-    "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:5aea7cc516b419e3526f47dd1531be31a56a046cfe44754d94f9383e13e2ee99"
+    "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:5aea7cc516b419e3526f47dd1531be31a56a046cfe44754d94f9383e13e2ee99",
+    "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },
   "dockerProvider": "4.6.0"
 }

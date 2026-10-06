@@ -50,5 +50,16 @@ default-filter = '''
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''
 
+[profile.live-kind]
+inherits = "ci"
+test-threads = 1
+slow-timeout = { period = "120s", terminate-after = 10 }
+default-filter = '''
+package(nemoclaw-sdk) & test(/^kubernetes_live::/)
+'''
+
+[profile.live-kind.junit]
+path = "live-kind.xml"
+
 [profile.live-docker.junit]
 path = "live-docker.xml"

@@ -86,6 +86,8 @@ mod kubernetes_connect;
 mod kubernetes_connection;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
+#[path = "kubernetes_live.rs"]
+mod kubernetes_live;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
 #[path = "kubernetes_operations.rs"]
