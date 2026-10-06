@@ -69,7 +69,7 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         "utf8",
       );
       expect(() => validateConfigExportWithPinnedV1(fixture)).toThrow(
-        /provider requires a lowercase name and openai or anthropic implementation/u,
+        /configuration violates schema at \/\$defs\/InferenceProvider\/properties\/provider\/enum/u,
       );
     },
   );
