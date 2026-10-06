@@ -783,6 +783,7 @@ describe("complete managed-image publication workflow", () => {
         "src/lib/adapters/openshell/**",
         "src/lib/adapters/podman/**",
         ...approvalFixturePaths,
+        "test/e2e/fixtures/docker-build-guard.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
