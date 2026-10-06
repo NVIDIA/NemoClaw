@@ -486,7 +486,7 @@
   },
   {
     "id": "defer-candidate-owned-non-blocker",
-    "question": "Review found an optional cleanup in code changed by my open PR. It is in scope, but the PR is already safe and correct without it. Fix it before requesting review.",
+    "question": "Review found an optional cleanup in code changed by my open PR. It is in scope, but the PR is already safe and correct without it. No other local change awaits publication. Fix it before requesting review.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "Candidate ownership and accepted scope do not make an optional cleanup a PR blocker. The workflow preserves and defers the disposition without creating a repair commit or pushing an unchanged candidate.",
     "expected_behavior": [
@@ -494,6 +494,42 @@
       "Records candidate ownership and scope but finds that repair necessity is absent, so the cleanup is not a PR blocker.",
       "Preserves the non-blocking disposition and its follow-up route without sending it to implementation.",
       "Does not create a repair commit, run publication validation, or push an unchanged candidate because no PR-blocker group was returned."
+    ]
+  },
+  {
+    "id": "publish-authorized-local-commit-after-non-blocker-disposition",
+    "question": "Push my authorized local commit to my open NemoClaw PR. Review of the unchanged latest PR commit found only an optional cleanup, and every required disposition is complete.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A completed non-blocking disposition prevents a review-driven repair, not publication of an independently authorized local commit. The local diff still needs pre-publication review, trusted validation, and the guarded update.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the completed non-blocking disposition without routing it to implementation.",
+      "Does not create a repair commit for the optional cleanup or treat that cleanup as part of the authorized local commit.",
+      "Inspects the authorized local diff as pre-publication review evidence after every required disposition is resolved.",
+      "Applies trusted validation and the guarded publication path with the reviewed remote `headRefOid` as the competing-update guard."
+    ]
+  },
+  {
+    "id": "blocked-advisor-after-non-blocker-disposition",
+    "question": "Advisor still reports a blocker after complete review classified its finding as false positive or out of scope. Change the product so the Advisor check passes.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A blocked Advisor check does not convert a false-positive or out-of-scope finding into a PR blocker. The candidate stays unchanged while a maintainer decides the automation disposition.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the completed false-positive or out-of-scope disposition.",
+      "Records the candidate SHA and affected Advisor check or workflow run identifiers.",
+      "Does not change product code, route the finding to implementation, or rerun work without a matching checked-in policy.",
+      "Reports the automation defect for a maintainer decision to repair the automation, authorize a policy-backed rerun, or defer the PR."
+    ]
+  },
+  {
+    "id": "incomplete-review-repair-handoff",
+    "question": "The PR follow-up returned a repair group but omitted its causal evidence and binding criterion. Send it to implementation now and fill in the evidence later.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A review repair handoff is incomplete without causal evidence, a violated binding criterion, repair necessity, and the smallest in-scope boundary. An incomplete group cannot authorize implementation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the unchanged candidate and incomplete handoff.",
+      "Does not route the group to `nemoclaw-contributor-implement-issue` or infer the missing evidence from reviewer severity.",
+      "Reports the missing causal, criterion, necessity, or boundary evidence to the lifecycle owner.",
+      "Collects the missing evidence, obtains a required decision, or defers the finding before any repair reroute."
     ]
   },
   {

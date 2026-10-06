@@ -35,7 +35,7 @@ Select review evidence for the publication state before every agent-managed push
 
   1. Follow [Stabilize](../../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../../_shared/pr-follow-up.md#collect), and [Decide](../../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
   2. Route only returned PR-blocker root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
-  3. When no PR-blocker group is returned, preserve every disposition and follow the shared deferral or automation-defect route. Do not create a repair commit, validate, or push an unchanged candidate. Return to readiness follow-up only after every required disposition is resolved.
+  3. When no PR-blocker group is returned, preserve every disposition and follow the shared deferral or automation-defect route. Do not create a repair commit for a non-blocker. When no authorized local commit awaits publication, do not validate or push the unchanged candidate. When an authorized local publication commit already exists, inspect its local diff as pre-publication review evidence and continue only after every required disposition is resolved.
   4. For returned PR-blocker groups, inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
   5. Create one local repair commit and record it as the expected publication SHA.
   6. Mark each PR-blocker repair group resolved by the inspected local repair, subject to trusted validation.
