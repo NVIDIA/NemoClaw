@@ -94,11 +94,7 @@ pub(crate) async fn run_with_progress(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env_clear();
-        for (name, value) in std::env::vars_os() {
-            if inherited_variable(&name.to_string_lossy()) {
-                command.env(name, value);
-            }
-        }
+        command.envs(child_environment(std::env::vars_os()));
         command.envs(overrides);
         if let Some(downloads) = &downloads {
             command.env(crate::download::ENV, &downloads.endpoint);
@@ -228,16 +224,6 @@ fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
             secrets.push(value.clone());
         }
     }
-    for (name, value) in std::env::vars() {
-        let upper = name.to_ascii_uppercase();
-        if !value.is_empty()
-            && ["KEY", "TOKEN", "SECRET", "PASSWORD"]
-                .iter()
-                .any(|part| upper.contains(part))
-        {
-            secrets.push(value);
-        }
-    }
     secrets.sort_unstable();
     secrets.dedup();
     secrets
@@ -288,6 +274,66 @@ fn redact(text: &mut String, secrets: &[String]) {
     *text = output;
 }
 
+/// Caller variables a child needs to run at all: finding programs and its
+/// home and temporary directories, Windows system settings, proxies and
+/// trusted certificates, and the SSH agent for SSH placement. Everything else,
+/// including unrelated credentials, stays in the caller. A deployment passes
+/// what its providers need explicitly, such as resolved credential references
+/// and a Kubernetes target's listed variables.
+const PLATFORM_VARIABLES: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "USERPROFILE",
+    "USERNAME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "SSH_AUTH_SOCK",
+];
+
+/// The caller's variables a child inherits: the platform set above, names
+/// compared without case as Windows does.
+fn child_environment(
+    caller: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(String, String)> {
+    caller
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(name, _)| {
+            let upper = name.to_ascii_uppercase();
+            PLATFORM_VARIABLES.contains(&upper.as_str()) && inherited_variable(name)
+        })
+        .collect()
+}
+
 fn inherited_variable(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     ![
@@ -303,6 +349,68 @@ fn inherited_variable(name: &str) -> bool {
     .any(|prefix| upper.starts_with(prefix))
         && upper != crate::kubernetes::STATE_ENV
         && upper != "KUBECONFIG"
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+
+    fn names(environment: &[(String, String)]) -> Vec<&str> {
+        environment.iter().map(|(name, _)| name.as_str()).collect()
+    }
+
+    fn caller(variables: &[(&str, &str)]) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        variables
+            .iter()
+            .map(|(name, value)| ((*name).into(), (*value).into()))
+            .collect()
+    }
+
+    #[test]
+    fn a_child_gets_only_platform_variables_from_the_caller() {
+        let environment = child_environment(caller(&[
+            ("PATH", "/usr/bin"),
+            ("HOME", "/home/me"),
+            ("HTTPS_PROXY", "http://proxy.example:3128"),
+            ("SSL_CERT_FILE", "/etc/ssl/ca.pem"),
+            ("SSH_AUTH_SOCK", "/run/ssh.sock"),
+            ("AWS_PROFILE", "dev"),
+            ("NVIDIA_INFERENCE_API_KEY", "nvapi-unrelated"),
+            ("GITHUB_TOKEN", "x"),
+            ("TF_LOG", "trace"),
+            ("KUBECONFIG", "/other"),
+        ]));
+        assert_eq!(
+            names(&environment),
+            [
+                "PATH",
+                "HOME",
+                "HTTPS_PROXY",
+                "SSL_CERT_FILE",
+                "SSH_AUTH_SOCK"
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_names_match_without_case() {
+        let environment = child_environment(caller(&[
+            ("Path", "C:\\Windows"),
+            ("SystemRoot", "C:\\Windows"),
+        ]));
+        assert_eq!(names(&environment), ["Path", "SystemRoot"]);
+    }
+
+    /// Unrelated short credentials in the caller's environment no longer hide
+    /// a child's diagnostic: only values passed on purpose are secrets.
+    #[test]
+    fn only_passed_values_are_secrets() {
+        let secrets = secret_values(&BTreeMap::from([
+            ("TF_IN_AUTOMATION".into(), "1".into()),
+            ("CUSTOM_CREDENTIAL".into(), "a-long-credential".into()),
+        ]));
+        assert_eq!(secrets, ["a-long-credential"]);
+    }
 }
 
 #[cfg(test)]
