@@ -1042,14 +1042,9 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       ? rawSandboxName
       : undefined;
 
-  // Resolve host-side service state from the same effective sandbox selected
-  // for in-sandbox shutdown, so pid cleanup cannot drift to a lower-priority
-  // env var or the default sandbox.
-  const pidDir =
-    opts.pidDir ??
-    (rawSandboxName && !sandboxName
-      ? undefined
-      : resolvePidDir({ ...opts, sandboxName: sandboxName ?? "default" }));
+  // Reuse the resolver used by the lock wrapper so cleanup cannot target a
+  // different PID directory from the one protected during this transition.
+  const pidDir = resolveStopPidDir(opts);
   if (pidDir) ensurePidDir(pidDir);
 
   // Stop cloudflared before dependent shutdown so an unverified live tunnel

@@ -116,6 +116,24 @@ describe("stopAll tunnel stop ordering", () => {
     expect(unloadOllamaModels).toHaveBeenCalledOnce();
     expect(stopMocks.releaseGatewayPortForStop).toHaveBeenCalledOnce();
   });
+
+  it("uses the explicit PID directory lock when the sandbox name is invalid", () => {
+    const lockName = `cloudflared-${createHash("sha256").update(resolve(pidDir)).digest("hex")}`;
+    const unloadOllamaModels = vi.fn(() => {
+      expect(isMcpLifecycleLockHeld(lockName)).toBe(true);
+      return undefined;
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    stopAll({
+      pidDir,
+      sandboxName: "../invalid",
+      unloadOllamaModels,
+    });
+
+    expect(unloadOllamaModels).toHaveBeenCalledOnce();
+  });
 });
 
 describe("stopCloudflared lifecycle lock", () => {
