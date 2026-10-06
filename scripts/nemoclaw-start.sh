@@ -1902,6 +1902,26 @@ start_persistent_gateway_log_mirror() {
   fi
 }
 
+wait_for_openclaw_auto_pair_startup() {
+  # OpenClaw 2026.9.5 CLI preflight opens the shared state database even for
+  # devices list. Let the gateway finish its migrations before another CLI
+  # competes for state-lifecycle ownership. The native startup probe excludes
+  # downstream channel health and does not require device pairing.
+  local deadline=$((SECONDS + 330)) status
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    openclaw_supervised_pid_is_live "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY" || return 1
+    status="$(curl -q --noproxy '*' --proxy '' --silent --output /dev/null \
+      --max-time 1 --write-out '%{http_code}' \
+      "http://127.0.0.1:${_DASHBOARD_PORT}/startupz")" || status=""
+    if [ "$status" = 200 ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[auto-pair] gateway startup deadline reached" >&2
+  return 1
+}
+
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
@@ -1921,6 +1941,7 @@ start_auto_pair() {
       # shellcheck source=/dev/null
       builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
     fi
+    wait_for_openclaw_auto_pair_startup || exit $?
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
   ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
