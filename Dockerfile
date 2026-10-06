@@ -447,7 +447,7 @@ ADD --chmod=0444 --checksum=sha256:425bf8c725d23bc5ac76bcedd10d9cdbbd6354c7273dd
 ADD --chmod=0444 --checksum=sha256:9fe46ed2a75148c5a1a720b446f1a95ff7c67e984144a24a83e004a892258cd8 https://registry.npmjs.org/@clack/prompts/-/prompts-1.7.0.tgz /prompts-1.7.0.tgz
 ADD --chmod=0444 --checksum=sha256:df0241b3046b505d27396da6eef107f14dffb108f77aa89cfd9611a928eb6dfe https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz /protobufjs-7.6.6.tgz
 ADD --chmod=0444 --checksum=sha256:205de58fb0e9e9ce2e1d2903f634f9be1852f024883fa037eb6ab1cd0c0e6c6b https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.2.tgz /protobufjs-8.7.2.tgz
-ADD --chmod=0444 --checksum=sha256:a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz /proxy-addr-2.0.7.tgz
+ADD --chmod=0444 --checksum=sha256:ffcc8055b78b0852b2889a426ad3a3003b60bc79df704faca194157efa2b2587 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz /proxy-addr-2.0.8.tgz
 ADD --chmod=0444 --checksum=sha256:e9c52dbf1e382319d5da00b8d964805859b7eb1424450e049d12743d7e19fc9a https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz /proxy-from-env-2.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:cf7d916cade644852293de603369f2f3ef13171e3f78cc3baf9a1bd6854190bd https://registry.npmjs.org/@openclaw/proxyline/-/proxyline-0.3.7.tgz /proxyline-0.3.7.tgz
 ADD --chmod=0444 --checksum=sha256:0c7274f0c299f39c2fddf54a2e0039b785977b0173c02d0b3f65fad68923e2b0 https://registry.npmjs.org/qrcode/-/qrcode-1.5.4.tgz /qrcode-1.5.4.tgz

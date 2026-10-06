@@ -90,7 +90,10 @@ openshell_audit_logs_since_epoch() {
       bracket_end = index($0, "]");
       ts = substr($0, 2, bracket_end - 2) + 0;
       keep = ts >= start;
-      if (keep) print;
+      # OpenShell 0.0.116 reports sandbox exec through its fixed SSH socket as
+      # NET:OPEN too. Exclude only that complete control-transport record.
+      ssh_relay = $0 ~ /^\[[0-9]+(\.[0-9]+)?\] \[sandbox\] \[OCSF \] \[ocsf\] NET:OPEN \[INFO\] \[msg:ssh relay open \(channel_id=[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}, target=unix:\/run\/openshell\/ssh\.sock\)\]$/;
+      if (keep && !ssh_relay) print;
       next;
     }
     keep { print; }
