@@ -818,16 +818,16 @@ function validateSandboxName(name: string): string {
   return name;
 }
 
+function resolveTunnelGatewayPort(opts: ServiceOptions): number {
+  const gatewayPort = opts.gatewayPort ?? resolveExplicitGatewayPortEnv();
+  if (gatewayPort !== null) return gatewayPort;
+  if (!opts.sandboxName) return GATEWAY_PORT;
+  return findSandboxAcrossGatewayRoots(opts.sandboxName)?.gatewayPort ?? GATEWAY_PORT;
+}
+
 function resolvePidDir(opts: ServiceOptions): string {
   if (opts.pidDir) return opts.pidDir;
-  const gatewayPort = opts.gatewayPort ?? resolveExplicitGatewayPortEnv();
-  if (gatewayPort !== null) {
-    return join(resolveNemoclawStateDir(undefined, gatewayPort), "tunnel");
-  }
-  const sandboxGatewayPort = opts.sandboxName
-    ? (findSandboxAcrossGatewayRoots(opts.sandboxName)?.gatewayPort ?? undefined)
-    : undefined;
-  return join(resolveNemoclawStateDir(undefined, sandboxGatewayPort), "tunnel");
+  return join(resolveNemoclawStateDir(undefined, resolveTunnelGatewayPort(opts)), "tunnel");
 }
 
 function legacyTunnelPidDirs(): string[] {
@@ -865,8 +865,8 @@ export function migrateLegacyCloudflaredState(
 ): boolean {
   if (opts.pidDir) return false;
 
-  const targetPidDir = resolvePidDir(opts);
-  const gatewayPort = opts.gatewayPort ?? GATEWAY_PORT;
+  const gatewayPort = resolveTunnelGatewayPort(opts);
+  const targetPidDir = resolvePidDir({ ...opts, gatewayPort });
   const readState = deps.readState ?? readCloudflaredState;
   const registeredSandboxNames =
     deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(gatewayPort));

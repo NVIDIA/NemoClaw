@@ -125,6 +125,28 @@ describe("legacy tunnel state migration (#11628)", () => {
     expect(resolveTunnelPidDir({ sandboxName: "legacy" })).toBe(targetPidDir);
   });
 
+  it("migrates tunnel state through the sandbox owning gateway", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    writeRegistry(gatewayPort, "legacy");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(
+      migrateLegacyCloudflaredState(
+        { sandboxName: "legacy" },
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          readState: (pidDir): CloudflaredState =>
+            pidDir === legacyPidDir
+              ? { kind: "unverified-pid-process", pid: 4242 }
+              : { kind: "stopped" },
+        },
+      ),
+    ).toBe(true);
+
+    expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
+    expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
   it("prefers the explicit gateway environment over sandbox ownership", () => {
     writeRegistry(gatewayPort + 1, "legacy");
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(gatewayPort));
