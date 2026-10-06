@@ -1778,12 +1778,16 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (message.includes(" failed:")) {
+  if (
+    message === "OpenClaw npm remediation command failed" ||
+    message === "OpenClaw npm remediation command could not start" ||
+    message.includes(" failed:")
+  ) {
     return "OpenClaw npm remediation command failed.";
   }
   if (
