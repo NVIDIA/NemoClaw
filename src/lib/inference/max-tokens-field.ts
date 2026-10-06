@@ -6,7 +6,7 @@
  * Chat Completions field name for a given model, and the reply budget for a
  * provider.
  *
- * OpenAI's GPT-5 family and the reasoning-model series (o1/o3/o4) reject the
+ * OpenAI's GPT-5/GPT-6 families and the reasoning-model series (o1/o3/o4) reject the
  * legacy `max_tokens` parameter on `/chat/completions` and require
  * `max_completion_tokens` instead — Azure OpenAI surfaces the same requirement
  * (HTTP 400: "Unsupported parameter: 'max_tokens' is not supported with this
@@ -42,7 +42,7 @@ export function resolveProbeReplyTokens(provider: string | null | undefined): nu
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
 // version/suffix segments (e.g. "gpt-5.4", "gpt-5.4-turbo") and callers may or
 // may not include a provider prefix ("azure/gpt-5.4").
-const MAX_COMPLETION_TOKENS_MODEL_PREFIXES = ["gpt-5", "o1", "o3", "o4"];
+const MAX_COMPLETION_TOKENS_MODEL_PREFIXES = ["gpt-5", "gpt-6", "o1", "o3", "o4"];
 
 /**
  * Whether the model requires `max_completion_tokens` in place of `max_tokens`.
@@ -59,7 +59,7 @@ export function requiresMaxCompletionTokensField(model: string | null | undefine
 
 /**
  * Returns the Chat Completions reply-budget field name for the model:
- * `max_completion_tokens` for GPT-5/o-series, otherwise `max_tokens`.
+ * `max_completion_tokens` for GPT-5/GPT-6/o-series, otherwise `max_tokens`.
  */
 export function resolveMaxTokensField(
   model: string | null | undefined,
