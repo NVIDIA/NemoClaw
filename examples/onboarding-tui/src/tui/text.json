@@ -61,7 +61,7 @@
     "/spec/sandboxes/*/network/tier": {
       "title": "Network tier"
     },
-    "/spec/sandboxes/*/runtime/provider": {
+    "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",
       "description": "The runtime owns the gateway and local sandbox resources."
     },
@@ -298,7 +298,7 @@
     "/spec/sandboxes/*/network/tier": {
       "isolated": "Isolated"
     },
-    "/spec/sandboxes/*/runtime/provider": {
+    "/spec/gateway/runtime/provider": {
       "docker": "Docker",
       "podman": "Podman"
     },

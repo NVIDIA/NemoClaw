@@ -80,7 +80,7 @@ fn load_journey(
         .ask([
             "/metadata/name",
             "/spec/sandboxes/0/harness/kind",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             "inference:preset",
         ])
         .ask([JourneyScope::InferenceApi])
@@ -130,7 +130,7 @@ mod tests {
         assert!(resolution.question("inference:preset").is_some());
         assert!(
             resolution
-                .question("/spec/sandboxes/0/runtime/provider")
+                .question("/spec/gateway/runtime/provider")
                 .is_some()
         );
     }

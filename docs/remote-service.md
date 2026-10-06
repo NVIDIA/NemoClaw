@@ -4,8 +4,6 @@
 # Configure an SSH Model Service
 
 [remote-vllm.yaml](../examples/spark/remote-vllm.yaml) manages a Docker inference service through SSH while an existing native OpenShell gateway owns Podman sandboxes.
-The pinned OpenShell Podman supervisor currently has a [TLS initialization bug](https://github.com/NVIDIA/OpenShell/issues/3427) that blocks provider traffic.
-Use an existing Docker gateway with `runtime.provider: docker` to exercise SSH inference while that Podman issue remains open.
 Declare the service under `spec.services.<name>` and select it from an inference provider with `serviceRef`.
 Its `placement.engine` selects the SSH Docker endpoint, and the rest of `placement` selects its private Docker network.
 Its `publication` declares the private host address and inference URL that OpenShell can reach.
@@ -43,12 +41,7 @@ Cache and compute use native Docker-provider reconciliation; a cross-host transf
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.
 
-The earlier custom-controller lifecycle was qualified by a live two-daemon DGX Spark test.
-That retained result does not qualify the current Docker-provider path on GPU hardware.
-The live test used a second Docker daemon in a network namespace, SSH control, rootless Podman sandboxes, and actual OpenClaw replies through OpenShell.
-See [the recorded test results](validation/rust-dual-daemon-linux-arm64.json).
-
-Both daemons shared the physical host and GPU; a separate-host deployment and other hardware remain qualification gates.
+The current Docker-provider path is unqualified on GPU hardware; a separate-host deployment and other hardware remain qualification gates.
 
 A successful apply establishes configuration and readiness.
 Verify an agent response through OpenShell separately using [inference verification](inference.md#verify-the-result).

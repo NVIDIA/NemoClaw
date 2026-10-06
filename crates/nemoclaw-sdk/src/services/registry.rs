@@ -172,11 +172,7 @@ impl ServiceDefinition {
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
                 && crate::config::validate_engine_endpoint(&gateway.engine).is_ok()
-        }) && document
-            .spec
-            .sandboxes
-            .iter()
-            .all(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker);
+        }) && gateway.runtime().provider == ComputeDriver::Docker;
         let (placement, package) = match self {
             Self::Ollama(service) => (service.published_placement()?, "Ollama"),
             Self::Vllm(service) => (service.published_placement()?, "vLLM"),

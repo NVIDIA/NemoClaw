@@ -9,6 +9,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
   - name: local
@@ -18,8 +20,6 @@ spec:
   - name: assistant
     image:
       ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
-    runtime:
-      provider: docker
     network:
       tier: isolated
     harness:

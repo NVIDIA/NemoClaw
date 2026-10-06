@@ -270,7 +270,7 @@ fn external_document(engine: &str) -> Document {
     }))
     .unwrap();
     // The image store need not run the gateway's selected compute driver.
-    document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+    document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
     document
 }
 

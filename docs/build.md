@@ -41,7 +41,7 @@ A source-derived provider version prevents reuse of a stale OpenTofu provider in
 To select a target, pass `bundle --platform PLATFORM`.
 The target names are `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64`.
 Building another target requires its Rust standard library, linker, and native SDK.
-[Native validation records](validation/rust-native-platforms.json) identify tested hosts; target selection alone does not qualify a runtime.
+Target selection alone does not qualify a runtime on that platform.
 
 Add the bundle’s `bin` directory to `PATH` and run `nemoclaw --help` to check CLI access.
 Continue with [deployment usage](usage.md).
@@ -62,7 +62,7 @@ Then remove that dedicated bundle directory using your host's file manager and r
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
+There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images
@@ -93,17 +93,17 @@ The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
 The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
 It removes its temporary image tag after completion; it does not start an adapter or request model responses.
+Direct `docker buildx bake` builds omit these labels, so plan cannot select them.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
-See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
+See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
-Keep the original bundle and state to operate or destroy deployments created before runtime metadata was retained; this change does not migrate their sandbox bindings.
 
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
@@ -131,7 +131,19 @@ The builder verifies archive and wheel hashes, retains upstream archives and loc
 The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
-Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.
+Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
+
+### Regenerate the Bundled Catalog
+
+The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+
+```sh
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+```
+
+Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).
+The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
 ### Reference Contract Image
 
@@ -243,7 +255,6 @@ Model snapshots and prepared data belong to the deployment’s persistent volume
 The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
-The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.
 
 The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
 An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.

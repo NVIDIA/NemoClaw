@@ -12,6 +12,85 @@ fn unknown_steps_and_platforms_are_rejected_before_any_work() {
     assert!(ci::nextest_target("plan9_amd64").is_err());
 }
 
+#[test]
+fn live_docker_is_an_explicit_step_outside_the_default_run() {
+    assert_eq!(Step::parse("live-docker"), Some(Step::LiveDocker));
+    assert!(!Step::ALL.contains(&Step::LiveDocker));
+}
+
+#[test]
+fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
+    use ci::live::{GatewayInputs, free_subnet, gateway_document, uuid};
+    let first = uuid().unwrap();
+    let second = uuid().unwrap();
+    assert_ne!(first, second);
+    for id in [&first, &second] {
+        let parts: Vec<_> = id.split('-').map(str::len).collect();
+        assert_eq!(parts, [8, 4, 4, 4, 12], "{id}");
+        assert!(
+            id.chars()
+                .all(|c| c == '-' || c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_eq!(&id[14..15], "4", "version 4 UUID: {id}");
+    }
+
+    let used = ["172.30.200.0/24".to_owned(), "172.30.201.0/24".to_owned()];
+    let chosen = free_subnet(&used, &[]).unwrap();
+    assert_eq!(chosen, "172.30.202.0/24");
+    assert_eq!(
+        free_subnet(&used, std::slice::from_ref(&chosen)).unwrap(),
+        "172.30.203.0/24"
+    );
+
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &first,
+        port: 17950,
+        subnet: &chosen,
+        image: "nc-live@sha256:abc",
+        harness: "nvidia.fabric.pi",
+    });
+    let value: serde_json::Value = serde_saphyr::from_str(&document).unwrap();
+    assert_eq!(value["metadata"]["uid"], first.as_str());
+    assert_eq!(value["spec"]["gateway"]["management"], "managed");
+    assert_eq!(
+        value["spec"]["gateway"]["endpoint"],
+        "http://127.0.0.1:17950"
+    );
+    assert_eq!(value["spec"]["gateway"]["networkCIDR"], chosen.as_str());
+    assert_eq!(
+        value["spec"]["sandboxes"][0]["image"]["ref"],
+        "nc-live@sha256:abc"
+    );
+    assert_eq!(
+        value["spec"]["sandboxes"][0]["harness"]["kind"],
+        "nvidia.fabric.pi"
+    );
+    assert!(value["spec"].get("services").is_none());
+}
+
+/// The live-docker gateway tests read this document, so it must be one the
+/// SDK accepts; a field-by-field check missed a stale shape before.
+#[cfg(feature = "sdk")]
+#[test]
+fn gateway_documents_parse_as_current_configuration() {
+    use ci::live::{GatewayInputs, gateway_document, uuid};
+    let uid = uuid().unwrap();
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &uid,
+        port: 17950,
+        subnet: "172.30.202.0/24",
+        image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+        harness: "nvidia.fabric.pi",
+    });
+    let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
+    assert_eq!(
+        parsed.spec.gateway.runtime().provider,
+        nemoclaw_sdk::config::ComputeDriver::Docker
+    );
+}
+
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, bytes) in entries {

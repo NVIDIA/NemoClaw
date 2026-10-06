@@ -52,7 +52,7 @@ pub(crate) fn populate(
     if managed {
         graph["data"]["nemoclaw_engine_capabilities"]["current"] = json!({
             "engine": engine,
-            "compute_driver": document.spec.sandboxes[0].runtime.provider,
+            "compute_driver": document.spec.gateway.runtime().provider,
             "lifecycle": { "postcondition": [{
                 "condition": "${self.status != \"unavailable\"}",
                 "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."

@@ -16,7 +16,7 @@ The isolated preset uses Landlock `best_effort`; unavailable restrictions are no
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
 See [agent tool restrictions](agents.md#agent-tool-restrictions).
 
-Host-specific security qualification, enterprise hardening profiles, and a complete threat model: **TBD**.
+A threat model, host-specific security qualification and hardening profiles are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 
 ### Identify the Trust Boundaries
 
@@ -52,8 +52,7 @@ Removing a caller's environment variable does not revoke an upstream key or eras
 Unchanged apply does not automatically detect changed values behind the same reference.
 Managed private HTTP endpoints with bearer authentication do not provide TLS.
 
-Corporate CA provisioning across client, image, gateway, and native runtimes: **TBD**.
-A complete credential-rotation runbook for every credential type: **TBD**.
+Corporate CA provisioning across the client, images, gateway and native runtimes, and a rotation runbook for every credential type, are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
 Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
@@ -91,7 +90,7 @@ The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI f
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener; keep the local bind on loopback |
 
 Do not reuse gateway mTLS settings as an assumed trust configuration for model downloads, image builds, or native agents.
-Those layers need their own verified corporate-CA procedure, which remains **TBD**.
+Those layers need their own corporate-CA procedure ([#12643](https://github.com/NVIDIA/NemoClaw/issues/12643)).
 
 ## Retained Data and Telemetry
 
@@ -104,20 +103,13 @@ Its full-payload setting is disabled, but trace contents still need privacy revi
 Relay with both explicit `interfaces` and Tavily search omitted selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
 Review this change in native control behavior before enabling the experimental mode.
 
-Production tracing privacy review and retention guidance: **TBD**.
+Privacy review and retention guidance for production tracing are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 
 ## Report a Vulnerability
 
 Use the private channels in [SECURITY.md](../SECURITY.md), including NVIDIA's disclosure program and encrypted PSIRT email.
 Do not include vulnerability details or credentials in a public issue.
 
-## Earlier Runtime Identity
-
-The earlier experimental Okta/Entra runtime-identity profiles and OAuth refresh lifecycle have no equivalent declaration in the v1 schema.
-A v1 runtime-identity procedure remains **TBD** pending an accepted implementation and tenant-scoped qualification.
-Provider authentication references do not implement that older identity workflow.
-
 ## Implementation and Tests
 
 The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-provider/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
-Use [retained validation records](validation/README.md) for their tested environments and limits.

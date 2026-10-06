@@ -11,6 +11,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: docker
     endpoint: https://openshell.example.invalid:8443
     engine: unix:///var/run/docker.sock
     credential: {env: OPENSHELL_OPERATOR_TOKEN}
@@ -24,8 +26,6 @@ spec:
       allowUnsupportedHealth: true
       image:
         ref: example.invalid/fabric-openclaw@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

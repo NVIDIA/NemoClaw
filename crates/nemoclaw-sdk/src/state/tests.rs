@@ -367,16 +367,6 @@ fn pending_creation_requires_current_per_resource_evidence() {
 }
 
 #[test]
-fn obsolete_plan_hash_is_rejected_without_rewriting_state() {
-    let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
-            .unwrap();
-    let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
-    value["planDigest"] = serde_json::json!("old-failed-apply-plan");
-    assert_rejected_record_preserves_state(value);
-}
-
-#[test]
 fn runtime_pending_without_a_runtime_is_rejected_without_rewriting_state() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())

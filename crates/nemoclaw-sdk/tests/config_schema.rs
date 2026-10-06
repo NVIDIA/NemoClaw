@@ -236,13 +236,13 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("podman"),
             true,
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("future"),
             false,
         ),
@@ -425,7 +425,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("podman"),
         ),
     ] {
@@ -499,16 +499,10 @@ fn gateway_variants_reject_fields_owned_by_the_other_mode() {
 }
 
 #[test]
-fn managed_gateway_schema_requires_one_compute_driver_including_defaulted_drivers() {
+fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("managed-podman.yaml");
-    let mut second = value["spec"]["sandboxes"][0].clone();
-    second["name"] = json!("second");
-    second.as_object_mut().unwrap().remove("runtime");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(second);
+    value["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
     agrees(&validator, &value, false);
 }
 

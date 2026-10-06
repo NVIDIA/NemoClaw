@@ -6,7 +6,6 @@ use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -140,12 +139,11 @@ async fn lifecycle(
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
-    fs::write(
+    std::os::unix::fs::symlink(
+        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
         root.join("bin/ssh"),
-        include_bytes!("fixtures/remote_ssh.py"),
     )
     .unwrap();
-    fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().driver = Some("podman".into());
     gateway.state.lock().unwrap().inference_exit = 1;
@@ -169,7 +167,7 @@ async fn lifecycle(
     }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     value["spec"]["services"]["qwen"]["placement"] =
         json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =

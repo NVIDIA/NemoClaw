@@ -36,7 +36,7 @@ fn runtime_targets_with_plans(
     };
     let gateway = Spec {
         layout: 2,
-        compute_driver: document.spec.sandboxes[0].runtime.provider,
+        compute_driver: document.spec.gateway.runtime().provider,
         kind: GATEWAY_KIND.into(),
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -137,7 +137,7 @@ pub(crate) fn compiled_runtime(
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
-        && document.spec.sandboxes[0].runtime.provider == ComputeDriver::Docker
+        && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {
         let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
         readiness["managed_spec"] = json!(

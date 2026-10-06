@@ -213,11 +213,7 @@ impl Service {
             return Ok((placement.engine.clone(), placement.network_cidr.clone()));
         }
         require(
-            document
-                .spec
-                .sandboxes
-                .iter()
-                .all(|sandbox| sandbox.runtime.provider == crate::config::ComputeDriver::Docker),
+            document.spec.gateway.runtime().provider == crate::config::ComputeDriver::Docker,
             "container requires a managed Docker gateway or explicit local Docker placement",
         )?;
         let gateway = document.spec.gateway.managed()?;
@@ -245,14 +241,11 @@ impl Installer for Service {
             .filter(|value| !value.is_empty())
             .ok_or(Error::State("missing container service generation"))?;
         let (engine, network_cidr) = self.location(document)?;
-        let shared_gateway =
-            document.spec.gateway.as_managed().filter(|gateway| {
-                gateway.engine == engine
-                    && gateway.network_cidr == network_cidr
-                    && document.spec.sandboxes.iter().all(|sandbox| {
-                        sandbox.runtime.provider == crate::config::ComputeDriver::Docker
-                    })
-            });
+        let shared_gateway = document.spec.gateway.as_managed().filter(|gateway| {
+            gateway.engine == engine
+                && gateway.network_cidr == network_cidr
+                && gateway.runtime.provider == crate::config::ComputeDriver::Docker
+        });
         let process = Process {
             engine: engine.clone(),
             image: self.image.clone(),

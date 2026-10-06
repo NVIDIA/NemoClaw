@@ -273,6 +273,39 @@ fn container_explicit_placement_does_not_adopt_the_gateway_network() {
 }
 
 #[test]
+fn container_placement_uses_the_gateway_runtime_not_a_sandbox_override() {
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "fixtures/config/container-agent-connection.yaml"
+    ))
+    .unwrap();
+    value["spec"]["gateway"]["management"] = json!("managed");
+    value["spec"]["gateway"]
+        .as_object_mut()
+        .unwrap()
+        .remove("credential");
+    value["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:18888");
+    value["spec"]["gateway"]["networkCIDR"] = json!("172.29.230.0/24");
+    value["spec"]["gateway"]["runtime"] = json!({"provider":"docker"});
+    let placement = value["spec"]["services"]["voice"]
+        .as_object_mut()
+        .unwrap()
+        .remove("placement")
+        .unwrap();
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = compile(&document, &container_generations(), "0.1.0").unwrap();
+    assert!(graph["resource"]["docker_network"].is_null());
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    value["spec"]["services"]["voice"]["placement"] = placement;
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = compile(&document, &container_generations(), "0.1.0").unwrap();
+    assert!(graph["resource"]["docker_network"].is_object());
+    assert!(graph["resource"]["docker_container"]["container_service_voice"].is_object());
+    value["spec"]["sandboxes"][0]["runtime"] = json!({"provider":"docker"});
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
 fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
     for source in [
         include_str!("../../../examples/spark/vllm.yaml"),
@@ -287,7 +320,7 @@ fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
             "endpoint".into(),
             serde_json::json!("https://inference.example/v1"),
         );
-        value["spec"]["sandboxes"][0]["runtime"]["provider"] = serde_json::json!("podman");
+        value["spec"]["gateway"]["runtime"]["provider"] = serde_json::json!("podman");
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }
