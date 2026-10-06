@@ -3,7 +3,7 @@
 
 use super::labels::display_value;
 use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
 

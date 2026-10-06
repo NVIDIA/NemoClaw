@@ -6,7 +6,10 @@ use nemoclaw_discovery::{Direct, observe};
 use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, ObservationError, Secrets,
     config::{ComputeDriver, InferenceApi},
-    discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, ObservationStatus},
+    discovery::{
+        CredentialRequest, DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, FabricRequest,
+        HardwareRequest, ObservationStatus,
+    },
     fabric_capabilities::{FabricRequirements, Support},
     inference_discovery::EndpointRequest,
 };
@@ -26,12 +29,12 @@ async fn arm64_engine_with_an_amd64_image() -> transport::Fixture {
 }
 
 fn image(endpoint: &str, platform: Option<DiscoveryRequest>) -> DiscoveryQuery {
-    DiscoveryQuery::Fabric {
+    DiscoveryQuery::Fabric(FabricRequest {
         engine: endpoint.into(),
         image: "runtime:test".into(),
         requirements: FabricRequirements::default(),
         platform,
-    }
+    })
 }
 
 fn platform_check(observation: Option<&DiscoveryObservation>) -> Option<Support> {
@@ -81,9 +84,9 @@ async fn a_read_that_fails_is_unknown_and_every_distinct_query_is_answered() {
         engine: "unix:///missing-engine.sock".into(),
         compute_driver: ComputeDriver::Docker,
     });
-    let hardware = DiscoveryQuery::Hardware {
+    let hardware = DiscoveryQuery::Hardware(HardwareRequest {
         engine: "unix:///missing-engine.sock".into(),
-    };
+    });
     let observed = observe(
         &[engine.clone(), hardware.clone(), engine.clone()],
         &Direct,
@@ -110,9 +113,9 @@ async fn cancellation_abandons_the_reads() {
     let cancel = CancellationToken::new();
     cancel.cancel();
     let result = observe(
-        &[DiscoveryQuery::Hardware {
+        &[DiscoveryQuery::Hardware(HardwareRequest {
             engine: fixture.endpoint.clone(),
-        }],
+        })],
         &Direct,
         &EnvironmentSecrets,
         &cancel,
@@ -146,12 +149,12 @@ async fn inference_and_credential_queries_are_each_answered_under_their_own_quer
         api: InferenceApi::OpenaiResponses,
         credential_env: Some("API_KEY".into()),
     });
-    let resolvable = DiscoveryQuery::Credential {
+    let resolvable = DiscoveryQuery::Credential(CredentialRequest {
         reference: "API_KEY".into(),
-    };
-    let unresolvable = DiscoveryQuery::Credential {
+    });
+    let unresolvable = DiscoveryQuery::Credential(CredentialRequest {
         reference: "OTHER_KEY".into(),
-    };
+    });
     let observed = observe(
         &[inference.clone(), resolvable.clone(), unresolvable.clone()],
         &Direct,

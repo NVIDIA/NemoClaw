@@ -4,7 +4,7 @@
 //! Discovery reads have no dependency on resource creation or image acquisition.
 use crate::{
     config::{ConfigError, Document},
-    discovery::{DiscoveryQuery, plan_queries},
+    discovery::{DiscoveryQuery, FabricRequest, plan_queries},
 };
 use serde_json::{Map, Value, json};
 
@@ -16,15 +16,16 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
             "engine_capabilities",
             json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
         ),
-        DiscoveryQuery::Hardware { engine } => {
-            ("target_hardware", json!({"engine":literal(engine)}))
-        }
-        DiscoveryQuery::Fabric {
+        DiscoveryQuery::Hardware(request) => (
+            "target_hardware",
+            json!({"engine":literal(&request.engine)}),
+        ),
+        DiscoveryQuery::Fabric(FabricRequest {
             engine,
             image,
             requirements,
             platform,
-        } => {
+        }) => {
             let mut inputs = json!({
                 "engine": literal(engine),
                 "image": literal(image),
@@ -50,7 +51,7 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
                 json!({"endpoint":literal(&request.endpoint),"api":request.api,"credential_env":request.credential_env}),
             )
         }
-        DiscoveryQuery::Gateway { .. } | DiscoveryQuery::Credential { .. } => {
+        DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => {
             unreachable!("a plan reads the gateway and credentials outside its discovery reads")
         }
     })
@@ -89,7 +90,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
     let (mut endpoints, mut targets, mut images) = (0, 0, 0);
     for query in plan_queries(document)? {
         match &query {
-            DiscoveryQuery::Gateway { .. } => {
+            DiscoveryQuery::Gateway(_) => {
                 // Reuse the existing strict gateway read rather than probing it twice.
                 observations.insert(
                     "gateway".into(),
@@ -101,7 +102,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 read(graph, &mut observations, &query, &name, &name, |_| {})?;
                 endpoints += 1;
             }
-            DiscoveryQuery::Hardware { .. } => {
+            DiscoveryQuery::Hardware(_) => {
                 let name = format!("target_{targets}");
                 read(graph, &mut observations, &query, &name, &name, |_| {})?;
                 targets += 1;
@@ -121,7 +122,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     },
                 )?;
             }
-            DiscoveryQuery::Fabric { requirements, .. } => {
+            DiscoveryQuery::Fabric(FabricRequest { requirements, .. }) => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
                 let name = format!("sandbox_{images}");
                 images += 1;
@@ -147,7 +148,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     }] });
                 })?;
             }
-            DiscoveryQuery::Credential { .. } => {
+            DiscoveryQuery::Credential(_) => {
                 unreachable!("a plan reads credentials separately from its provider reads")
             }
         }

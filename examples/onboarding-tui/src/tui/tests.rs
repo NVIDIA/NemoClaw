@@ -12,7 +12,7 @@ use nemoclaw_authoring::{
     Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
     discovery_queries, inference_request_for_document,
 };
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
@@ -770,5 +770,5 @@ async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once(
         None,
         "the catalog is read once"
     );
-    assert!(wizard.observations.inference(&request).is_some());
+    assert!(wizard.observations.get(&request).is_some());
 }

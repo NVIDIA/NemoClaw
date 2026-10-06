@@ -7,7 +7,8 @@ use nemoclaw_authoring::{
     Capabilities, JourneyQuestionKind, JourneyState, discovery_queries,
     inference_request_for_document,
 };
-use nemoclaw_discovery::{Direct, DiscoveryObservations};
+use nemoclaw_discovery::Direct;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
