@@ -72,6 +72,31 @@ function selectSharedGatewayStateResolver(source: string): string {
   return prospective;
 }
 
+function selectThreadGroupExecutableRuntime(source: string): string {
+  const sharedImport = 'import { readGatewayProcEntry } from "./gateway/process-proc-entry";';
+  const withImport = source.includes(sharedImport)
+    ? source
+    : source.replace(
+        "import { HOST_GATEWAY_PGREP_PATTERN }",
+        `${sharedImport}\nimport { HOST_GATEWAY_PGREP_PATTERN }`,
+      );
+  const leaderReader = `  function readProcessExe(pid: number): string | null {
+    try {
+      const procExePath = \`/proc/\${pid}/exe\`;
+      if (!fs.existsSync(procExePath)) return null;
+      return fs.readlinkSync(procExePath);
+    } catch {
+      return null;
+    }
+  }`;
+  const threadReader = `  function readProcessExe(pid: number): string | null {
+    return readGatewayProcEntry(pid, "exe");
+  }`;
+  const prospective = withImport.replace(leaderReader, threadReader);
+  assert(prospective.includes(threadReader), "prospective thread-group executable reader");
+  return prospective;
+}
+
 type RunOptions = {
   candidateParserBypass?: boolean;
   supervisorSymlink?: boolean;
@@ -176,6 +201,35 @@ describe("OpenShell supervisor manifest trust", () => {
     const result = runParser({ transformSupervisor: () => prospective });
 
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("accepts the prospective same-thread-group executable runtime (#12614)", () => {
+    const result = runParser({ transformSupervisor: selectThreadGroupExecutableRuntime });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects a repository mutation of the thread-group executable runtime", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectThreadGroupExecutableRuntime(source).replace(
+          "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+          "registry.invalid/openshell/supervisor@${manifestDigest}",
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
+  });
+
+  it("rejects a replacement image digest in the thread-group executable runtime", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectThreadGroupExecutableRuntime(source).replace(
+          V00116_SUPERVISOR_MANIFEST_DIGEST,
+          REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST,
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted identities");
   });
 
   it("rejects an operational mutation of the base-trusted prospective supervisor fixture", () => {

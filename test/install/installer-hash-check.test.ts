@@ -45,6 +45,16 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+// Exact #12376 npm replacement, derived from the canonical bootstrap template.
+const DCODE_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
+  '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
+  `  # Replace npm's private dependency tree: overlaying a newer archive can leave
+  # incompatible packages from the previous npm installation in node_modules.
+  sudo rm -rf /usr/local/lib/node_modules/npm
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
+);
+const DCODE_NPM_REPLACEMENT_DIGEST =
+  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
@@ -913,7 +923,65 @@ function expectTrustedRelease(
   expect(result.stdout).toContain("All installer hashes are current");
 }
 
+function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
+  const root = createFixture();
+  const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
+  const parserSource = fs.readFileSync(parser, "utf8");
+  fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
+  fs.writeFileSync(brev, source);
+  return spawnSync(
+    process.execPath,
+    [
+      parser,
+      "--blueprint",
+      path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer",
+      path.join(root, "scripts/install-openshell.sh"),
+      "--brev-installer",
+      brev,
+      "--supervisor-runtime",
+      path.join(root, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+    ],
+    { encoding: "utf8" },
+  );
+}
+
 describe("installer hash verification", () => {
+  describe("DCode bootstrap prerequisite", () => {
+    it("admits the reviewed npm replacement only after its trust prerequisite", () => {
+      const before = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+        "0".repeat(64),
+      );
+      expect(before.status, before.stderr).toBe(1);
+      expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
+      const after = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+      );
+      expect(after.status, after.stderr).toBe(0);
+      expect(after.stdout).toContain(
+        `"operationalTemplateSha256":"${DCODE_NPM_REPLACEMENT_DIGEST}"`,
+      );
+    });
+
+    it.each([
+      [
+        "broader package deletion",
+        "/usr/local/lib/node_modules/npm",
+        "/usr/local/lib/node_modules",
+      ],
+      ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
+    ])("rejects %s in the reviewed npm replacement", (_name, original, replacement) => {
+      const mutated = DCODE_NPM_REPLACEMENT_TEMPLATE.replace(original, replacement);
+      const result = parseNpmReplacement(mutated, DCODE_NPM_REPLACEMENT_DIGEST);
+      expect(result.status, `${_name} mutation must be rejected: ${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    });
+  });
+
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
