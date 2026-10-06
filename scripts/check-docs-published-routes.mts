@@ -370,7 +370,7 @@ export function resolvePublishedRoute(fromRoute: string, target: string): string
 
 export type MarkdownLink = { text: string; target: string; line: number };
 
-/** Extract markdown links, skipping fenced code blocks and inline code spans. */
+/** Extract Markdown links and static MDX hrefs, excluding code examples. */
 export function extractMarkdownLinks(body: string): MarkdownLink[] {
   const links: MarkdownLink[] = [];
   const lines = body.split(/\r?\n/);
@@ -402,6 +402,10 @@ export function extractMarkdownLinks(body: string): MarkdownLink[] {
     let match: RegExpExecArray | null;
     while ((match = linkRe.exec(scan)) !== null) {
       links.push({ text: match[1], target: match[2], line: i + 1 });
+    }
+    const hrefRe = /\bhref\s*=\s*\{?\s*(["'])([^"']+)\1\s*\}?/g;
+    while ((match = hrefRe.exec(scan)) !== null) {
+      links.push({ text: "MDX href", target: match[2], line: i + 1 });
     }
   });
   return links;

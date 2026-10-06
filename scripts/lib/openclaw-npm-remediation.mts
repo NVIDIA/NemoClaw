@@ -18,9 +18,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
+import { rejectUnsafePackageTree, requireRealDirectory } from "./bundled-npm-package.mts";
 
 type JsonObject = Record<string, any>;
 
@@ -1678,6 +1679,43 @@ export function remediateReviewedOpenClawPluginArchive(
     expectedPatchedMetadataIntegrity: remediation.expectedPatchedMetadataIntegrity,
     expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
+}
+
+export function remediateInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & Readonly<{ packageDirectory?: string }>,
+): void {
+  if (REMEDIATIONS[request.packageSpec]?.kind !== "proxy-addr") return;
+  if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
+    throw new Error("Official plugin remediation requires its verified install path");
+  }
+  let installedDependency = requireRealDirectory(
+    request.packageDirectory,
+    "Official plugin install directory",
+  );
+  for (const component of ["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]) {
+    installedDependency = requireRealDirectory(
+      join(installedDependency, component),
+      "Official plugin dependency directory",
+    );
+  }
+  rejectUnsafePackageTree(installedDependency, "Official plugin dependency directory");
+  const remediated = remediateReviewedOpenClawPluginArchive(request);
+  const env = { ...process.env, ...request.env };
+  const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
+  try {
+    const patched = extractArchive(
+      remediated.archivePath,
+      directory,
+      request.workingDirectory,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(
+      request.packageDirectory,
+      join(patched, "node_modules", "@slack", "bolt", "node_modules", "proxy-addr"),
+    );
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 }
 
 function isMainModule(): boolean {
