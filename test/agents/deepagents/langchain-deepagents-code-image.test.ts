@@ -454,6 +454,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "nemoclaw_read_only_mcp.py",
         "patch-managed-deepagents-code.py",
         "patch-managed-quickjs.py",
+        "validate-quickjs-runtime.py",
         "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
@@ -474,7 +475,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
         "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
-        'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+        "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-quickjs-runtime.py",
         "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
@@ -484,7 +485,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
     );
     const quickjsProbeIndex = dockerfile.indexOf(
-      'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+      "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-quickjs-runtime.py",
     );
     const quickjsCleanupIndex = dockerfile.indexOf(
       "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
@@ -814,11 +815,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_PROBE:other",
       "unable to probe sandbox",
       "unexpected sandbox probe output",
-      "libc.memfd_create",
-      "errno.EPERM",
-      "from quickjs_rs import Runtime",
-      'context.eval("20 + 22") == 42',
-      "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK",
+      "validate-quickjs-runtime.py --require-memfd-denied",
+      "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK",
       "SANDBOX_EXEC_TIMEOUT_SECONDS=45",
       "SANDBOX_EXEC_KILL_AFTER_SECONDS=5",
       "--signal=TERM",
