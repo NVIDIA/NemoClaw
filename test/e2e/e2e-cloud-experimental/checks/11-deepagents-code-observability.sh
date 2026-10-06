@@ -24,7 +24,7 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
-OBSERVABILITY_THREADS=()
+OBSERVABILITY_PROMPTS=()
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -90,11 +90,14 @@ cleanup() {
     exit_status=1
   fi
   # These conversations include the synthetic redaction credential. Remove
-  # only the IDs returned by our own turns before a later rebuild scans state.
-  local thread deletion_output
-  for thread in ${OBSERVABILITY_THREADS[@]+"${OBSERVABILITY_THREADS[@]}"}; do
-    if ! deletion_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-      dcode threads delete "$thread" --json)" \
+  # only conversations with our unique exact prompts, even if turn JSON failed.
+  local prompt thread deletion_output
+  for prompt in ${OBSERVABILITY_PROMPTS[@]+"${OBSERVABILITY_PROMPTS[@]}"}; do
+    if ! thread="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads list --verbose --limit 20 --json \
+      | "$TSX" "$CONTRACT_HELPER" thread-for-prompt "$prompt")" \
+      || ! deletion_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+        dcode threads delete "$thread" --json)" \
       || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread"; then
       printf '%s: could not remove an observability test conversation\n' "$PREFIX" >&2
       exit_status=1
@@ -294,14 +297,12 @@ run_dcode_direct() {
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
     dcode --json -n \
-    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
+    "$DIRECT_TURN_PROMPT"
 }
 
 run_dcode_login() {
-  local prompt
-  prompt="Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -lc \
-    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode --json -n ${prompt@Q}"
+    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode --json -n ${LOGIN_TURN_PROMPT@Q}"
 }
 
 tool_trace_source() {
@@ -398,18 +399,18 @@ marker_output="$(observability_marker_value)" \
 [ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
 pass "host observability policy is restored before positive trace checks"
 
+# Register unique ownership before executing either turn, not after parsing it.
+run_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+DIRECT_TURN_PROMPT="[${run_id}:direct] My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
+LOGIN_TURN_PROMPT="[${run_id}:login] Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
+OBSERVABILITY_PROMPTS+=("$DIRECT_TURN_PROMPT")
 direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
-direct_thread="$(printf '%s\n' "$direct_output" | "$TSX" "$CONTRACT_HELPER" thread-id)" \
-  || fail "direct-exec dcode omitted its conversation identity"
-OBSERVABILITY_THREADS+=("$direct_thread")
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"
 
+OBSERVABILITY_PROMPTS+=("$LOGIN_TURN_PROMPT")
 login_output="$(run_dcode_login)" || fail "login-shell dcode observability turn failed: $login_output"
-login_thread="$(printf '%s\n' "$login_output" | "$TSX" "$CONTRACT_HELPER" thread-id)" \
-  || fail "login-shell dcode omitted its conversation identity"
-OBSERVABILITY_THREADS+=("$login_thread")
 printf '%s\n' "$login_output" | grep -Fq "$LOGIN_RESPONSE" \
   || fail "login-shell dcode response omitted its requested marker"
 pass "login-shell dcode completed with observability enabled"

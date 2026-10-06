@@ -12,7 +12,7 @@ import {
   assertObservabilityThreadDeleted,
   hasConfirmedOpenShellPolicyDenial,
   observabilityPresetState,
-  observabilityThreadId,
+  observabilityThreadForPrompt,
   validateCaptureDirectory,
 } from "../live/deepagents-observability-contract.ts";
 import {
@@ -46,14 +46,7 @@ const REDACTION_MARKER = "<redacted-secret>";
 
 describe("observability conversation cleanup", () => {
   const threadId = "01a10459-84ba-7651-9938-7386f41cdbfe";
-  const completed = {
-    schema_version: 1,
-    command: "non-interactive",
-    data: { status: "success", exit_code: 0, completion: { thread_id: threadId } },
-  };
-
-  it("selects the completed turn and requires native confirmation for that exact ID", () => {
-    expect(observabilityThreadId(JSON.stringify(completed))).toBe(threadId);
+  it("requires native deletion confirmation for the exact owned conversation", () => {
     const deletion = {
       schema_version: 1,
       command: "threads delete",
@@ -73,15 +66,112 @@ describe("observability conversation cleanup", () => {
     ).toThrow();
   });
 
-  it.each([
-    { ...completed, schema_version: 2 },
-    { ...completed, command: "threads list" },
-    { ...completed, data: { ...completed.data, status: "error", exit_code: 1 } },
-    { ...completed, data: { ...completed.data, completion: { thread_id: "--all" } } },
-    { ...completed, data: { ...completed.data, completion: {} } },
-  ])("rejects evidence that cannot identify the test-owned conversation", (evidence) => {
-    expect(() => observabilityThreadId(JSON.stringify(evidence))).toThrow();
+  const prompt = "[random-test-identity:direct] private test prompt";
+  const owned = { thread_id: threadId, initial_prompt: prompt };
+  const unrelated = { thread_id: "unrelated", initial_prompt: `${prompt} other` };
+  const listing = { schema_version: 1, command: "threads list", data: [unrelated, owned] };
+
+  it("recovers only one exact owned prompt", () => {
+    expect(observabilityThreadForPrompt(JSON.stringify(listing), prompt)).toBe(threadId);
   });
+
+  it.each([
+    { ...listing, schema_version: 2 },
+    { ...listing, command: "non-interactive" },
+    { ...listing, data: {} },
+    { ...listing, data: [unrelated] },
+    { ...listing, data: [owned, owned] },
+    { ...listing, data: [{ ...owned, thread_id: "--all" }] },
+    { ...listing, data: [null] },
+  ])("rejects ambiguous or malformed native listings", (invalid) => {
+    expect(() => observabilityThreadForPrompt(JSON.stringify(invalid), prompt)).toThrow();
+  });
+
+  it.each(["direct", "login", "command-failure"])(
+    "cleans up only its own conversations after %s turn evidence fails",
+    (failure) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-cleanup-"));
+      const benign = {
+        thread_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        initial_prompt: "unrelated",
+      };
+      try {
+        const statePath = path.join(root, "threads.json");
+        fs.writeFileSync(statePath, JSON.stringify([benign]));
+        const stub = `#!${process.execPath}
+const fs = require("node:fs"), cp = require("node:child_process");
+let args = process.argv.slice(2);
+if (args[0] === "sandbox") args = args.slice(args.indexOf("--") + 1);
+if (args[0] === "bash") {
+  const r = cp.spawnSync("bash", ["--noprofile", "--norc", "-c", args.at(-1)], { env: process.env, stdio: "inherit" });
+  process.exit(r.status ?? 1);
+}
+if (args[0] === "env") args = args.slice(args.indexOf("dcode"));
+if (args[0] === "dcode") args.shift();
+let threads = JSON.parse(fs.readFileSync(process.env.THREADS_FILE, "utf8"));
+const emit = (command, data) => console.log(JSON.stringify({ schema_version: 1, command, data }));
+if (args[0] === "threads" && args[1] === "list") emit("threads list", threads);
+else if (args[0] === "threads" && args[1] === "delete") {
+  const found = threads.some(t => t.thread_id === args[2]);
+  threads = threads.filter(t => t.thread_id !== args[2]);
+  fs.writeFileSync(process.env.THREADS_FILE, JSON.stringify(threads));
+  fs.appendFileSync(process.env.DELETED_FILE, args[2] + "\\n");
+  emit("threads delete", { thread_id: args[2], deleted: found });
+} else if (args.includes("-n")) {
+  const prompt = args[args.indexOf("-n") + 1], direct = prompt.includes("DIRECT_RESPONSE");
+  const thread_id = direct ? "11111111-1111-1111-1111-111111111111" : "22222222-2222-2222-2222-222222222222";
+  threads.push({ thread_id, initial_prompt: prompt });
+  fs.writeFileSync(process.env.THREADS_FILE, JSON.stringify(threads));
+  if (process.env.FAILURE === "command-failure") process.exit(1);
+  if (process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
+  else emit("non-interactive", { status: "success", exit_code: 0, completion: { thread_id }, response: direct ? "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL" : "NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL" });
+} else process.exit(9);
+`;
+        fs.writeFileSync(path.join(root, "openshell"), stub, { mode: 0o755 });
+        fs.writeFileSync(path.join(root, "dcode"), stub, { mode: 0o755 });
+        const script = fs.readFileSync(
+          path.join(
+            process.cwd(),
+            "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+          ),
+          "utf8",
+        );
+        // Execute the actual ownership, turn and EXIT-cleanup paths with only
+        // the unrelated network/policy setup omitted from this shell fixture.
+        const ready = 'pass "host observability policy is restored before positive trace checks"';
+        const driver =
+          script.slice(0, script.indexOf('[ -n "$SANDBOX_NAME" ]')) +
+          script.slice(
+            script.indexOf("run_dcode_direct()"),
+            script.indexOf("tool_trace_source()"),
+          ) +
+          script.slice(
+            script.indexOf(ready) + ready.length,
+            script.indexOf('tool_trace_output="$(run_deterministic_tool_trace)"'),
+          );
+        const result = spawnSync("bash", ["-c", driver], {
+          encoding: "utf8",
+          env: {
+            PATH: `${root}:${process.env.PATH}`,
+            REPO: process.cwd(),
+            SANDBOX_NAME: "owned-test-sandbox",
+            THREADS_FILE: statePath,
+            DELETED_FILE: path.join(root, "deleted"),
+            FAILURE: failure,
+          },
+        });
+        expect(result.status, result.stdout + result.stderr).toBe(1);
+        expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toEqual([benign]);
+        expect(fs.readFileSync(path.join(root, "deleted"), "utf8").trim().split("\n")).toEqual(
+          failure === "login"
+            ? ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+            : ["11111111-1111-1111-1111-111111111111"],
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 function validSpans(): TestSpan[] {
@@ -120,7 +210,7 @@ function validSpans(): TestSpan[] {
 
 const expectations = {
   ambientCanary: AMBIENT_CANARY,
-  redaction: { marker: REDACTION_MARKER, rawCredential: RAW_CREDENTIAL },
+  redaction: { rawCredential: RAW_CREDENTIAL },
   serviceName: SERVICE_NAME,
   llmExchanges: [
     {
@@ -211,7 +301,7 @@ describe("Deep Agents OTLP trace contract", () => {
     });
     expect(() =>
       assertDeepAgentsTraceContract([traceRequest(missingMarker)], expectations),
-    ).toThrow(/credential-shaped OTLP content lacks the redaction marker/);
+    ).toThrow(/direct prompt and response markers were not associated/);
   });
 
   it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {

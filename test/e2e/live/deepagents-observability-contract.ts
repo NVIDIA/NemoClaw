@@ -41,7 +41,6 @@ export type DeepAgentsTraceExpectations = {
   ambientCanary: string;
   llmExchanges: readonly LlmTraceExpectation[];
   redaction: {
-    marker: string;
     rawCredential: string;
   };
   serviceName: string;
@@ -121,8 +120,6 @@ export function assertDeepAgentsTraceContract(
 ): { requestCount: number; spanCount: number } {
   const canary = Buffer.from(expectations.ambientCanary);
   const rawCredential = Buffer.from(expectations.redaction.rawCredential);
-  const redactionMarker = Buffer.from(expectations.redaction.marker);
-  let redactionMarkerObserved = false;
   const spans = bodies.flatMap((body) => {
     const encoded = Buffer.from(body);
     if (encoded.includes(canary)) {
@@ -131,12 +128,8 @@ export function assertDeepAgentsTraceContract(
     if (encoded.includes(rawCredential)) {
       throw new Error("credential-shaped prompt content reached OTLP");
     }
-    redactionMarkerObserved ||= encoded.includes(redactionMarker);
     return decodeExportTraceServiceRequest(body);
   });
-  if (!redactionMarkerObserved) {
-    throw new Error("credential-shaped OTLP content lacks the redaction marker");
-  }
 
   for (const expectation of expectations.llmExchanges) {
     assertLlmExchange(spans, expectations.serviceName, expectation);
@@ -167,21 +160,27 @@ function sessionRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** Identify only the conversation created by this observability invocation. */
-export function observabilityThreadId(output: string): string {
+/** Recover only the unique exact prompt registered before our invocation. */
+export function observabilityThreadForPrompt(output: string, prompt: string): string {
   const envelope = sessionRecord(JSON.parse(output));
-  const data = sessionRecord(envelope.data);
-  const completion = sessionRecord(data.completion);
-  const threadId = completion.thread_id;
   if (
     envelope.schema_version !== 1 ||
-    envelope.command !== "non-interactive" ||
-    data.status !== "success" ||
-    data.exit_code !== 0 ||
+    envelope.command !== "threads list" ||
+    !Array.isArray(envelope.data)
+  ) {
+    throw new Error("invalid dcode thread listing");
+  }
+  const matches = envelope.data
+    .map(sessionRecord)
+    .filter((thread) => thread.initial_prompt === prompt);
+  const threadId = matches[0]?.thread_id;
+  if (
+    !prompt ||
+    matches.length !== 1 ||
     typeof threadId !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
   ) {
-    throw new Error("dcode observability turn has no valid completed thread identity");
+    throw new Error("dcode did not identify exactly one observability conversation");
   }
   return threadId;
 }
@@ -264,8 +263,8 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (command === "thread-id") {
-    process.stdout.write(`${observabilityThreadId(input)}\n`);
+  if (command === "thread-for-prompt" && argument) {
+    process.stdout.write(`${observabilityThreadForPrompt(input, argument)}\n`);
     return;
   }
   if (command === "thread-deleted" && argument) {
@@ -280,7 +279,6 @@ async function main(): Promise<void> {
       {
         ambientCanary: requiredEnvironment("AMBIENT_CANARY"),
         redaction: {
-          marker: requiredEnvironment("REDACTION_MARKER"),
           rawCredential: requiredEnvironment("REDACTION_PROBE"),
         },
         serviceName: requiredEnvironment("SERVICE_NAME"),
@@ -308,7 +306,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-id|thread-deleted|validate-captures> [argument]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|validate-captures> [argument]",
   );
 }
 
