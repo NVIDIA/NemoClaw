@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 import { REASONING_EFFORT_ENV } from "../onboard/reasoning-mode";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, OPENAI_ENDPOINTLESS_PROFILE } from "./inference-set.test-support";
+import { baseSession, createDeps } from "./inference-set.test-support";
 
 function compatibleEndpointConfig(modelOverrides: ConfigObject = {}): ConfigObject {
   return {
@@ -313,34 +314,11 @@ describe("inference set reasoning effort (#7659)", () => {
   );
 
   it("clears the registry effort when switching to an unsupported API", async () => {
-    let providerVersion = 1;
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:get": {
-          const output = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            `Resource version: ${providerVersion}`,
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
-        }
-        case "provider:update":
-          providerVersion += 1;
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        case "provider:profile":
-          return {
-            status: 0,
-            output: OPENAI_ENDPOINTLESS_PROFILE,
-            stdout: OPENAI_ENDPOINTLESS_PROFILE,
-            stderr: "",
-          };
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
-    });
+    const native = await nativeCompatibleFixture(
+      "https://compatible.example.test/v1",
+      "openai-responses",
+      false,
+    );
     const deps = createDeps({
       config: compatibleEndpointConfig(),
       entry: {
@@ -361,7 +339,9 @@ describe("inference set reasoning effort (#7659)", () => {
         preferredInferenceApi: "openai-completions",
         compatibleEndpointReasoningEffort: "low",
       }),
-      captureOpenshell,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
+      resolveCredentialValue: () => "opaque-test-credential",
     });
 
     await runInferenceSet(

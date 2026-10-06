@@ -49,6 +49,21 @@ describe("trusted private endpoint hosts", () => {
     expect(() => normalizeTrustedPrivateHost(raw)).toThrow(/trusted private host/);
   });
 
+  it.each([
+    "[sensitive-host",
+    "[sensitive-host]",
+    "https://user:sensitive-token@host.example",
+    "sensitive-host..",
+    "sensitive-host:443",
+    "999.1.1.1",
+    "sensitive-host".repeat(30),
+    "sensitive-host!",
+  ])("does not echo invalid allowlist input in errors (%#)", (raw) => {
+    expect(() => normalizeTrustedPrivateHost(raw)).toThrow(/trusted private host/);
+    expect(() => normalizeTrustedPrivateHost(raw)).not.toThrow(raw);
+    expect(() => parseTrustedPrivateHosts(`valid.example,${raw}`)).not.toThrow(raw);
+  });
+
   it("parses and deduplicates exact hosts from the generic source (#8176)", () => {
     expect(parseTrustedPrivateHosts(" MCP.CORP.EXAMPLE.,10.0.0.8,mcp.corp.example ")).toEqual([
       "mcp.corp.example",

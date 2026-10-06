@@ -143,11 +143,11 @@ export function normalizeTrustedPrivateHost(raw: string): string {
 
   if (value.startsWith("[") || value.endsWith("]")) {
     if (!(value.startsWith("[") && value.endsWith("]"))) {
-      throw new Error(`trusted private host "${value}" is malformed`);
+      throw new Error("trusted private host is malformed");
     }
     const address = value.slice(1, -1).toLowerCase();
     if (isIP(address) !== 6) {
-      throw new Error(`trusted private host "${value}" is not an IPv6 literal`);
+      throw new Error("trusted private host is not an IPv6 literal");
     }
     return normalizeIpLiteral(address);
   }
@@ -158,22 +158,22 @@ export function normalizeTrustedPrivateHost(raw: string): string {
     value.startsWith(".") ||
     value.includes("%")
   ) {
-    throw new Error(`trusted private host "${value}" must be an exact hostname or IP literal`);
+    throw new Error("trusted private host must be an exact hostname or IP literal");
   }
 
   const normalized = value.replace(/\.$/, "").toLowerCase();
   if (!normalized || normalized.endsWith(".")) {
-    throw new Error(`trusted private host "${value}" is malformed`);
+    throw new Error("trusted private host is malformed");
   }
   if (isIP(normalized) !== 0) return normalizeIpLiteral(normalized);
   if (normalized.includes(":")) {
-    throw new Error(`trusted private host "${value}" must not include a port`);
+    throw new Error("trusted private host must not include a port");
   }
   if (/^\d+(?:\.\d+){3}$/.test(normalized)) {
-    throw new Error(`trusted private host "${value}" is not a valid IP literal`);
+    throw new Error("trusted private host is not a valid IP literal");
   }
   if (normalized.length > 253) {
-    throw new Error(`trusted private host "${value}" is too long`);
+    throw new Error("trusted private host is too long");
   }
 
   const labels = normalized.split(".");
@@ -183,7 +183,7 @@ export function normalizeTrustedPrivateHost(raw: string): string {
         label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
     )
   ) {
-    throw new Error(`trusted private host "${value}" is malformed`);
+    throw new Error("trusted private host is malformed");
   }
   return normalized;
 }
