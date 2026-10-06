@@ -545,6 +545,11 @@ export async function teardownSandboxDashboardForward(
       console.error(
         `  ForwardTcp cleanup did not release registered host port(s): ${unreleasedPorts.join(", ")}.`,
       );
+      console.error(
+        release.state === "bound"
+          ? "  ForwardTcp release verification: bound."
+          : `  ForwardTcp release verification: indeterminate (${release.error.kind}).`,
+      );
       return false;
     }
     return true;

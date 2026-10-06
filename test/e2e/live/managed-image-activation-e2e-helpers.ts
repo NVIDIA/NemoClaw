@@ -280,7 +280,11 @@ exec ${command.map((argument) => shellQuote(argument)).join(" ")}
 interface ExternalImageRegistryDocument {
   sandboxes?: Record<
     string,
-    { toolDisclosure?: "progressive" | "direct"; workload?: Record<string, unknown> }
+    {
+      dashboardPort?: number;
+      toolDisclosure?: "progressive" | "direct";
+      workload?: Record<string, unknown>;
+    }
   >;
 }
 
@@ -1088,6 +1092,13 @@ async function qualifyExternalImage(
     redactionValues: [API_KEY],
     timeoutMs: 15 * 60_000,
   });
+  await captureExternalImageDestroyForwardDiagnostic(
+    host,
+    agent,
+    destroy.exitCode,
+    registryEntry?.dashboardPort,
+    env,
+  );
   await verifyExactCleanup(host, sandbox, sandboxName, env);
   const afterInspection = await inspectDockerImageId(
     host,
@@ -1122,6 +1133,33 @@ async function qualifyExternalImage(
     rebuilt,
     verified: verified && rebuilt && (agent !== "openclaw" || identityDriftRejected),
   };
+}
+
+export async function captureExternalImageDestroyForwardDiagnostic(
+  host: Pick<HostCliClient, "command">,
+  agent: ExternalImageAgent,
+  destroyExitCode: number | null,
+  dashboardPort: number | undefined,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  if (
+    destroyExitCode !== 0 &&
+    typeof dashboardPort === "number" &&
+    Number.isInteger(dashboardPort) &&
+    dashboardPort >= 1 &&
+    dashboardPort <= 65535
+  ) {
+    // Capture only the recorded socket and owner PID/name, never process arguments.
+    // Diagnostics must not replace the failed destroy result or mutate its recovery state.
+    await Promise.allSettled([
+      host.command("ss", ["-H", "-ltnp", `sport = :${dashboardPort}`], {
+        artifactName: `external-image-${agent}-destroy-forward-listener`,
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 5_000,
+      }),
+    ]);
+  }
 }
 
 export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): Promise<void> {

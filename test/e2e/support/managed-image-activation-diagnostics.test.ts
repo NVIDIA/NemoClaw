@@ -15,6 +15,7 @@ import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  captureExternalImageDestroyForwardDiagnostic,
   collectOnboardFailureDockerDiagnostics,
   externalImageActivationAgents,
   externalImageActivationMatches,
@@ -886,5 +887,34 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       }),
     ).rejects.toThrow("list OpenShell sandboxes after managed activation destroy failed");
     expect(list).toHaveBeenCalledOnce();
+  });
+});
+
+describe("external-image destroy forward diagnostics", () => {
+  it("preserves a failed destroy when listener diagnostics cannot run", async () => {
+    const command = vi.fn().mockRejectedValue(new Error("ss unavailable"));
+    await expect(
+      captureExternalImageDestroyForwardDiagnostic({ command }, "openclaw", 1, 18791, {}),
+    ).resolves.toBeUndefined();
+    expect(command).toHaveBeenCalledWith(
+      "ss",
+      ["-H", "-ltnp", "sport = :18791"],
+      expect.objectContaining({ timeoutMs: 5_000, redactionValues: expect.any(Array) }),
+    );
+  });
+
+  it.each([undefined, 0, -1, 65536, 1.5])(
+    "does not inspect an invalid recorded port %s",
+    async (port) => {
+      const command = vi.fn();
+      await captureExternalImageDestroyForwardDiagnostic({ command }, "openclaw", 1, port, {});
+      expect(command).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not inspect listeners after successful destroy", async () => {
+    const command = vi.fn();
+    await captureExternalImageDestroyForwardDiagnostic({ command }, "openclaw", 0, 18791, {});
+    expect(command).not.toHaveBeenCalled();
   });
 });

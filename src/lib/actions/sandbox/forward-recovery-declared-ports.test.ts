@@ -400,6 +400,35 @@ describe("declared and cleanup forward sets", () => {
     });
   });
 
+  it.each(["bound", "timeout", "authority", "transport", "validation"] as const)(
+    "classifies unreleased dashboard ports without exposing raw errors: %s",
+    async (classification) => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      mocks.verifyForwardRelease.mockImplementationOnce(
+        async (request: VerifyOpenShellForwardReleaseRequest) =>
+          classification === "bound"
+            ? { state: "bound", forwards: request.forwards }
+            : {
+                state: "indeterminate",
+                forwards: request.forwards,
+                error: { kind: classification, message: "private-error-canary" },
+              },
+      );
+      const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+      await expect(teardownSandboxDashboardForward("box")).resolves.toBe(false);
+      expect(consoleError.mock.calls).toEqual([
+        ["  ForwardTcp cleanup did not release registered host port(s): 18789, 8642."],
+        [
+          classification === "bound"
+            ? "  ForwardTcp release verification: bound."
+            : `  ForwardTcp release verification: indeterminate (${classification}).`,
+        ],
+      ]);
+      expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].timeoutMs).toBe(5_000);
+    },
+  );
+
   it.each([
     ["owned", true],
     ["foreign", false],
