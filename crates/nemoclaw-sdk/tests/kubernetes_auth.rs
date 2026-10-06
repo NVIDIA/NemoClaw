@@ -281,6 +281,7 @@ async fn the_issuer_image_serves_both_documents_over_https() {
     assert_eq!(missing.status(), 404);
 }
 
+#[cfg(unix)]
 fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = vec![root.to_path_buf()];
     for entry in std::fs::read_dir(root).unwrap() {
