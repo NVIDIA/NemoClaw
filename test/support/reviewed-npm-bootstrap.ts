@@ -119,6 +119,7 @@ case "$1" in
     while [ "$#" -gt 1 ]; do
       if [ "$1" = "--pack-destination" ]; then
         [ "$pack_args" = "pack npm@12.0.2 --pack-destination $2 --userconfig /dev/null --registry https://registry.npmjs.org/ --logs-dir $2/npm-logs --logs-max 1 --ignore-scripts --no-audit --no-fund" ]
+        [ -d "$2/npm-logs" ]
         cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$2/npm-12.0.2.tgz"
         exit 0
       fi

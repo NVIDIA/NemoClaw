@@ -35,7 +35,10 @@ NODE
 
 pack_log="$download_dir/npm-pack.log"
 npm_logs_dir="$download_dir/npm-logs"
-mkdir -m 0700 "$npm_logs_dir"
+(
+  umask 077
+  mkdir "$npm_logs_dir"
+)
 set +e
 npm pack "npm@$version" \
   --pack-destination "$download_dir" \
