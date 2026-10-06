@@ -3,11 +3,13 @@
 #![cfg(unix)]
 use crate::transport;
 use nemoclaw_discovery::{Direct, observe};
+use nemoclaw_sdk::config::InferenceApi;
 use nemoclaw_sdk::{
-    CancellationToken, EnvironmentSecrets, Error,
+    CancellationToken, EnvironmentSecrets, Error, ObservationError, Secrets,
     config::ComputeDriver,
     discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support},
+    inference_discovery::EndpointRequest,
 };
 use serde_json::json;
 
@@ -118,4 +120,60 @@ async fn cancellation_abandons_the_reads() {
     )
     .await;
     assert!(matches!(result, Err(Error::Cancelled)));
+}
+
+/// Resolves only `API_KEY`, so no real environment variable is read.
+struct FakeSecrets;
+impl Secrets for FakeSecrets {
+    fn resolve(&self, reference: &str) -> Result<String, ObservationError> {
+        match reference {
+            "API_KEY" => Ok("sk-secret-value".into()),
+            _ => Err(ObservationError::Authentication),
+        }
+    }
+}
+
+#[tokio::test]
+async fn inference_and_credential_queries_are_each_answered_under_their_own_query() {
+    let catalog = transport::Fixture::start_tcp(|_| {
+        Some((
+            200,
+            br#"{"data":[{"id":"model-b"},{"id":"model-a"}]}"#.to_vec(),
+        ))
+    })
+    .await;
+    let inference = DiscoveryQuery::Inference(EndpointRequest {
+        endpoint: format!("{}/v1", catalog.endpoint),
+        api: InferenceApi::OpenaiResponses,
+        credential_env: Some("API_KEY".into()),
+    });
+    let resolvable = DiscoveryQuery::Credential {
+        reference: "API_KEY".into(),
+    };
+    let unresolvable = DiscoveryQuery::Credential {
+        reference: "OTHER_KEY".into(),
+    };
+    let observed = observe(
+        &[inference.clone(), resolvable.clone(), unresolvable.clone()],
+        &Direct,
+        &FakeSecrets,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let Some(DiscoveryObservation::Inference(models)) = observed.get(&inference) else {
+        panic!("the inference read is recorded under its query");
+    };
+    assert_eq!(models.status, ObservationStatus::Available);
+    assert_eq!(models.models, vec!["model-a", "model-b"]);
+    let Some(DiscoveryObservation::Credential(found)) = observed.get(&resolvable) else {
+        panic!("the credential read is recorded under its query");
+    };
+    assert_eq!(found.status, ObservationStatus::Available);
+    let Some(DiscoveryObservation::Credential(missing)) = observed.get(&unresolvable) else {
+        panic!("each credential reference has its own answer");
+    };
+    assert_eq!(missing.status, ObservationStatus::Unavailable);
+    let recorded = serde_json::to_string(&(found, missing)).unwrap();
+    assert!(!recorded.contains("sk-secret-value"));
 }
