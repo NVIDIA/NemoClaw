@@ -11,6 +11,7 @@ fn destroy_environment(document: &Document) -> Document {
         provider.credential = None;
     }
     for sandbox in &mut environment.spec.sandboxes {
+        sandbox.image.metadata = None;
         sandbox.integrations.clear();
         sandbox.agent.integrations.clear();
         sandbox.agent.integration_refs.clear();
@@ -91,16 +92,22 @@ impl Deployment {
             return Ok(result);
         }
         // Observe and validate both complete saved plans before the first delete.
+        let (operation, _connection) = if !record.root_destroyed() && !bindings.is_empty() {
+            self.connected(&record.document, &record.generations, cancel)
+                .await?
+        } else {
+            (self.clone(), None)
+        };
         let mut stages = Vec::new();
         if !record.root_destroyed() {
-            let (changes, planned) = self
+            let (changes, planned) = operation
                 .plan_teardown_stage(&bundle, &store, &record, false, &root_graph, cancel)
                 .await?;
             result.changes.extend(changes);
             stages.push((&store, false, planned));
         }
         if let Some((stage, graph)) = runtime.as_ref().zip(runtime_graph.as_ref()) {
-            let (changes, planned) = self
+            let (changes, planned) = operation
                 .plan_teardown_stage(&bundle, stage, &record, true, graph, cancel)
                 .await?;
             result.changes.extend(changes);
@@ -116,14 +123,15 @@ impl Deployment {
         (self.progress)(Progress::Destroying);
         for (stage, is_runtime, planned) in stages {
             if planned {
-                self.tofu(
-                    &bundle,
-                    stage,
-                    &destroy_environment(&record.document),
-                    &["apply", "-input=false", "-no-color", "destroy.plan"],
-                    cancel,
-                )
-                .await?;
+                operation
+                    .tofu(
+                        &bundle,
+                        stage,
+                        &destroy_environment(&record.document),
+                        &["apply", "-input=false", "-no-color", "destroy.plan"],
+                        cancel,
+                    )
+                    .await?;
             }
             if !is_runtime {
                 record.finish_root_destroy();
@@ -234,6 +242,22 @@ fn bind_teardown_processes(
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     for target in targets {
+        if target.kind == crate::kubernetes::GATEWAY_KIND {
+            if bindings.contains_key(&target.address) && !bindings.contains_key(KUBERNETES_STORAGE)
+            {
+                return Err(Error::Conflict(
+                    "destroy requires the Kubernetes storage binding before removing its gateway",
+                ));
+            }
+            if let Some(binding) = bindings.get(&target.address)
+                && binding.spec != target.values["spec"]
+            {
+                return Err(Error::Conflict(
+                    "Kubernetes gateway binding differs from retained intent",
+                ));
+            }
+            continue;
+        }
         let storage = if target.kind == GATEWAY_KIND {
             Some(GATEWAY_STORAGE.to_owned())
         } else if crate::services::resource_behavior(&target.kind).runtime_process {
@@ -308,6 +332,108 @@ fn runtime_bindings_safe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn teardown_keeps_provisioning_identity_without_requesting_image_metadata() {
+        let (document, _) = crate::deployment::tests::kubernetes_context();
+        assert!(document.credential_names().contains(&"TEST_IMAGE_METADATA"));
+        let environment = destroy_environment(&document);
+        assert_eq!(environment.credential_names(), ["TEST_KUBECONFIG"]);
+        assert!(document.spec.sandboxes[0].image.metadata.is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_kubernetes_platform_creation_skips_empty_agent_teardown_without_credentials() {
+        struct NoSecrets;
+        impl Secrets for NoSecrets {
+            fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+                panic!("an empty agent teardown must not resolve gateway credentials")
+            }
+        }
+        let (document, _) = crate::deployment::tests::kubernetes_context();
+        let mut record = Record::new(document).unwrap();
+        record.begin_runtime_apply(&record.document.clone());
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path()).unwrap();
+        let bundle = Bundle {
+            directory: directory.path().join("unavailable-bundle"),
+            manifest: crate::bundle::Manifest {
+                version: "0.1.0".into(),
+                rust: "fixture".into(),
+                opentofu: compile::OPENTOFU_VERSION.into(),
+                files: BTreeMap::new(),
+            },
+        };
+        let deployment =
+            Deployment::new(directory.path(), &bundle.directory).with_secrets(Arc::new(NoSecrets));
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+            &BTreeSet::new(),
+            false,
+        )
+        .unwrap();
+        let (changes, planned) = deployment
+            .plan_teardown_stage(
+                &bundle,
+                &store,
+                &record,
+                false,
+                &compiled,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert!(changes.is_empty());
+        assert!(!planned);
+        assert!(!store.directory.join("main.tf.json").exists());
+    }
+
+    #[test]
+    fn kubernetes_destroy_retains_storage_and_rejects_an_unbound_gateway() {
+        let (document, _) = crate::deployment::tests::kubernetes_context();
+        let record = Record::new(document).unwrap();
+        let targets = compile::runtime_targets(&record.document, &record.generations).unwrap();
+        let bindings: BTreeMap<String, StateBinding> = targets
+            .iter()
+            .map(|target| {
+                (
+                    target.address.clone(),
+                    StateBinding {
+                        id: format!("physical-{}", target.kind),
+                        spec: target.values["spec"].clone(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        teardown_expected(&record, &bindings, true).unwrap();
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            compiled.retained,
+            BTreeSet::from([KUBERNETES_STORAGE.into()])
+        );
+        let graph = compiled.graph;
+        assert_eq!(graph["provider"]["nemoclaw"]["platform_only"], true);
+        assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+        assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
+        assert_eq!(
+            graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+            true
+        );
+        assert!(graph.get("data").is_none());
+        let mut invalid = bindings;
+        invalid.remove(KUBERNETES_STORAGE);
+        assert!(teardown_expected(&record, &invalid, true).is_err());
+    }
 
     #[test]
     fn unfinished_apply_without_complete_runtime_state_explains_how_to_recover() {

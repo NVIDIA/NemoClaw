@@ -110,6 +110,62 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
     client(config)
 }
 
+pub use connection::Connection;
+
+/// Open the command-scoped connection to a deployment's managed Kubernetes
+/// gateway. `state_directory` is the deployment's state directory; the
+/// gateway's receipt and client files live in its `kubernetes` directory.
+pub async fn connection(
+    document: &crate::config::Document,
+    generations: &crate::compile::Generations,
+    state_directory: &std::path::Path,
+    secrets: &dyn crate::Secrets,
+    cancel: &crate::CancellationToken,
+) -> Result<Connection, Error> {
+    let settings = document
+        .spec
+        .gateway
+        .as_managed()
+        .ok_or(ObservationError::Query)?;
+    let target = settings
+        .kubernetes
+        .as_ref()
+        .ok_or(ObservationError::Query)?;
+    let spec = Spec {
+        layout: 1,
+        kind: GATEWAY_KIND.into(),
+        name: format!("{}-gateway", document.workspace()),
+        owner: document.metadata.uid.clone(),
+        generation: generations
+            .get(GATEWAY_KIND)
+            .ok_or(ObservationError::Incomplete)?
+            .clone(),
+        settings: settings.clone(),
+    };
+    spec.validate()?;
+    let cluster = ClusterTarget {
+        kubeconfig: secrets.resolve(&target.kubeconfig.env)?.into(),
+        context: target.context.clone(),
+    };
+    let state = std::path::absolute(state_directory)
+        .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
+        .join("kubernetes");
+    let opening = async {
+        let operations = operations::Operations {
+            server: server(&cluster)?,
+            client: connect(&cluster).await?,
+            helm: "helm".into(),
+            kubeconfig: cluster.kubeconfig.clone(),
+            state,
+        };
+        operations.connect(&spec).await
+    };
+    tokio::select! {
+        () = cancel.cancelled() => Err(Error::Cancelled),
+        result = opening => result,
+    }
+}
+
 /// The API server URL the target's context selects.
 pub fn server(target: &ClusterTarget) -> Result<String, ObservationError> {
     let kubeconfig =

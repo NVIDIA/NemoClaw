@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 mod teardown;
 #[cfg(all(test, unix))]
-mod tests;
+pub(super) mod tests;
 
 pub(super) use super::plan::check_plan as check_runtime_plan;
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
+const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
 fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error> {
     let Some(binding) = binding else {
         return Ok(want.clone());
@@ -46,6 +47,14 @@ fn runtime_bindings(
         ));
     }
     for target in targets {
+        if target.kind == crate::kubernetes::GATEWAY_KIND
+            && bindings.contains_key(&target.address)
+            && !bindings.contains_key(KUBERNETES_STORAGE)
+        {
+            return Err(Error::Conflict(
+                "Kubernetes gateway requires its retained storage binding",
+            ));
+        }
         if target.kind == GATEWAY_KIND
             && bindings.contains_key(&target.address)
             && !bindings.contains_key(GATEWAY_STORAGE)
@@ -88,6 +97,16 @@ fn runtime_observations(
         expected: runtime_bindings(targets, bindings)?,
         gateway_running: document.spec.gateway.as_managed().is_none(),
     };
+    if let Some(gateway) = targets
+        .iter()
+        .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
+    {
+        result.gateway_running = plan.resource_changes.iter().any(|change| {
+            change.address == gateway.address
+                && change.change.actions == ["no-op"]
+                && change.change.before["running"] == "true"
+        });
+    }
     if let Some(gateway) = targets
         .iter()
         .find(|target| target.kind == GATEWAY_KIND && plan::disposable(&target.address))
