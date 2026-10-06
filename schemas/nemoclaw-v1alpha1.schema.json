@@ -410,6 +410,38 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "const": "podman"
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "engine": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "engine"
+                ],
+                "x-nemoclaw-error": "Podman requires spec.gateway.engine to name its local API service socket."
+              }
+            }
+          ],
           "description": "A gateway installed and managed by this deployment.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
           "properties": {
             "endpoint": {
@@ -435,10 +467,9 @@
                   "pattern": "^unix:///"
                 }
               ],
-              "default": "unix:///var/run/docker.sock",
               "description": "Managed gateway Unix engine socket; Podman requires its API service socket.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+              "x-nemoclaw-default-rule": "Omitted or empty selects Docker's default socket when runtime.provider is docker. Podman requires its API service socket."
             },
             "image": {
               "default": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",

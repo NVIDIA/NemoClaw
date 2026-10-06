@@ -187,7 +187,9 @@ impl Document {
         let gateway = &mut self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
-            default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
+            if gateway.runtime.provider == ComputeDriver::Docker {
+                default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
+            }
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
             default_string(
                 &mut gateway.network_cidr,

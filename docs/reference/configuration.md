@@ -300,7 +300,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local gateway HTTP origin with an unprivileged loopback port. Constraints: `""` or pattern `^http://127\.0\.0\.1:[0-9]+/?$`. Omitted or empty selects the default. |
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects the default. |
+| `engine` | string | No | — | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects Docker's default socket when runtime.provider is docker. Podman requires its API service socket. |
 | `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"`. Omitted or empty selects the default. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |

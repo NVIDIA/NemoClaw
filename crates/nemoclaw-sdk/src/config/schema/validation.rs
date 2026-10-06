@@ -244,7 +244,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 ),
                 (
                     "engine",
-                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
+                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}]}),
                 ),
                 (
                     "image",
@@ -270,13 +270,26 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 }
                 property(gateway, field, rule);
                 if field != "networkCIDR" {
+                    let default_rule = if field == "engine" {
+                        "Omitted or empty selects Docker's default socket when runtime.provider is docker. Podman requires its API service socket."
+                    } else {
+                        "Omitted or empty selects the default."
+                    };
                     property(
                         gateway,
                         field,
-                        json!({"x-nemoclaw-default-rule": "Omitted or empty selects the default."}),
+                        json!({"x-nemoclaw-default-rule": default_rule}),
                     );
                 }
             }
+            gateway["allOf"] = json!([{
+                "if": at("runtime/provider", json!({"const":"podman"}), true),
+                "then": {
+                    "required": ["engine"],
+                    "properties": {"engine": {"minLength": 1}},
+                    "x-nemoclaw-error": "Podman requires spec.gateway.engine to name its local API service socket."
+                }
+            }]);
         } else {
             property(gateway, "endpoint", json!({"pattern": "^https?://"}));
             gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
