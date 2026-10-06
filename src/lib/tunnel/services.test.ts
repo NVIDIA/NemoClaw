@@ -4,6 +4,7 @@
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,12 +21,15 @@ import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 // Import source directly so tests cannot pass against a stale build.
 import { registerTunnelOrigin } from "./allowed-origins";
-import { resolveDefaultSandboxName } from "./service-command";
+import * as gatewayStop from "./gateway-stop";
+import { resolveDefaultSandboxName, runStopCommand } from "./service-command";
 import {
   getServiceStatuses,
   getTunnelUrl,
   type ProcessControl,
   readCloudflaredState,
+  readWindowsProcessCommandLine,
+  signalCloudflaredForPlatform,
   showStatus,
   startAll,
   stopAll,
@@ -40,6 +44,34 @@ const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
 const INTEGRATION_ENV_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_ENV_SANDBOX}`;
 const INTEGRATION_REGISTRY_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_REGISTRY_SANDBOX}`;
+const ALIVE_CLOUDFLARED_CONTROL: ProcessControl = {
+  isAlive: () => true,
+  commandLine: () => "/usr/local/bin/cloudflared tunnel run",
+  signalCloudflared: () => "signaled",
+};
+
+function fakeCloudflaredProcessControl(): ProcessControl {
+  return {
+    isAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    commandLine: (pid) =>
+      pid === process.pid ? process.argv.join(" ") : "/usr/local/bin/cloudflared tunnel run",
+    signalCloudflared: (pid, signal) => {
+      try {
+        process.kill(pid, signal);
+        return "signaled";
+      } catch {
+        return "not-running";
+      }
+    },
+  };
+}
 
 function resetIntegrationPidDirs(): void {
   for (const dir of [INTEGRATION_ENV_PID_DIR, INTEGRATION_REGISTRY_PID_DIR]) {
@@ -122,6 +154,13 @@ describe("getServiceStatuses", () => {
     expect(cf?.pid).toBeNull();
   });
 
+  it("does not report a live PID owned by another process as cloudflared", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    const statuses = getServiceStatuses({ pidDir });
+    const cf = statuses.find((s) => s.name === "cloudflared");
+    expect(cf).toEqual({ name: "cloudflared", running: false, pid: null });
+  });
+
   it("ignores invalid PID file contents", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
     const statuses = getServiceStatuses({ pidDir });
@@ -195,7 +234,10 @@ describe("status host service PID dir matches start/stop env (#1077)", () => {
     }));
     expect(resolved).toBe(INTEGRATION_ENV_SANDBOX);
 
-    const statuses = getServiceStatuses({ sandboxName: resolved });
+    const statuses = getServiceStatuses({
+      sandboxName: resolved,
+      processControl: ALIVE_CLOUDFLARED_CONTROL,
+    });
     const cloudflared = statuses.find((service) => service.name === "cloudflared");
     expect(cloudflared?.running).toBe(true);
     expect(cloudflared?.pid).toBe(process.pid);
@@ -223,6 +265,11 @@ describe("status host service PID dir matches start/stop env (#1077)", () => {
         sandboxName: resolveDefaultSandboxName(() => ({
           defaultSandbox: INTEGRATION_REGISTRY_SANDBOX,
         })),
+        processControl: {
+          isAlive: () => true,
+          commandLine: () => "/usr/bin/node vitest.mjs",
+          signalCloudflared: () => "signaled",
+        },
       });
       const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
       // Wrong PID dir would report "(stopped)" with no PID; env-resolved dir finds our pid file.
@@ -267,11 +314,32 @@ describe("showStatus", () => {
     logSpy.mockRestore();
   });
 
+  it("does not show a stale tunnel URL when live PID identity is unavailable", () => {
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://stale.trycloudflare.com");
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({
+      pidDir,
+      processControl: {
+        isAlive: () => true,
+        commandLine: () => null,
+        signalCloudflared: () => "signaled",
+      },
+    });
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("PID 4242, identity unavailable");
+    expect(output).toContain("restore process inspection access");
+    expect(output).not.toContain("Public URL");
+    expect(output).not.toContain("https://stale.trycloudflare.com");
+    logSpy.mockRestore();
+  });
+
   // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
   // asked for a "no cloudflared process; restart with ..." shape — a cause
   // phrase plus a single-command recovery. All three failure modes surface
   // "no cloudflared process" and point at `nemoclaw tunnel start`, which
-  // overwrites a stale PID file when isRunning() is false (see startService).
+  // overwrites a stale PID file when the identity-aware state is not running.
   it("prints `tunnel start` remediation when the PID file is missing (stopped)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showStatus({ pidDir });
@@ -326,7 +394,7 @@ describe("startAll", () => {
     } else {
       process.env.CLOUDFLARE_TUNNEL_TOKEN = originalCloudflareTunnelToken;
     }
-    const pid = readCloudflaredState(pidDir);
+    const pid = readCloudflaredState(pidDir, fakeCloudflaredProcessControl());
     if (pid.kind === "running") {
       try {
         process.kill(pid.pid, "SIGTERM");
@@ -356,7 +424,11 @@ describe("startAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
 
     const pidFile = join(pidDir, "cloudflared.pid");
     expect(readFileSync(pidFile, "utf-8")).toMatch(/^\d+$/);
@@ -387,7 +459,11 @@ describe("startAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
 
     const log = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -395,6 +471,77 @@ describe("startAll", () => {
     expect(log).toContain("token-env-present");
     expect(log).not.toContain("named-secret");
     expect(output).toContain("https://agent.example.com");
+  });
+
+  it("replaces a stale PID owned by another live process instead of reusing its URL", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      ["#!/usr/bin/env sh", "echo 'https://fresh.trycloudflare.com'", "sleep 20"].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid), { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://stale.trycloudflare.com\n", {
+      mode: 0o600,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(replacementPid).not.toBe(process.pid);
+    expect(output).toContain("https://fresh.trycloudflare.com");
+    expect(output).not.toContain("https://stale.trycloudflare.com");
+    expect(() => process.kill(process.pid, 0)).not.toThrow();
+  });
+
+  it("refuses to replace a live PID when its process identity cannot be read", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      ["#!/usr/bin/env sh", "echo 'https://fresh.trycloudflare.com'", "sleep 20"].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://stale.trycloudflare.com\n", {
+      mode: 0o600,
+    });
+    const signals: Array<{ pid: number; sig: NodeJS.Signals }> = [];
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: (pid) => (pid === 4242 ? null : "/usr/local/bin/cloudflared tunnel run"),
+      signalCloudflared: (pid, sig) => {
+        signals.push({ pid, sig });
+        return "signaled";
+      },
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(startAll({ pidDir, dashboardPort: 12345, processControl })).rejects.toThrow(
+      "cloudflared process identity is unavailable for PID 4242",
+    );
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("process identity is unavailable for PID 4242");
+    expect(output).not.toContain("https://fresh.trycloudflare.com");
+    expect(output).not.toContain("https://stale.trycloudflare.com");
+    expect(signals).toEqual([]);
   });
 });
 
@@ -435,10 +582,79 @@ describe("readCloudflaredState", () => {
   });
 
   it("returns stale-pid-process when the PID points at a different process", () => {
-    // Use this test process's own PID — guaranteed alive, but not cloudflared.
-    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
-    const state = readCloudflaredState(pidDir);
-    expect(state.kind).toBe("stale-pid-process");
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/usr/bin/node\0vitest.mjs",
+      signalCloudflared: () => "signaled",
+    });
+    expect(state).toEqual({ kind: "stale-pid-process", pid: 4242 });
+  });
+
+  it("does not accept cloudflared appearing only as an unrelated process argument", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/usr/bin/node\0worker.js\0cloudflared",
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(state).toEqual({ kind: "stale-pid-process", pid: 4242 });
+  });
+
+  it("keeps a shell-wrapped cloudflared PID unverified", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/bin/sh\0/tmp/cloudflared\0tunnel\0run",
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+  });
+
+  it("returns unverified-pid-process when a live PID cannot be inspected", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => null,
+      signalCloudflared: () => "signaled",
+    });
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+  });
+
+  it("recognizes cloudflared through the Windows CIM identity probe", () => {
+    const capture = vi.fn((_command: string, _args: readonly string[]) =>
+      [
+        "cloudflared.exe",
+        String.raw`C:\\Program Files\\cloudflared\\cloudflared.exe`,
+        String.raw`"C:\\Program Files\\cloudflared\\cloudflared.exe" tunnel run`,
+      ].join("\n"),
+    );
+    const commandLine = readWindowsProcessCommandLine(4242, capture);
+
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => commandLine,
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toBe("powershell.exe");
+    expect(capture.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(["-NoProfile", "-NonInteractive", "-Command"]),
+    );
+    expect(capture.mock.calls[0]?.[1].at(-1)).toContain("ProcessId = 4242");
+    expect(state).toEqual({ kind: "running", pid: 4242 });
+  });
+
+  it("fails closed when the Windows CIM identity probe fails", () => {
+    expect(
+      readWindowsProcessCommandLine(4242, () => {
+        throw new Error("access denied");
+      }),
+    ).toBeNull();
   });
 });
 
@@ -502,8 +718,17 @@ describe("stopAll", () => {
     const control: ProcessControl = {
       isAlive: () => script.alive[Math.min(aliveIdx++, script.alive.length - 1)],
       commandLine: () => script.cmdlines[Math.min(cmdIdx++, script.cmdlines.length - 1)],
-      signal: (pid, sig) => {
-        signals.push({ pid, sig });
+      signalCloudflared: (pid, sig) => {
+        const commandLine = script.cmdlines[Math.min(cmdIdx++, script.cmdlines.length - 1)];
+        const recordSignal = (): "signaled" => {
+          signals.push({ pid, sig });
+          return "signaled";
+        };
+        return commandLine === null
+          ? "unavailable"
+          : commandLine.split(/\s+/).some((token) => token.endsWith("cloudflared"))
+            ? recordSignal()
+            : "not-cloudflared";
       },
     };
     return { control, signals };
@@ -517,7 +742,7 @@ describe("stopAll", () => {
     () => {
       const { control, signals } = scriptedControl({
         alive: [true],
-        cmdlines: ["/usr/bin/node vitest"],
+        cmdlines: ["/usr/bin/node worker.js cloudflared"],
       });
       writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -533,13 +758,323 @@ describe("stopAll", () => {
     },
   );
 
+  it.each([false, true])(
+    "fails the stop command when cloudflared remains unverified (gateway release: %s)",
+    (releaseGatewayPort) => {
+      vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockReturnValue("not-scoped");
+      const { control, signals } = scriptedControl({ alive: [true], cmdlines: [null] });
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(() =>
+          runStopCommand({
+            listSandboxes: () => ({}),
+            releaseGatewayPort,
+            stopAll: (options) =>
+              stopAll({
+                ...options,
+                sandboxName: "",
+                pidDir,
+                processControl: control,
+                cleanupOllamaModels: false,
+              }),
+          }),
+        ).toThrow("Cloudflared cleanup is incomplete");
+      } finally {
+        logSpy.mockRestore();
+      }
+      expect(signals).toEqual([]);
+      expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    },
+  );
+
+  it("does not signal a live PID when process identity cannot be read", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: [null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("cloudflared PID 4242 was not stopped");
+    expect(output).toContain("Host service cleanup remains incomplete");
+  });
+
+  it("does not signal or discard a shell-wrapped cloudflared PID", () => {
+    const signals: Array<{ pid: number; sig: string }> = [];
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "/bin/sh /tmp/cloudflared tunnel run",
+      signalCloudflared: (pid, sig) => {
+        signals.push({ pid, sig });
+        return "signaled";
+      },
+    };
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      expect(() => stopAll({ pidDir, processControl })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("Independently verify PID 4242 is cloudflared");
+  });
+
+  it("preserves the PID when identity-bound signaling is unavailable", () => {
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "/usr/local/bin/cloudflared tunnel run",
+      signalCloudflared: () => "unavailable",
+    };
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      expect(() => stopAll({ pidDir, processControl })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      logSpy.mockRestore();
+    }
+
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("Independently verify PID 4242 is cloudflared");
+    expect(output).toContain("keep the PID record until it exits");
+  });
+
+  it("does not send SIGTERM when the PID is recycled after initial validation", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["cloudflared tunnel run", "/usr/bin/node vitest"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("signals an identity-confirmed cloudflared process with a macOS audit token", () => {
+    const signal = vi.fn(() => "signaled" as const);
+
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("signaled");
+    expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
+  });
+
+  it("does not raw-signal a process on Windows", () => {
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32")).toBe("unavailable");
+  });
+
+  it("uses the identity-bound macOS signal result without an unbound precheck", () => {
+    const signal = vi.fn(() => "not-cloudflared" as const);
+
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("not-cloudflared");
+    expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
+  });
+
+  it.skipIf(process.platform !== "linux")(
+    "signals a verified cloudflared process through a Linux pidfd",
+    () => {
+      const executable = join(pidDir, "cloudflared");
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+        const deadline = Date.now() + 1000;
+        let processStopped = false;
+        while (!processStopped && Date.now() < deadline) {
+          try {
+            const status = readFileSync(`/proc/${String(pid)}/status`, "utf-8");
+            processStopped = /^State:\s+(?:Z|X)/m.test(status);
+          } catch {
+            // A missing /proc entry also proves that the process exited.
+            processStopped = true;
+          }
+        }
+        expect(processStopped).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The identity-bound stop path already reaped the process.
+        }
+      }
+
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "preserves a live cloudflared PID after its executable is removed by an upgrade",
+    async () => {
+      const executable = join(pidDir, "cloudflared");
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      await new Promise<void>((resolveSpawn, reject) => {
+        subprocess.once("spawn", resolveSpawn);
+        subprocess.once("error", reject);
+      });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      const pidFile = join(pidDir, "cloudflared.pid");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        writeFileSync(pidFile, String(pid), { mode: 0o600 });
+        rmSync(executable);
+        expect(() => stopAll({ pidDir, unloadOllamaModels: () => undefined })).toThrow(
+          "Cloudflared cleanup is incomplete",
+        );
+        expect(readFileSync(pidFile, "utf-8")).toBe(String(pid));
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      } finally {
+        logSpy.mockRestore();
+        subprocess.kill("SIGKILL");
+        await new Promise<void>((resolveExit) => subprocess.once("exit", () => resolveExit()));
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "signals a verified cloudflared process through a macOS audit token",
+    () => {
+      const executable = join(pidDir, "cloudflared");
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+        const processStopped = (): boolean => {
+          try {
+            const state = childProcess
+              .execFileSync("ps", ["-p", String(pid), "-o", "stat="], { encoding: "utf-8" })
+              .trim();
+            return state === "" || state.startsWith("Z");
+          } catch {
+            return true;
+          }
+        };
+        const deadline = Date.now() + 1000;
+        while (!processStopped() && Date.now() < deadline) {
+          // The helper signal is synchronous; this loop only gives the child time to exit.
+        }
+        expect(processStopped()).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The identity-bound stop path already reaped the process.
+        }
+      }
+
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "does not signal a different macOS process after the initial identity check",
+    () => {
+      const subprocess = childProcess.spawn("/bin/sleep", ["20"], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("unrelated test process has no PID");
+        })();
+
+      try {
+        expect(signalCloudflaredForPlatform(pid, "SIGTERM", "darwin")).toBe("not-cloudflared");
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      } finally {
+        process.kill(pid, "SIGKILL");
+      }
+    },
+  );
+
+  it("preserves the PID when identity becomes unreadable before SIGKILL", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, true],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain(
+      "was not force-stopped because identity-bound signaling is unavailable",
+    );
+    expect(output).toContain("Host service cleanup remains incomplete");
+  });
+
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({
       // Alive pre-SIGTERM; the poll observes exit; a live PID reappears at the
       // pre-SIGKILL re-check.
       alive: [true, false, true],
       // Ours pre-SIGTERM, then recycled to a bystander before escalation.
-      cmdlines: ["cloudflared tunnel run", "/usr/bin/node vitest"],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "/usr/bin/node vitest"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -556,8 +1091,8 @@ describe("stopAll", () => {
 
   it("escalates to SIGKILL when cloudflared remains live after the grace period (#7644)", () => {
     const { control, signals } = scriptedControl({
-      alive: [true, true],
-      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run"],
+      alive: [true, true, false],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "cloudflared tunnel run"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -575,6 +1110,41 @@ describe("stopAll", () => {
       { pid: 4242, sig: "SIGKILL" },
     ]);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("retains the PID when cloudflared remains live after SIGKILL", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["cloudflared tunnel run"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(3000)
+      .mockReturnValueOnce(3000)
+      .mockReturnValue(4000);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([
+      { pid: 4242, sig: "SIGTERM" },
+      { pid: 4242, sig: "SIGKILL" },
+    ]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readCloudflaredState(pidDir, control)).toEqual({ kind: "running", pid: 4242 });
+    expect(output).toContain("remained live after the force-stop signal");
+    expect(output).toContain("Host service cleanup remains incomplete");
   });
 
   it("removes stale PID files", () => {
@@ -719,7 +1289,7 @@ describe("startAll tunnel-origin registration (#6212)", () => {
   });
 
   afterEach(() => {
-    const state = readCloudflaredState(pidDir);
+    const state = readCloudflaredState(pidDir, fakeCloudflaredProcessControl());
     const runningPid = state.kind === "running" ? state.pid : Number.NaN;
     try {
       process.kill(runningPid, "SIGTERM");
@@ -736,7 +1306,12 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      sandboxName: "my-sandbox",
+      processControl: fakeCloudflaredProcessControl(),
+    });
     logSpy.mockRestore();
 
     expect(registerTunnelOrigin).toHaveBeenCalledTimes(1);
@@ -754,7 +1329,11 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 
@@ -791,7 +1370,12 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await expect(
-      startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" }),
+      startAll({
+        pidDir,
+        dashboardPort: 12345,
+        sandboxName: "my-sandbox",
+        processControl: fakeCloudflaredProcessControl(),
+      }),
     ).resolves.toBeUndefined();
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();

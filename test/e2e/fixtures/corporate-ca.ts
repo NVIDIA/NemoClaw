@@ -92,8 +92,8 @@ expect_export() {
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
 workload_kind='${workloadKind}'
 if [ "$workload_kind" = 'managed-image' ]; then
-  bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
-  runtime_env='/run/nemoclaw/managed-startup-runtime.env'
+  bundle='/tmp/nemoclaw-managed-startup-ca-bundle.pem'
+  runtime_env='/tmp/nemoclaw-managed-startup-runtime.env'
   system_bundle='/etc/ssl/certs/ca-certificates.crt'
   expected_bundle_metadata='0:0:444'
   expected_runtime_env_metadata='0:0:444'

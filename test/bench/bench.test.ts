@@ -175,13 +175,12 @@ describe("buildChatCompletionsUrl", () => {
     );
   });
 
-  it.each([
-    "http://localhost:8000/v1",
-    "http://127.0.0.1:8000/v1",
-    "http://[::1]:8000/v1",
-  ])("allows a plaintext loopback endpoint: %s", (base) => {
-    expect(buildChatCompletionsUrl(base)).toContain("/v1/chat/completions");
-  });
+  it.each(["http://localhost:8000/v1", "http://127.0.0.1:8000/v1", "http://[::1]:8000/v1"])(
+    "allows a plaintext loopback endpoint: %s",
+    (base) => {
+      expect(buildChatCompletionsUrl(base)).toContain("/v1/chat/completions");
+    },
+  );
 
   it("rejects non-HTTP and credential-bearing endpoints", () => {
     expect(() => buildChatCompletionsUrl("file:///tmp/inference")).toThrow("HTTP or HTTPS");
@@ -526,15 +525,15 @@ describe("trace ingestion", () => {
 });
 
 describe("unsupportedTraceMetric", () => {
-  it.each([
-    "sandbox-cold-start",
-    "policy-application-overhead",
-  ] as const)("describes %s as unsupported with guidance", (id) => {
-    const metric = unsupportedTraceMetric(id);
-    expect(metric.id).toBe(id);
-    expect(metric.status).toBe("unsupported");
-    expect(metric.reason).toContain("NEMOCLAW_TRACE");
-  });
+  it.each(["sandbox-cold-start", "policy-application-overhead"] as const)(
+    "describes %s as unsupported with guidance",
+    (id) => {
+      const metric = unsupportedTraceMetric(id);
+      expect(metric.id).toBe(id);
+      expect(metric.status).toBe("unsupported");
+      expect(metric.reason).toContain("NEMOCLAW_TRACE");
+    },
+  );
 });
 
 describe("renderMarkdownReport", () => {

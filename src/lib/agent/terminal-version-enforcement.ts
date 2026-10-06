@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "./defs";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
   checkTerminalAgentVersion,
   formatTerminalAgentVersionFailure,
-  type RunCaptureOpenshell,
 } from "./terminal-version-drift";
 
 interface TerminalVersionEnforcementOptions {
@@ -20,10 +20,10 @@ interface TerminalVersionEnforcementOptions {
 export async function enforceTerminalAgentVersion(
   sandboxName: string,
   agent: AgentDefinition,
-  runCaptureOpenshell: RunCaptureOpenshell,
+  executor: OpenShellSandboxBufferedCommandExecutor,
   options: TerminalVersionEnforcementOptions,
 ): Promise<void> {
-  const result = checkTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell);
+  const result = await checkTerminalAgentVersion(sandboxName, agent, executor);
   if (result.status === "current" || result.status === "not-required") return;
 
   await options.beforeFailure?.();

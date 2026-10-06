@@ -77,6 +77,7 @@ export function rewindSessionForRebuildResume(
   s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
   s.provider = resumeConfig.provider;
   s.model = resumeConfig.model;
+  s.modelSelectionProvenance = resumeConfig.modelSelectionProvenance ?? null;
   s.nimContainer = resumeConfig.nimContainer;
   s.credentialEnv = resumeConfig.credentialEnv;
   s.preferredInferenceApi = resumeConfig.preferredInferenceApi;

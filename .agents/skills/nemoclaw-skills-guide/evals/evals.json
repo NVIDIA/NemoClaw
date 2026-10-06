@@ -6,7 +6,7 @@
     "ground_truth": "The guide lists every shipped skill by audience and recommends the starting skill for the user's role.",
     "expected_behavior": [
       "Uses `nemoclaw-skills-guide`.",
-      "Asks which role describes the user.",
+      "Uses available task context to recommend relevant skills; asks only when the missing task changes the recommendation.",
       "Presents the applicable skills and a starting skill."
     ]
   },
@@ -36,15 +36,17 @@
     "question": "Implement NVIDIA/NemoClaw issue #8378 and add its tests.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "A concrete work request goes to the owning workflow rather than the catalog.",
-    "expected_behavior": ["Uses `nemoclaw-contributor-implement-issue`."]
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`."
+    ]
   },
   {
     "id": "ambiguous-what-can-you-do",
     "question": "What can you do with NemoClaw?",
     "expected_skill": null,
-    "ground_truth": "The request does not state whether the user operates a sandbox, contributes code, or maintains the project.",
+    "ground_truth": "A broad capability question can be answered with a short overview. A role-classification question is optional, not a prerequisite.",
     "expected_behavior": [
-      "Asks which role describes the user before listing a bucket."
+      "Gives a concise capability overview using available context without requiring a role choice first."
     ]
   },
   {

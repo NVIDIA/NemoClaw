@@ -20,8 +20,13 @@
 import os from "node:os";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
+import {
+  runSandboxInferenceInvocationProbe,
+  type SandboxInferenceRouteHealthContext,
+} from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "./inference/openrouter";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
@@ -102,7 +107,16 @@ export interface VerifyDeploymentDeps {
   getMessagingChannels: (name: string) => string[];
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
-  providerExistsInGateway: (providerName: string) => boolean;
+  providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
+
+  /**
+   * Send one bounded inference request over the gateway route from inside the
+   * sandbox. Only consulted when a supported agent uses the OpenRouter runtime
+   * adapter, whose models route returns HTTP 404 (#12621). The route can only
+   * be accepted on the evidence of a served request. Optional: when it is
+   * absent that 404 fails closed, because nothing validated the selected model.
+   */
+  probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -116,7 +130,7 @@ export interface VerifyDeploymentDeps {
    * the runtime view, so a user could land on the dashboard and see
    * "No channels found" without any NemoClaw warning.
    */
-  probeChannelRuntimeStatus?: () => RuntimeChannelStatus | null;
+  probeChannelRuntimeStatus?: () => Promise<RuntimeChannelStatus | null>;
 }
 
 export interface VerifyDeploymentOptions {
@@ -139,6 +153,12 @@ export interface VerifyDeploymentOptions {
    * startup paths intentionally differ.
    */
   diagnoseCustomOpenClawRuntime?: boolean;
+  /**
+   * Agent and provider behind this deployment, used to recognise supported
+   * OpenRouter adapter routes that answer HTTP 404 by design (#12621).
+   * Defaults to no agent and no provider, which fails every 404 closed.
+   */
+  inferenceRouteContext?: InferenceRouteContext;
 }
 
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [
@@ -189,17 +209,17 @@ export function buildGatewayLogHint(
  * Probe the gateway /health endpoint inside the sandbox.
  * Uses HTTP status code extraction (not curl -sf) so 401 counts as alive.
  */
-function probeGatewayInSandboxOnce(
+async function probeGatewayInSandboxOnce(
   sandboxName: string,
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
-): { reachable: boolean; httpCode: number; detail: string } {
+): Promise<{ reachable: boolean; httpCode: number; detail: string }> {
   const port = chain.gatewayPort ?? chain.port;
   const endpoint = chain.gatewayHealthEndpoint ?? chain.healthEndpoint;
   const script =
     `curl -so /dev/null -w '%{http_code}' --max-time 3 ` +
     `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
     return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
   }
@@ -227,40 +247,143 @@ async function verifyGatewayInSandbox(
 /**
  * Retrieve the gateway version from inside the sandbox.
  */
-function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): string | null {
+async function fetchGatewayVersion(
+  sandboxName: string,
+  deps: VerifyDeploymentDeps,
+): Promise<string | null> {
   const script = "openclaw --version 2>/dev/null";
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result || result.status !== 0 || !result.stdout.trim()) return null;
   return parseVersionFromText(result.stdout, "openclaw --version");
 }
 
 type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 
-function probeInferenceRouteOnce(
+/**
+ * Provider behind the deployment, normalized into the context
+ * `status` uses so the two readiness paths cannot drift (#10080).
+ */
+export type InferenceRouteContext = {
+  provider?: string | null;
+};
+
+function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
+  return { provider: context.provider ?? null };
+}
+
+type InferenceRouteProbe = {
+  status: InferenceRouteStatus;
+  detail: string;
+  /** Status the models route answered with, or 0 when it never answered. */
+  httpCode: number;
+  /** Set when the status alone would point the user at the wrong remedy. */
+  hint?: string;
+};
+
+async function probeInferenceRouteOnce(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): { status: InferenceRouteStatus; detail: string } {
+): Promise<InferenceRouteProbe> {
   const script =
     `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time ${INFERENCE_ROUTE_REACHABILITY_MAX_SECONDS} ` +
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { status: "unreachable", detail: "sandbox unreachable" };
+    return { status: "unreachable", detail: "sandbox unreachable", httpCode: 0 };
   }
-  const code = parseInt(result.stdout.trim(), 10) || 0;
+  // curl writes exactly three digits and the script echoes `000` when it fails,
+  // so any other token means the probe carries no status worth trusting.
+  // `parseInt` read `200junk` as 200 and a nonzero command result was ignored
+  // outright, either of which could report an unanswered route as healthy.
+  const output = result.stdout.trim();
+  const code = result.status === 0 && /^\d{3}$/u.test(output) ? Number(output) : 0;
   if (code === 0) {
     return {
       status: "unreachable",
       detail: "inference.local unreachable (DNS or proxy not running)",
+      httpCode: 0,
     };
   }
   if (code >= 500) {
     return {
       status: "unhealthy",
       detail: `inference.local returned HTTP ${code} (route reachable but endpoint unhealthy)`,
+      httpCode: code,
     };
   }
-  return { status: "ok", detail: `inference.local responded HTTP ${code}` };
+  // A models route that answers 404 has no model catalog, so nothing validated
+  // the selected model against the provider. `status` already fails closed on
+  // that (#10080); onboarding kept calling it healthy and exiting 0, so the two
+  // readiness paths disagreed about the same route (#10543). A credential-gated
+  // 401/403 stays healthy here: that route did answer, it just wants a key
+  // (#2342).
+  if (code === 404) {
+    return {
+      status: "unhealthy",
+      detail:
+        `inference.local returned HTTP ${code}, so the selected model was never ` +
+        `validated against a model catalog`,
+      httpCode: code,
+    };
+  }
+  return { status: "ok", detail: `inference.local responded HTTP ${code}`, httpCode: code };
+}
+
+/**
+ * A 404 needs its own hint: the route answered, so neither the "unreachable
+ * proxy" nor the "5xx endpoint" remedy applies. The model catalog is what is
+ * missing (#10543).
+ */
+function buildInferenceRouteHint(inference: InferenceRouteProbe): string {
+  if (inference.status === "ok") return "";
+  if (inference.hint) return inference.hint;
+  if (inference.httpCode === 404) {
+    return (
+      "The inference route answered but served no model catalog, so the selected model was " +
+      "never validated. Confirm the provider and model are configured for this sandbox and " +
+      "that the endpoint serves /v1/models, then re-run: nemoclaw <sandbox> status."
+    );
+  }
+  if (inference.status === "unhealthy") {
+    return "The inference route is reachable but the endpoint returned a server error (HTTP 5xx). If the endpoint runs on the host, configure it to listen on a host address reachable through host.openshell.internal and restrict access with the host firewall or equivalent controls; a 127.0.0.1/localhost-only bind is not reachable from the sandbox. Then re-run: nemoclaw <sandbox> status.";
+  }
+  return "The inference proxy is unreachable. Confirm the configured endpoint is running and reachable from the sandbox, then re-run: nemoclaw <sandbox> status.";
+}
+
+/**
+ * Resolve an expected OpenRouter adapter 404. The adapter serves Chat
+ * Completions but no model catalog (#12621). Matching the shared predicate is
+ * necessary but not sufficient: the route status alone proves nothing about
+ * whether the sandbox can invoke its selected model. Accept it only through a
+ * successful bounded inference request, exactly as `status` does.
+ */
+async function resolveExpectedModelsRoute404(
+  probe: InferenceRouteProbe,
+  deps: VerifyDeploymentDeps,
+): Promise<InferenceRouteProbe> {
+  const invocation = (await deps.probeInferenceInvocation?.()) ?? null;
+  if (invocation?.ok) {
+    return {
+      status: "ok",
+      detail:
+        "inference.local served an inference request; its models route answers " +
+        "HTTP 404 by design for the OpenRouter adapter",
+      httpCode: probe.httpCode,
+    };
+  }
+  const reason = invocation?.detail ?? "no inference request confirmed the selected model";
+  return {
+    status: "unhealthy",
+    detail:
+      `inference.local answered HTTP ${probe.httpCode} on its models route and serves no model ` +
+      `catalog by design for the OpenRouter adapter, but no inference request confirmed the ` +
+      `selected model: ${reason}`,
+    httpCode: probe.httpCode,
+    hint:
+      "The OpenRouter adapter serves no model catalog, so the models route answering HTTP 404 is " +
+      "expected. The inference request itself failed. Confirm the provider credential and the " +
+      "selected model, then re-run: nemoclaw <sandbox> status.",
+  };
 }
 
 async function verifyInferenceRoute(
@@ -268,12 +391,21 @@ async function verifyInferenceRoute(
   deps: VerifyDeploymentDeps,
   retryDelaysMs: readonly number[],
   sleep: (ms: number) => Promise<void>,
-): Promise<{ status: InferenceRouteStatus; detail: string }> {
-  return retryUntilAsync(() => probeInferenceRouteOnce(sandboxName, deps), {
-    accept: (result) => result.status === "ok",
+  context: InferenceRouteContext,
+): Promise<InferenceRouteProbe> {
+  const routeContext = toRouteHealthContext(context);
+  const isExpected404 = (result: InferenceRouteProbe) =>
+    isOpenRouterRuntimeAdapterModelsRoute404(routeContext.provider, result.httpCode);
+  // An ordinary 404 still gets the startup budget: a route can answer before
+  // its model catalog is registered, and the inference probe already recovers
+  // a late route (#6849). Only the 404 that is expected settles immediately,
+  // so the by-design case does not wait out a budget it can never satisfy.
+  const probe = await retryUntilAsync(() => probeInferenceRouteOnce(sandboxName, deps), {
+    accept: (result) => result.status === "ok" || isExpected404(result),
     retryDelaysMs,
     sleep,
   });
+  return isExpected404(probe) ? await resolveExpectedModelsRoute404(probe, deps) : probe;
 }
 
 /**
@@ -369,7 +501,10 @@ function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
   if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
     return "localhost";
-  return "ssh-tunnel";
+  // A non-loopback CHAT_UI_URL names the operator's external proxy route.
+  // The host forward behind that proxy remains on loopback unless the
+  // operator separately opts into a wider bind (#10861).
+  return "proxy";
 }
 
 export interface MessagingBridgeStatus {
@@ -402,10 +537,10 @@ export interface MessagingBridgeStatus {
  * the channel?) so the "No channels found" dashboard symptom from #4156
  * surfaces here as a warning.
  */
-function verifyMessagingBridges(
+async function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): MessagingBridgeStatus {
+): Promise<MessagingBridgeStatus> {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
     return {
@@ -424,7 +559,10 @@ function verifyMessagingBridges(
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
-    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
+    const providersExist = await Promise.all(
+      expectedProviders.map((providerName) => deps.providerExistsInGateway(providerName)),
+    );
+    if (!providersExist.every(Boolean)) {
       missingProviders.push(channel);
     }
   }
@@ -434,7 +572,7 @@ function verifyMessagingBridges(
   let runtimeProbeFailed = false;
   let runtimeProbeOnlyConfig = false;
   if (deps.probeChannelRuntimeStatus) {
-    const runtime = deps.probeChannelRuntimeStatus();
+    const runtime = await deps.probeChannelRuntimeStatus();
     if (runtime) {
       runtimeProbeDetail = runtime.detail;
       if (runtime.ok) {
@@ -569,7 +707,7 @@ export async function verifyDeployment(
   // exec cannot safely prove that image artifacts are absent.
   const runtimeDiagnosis =
     !gateway.reachable && options.diagnoseCustomOpenClawRuntime
-      ? classifyOpenClawRuntimeFailure(sandboxName, deps.executeSandboxCommand)
+      ? await classifyOpenClawRuntimeFailure(sandboxName, deps.executeSandboxCommand)
       : null;
   const customRuntimeHints = runtimeDiagnosis
     ? buildCustomOpenClawRuntimeFailureHints(runtimeDiagnosis)
@@ -584,7 +722,7 @@ export async function verifyDeployment(
   });
 
   // 2. Gateway version (cosmetic — not a health signal)
-  const gatewayVersion = gateway.reachable ? fetchGatewayVersion(sandboxName, deps) : null;
+  const gatewayVersion = gateway.reachable ? await fetchGatewayVersion(sandboxName, deps) : null;
 
   // 3. Dashboard reachable from host (port forward)
   // A port forward cannot repair an image that has no managed gateway runtime,
@@ -627,23 +765,19 @@ export async function verifyDeployment(
     deps,
     gateway.reachable ? retryDelaysMs : [],
     sleep,
+    options.inferenceRouteContext ?? {},
   );
   const inferenceRouteWorking = inference.status === "ok";
   diagnostics.push({
     link: "inference",
     status: inference.status === "ok" ? "ok" : "fail",
     detail: inference.detail,
-    hint:
-      inference.status === "ok"
-        ? ""
-        : inference.status === "unhealthy"
-          ? "The inference route is reachable but the endpoint returned a server error (HTTP 5xx). If the endpoint runs on the host, configure it to listen on a host address reachable through host.openshell.internal and restrict access with the host firewall or equivalent controls; a 127.0.0.1/localhost-only bind is not reachable from the sandbox. Then re-run: nemoclaw <sandbox> status."
-          : "The inference proxy is unreachable. Confirm the configured endpoint is running and reachable from the sandbox, then re-run: nemoclaw <sandbox> status.",
+    hint: buildInferenceRouteHint(inference),
   });
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
   // each configured channel — #4156).
-  const messaging = verifyMessagingBridges(sandboxName, deps);
+  const messaging = await verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",
@@ -729,4 +863,38 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   lines.push(`  ${D}The sandbox was created successfully but may not be fully functional.${RESET}`);
   lines.push(`  ${D}Run: nemoclaw <sandbox> status  — to re-check after a few seconds.${RESET}`);
   return lines;
+}
+
+export type InferenceInvocationContext = {
+  sandboxName: string;
+  gatewayName: string;
+  agentName: string | null | undefined;
+  model: string | null;
+  provider: string | null;
+  preferredInferenceApi: string | null;
+};
+
+/**
+ * The standard `probeInferenceInvocation` dependency: send one bounded
+ * inference request over the gateway route, using the same probe `status`
+ * runs. Onboarding wires this so supported OpenRouter adapter routes that
+ * answer HTTP 404 by design are accepted only on the evidence of a served
+ * request (#12621).
+ */
+export async function probeOnboardInferenceInvocation(
+  context: InferenceInvocationContext,
+): Promise<{ ok: boolean; detail?: string }> {
+  const { model, provider } = context;
+  if (!model || !provider) {
+    return { ok: false, detail: "no provider and model were recorded for this sandbox" };
+  }
+  const result = await runSandboxInferenceInvocationProbe({
+    sandboxName: context.sandboxName,
+    gatewayName: context.gatewayName,
+    agentName: context.agentName ?? null,
+    provider,
+    model,
+    preferredInferenceApi: context.preferredInferenceApi,
+  });
+  return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }

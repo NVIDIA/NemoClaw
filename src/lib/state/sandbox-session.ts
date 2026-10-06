@@ -14,6 +14,9 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
@@ -176,9 +179,9 @@ export function getActiveSandboxSessions(
  * for matching SSH target hosts. `ps -axo pid,command` works on both platforms
  * and returns full command lines in pgrep-compatible format (`PID COMMAND`).
  */
-function querySshProcesses(): string | null {
+function querySshProcesses(runCommand: typeof spawnSync = spawnSync): string | null {
   try {
-    const result = spawnSync("ps", ["-axo", "pid,command"], {
+    const result = runCommand("ps", ["-axo", "pid,command"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
@@ -199,16 +202,34 @@ function querySshProcesses(): string | null {
  * Create the default system deps for session detection.
  * Uses `ps` on the host.
  */
-export function createSystemDeps(openshellBinary: string): SessionDetectionDeps {
+export function createSystemDeps(
+  openshellBinary: string | null = resolveOpenshell(),
+  options: {
+    readonly runtimeSelection?: OpenShellRuntimeSelection;
+    readonly spawnSync?: typeof spawnSync;
+  } = {},
+): SessionDetectionDeps {
+  const runCommand = options.spawnSync ?? spawnSync;
+  const selectedEnv = options.runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+    : undefined;
   return {
-    getSshProcesses: querySshProcesses,
-    resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
-      const result = spawnSync(binary, args, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 5000,
-      });
-      return { status: result.status, stdout: result.stdout || "" };
-    }),
+    getSshProcesses: () => querySshProcesses(runCommand),
+    ...(openshellBinary
+      ? {
+          resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
+            const selectedArgs = options.runtimeSelection
+              ? [args[0]!, args[1]!, "-g", options.runtimeSelection.gatewayName, ...args.slice(2)]
+              : args;
+            const result = runCommand(binary, selectedArgs, {
+              encoding: "utf-8",
+              ...(selectedEnv ? { env: selectedEnv } : {}),
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 5000,
+            });
+            return { status: result.status, stdout: result.stdout || "" };
+          }),
+        }
+      : {}),
   };
 }

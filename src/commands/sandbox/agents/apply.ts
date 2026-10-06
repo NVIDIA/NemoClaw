@@ -19,12 +19,15 @@ function printApplyHelp(): void {
     "  adds missing secondary agents and deletes orphan ones via `openclaw agents add|delete`.",
   );
   console.log(
-    "  Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a",
+    "  Supported per-agent `model`, `subagents`, and `tools` overrides, top-level `defaults`,",
   );
   console.log(
-    "  sandbox rebuild and are reported as warnings; rerun `nemoclaw onboard --agents <file>",
+    "  and `main` overrides require a sandbox rebuild and are reported as warnings; rerun",
   );
-  console.log("  --recreate-sandbox` to bake them.");
+  console.log("  `nemoclaw onboard --agents <file> --recreate-sandbox` to bake them.");
+  console.log(
+    "  Per-agent `subagents.maxSpawnDepth` is invalid; move it to `defaults.subagents.maxSpawnDepth`.",
+  );
   console.log("");
   console.log("  Flags:");
   console.log("    -f, --file <agents.yaml>   Path to the manifest (required).");
@@ -41,7 +44,7 @@ export default class SandboxAgentsApplyCommand extends NemoClawCommand {
   static strict = false;
   static summary = "Reconcile a sandbox's OpenClaw agents against a declarative manifest";
   static description =
-    "Read an `agents.yaml` manifest and apply roster diffs (add/delete) to the live sandbox via `openclaw agents add|delete`. Per-agent config fields (`model`, `subagents.*`, top-level `defaults`, `main`) need a rebuild and are surfaced as warnings instead of silent no-ops.";
+    "Read an `agents.yaml` manifest and apply roster diffs (add/delete) to the live sandbox via `openclaw agents add|delete`. Supported per-agent config fields (`model`, `subagents`, `tools`) plus top-level `defaults` and `main` need a rebuild and are surfaced as warnings instead of silent no-ops. Per-agent `subagents.maxSpawnDepth` is invalid; move it to `defaults.subagents.maxSpawnDepth`.";
   static usage = ["<name> agents apply -f <agents.yaml> [--yes] [--non-interactive]"];
   static examples = [
     "<%= config.bin %> sandbox agents apply alpha -f ./agents.yaml",

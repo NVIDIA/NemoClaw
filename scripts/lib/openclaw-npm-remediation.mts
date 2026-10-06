@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,25 +10,34 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
+import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
+  kind:
+    | "axios"
+    | "core"
+    | "current-core"
+    | "jaeger"
+    | "legacy-core"
+    | "slack-proxy-addr"
+    | "undici";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -76,6 +85,15 @@ const TAR_VERSION = "7.5.21";
 const TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
+const LEGACY_BAILEYS_VERSION = "7.0.0-rc.9";
+const LEGACY_BAILEYS_INTEGRITY =
+  "sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==";
+const LEGACY_BAILEYS_TARBALL =
+  "https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz";
+const LEGACY_LIBSIGNAL_VERSION = "6.0.0";
+const LEGACY_LIBSIGNAL_INTEGRITY =
+  "sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==";
+const LEGACY_LIBSIGNAL_TARBALL = "https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz";
 const FS_SAFE_VERSION = "0.3.0";
 const FS_SAFE_INTEGRITY =
   "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
@@ -90,10 +108,10 @@ const CURRENT_BRACE_EXPANSION_INTEGRITY =
   "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const CURRENT_BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-const CURRENT_FAST_URI_VERSION = "3.1.6";
+const CURRENT_FAST_URI_VERSION = "3.1.7";
 const CURRENT_FAST_URI_INTEGRITY =
-  "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==";
-const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
+  "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==";
+const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
 const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
@@ -116,7 +134,18 @@ const OTEL_CORE_INTEGRITY =
   "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
+const PROXY_ADDR_VERSION = "2.0.8";
+const PROXY_ADDR_INTEGRITY =
+  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
+const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
+
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/slack@2026.9.2": {
+    expectedPatchedTreeIntegrity:
+      "sha512-li/y4SFf6t3Z6JvP2R2H8dfauu0eybiwzd408QMCR9+zzi6oVVVffi+LGRDDYMh2TFCGgQ8Pnv2a5FiXMmPt1A==",
+    kind: "slack-proxy-addr",
+    version: "2026.9.2",
+  },
   "@openclaw/diagnostics-otel@2026.6.10": {
     expectedPatchedMetadataIntegrity:
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
@@ -138,25 +167,25 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // #7337: remove this branch only after a reviewed diagnostics release ships a safe SDK graph.
   "@openclaw/diagnostics-otel@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+      "sha512-p3TthwGT081xMnHkZNwh6WwObk/OHkNtjImllLRuTezaro09kk6uShJDHpcwRtiW5C9RdbXN5DV/QS2lGoG/zQ==",
     kind: "jaeger",
     version: "2026.7.1",
   },
   "@openclaw/discord@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-w+F8FrRl0wPd0EN2RnLyu6yfixel7BT8Iex4wLLQDvfIac8rLhuksNpFU4uZa8W9wXgh47hguq0F9NSN0BZfOQ==",
+      "sha512-KUDcFJnqI3O7yKiBUh20ZijM7J7gkbpKGDw4bb8y+uO8s914US6PieyzwAzgycRXWfXPxHQx5CTDrg28PdKfaw==",
     kind: "undici",
     version: "2026.7.1",
   },
   "@openclaw/msteams@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
+      "sha512-qk1PXcRU5r/7zWIJlwHGTBmKIuLoBYHhv6hA1w+mYs0H9JX0nBk6WccahcmiWVzu2SsryCQ4Sck6j4Fbu6kcHg==",
     kind: "axios",
     version: "2026.7.1",
   },
   "@openclaw/slack@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
+      "sha512-A23af8PA4KuO8vju0viceyj1Y0M7ywF66TxKZZ8rI21L/TSn8RrzqiSaOV4UewV3/PLjDz+lY5lY+qbycOCBfg==",
     kind: "axios",
     version: "2026.7.1",
   },
@@ -168,16 +197,19 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   // openclaw/openclaw#113584: remove after a supported OpenClaw archive
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
+  // npm 12 no longer packs or honors npm-shrinkwrap.json. The reviewed archive
+  // still ships the complete bundleDependencies tree, and this digest pins that
+  // exact npm 12 packed tree so either a packlist or bundled-graph change fails.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==",
+      "sha512-j/ArEzhwh+FDiIqgKQBFMiDUk5wHOHzGxbvl5hnh2W8X0nTpJ5oW/VzO8T5B7HqI6MVlQp4NLadFveN209TLLg==",
     kind: "current-core",
     version: "2026.7.1",
   },
   "openclaw@2026.3.11": {
     kind: "legacy-core",
     expectedPatchedMetadataIntegrity:
-      "sha512-Yz/7GyAgLSPtJkijdUsVzxnjhATMPLRSFFMhl2H565aW7tReHZmuPeExBq0K4EEFkvg7zM2sFm2CP3f2oNw32Q==",
+      "sha512-kuoMP4afOUId6SrExT5xaSjSigSovFwaXflirtJFZqqlREqAoVj7QHl1i/1LS5Jk3kq5x85jQCqy2R/4rSPSLQ==",
     version: "2026.3.11",
   },
 });
@@ -309,6 +341,12 @@ function hashPatchedMetadata(packageDirectory: string): string {
     const bundledTarPackageJson = readJson(
       join(packageDirectory, "node_modules", "tar", "package.json"),
     );
+    const bundledBaileysPackageJson = readJson(
+      join(packageDirectory, "node_modules", "@whiskeysockets", "baileys", "package.json"),
+    );
+    const bundledLibsignalPackageJson = readJson(
+      join(packageDirectory, "node_modules", "libsignal", "package.json"),
+    );
     return hashMetadataEntries([
       [
         "legacy-openclaw-remediation.json",
@@ -320,7 +358,19 @@ function hashPatchedMetadata(packageDirectory: string): string {
                 name: bundledTarPackageJson.name,
                 version: bundledTarPackageJson.version,
               },
+              bundledBaileys: {
+                dependencies: bundledBaileysPackageJson.dependencies,
+                name: bundledBaileysPackageJson.name,
+                version: bundledBaileysPackageJson.version,
+              },
+              bundledLibsignal: {
+                dependencies: bundledLibsignalPackageJson.dependencies,
+                name: bundledLibsignalPackageJson.name,
+                version: bundledLibsignalPackageJson.version,
+              },
               name: packageJson.name,
+              baileysDependency: packageJson.dependencies?.["@whiskeysockets/baileys"],
+              libsignalDependency: packageJson.dependencies?.libsignal,
               tarDependency: packageJson.dependencies?.tar,
               version: packageJson.version,
             },
@@ -784,10 +834,31 @@ export function patchOpenClawDiscordPackageGraph(packageDirectory: string): void
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
+  const bundledBaileysPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "@whiskeysockets",
+    "baileys",
+    "package.json",
+  );
+  const bundledLibsignalPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "libsignal",
+    "package.json",
+  );
   const packageJson = readJson(packageJsonPath);
   requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
   if (packageJson.dependencies?.tar !== "7.5.11") {
     throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.dependencies?.["@whiskeysockets/baileys"] !== LEGACY_BAILEYS_VERSION) {
+    throw new Error(
+      `openclaw@2026.3.11 must declare reviewed @whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} before remediation`,
+    );
+  }
+  if (packageJson.dependencies?.libsignal !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares libsignal before remediation");
   }
   if (packageJson.bundledDependencies !== undefined) {
     throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
@@ -798,15 +869,56 @@ export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): v
   if (!existsSync(bundledTarPackageJsonPath)) {
     throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
   }
+  if (!existsSync(bundledBaileysPackageJsonPath) || !existsSync(bundledLibsignalPackageJsonPath)) {
+    throw new Error(
+      "openclaw@2026.3.11 remediation requires the reviewed bundled Baileys and libsignal packages",
+    );
+  }
   requirePackageIdentity(
     readJson(bundledTarPackageJsonPath),
     "tar",
     TAR_VERSION,
     "Legacy OpenClaw bundled tar remediation",
   );
+  const bundledBaileysPackageJson = readJson(bundledBaileysPackageJsonPath);
+  requirePackageIdentity(
+    bundledBaileysPackageJson,
+    "@whiskeysockets/baileys",
+    LEGACY_BAILEYS_VERSION,
+    "Legacy OpenClaw bundled Baileys remediation",
+  );
+  requireDependencyShape(
+    bundledBaileysPackageJson,
+    {
+      "@cacheable/node-cache": "^1.4.0",
+      "@hapi/boom": "^9.1.3",
+      "async-mutex": "^0.5.0",
+      libsignal: LEGACY_LIBSIGNAL_VERSION,
+      "lru-cache": "^11.1.0",
+      "music-metadata": "^11.7.0",
+      "p-queue": "^9.0.0",
+      pino: "^9.6",
+      protobufjs: "^7.2.4",
+      ws: "^8.13.0",
+    },
+    `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+  );
+  const bundledLibsignalPackageJson = readJson(bundledLibsignalPackageJsonPath);
+  requirePackageIdentity(
+    bundledLibsignalPackageJson,
+    "libsignal",
+    LEGACY_LIBSIGNAL_VERSION,
+    "Legacy OpenClaw bundled libsignal remediation",
+  );
+  requireDependencyShape(
+    bundledLibsignalPackageJson,
+    { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+    `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+  );
 
   packageJson.dependencies.tar = TAR_VERSION;
-  packageJson.bundledDependencies = ["tar"];
+  packageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
+  packageJson.bundledDependencies = ["tar", "@whiskeysockets/baileys", "libsignal"];
   writeJson(packageJsonPath, packageJson);
 }
 
@@ -1032,6 +1144,34 @@ function packReplacement(
   });
 }
 
+export function patchOpenClawSlackProxyPackageGraph(
+  packageDirectory: string,
+  replacementDirectory: string,
+): void {
+  requirePackageIdentity(
+    readJson(join(packageDirectory, "package.json")),
+    "@openclaw/slack",
+    "2026.9.2",
+    "OpenClaw Slack plugin",
+  );
+  const target = join(
+    packageDirectory,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  );
+  const original = readJson(join(target, "package.json"));
+  const replacement = readJson(join(replacementDirectory, "package.json"));
+  requirePackageIdentity(original, "proxy-addr", "2.0.7", "Bundled Slack proxy-addr");
+  requirePackageIdentity(replacement, "proxy-addr", PROXY_ADDR_VERSION, "proxy-addr replacement");
+  const dependencies = { forwarded: "0.2.0", "ipaddr.js": "1.9.1" };
+  requireDependencyShape(original, dependencies, "Bundled Slack proxy-addr");
+  requireDependencyShape(replacement, dependencies, "proxy-addr replacement");
+  copyReplacementPackage(replacementDirectory, target);
+}
+
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -1057,7 +1197,22 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "core") {
+  if (remediation.kind === "slack-proxy-addr") {
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(remediationRoot, "proxy-addr"),
+      remediationRoot,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(sourcePackage, replacement);
+  } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
       FS_SAFE_INTEGRITY,
@@ -1197,13 +1352,35 @@ export function buildRemediatedOpenClawPluginArchive(
     copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
   } else if (remediation.kind === "legacy-core") {
     const bundledTarPath = join(sourcePackage, "node_modules", "tar");
-    if (existsSync(bundledTarPath)) {
-      throw new Error("openclaw@2026.3.11 unexpectedly bundles tar before remediation");
+    const bundledBaileysPath = join(sourcePackage, "node_modules", "@whiskeysockets", "baileys");
+    const bundledLibsignalPath = join(sourcePackage, "node_modules", "libsignal");
+    if (
+      existsSync(bundledTarPath) ||
+      existsSync(bundledBaileysPath) ||
+      existsSync(bundledLibsignalPath)
+    ) {
+      throw new Error(
+        "openclaw@2026.3.11 unexpectedly bundles a legacy remediation package before remediation",
+      );
     }
     const tarArchive = packReplacement(
       `tar@${TAR_VERSION}`,
       TAR_INTEGRITY,
       TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const baileysArchive = packReplacement(
+      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+      LEGACY_BAILEYS_INTEGRITY,
+      LEGACY_BAILEYS_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const libsignalArchive = packReplacement(
+      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+      LEGACY_LIBSIGNAL_INTEGRITY,
+      LEGACY_LIBSIGNAL_TARBALL,
       remediationRoot,
       env,
     );
@@ -1213,13 +1390,87 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
+    const baileysPackage = extractArchive(
+      baileysArchive.archivePath,
+      join(remediationRoot, "baileys"),
+      remediationRoot,
+      env,
+    );
+    const libsignalPackage = extractArchive(
+      libsignalArchive.archivePath,
+      join(remediationRoot, "libsignal"),
+      remediationRoot,
+      env,
+    );
     requirePackageIdentity(
       readJson(join(tarPackage, "package.json")),
       "tar",
       TAR_VERSION,
       "Legacy OpenClaw tar remediation package",
     );
+    const baileysPackageJsonPath = join(baileysPackage, "package.json");
+    const baileysPackageJson = readJson(baileysPackageJsonPath);
+    requirePackageIdentity(
+      baileysPackageJson,
+      "@whiskeysockets/baileys",
+      LEGACY_BAILEYS_VERSION,
+      "Legacy OpenClaw Baileys remediation package",
+    );
+    requireDependencyShape(
+      baileysPackageJson,
+      {
+        "@cacheable/node-cache": "^1.4.0",
+        "@hapi/boom": "^9.1.3",
+        "async-mutex": "^0.5.0",
+        libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
+        "lru-cache": "^11.1.0",
+        "music-metadata": "^11.7.0",
+        "p-queue": "^9.0.0",
+        pino: "^9.6",
+        protobufjs: "^7.2.4",
+        ws: "^8.13.0",
+      },
+      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+    );
+    if (
+      baileysPackageJson.engines?.node !== ">=20.0.0" ||
+      baileysPackageJson.license !== "MIT" ||
+      JSON.stringify(sortedObject(baileysPackageJson.peerDependencies ?? {})) !==
+        JSON.stringify(
+          sortedObject({
+            "audio-decode": "^2.1.3",
+            jimp: "^1.6.0",
+            "link-preview-js": "^3.0.0",
+            sharp: "*",
+          }),
+        )
+    ) {
+      throw new Error(
+        `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} package contract changed; review the remediation before updating it`,
+      );
+    }
+    const libsignalPackageJson = readJson(join(libsignalPackage, "package.json"));
+    requirePackageIdentity(
+      libsignalPackageJson,
+      "libsignal",
+      LEGACY_LIBSIGNAL_VERSION,
+      "Legacy OpenClaw libsignal remediation package",
+    );
+    requireDependencyShape(
+      libsignalPackageJson,
+      { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+    );
+    if (libsignalPackageJson.license !== "GPL-3.0") {
+      throw new Error(
+        `libsignal@${LEGACY_LIBSIGNAL_VERSION} package contract changed; review the remediation before updating it`,
+      );
+    }
+    baileysPackageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
+    writeJson(baileysPackageJsonPath, baileysPackageJson);
     copyReplacementPackage(tarPackage, bundledTarPath);
+    copyReplacementPackage(baileysPackage, bundledBaileysPath);
+    copyReplacementPackage(libsignalPackage, bundledLibsignalPath);
     patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "axios") {
     const axiosArchive = packReplacement(
@@ -1379,10 +1630,11 @@ export function buildRemediatedOpenClawPluginArchive(
     env,
   );
   const packed = JSON.parse(packedJson);
-  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+  const packedResult = singleNpmPackResult(packed);
+  if (typeof packedResult?.filename !== "string") {
     throw new Error(`npm pack returned an invalid remediation result for ${request.packageSpec}`);
   }
-  const archivePath = resolve(outputDirectory, basename(packed[0].filename));
+  const archivePath = resolve(outputDirectory, basename(packedResult.filename));
   validateArchiveMembers(archivePath, remediationRoot, env);
   const packedPackage = extractArchive(
     archivePath,
@@ -1438,8 +1690,116 @@ export function remediateReviewedOpenClawPluginArchive(
   });
 }
 
+export function remediateInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
+): void {
+  if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
+  if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
+    throw new Error("Official plugin remediation requires its verified install path");
+  }
+  const trustedRoot = realpathSync(request.trustedStateRoot);
+  const packageDirectory = realpathSync(request.packageDirectory);
+  // OpenClaw 2026.9.2 owns npm plugins in package-specific managed projects,
+  // including artifact-generation projects. Accept only Slack's exact shape.
+  const projectName = `openclaw-slack-${createHash("sha256")
+    .update("@openclaw/slack")
+    .digest("hex")
+    .slice(0, 10)}`;
+  const installedParts = relative(trustedRoot, packageDirectory).split(sep);
+  const project = installedParts[2] ?? "";
+  if (
+    installedParts.length !== 6 ||
+    installedParts[0] !== "npm" ||
+    installedParts[1] !== "projects" ||
+    (project !== projectName &&
+      !new RegExp(`^${projectName}__openclaw-generation__g-[a-f0-9]{16}$`).test(project)) ||
+    installedParts.slice(3).join("/") !== "node_modules/@openclaw/slack" ||
+    relative(resolve(request.trustedStateRoot), resolve(request.packageDirectory)) !==
+      relative(trustedRoot, packageDirectory)
+  ) {
+    throw new Error("Official Slack install path is outside its trusted plugin root");
+  }
+  let installedDependency = trustedRoot;
+  for (const component of [
+    ...installedParts,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  ]) {
+    installedDependency = join(installedDependency, component);
+    const metadata = lstatSync(installedDependency);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Official plugin dependency directory must be a real directory");
+    }
+  }
+  // The existing no-follow tree walk also rejects unsafe installed members.
+  hashPackageTree(installedDependency);
+  const env = { ...process.env, ...request.env };
+  const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
+  try {
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
+      directory,
+      env,
+    );
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(directory, "proxy-addr"),
+      directory,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
+}
+
+function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("Missing --")) {
+    return "OpenClaw npm remediation is missing required arguments.";
+  }
+  if (message.includes(" failed:")) {
+    return "OpenClaw npm remediation command failed.";
+  }
+  if (
+    error instanceof SyntaxError ||
+    message.startsWith("npm archive ") ||
+    message.includes(" did not extract a package directory") ||
+    message.includes(" archive escaped its reviewed root") ||
+    message.includes(" archive is not a regular file")
+  ) {
+    return "OpenClaw npm remediation rejected an invalid archive.";
+  }
+  if (
+    message.includes(" changed") ||
+    message.includes(" before remediation") ||
+    message.includes(" after review") ||
+    message.includes(" must declare") ||
+    message.includes(" must resolve") ||
+    message.includes(" must ship") ||
+    message.includes(" unexpectedly") ||
+    message.includes(" already") ||
+    message.includes(" integrity mismatch") ||
+    message.includes("unsupported entry") ||
+    message.includes("invalid remediation result") ||
+    message.startsWith("No OpenClaw npm remediation is defined")
+  ) {
+    return "OpenClaw npm remediation rejected an unreviewed package state.";
+  }
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "EACCES" || code === "EISDIR" || code === "ENOENT" || code === "ENOTDIR") {
+    return "OpenClaw npm remediation could not access its working files.";
+  }
+  return "OpenClaw npm remediation failed.";
 }
 
 if (isMainModule()) {
@@ -1461,7 +1821,7 @@ if (isMainModule()) {
       ),
     );
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalOpenClawNpmRemediationDiagnostic(error));
     process.exit(1);
   }
 }

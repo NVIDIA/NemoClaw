@@ -7,18 +7,40 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 
 config_file = os.path.abspath(sys.argv[1])
 openclaw_dir = os.path.dirname(config_file)
 env_key = "WECHAT_BOT_TOKEN"
 canonical = f"openshell:resolve:env:{env_key}"
-scoped_re = re.compile(rf"^openshell:resolve:env:v[0-9]+_{env_key}$")
+scoped_re = re.compile(
+    rf"^openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}$"
+)
 
 
 def fail(message):
     print(f"[SECURITY] Refusing WeChat provider placeholder refresh — {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def parse_openclaw_config(source):
+    parsed = subprocess.run(
+        [
+            "/usr/local/bin/node",
+            "-e",
+            'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
+            + 'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        ],
+        input=source,
+        # This parser can run from a Node preload. Do not load that preload again.
+        env={key: value for key, value in os.environ.items() if key != "NODE_OPTIONS"},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+    return json.loads(parsed.stdout)
 
 
 def safe_account_id(value):
@@ -198,11 +220,11 @@ try:
                 fail("openclaw.json is not a single regular file")
             with os.fdopen(config_fd, "r", encoding="utf-8") as stream:
                 config_fd = -1
-                config = json.load(stream)
+                config = parse_openclaw_config(stream.read())
         finally:
             if config_fd >= 0:
                 os.close(config_fd)
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError):
         fail("openclaw.json is unreadable or unsafe")
 
     channels = config.get("channels") if isinstance(config, dict) else None
@@ -231,7 +253,7 @@ try:
             fail(f"{env_key} is missing from the runtime environment")
         if not runtime_placeholder.startswith("openshell:resolve:env:"):
             fail(f"{env_key} is not an OpenShell placeholder; raw credentials stay out of account files")
-        fail(f"{env_key} is not the required revision-scoped OpenShell placeholder")
+        fail(f"{env_key} is not the required generation-scoped OpenShell placeholder")
 
     try:
         plugin_fd = os.open("openclaw-weixin", directory_flags, dir_fd=root_fd)
@@ -283,7 +305,7 @@ try:
         if current == runtime_placeholder:
             continue
         if current != canonical and not scoped_re.fullmatch(current):
-            fail("a managed account token is neither canonical nor revision-scoped")
+            fail("a managed account token is neither canonical nor generation-scoped")
         account_data["token"] = runtime_placeholder
         payload = (json.dumps(account_data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         pending.append((filename, metadata, account_mode, original_payload, payload))

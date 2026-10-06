@@ -3,6 +3,7 @@
 
 import type { AgentDashboardUi } from "./dashboard-ui";
 import type { AgentRuntime } from "./runtime-manifest";
+import type { AgentSkillIntegration } from "./skill-integration";
 import type { AgentWebAuth } from "./web-auth";
 
 export type ManifestScalar = string | number | boolean | null | Date;
@@ -23,66 +24,6 @@ export interface AgentConfigPaths {
   format: string;
 }
 
-interface AgentStateDirectoryBehavior {
-  backup: boolean;
-}
-
-export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
-  kind: "path";
-  path: string;
-}
-
-export interface AgentStateDirectoryPrefix extends AgentStateDirectoryBehavior {
-  kind: "prefix";
-  prefix: string;
-}
-
-export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryPrefix;
-
-export type AgentStateFileStrategy = "copy" | "sqlite_backup";
-
-export type StateFileRestoreMerge = "key-allowlist" | "openclaw-config";
-
-export type StateFileUserKeyType = "boolean" | "string" | "integer" | "number" | "enum";
-
-export interface StateFileUserKey {
-  key: string;
-  type: StateFileUserKeyType;
-  values?: readonly (string | number | boolean)[];
-  min?: number;
-  max?: number;
-  maxLength?: number;
-}
-
-export interface StateFileFreshHeader {
-  match: "exact" | "prefix";
-  value: string;
-}
-
-export interface StateFileKeyAllowlistRestoreOwnership {
-  merge: "key-allowlist";
-  userKeys: readonly StateFileUserKey[];
-  requireFreshTables?: readonly string[];
-  requireFreshHeaders?: readonly StateFileFreshHeader[];
-}
-
-export interface StateFileOpenClawRestoreOwnership {
-  merge: "openclaw-config";
-  userKeys?: never;
-  requireFreshTables?: never;
-  requireFreshHeaders?: never;
-}
-
-export type StateFileRestoreOwnership =
-  | StateFileKeyAllowlistRestoreOwnership
-  | StateFileOpenClawRestoreOwnership;
-
-export interface AgentStateFile {
-  path: string;
-  strategy: AgentStateFileStrategy;
-  restore?: StateFileRestoreOwnership;
-}
-
 export type AgentDashboardKind = "ui" | "api";
 
 export interface AgentDashboard {
@@ -100,7 +41,7 @@ export interface AgentInference {
 }
 
 export type AgentMcpSupport = "bridge" | "disabled";
-export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+export type AgentMcpAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export interface AgentMcpCapability {
   support: AgentMcpSupport;
@@ -133,9 +74,9 @@ export interface AgentDefinition {
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
+  deferred_onboarding?: boolean;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
-  state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
   agentDir: string;
@@ -149,14 +90,7 @@ export interface AgentDefinition {
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
-  readonly stateDirectories: AgentStateDirectory[];
-  readonly stateDirs: string[];
-  readonly stateDirPrefixes: string[];
-  readonly backupStateDirs: string[];
-  readonly backupStateDirPrefixes: string[];
-  readonly nonBackupStateDirs: string[];
-  readonly nonBackupStateDirPrefixes: string[];
-  readonly stateFiles: AgentStateFile[];
+  readonly skillIntegration?: AgentSkillIntegration | null;
   readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;

@@ -1,14 +1,50 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist for parity with the other CLI tests in this project.
-import { collectGatewayWedgeDiagnostics, sanitizeWedgeLogLine } from "./gateway-wedge-diagnostics";
+import {
+  collectGatewayWedgeDiagnostics,
+  collectRedactedOpenShellSandboxLogs,
+  sanitizeWedgeLogLine,
+} from "./gateway-wedge-diagnostics";
+
+describe("collectRedactedOpenShellSandboxLogs", () => {
+  it("reads a bounded retained tail and sanitizes every returned line", async () => {
+    const read = vi.fn(async () => ({
+      content:
+        "[setup] released gateway launch\n" +
+        "gateway startup failed: OPENAI_API_KEY=example-not-a-real-value-0001\n",
+      diagnostic: "",
+      outcome: { kind: "completed" as const, exitCode: 0 },
+    }));
+    const target = { kind: "named" as const, gatewayName: "recorded-gateway" };
+
+    await expect(
+      collectRedactedOpenShellSandboxLogs("alpha", target, {
+        checkAvailability: vi.fn(),
+        follow: vi.fn() as never,
+        read,
+      }),
+    ).resolves.toEqual([
+      "[setup] released gateway launch",
+      "gateway startup failed: OPENAI_API_KEY=<REDACTED>",
+    ]);
+    expect(read).toHaveBeenCalledExactlyOnceWith({
+      target,
+      sandboxName: "alpha",
+      source: "openshell",
+      lines: "120",
+      since: null,
+      timeoutMs: 15_000,
+    });
+  });
+});
 
 describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
-  it("returns the matching gateway.log lines, trimmed", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("returns the matching gateway.log lines, trimmed", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 0,
       stdout:
         "  [reload] config change requires gateway restart (plugins.installs)\n" +
@@ -21,8 +57,8 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     ]);
   });
 
-  it("returns [] when nothing matches (grep exits non-zero)", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("returns [] when nothing matches (grep exits non-zero)", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 1,
       stdout: "",
       stderr: "",
@@ -30,13 +66,20 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     expect(lines).toEqual([]);
   });
 
-  it("returns [] when the sandbox exec is unavailable", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => null);
+  it("returns [] when the sandbox exec is unavailable", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => null);
     expect(lines).toEqual([]);
   });
 
-  it("sanitizes sandbox-controlled log lines before returning them", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("returns [] when the sandbox exec rejects", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => {
+      throw new Error("untrusted diagnostic failure");
+    });
+    expect(lines).toEqual([]);
+  });
+
+  it("sanitizes sandbox-controlled log lines before returning them", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 0,
       stdout:
         "gateway startup failed: Authorization: Bearer abc.def.ghi rejected\n" +
@@ -113,9 +156,7 @@ describe("sanitizeWedgeLogLine", () => {
 
   it("preserves a carriage-return boundary until redaction completes", () => {
     expect(
-      sanitizeWedgeLogLine(
-        'gateway startup failed: CUSTOM_TOKEN="opaque secret\rsafe diagnostic"',
-      ),
+      sanitizeWedgeLogLine('gateway startup failed: CUSTOM_TOKEN="opaque secret\rsafe diagnostic"'),
     ).toBe('gateway startup failed: CUSTOM_TOKEN="<REDACTED>"safe diagnostic"');
   });
 

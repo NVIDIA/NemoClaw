@@ -40,7 +40,7 @@ graph LR
             direction TB
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
-            MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+            STATE["State Management<br/><small>Whole-home rebuild transfer<br/>Fail-closed credential checks<br/>Integrity verification</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]
@@ -62,7 +62,7 @@ graph LR
 
     NCLI -->|"Orchestrates"| OSCLI
     BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
-    MIGRATE -->|"Safe state<br/>transfer"| SANDBOX
+    STATE -->|"Backup + restore"| SANDBOX
 
     AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
     GW -->|"Proxied with<br/>credential injected"| INFERENCE
@@ -86,12 +86,19 @@ Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
 When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
 It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
-NemoClaw rejects a known version below the minimum or a known stable version above the maximum.
-An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`.
+NemoClaw rejects a known version below the minimum, above the maximum, or identified as a development build.
+Managed installations require exact stable OpenShell 0.0.116; the development channel is not eligible.
 An undetermined version or an unsupported version stops package-unit adoption.
 When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
 It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
-An activation path blocks fallback because its service can later claim port `8080`.
+When `NEMOCLAW_GATEWAY_PORT` selects port `8080` and no activation path exists, NemoClaw keeps the standalone gateway on port `8080`.
+When the port is unset, one canonical package-service activation can make the installer select a separate standalone NemoClaw port from `8990` through `9005` only after offline unit and environment checks prove that the service uses port `8080`.
+The selector rejects a listener, an existing gateway registration, port-scoped NemoClaw state, reserved ports, and configured service ports.
+It fails closed when no supported listener probe can conclusively confirm that a candidate is unused.
+The installer records a pending automatic port under its port-scoped state root before onboarding runs or is deferred. Successful installer-driven or direct CLI onboarding promotes it to the completed identity.
+Later installer and CLI processes restore either identity when `NEMOCLAW_GATEWAY_PORT` is unset, so deferred or interrupted onboarding returns to the same port-scoped recovery state.
+A supported explicit non-default port remains authoritative and bypasses automatic selection.
+An explicit port of `8080`, multiple activation paths, a noncanonical service, a drop-in, or another effective service port blocks fallback.
 An active `SYSTEMD_UNIT_PATH` override also blocks fallback because NemoClaw cannot verify its activation state.
 Other identity-query failures stop package-unit adoption.
 NemoClaw stops when systemd identifies an untrusted unit or effective binary.
@@ -213,7 +220,7 @@ The concrete files differ by agent because each runtime has its own plugin syste
 The OpenClaw integration is a thin TypeScript plugin that runs in-process with the OpenClaw gateway inside the sandbox.
 Its durable entry points are `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-context.ts`, and `nemoclaw/openclaw.plugin.json`.
 The `nemoclaw/src/commands/` directory contains in-sandbox `/nemoclaw` command handlers and migration helpers.
-The `nemoclaw/src/blueprint/` directory contains runner, state, snapshot, SSRF, and private-network validation code.
+The `nemoclaw/src/blueprint/` directory contains runner, persistent-state, internal rollback-capture, SSRF, and private-network validation code.
 
 Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
 This guidance stays out of the visible chat transcript.
@@ -223,14 +230,14 @@ The context tells the agent to try allowed network and filesystem operations bef
 
 <AgentOnly variant="hermes">
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
-The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
+The manifest declares Hermes' binary, health probe, config directory, and OpenAI-compatible API endpoint.
 Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
 Managed startup materializes Hermes YAML and environment state from the recorded onboarding choices.
 The runtime configuration guard validates that state before the supervised Hermes gateway starts.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 The Deep Agents integration follows the generic agent-manifest path for terminal runtimes.
-The manifest declares the `dcode` binary, smoke checks, config directory, state directories, and OpenAI-compatible inference route.
+The manifest declares the `dcode` binary, smoke checks, config directory, and OpenAI-compatible inference route.
 The configuration generator turns NemoClaw onboarding choices into `config.toml`, and the managed launchers enforce the supported credential, MCP, tracing, and sandbox boundaries before `dcode` starts.
 </AgentOnly>
 
@@ -275,8 +282,7 @@ nemoclaw/src/blueprint/
 ├── runner.ts                       CLI runner: plan / apply / status / rollback
 ├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)
 ├── private-networks.ts             Shared private-network block list loader for SSRF checks
-├── snapshot.ts                     Migration snapshot / restore lifecycle
-├── state.ts                        Persistent run state management
+└── state.ts                        Persistent run state management
 ```
 
 ### Blueprint Lifecycle
@@ -315,7 +321,7 @@ Before selecting one agent image, NemoClaw validates a complete three-agent coho
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
-The portable experimental profile retains its existing workload path and lifecycle. Native Podman is independently selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
+Native Podman is selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>
@@ -382,9 +388,9 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 | Path | Purpose |
 |---|---|
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata for the default gateway port, including the default sandbox selection. |
-| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
+| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, rebuild backups, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
 <AgentOnly variant="openclaw">
-| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw backs up or restores during migration flows. |
 </AgentOnly>
 
 The following environment variables configure optional services and local access.
@@ -401,7 +407,8 @@ The following environment variables configure optional services and local access
 | `SLACK_ALLOWED_USERS` | Comma-separated Slack member IDs for DM and channel `@mention` user allowlisting. |
 | `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Included in the generated sandbox configuration during onboarding. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
-| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Onboarding-time toggle that disables gateway device pairing when set to `1` before the sandbox is created. Stock managed-image onboarding carries it in the identity-bound startup profile; explicit custom Dockerfile onboarding carries it into the custom image. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Legacy compatibility input retained while managed Dockerfile callers transition. OpenClaw 2026.9.1 retired the bypass, so NemoClaw accepts but does not read, validate, or emit this toggle into generated OpenClaw configuration; pairing remains required. |
+| `NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE` | Legacy provenance input retained for the same transition. NemoClaw validates an explicit value as `operator` or `managed-onboard`, but no longer reads it as an authorization decision or emits it into generated OpenClaw configuration. |
 </AgentOnly>
 <AgentOnly variant="hermes">
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `$$nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
@@ -413,10 +420,10 @@ The following environment variables configure optional services and local access
 </AgentOnly>
 <AgentOnly variant="deepagents">
 | `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |
-| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
+| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
 </AgentOnly>
 
 For normal setup and reconfiguration, prefer `$$nemoclaw onboard` over editing these files by hand.
 <AgentOnly variant="openclaw">
-Do not treat `NEMOCLAW_DISABLE_DEVICE_AUTH` as a runtime setting for an already-created sandbox.
+Do not rely on `NEMOCLAW_DISABLE_DEVICE_AUTH` to bypass pairing; it is a retired compatibility input and has no effect on generated OpenClaw configuration.
 </AgentOnly>

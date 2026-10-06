@@ -190,7 +190,7 @@ describe("managed inference YAML profile contract", () => {
       serve: {
         authentication: "bearer",
         contextSize: 262144,
-        limits: { maxRequestBodyBytes: 32768 },
+        limits: { maxRequestBodyBytes: 1048576 },
         batchSize: 2048,
         microBatchSize: 512,
         flashAttention: "enabled",
@@ -205,9 +205,7 @@ describe("managed inference YAML profile contract", () => {
     const preset = catalog.presets.find(
       ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
     );
-    const recipe = catalog.recipes.find(
-      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_RECIPE_ID,
-    );
+    const recipe = catalog.recipes.find(({ metadata }) => metadata.id === MUSE_LLAMA_CPP_RECIPE_ID);
 
     expect(preset?.metadata.supportState).toBe("experimental");
     expect(preset?.spec).toMatchObject({
@@ -247,7 +245,7 @@ describe("managed inference YAML profile contract", () => {
         chatTemplate: "model-embedded-jinja",
         chatTemplateArguments: { reasoningStrength: "low" },
         contextSize: 131072,
-        limits: { maxRequestBodyBytes: 16384 },
+        limits: { maxRequestBodyBytes: 1048576 },
         slots: 1,
         speculativeDecoding: "disabled",
       },

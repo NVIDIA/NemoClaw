@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { waitForPolicyMutation } from "./policy-preset-sync";
 
 /**
@@ -25,53 +25,42 @@ const UNCONFIRMED_ERROR_MESSAGE =
 const TRANSIENT_STARTUP_ERROR_MESSAGE = "sandbox not found: sb-9206";
 
 describe("waitForPolicyMutation", () => {
-  let clockMs = 0;
-  let sleptMs: number[] = [];
-
   beforeEach(() => {
-    // `waitUntil` measures its budget with Date.now and burns it in a blocking
-    // Atomics.wait. Driving one synthetic clock from the other keeps the real
-    // polling arithmetic while costing no wall-clock time.
-    clockMs = 1_700_000_000_000;
-    sleptMs = [];
-    vi.spyOn(Date, "now").mockImplementation(() => clockMs);
-    vi.spyOn(Atomics, "wait").mockImplementation((_typedArray, _index, _value, timeout) => {
-      const durationMs = typeof timeout === "number" ? timeout : 0;
-      sleptMs.push(durationMs);
-      clockMs += durationMs;
-      return "timed-out";
-    });
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("attempts a rejected policy submission exactly once (#9206)", () => {
+  it("attempts a rejected policy submission exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       throw new Error(REJECTION_ERROR_MESSAGE);
     };
 
-    expect(() => waitForPolicyMutation("applyPresets(weather)", mutate)).toThrow(
-      REJECTION_ERROR_MESSAGE,
-    );
+    await expect(
+      (async () => await waitForPolicyMutation("applyPresets(weather)", mutate))(),
+    ).rejects.toThrow(REJECTION_ERROR_MESSAGE);
     expect(attempts).toBe(1);
-    expect(sleptMs).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("attempts a policy submission with an unconfirmed result exactly once (#9206)", () => {
+  it("attempts a policy submission with an unconfirmed result exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       throw new Error(UNCONFIRMED_ERROR_MESSAGE);
     };
 
-    expect(() => waitForPolicyMutation("applyPresets(weather)", mutate)).toThrow(
-      UNCONFIRMED_ERROR_MESSAGE,
-    );
+    await expect(
+      (async () => await waitForPolicyMutation("applyPresets(weather)", mutate))(),
+    ).rejects.toThrow(UNCONFIRMED_ERROR_MESSAGE);
     expect(attempts).toBe(1);
-    expect(sleptMs).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("keeps re-polling a sandbox that has not appeared yet until the mutation lands (#9206)", () => {
+  it("keeps re-polling a sandbox that has not appeared yet until the mutation lands (#9206)", async () => {
     const behaviours: ReadonlyArray<() => boolean> = [
       () => {
         throw new Error(TRANSIENT_STARTUP_ERROR_MESSAGE);
@@ -82,28 +71,30 @@ describe("waitForPolicyMutation", () => {
       () => true,
     ];
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       const behaviour = behaviours[attempts] ?? (() => true);
       attempts += 1;
       return behaviour();
     };
 
-    expect(() => waitForPolicyMutation("applyPreset(slack)", mutate)).not.toThrow();
+    const pending = waitForPolicyMutation("applyPreset(slack)", mutate);
+    await vi.advanceTimersByTimeAsync(2 * MUTATION_POLL_INTERVAL_MS);
+    await expect(pending).resolves.toBeUndefined();
     expect(attempts).toBe(3);
-    expect(sleptMs).toEqual([MUTATION_POLL_INTERVAL_MS, MUTATION_POLL_INTERVAL_MS]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("attempts a policy mutation that returns false exactly once (#9206)", () => {
+  it("attempts a policy mutation that returns false exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       return false;
     };
 
-    expect(() => waitForPolicyMutation("applyPreset(slack)", mutate)).toThrow(
-      "applyPreset(slack) returned false",
-    );
+    await expect(
+      (async () => await waitForPolicyMutation("applyPreset(slack)", mutate))(),
+    ).rejects.toThrow("applyPreset(slack) returned false");
     expect(attempts).toBe(1);
-    expect(sleptMs).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

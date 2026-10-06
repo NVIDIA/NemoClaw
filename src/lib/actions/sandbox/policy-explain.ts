@@ -16,6 +16,7 @@
  * surface in those e2e jobs before merge.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildPolicyContext,
   type PolicyContext,
@@ -24,10 +25,12 @@ import {
 
 export const POLICY_CONTEXT_SANDBOX_PATH = "/sandbox/.openclaw/workspace/POLICY.md";
 
+type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
+
 export type SandboxExec = (
   sandboxName: string,
   command: string,
-) => { status: number; stdout: string; stderr: string } | null;
+) => SandboxExecResult | Promise<SandboxExecResult>;
 
 export interface ExplainPolicyOptions {
   json?: boolean;
@@ -35,7 +38,7 @@ export interface ExplainPolicyOptions {
 }
 
 export interface ExplainPolicyDeps {
-  build?: (sandboxName: string) => PolicyContext;
+  build?: (sandboxName: string) => PolicyContext | Promise<PolicyContext>;
   render?: (ctx: PolicyContext) => string;
   log?: (line: string) => void;
   logJson?: (value: unknown) => void;
@@ -48,7 +51,7 @@ export interface WritePolicyContextResult {
   reason?: string;
   /**
    * Set to `unexpected-loader` when the executor loader caught an
-   * import/resolve error (cycle, missing module, process-recovery
+   * import/resolve error (cycle, missing module, command-transport
    * regression). Callers use this to distinguish a legitimate
    * `sandbox unreachable` from a code regression that needs surfacing.
    */
@@ -83,29 +86,26 @@ type ExecutorLoad =
  *   OpenShell; treat as `sandbox unreachable` and warn at most once per
  *   call site at the caller's discretion.
  * - `crashed`: require/resolve threw. Either an import cycle, a missing
- *   module, or a process-recovery regression. Callers must route this
+ *   module, or a command-transport regression. Callers must route this
  *   through the refresh helper's `unexpected` sink so a code regression
  *   is not silently treated as `sandbox unreachable`.
  *
  * Once the loader returns `ok`, ownership of the actual subprocess call
- * lives in `process-recovery`'s {@link executeSandboxCommand}, which is
- * the single source of truth for sandbox SSH spawning. This function
- * does not invent a parallel spawn pipeline.
+ * lives in `command-transport`'s {@link executeSandboxExecCommand}, which is
+ * the single native OpenShell command path.
  */
 function loadExecutor(): ExecutorLoad {
   if (process.env.VITEST === "true") return { kind: "vitest" };
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const resolve = require("../../adapters/openshell/resolve") as {
       resolveOpenshell?: () => string | null;
     };
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
     if (!resolved) return { kind: "no-runtime" };
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const recovery = require("./process-recovery") as {
-      executeSandboxCommand: SandboxExec;
+    const transport = require("../../adapters/sandbox/command-transport") as {
+      executeSandboxExecCommand: SandboxExec;
     };
-    return { kind: "ok", exec: recovery.executeSandboxCommand };
+    return { kind: "ok", exec: transport.executeSandboxExecCommand };
   } catch (error: unknown) {
     return {
       kind: "crashed",
@@ -152,10 +152,10 @@ function buildWriteCommand(markdown: string, targetPath: string): string {
   ].join(" && ");
 }
 
-export function writePolicyContextToSandbox(
+export async function writePolicyContextToSandbox(
   sandboxName: string,
   deps: ExplainPolicyDeps = {},
-): WritePolicyContextResult {
+): Promise<WritePolicyContextResult> {
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
   let exec: SandboxExec | undefined = deps.exec;
@@ -177,10 +177,16 @@ export function writePolicyContextToSandbox(
     }
     exec = load.exec;
   }
-  const ctx = build(sandboxName);
+  const ctx = await build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
-  const result = exec(sandboxName, command);
+  let result: Awaited<ReturnType<SandboxExec>>;
+  try {
+    result = await exec(sandboxName, command);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (result === null) {
     return { written: false, reason: "sandbox unreachable", failure: "sandbox-unreachable" };
   }
@@ -194,24 +200,24 @@ export function writePolicyContextToSandbox(
   return { written: true };
 }
 
-export function explainSandboxPolicy(
+export async function explainSandboxPolicy(
   sandboxName: string,
   options: ExplainPolicyOptions = {},
   deps: ExplainPolicyDeps = {},
-): PolicyContext {
+): Promise<PolicyContext> {
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
   const log = deps.log ?? ((line: string) => console.log(line));
   const logJson = deps.logJson ?? ((value: unknown) => console.log(JSON.stringify(value, null, 2)));
   const warn = deps.warn ?? ((line: string) => console.error(line));
-  const ctx = build(sandboxName);
+  const ctx = await build(sandboxName);
   if (options.json) {
     logJson(ctx);
   } else {
     log(render(ctx));
   }
   if (options.writeToSandbox) {
-    const writeResult = writePolicyContextToSandbox(sandboxName, { ...deps, build, render });
+    const writeResult = await writePolicyContextToSandbox(sandboxName, { ...deps, build, render });
     if (!writeResult.written) {
       const detail = writeResult.reason ?? "unknown reason";
       warn(`  Could not seed ${POLICY_CONTEXT_SANDBOX_PATH}: ${detail}.`);

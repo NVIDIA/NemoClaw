@@ -348,8 +348,7 @@ function parseContainer(
     typeof container.running !== "boolean" ||
     !safeString(container.restartPolicy, 128) ||
     (phase === "configuring" && container.running !== true) ||
-    (phase === "active" &&
-      (container.running !== true || container.restartPolicy !== "unless-stopped"))
+    (phase === "active" && container.running !== true)
   ) {
     fail("has invalid container authority");
   }

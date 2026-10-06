@@ -11,6 +11,8 @@ import type {
   RuntimeProviderSnapshotPreflightReceipt,
   RuntimeProviderSnapshotRestoreReceipt,
   RuntimeProviderSnapshotSurface,
+  RuntimeProviderStoppedStateCapture,
+  RuntimeProviderStoppedStateProjection,
 } from "../../../onboard/runtime-provider/contract";
 import {
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -92,6 +94,7 @@ function requireRuntimeReceipt(
 
 function requireRestoreReceipt(
   bundle: RuntimeProviderBundle,
+  surface: SupportedSnapshotSurface,
   sandbox: SandboxEntry,
   authority: RuntimeProviderManagedProfileRestoreAuthority,
   preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -107,7 +110,10 @@ function requireRestoreReceipt(
     receipt.managedProfile.profileFingerprint !== authority.profileFingerprint ||
     receipt.lifecycleState !== preflight.lifecycleState ||
     receipt.lifecycleGeneration !== preflight.lifecycleGeneration ||
-    !isDeepStrictEqual(receipt.runtime.acceleration, source.runtime.acceleration)
+    !(surface.canRepresentAcceleration ?? isDeepStrictEqual)(
+      cloneAndDeepFreeze(source.runtime.acceleration),
+      cloneAndDeepFreeze(receipt.runtime.acceleration),
+    )
   ) {
     throw new SandboxSnapshotProviderError(
       `runtime provider '${bundle.identity.id}' returned invalid managed restore proof`,
@@ -124,19 +130,34 @@ function requireRestoreReceipt(
 export function captureSandboxRuntimeSnapshot(
   bundle: RuntimeProviderBundle,
   sandbox: SandboxEntry,
+  deadlineMs?: number,
 ): SandboxRuntimeSnapshot {
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - Date.now());
+    if (remainingMs <= 0) {
+      throw new SandboxSnapshotProviderError("snapshot authority capture deadline expired");
+    }
+    return remainingMs;
+  };
   const surface = requireSnapshotSurface(bundle, "backup");
   const providerSandbox = cloneAndDeepFreeze(sandbox);
+  const preflightTimeoutMs = remainingTimeoutMs();
   const preflight = requirePreflight(
     bundle,
     sandbox,
     "backup",
-    surface.preflight("backup", providerSandbox),
+    preflightTimeoutMs === undefined
+      ? surface.preflight("backup", providerSandbox)
+      : surface.preflight("backup", providerSandbox, preflightTimeoutMs),
   );
   const immutablePreflight = cloneAndDeepFreeze(preflight);
+  const captureTimeoutMs = remainingTimeoutMs();
   const runtime = requireRuntimeReceipt(
     bundle,
-    surface.capture(providerSandbox, immutablePreflight),
+    captureTimeoutMs === undefined
+      ? surface.capture(providerSandbox, immutablePreflight)
+      : surface.capture(providerSandbox, immutablePreflight, captureTimeoutMs),
   );
   return cloneAndDeepFreeze({
     schemaVersion: SANDBOX_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
@@ -146,6 +167,34 @@ export function captureSandboxRuntimeSnapshot(
     lifecycleGeneration: immutablePreflight.lifecycleGeneration,
     runtime: cloneAndDeepFreeze(runtime),
   });
+}
+
+/** Prepare provider-owned read-only capture without granting filesystem mutation authority. */
+export function prepareSandboxStoppedStateCapture(
+  bundle: RuntimeProviderBundle,
+  sandbox: SandboxEntry,
+  source: SandboxRuntimeSnapshot,
+  projection: RuntimeProviderStoppedStateProjection,
+): RuntimeProviderStoppedStateCapture | null {
+  const surface = requireSnapshotSurface(bundle, "backup");
+  if (source.providerId !== bundle.identity.id || source.lifecycleState !== "stopped") {
+    throw new SandboxSnapshotProviderError(
+      "stopped state source does not match the owning provider",
+    );
+  }
+  const prepared = surface.prepareStoppedStateCapture?.(
+    cloneAndDeepFreeze(sandbox),
+    cloneAndDeepFreeze(source),
+    cloneAndDeepFreeze(projection),
+  );
+  if (prepared == null) return null;
+  if (typeof prepared.capture !== "function" || typeof prepared.assertCurrent !== "function") {
+    throw new SandboxSnapshotProviderError("provider returned invalid stopped state capture");
+  }
+  return {
+    capture: (fd, maxBytes) => prepared.capture(fd, maxBytes),
+    assertCurrent: () => prepared.assertCurrent(),
+  };
 }
 
 export interface PreparedSandboxRuntimeRestore {
@@ -199,7 +248,14 @@ export function prepareSandboxRuntimeRestore(
     "restore",
     surface.preflight("restore", providerTarget),
   );
-  if (preflight.lifecycleState !== source.lifecycleState) {
+  if (
+    preflight.lifecycleState !== source.lifecycleState &&
+    surface.canRestoreLifecycle?.(
+      providerTarget,
+      source.lifecycleState,
+      preflight.lifecycleState,
+    ) !== true
+  ) {
     throw new SandboxSnapshotProviderError(
       `target '${target.name}' cannot represent the snapshot lifecycle state`,
     );
@@ -272,6 +328,7 @@ export function confirmSandboxRuntimeRestore(
   const providerTarget = cloneAndDeepFreeze(target);
   const restoreReceipt = requireRestoreReceipt(
     bundle,
+    surface,
     target,
     authority.managedProfile,
     authority.preflight,

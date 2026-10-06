@@ -58,8 +58,9 @@ async function runGit(
 
 /**
  * Fork checkouts can have a stale `origin/main`. Bind the ephemeral comparison
- * ref to the base commit already approved by the trusted PR E2E controller so
- * only real base-image input changes force the expensive local build.
+ * ref to the exact PR base SHA supplied to the manual E2E workflow and
+ * validated by its trusted pre-check so only real base-image input changes
+ * force the expensive local build.
  */
 export async function bindApprovedPrBaseForBaseImageComparison(
   host: HostCommandClient,

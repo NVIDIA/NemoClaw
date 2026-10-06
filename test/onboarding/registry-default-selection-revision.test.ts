@@ -56,6 +56,47 @@ function readPersistedRegistry(): SandboxRegistry {
 }
 
 describe("registry default-selection revision", () => {
+  it("persists the policy selection in the same default-pointer revision", () => {
+    registry.registerSandbox({ name: "alpha" });
+    const previousRevision = registry.load().defaultSelectionRevision!;
+    const appliedPolicySelection = {
+      schemaVersion: 1,
+      source: "verified_selection",
+      tier: "balanced",
+    };
+
+    expect(registry.setDefault("alpha", { appliedPolicySelection })).toBe(true);
+    expect(readPersistedRegistry()).toMatchObject({
+      defaultSandbox: "alpha",
+      defaultSelectionRevision: previousRevision + 1,
+      sandboxes: { alpha: { appliedPolicySelection } },
+    });
+
+    expect(registry.setDefault("alpha", { appliedPolicySelection: null })).toBe(true);
+    const cleared = readPersistedRegistry();
+    expect(cleared.defaultSelectionRevision).toBe(previousRevision + 2);
+    expect(cleared.sandboxes.alpha).not.toHaveProperty("appliedPolicySelection");
+  });
+
+  it("does not partially persist a policy selection if the default revision cannot commit", () => {
+    registry.registerSandbox({ name: "alpha" });
+    const exhausted = readPersistedRegistry();
+    exhausted.defaultSelectionRevision = Number.MAX_SAFE_INTEGER;
+    fs.writeFileSync(registryFile, `${JSON.stringify(exhausted)}\n`);
+    const before = fs.readFileSync(registryFile, "utf-8");
+
+    expect(() =>
+      registry.setDefault("alpha", {
+        appliedPolicySelection: {
+          schemaVersion: 1,
+          source: "verified_selection",
+          tier: "balanced",
+        },
+      }),
+    ).toThrow("Sandbox registry default-selection revision is exhausted");
+    expect(fs.readFileSync(registryFile, "utf-8")).toBe(before);
+  });
+
   it("persists a revision for explicit and automatic default-pointer operations", () => {
     registry.registerSandbox({ name: "alpha" });
     expect(registry.load().defaultSelectionRevision).toBe(1);

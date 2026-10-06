@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { normalizeProcessExitCode } from "../../core/process-exit";
+import { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
@@ -29,11 +29,7 @@ import {
   getRebuildSandboxGpuOverrides,
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
-import {
-  type McpRebuildPreparation,
-  printMcpRebuildRetryCommand,
-  restoreMcpRegistryForRebuildRetry,
-} from "./rebuild-mcp-phase";
+import { type McpRebuildPreparation, printMcpRebuildRetryCommand } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
@@ -163,6 +159,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       s,
       onboardSession.createSession({
         mode: "non-interactive",
+        servingProfileProvenance: sb.servingProfileProvenance,
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
@@ -174,6 +171,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
           ? sessionBefore?.migratedLegacyValueHashes
           : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
+        routerPort:
+          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
         // The inner resume compares its requested host mounts against this
@@ -184,6 +183,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          fromImage: recreateOptions.fromImage,
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
@@ -206,6 +206,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
+    s.metadata.fromImage = recreateOptions.fromImage;
     s.provider = resumeConfig.provider;
     s.model = resumeConfig.model;
     s.nimContainer = resumeConfig.nimContainer;
@@ -235,12 +236,20 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Recreate env will target NEMOCLAW_SANDBOX_NAME=${sandboxName}; NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
   );
   log(
-    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
+    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile}, fromImage: ${recreateOptions.fromImage} })`,
   );
 
   let onboardFailed = false;
   let onboardExitCode = 1;
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+  const replacementAuthorityValid = hasValidDeferredN1xManagedVllmReplacementAuthority(
+    recreateOptions,
+    sb,
+    resumeConfig,
+  );
+  if (replacementAuthorityValid && recreateOptions.reinstallDeferredN1xManagedVllm === true) {
+    process.env.NEMOCLAW_PROVIDER = "install-vllm";
+  }
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
@@ -271,14 +280,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const savedExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
+    if (!replacementAuthorityValid) {
+      throw new Error("Deferred N1x managed-vLLM replacement authority is invalid.");
+    }
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(recreateJournal.runtimeSelection
+        ? { runtimeSelection: recreateJournal.runtimeSelection }
+        : {}),
       ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
-      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
-        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     const returnedExitCode = normalizeProcessExitCode(process.exitCode);
@@ -333,7 +345,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
 
     registryRollback.restoreForRetry();
-    restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
+    log("Recreate failed: preserved source-derived MCP handoff for retry");
 
     console.error("");
     if (recoveryRecreate) {
@@ -362,9 +374,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       },
     );
     if (backupManifest) {
-      console.error("    3. Then restore your workspace state:");
       console.error(
-        `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
+        "       The retry will restore the complete native agent home from this backup.",
       );
     }
     console.error("");

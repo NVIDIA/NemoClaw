@@ -33,6 +33,10 @@ describe("local model profile selection", () => {
       runtime: "vllm",
       preset: { spec: { selection: "disabled", plan: { backend: "vllm" } } },
       recipe: { spec: { backend: "vllm", execution: { materializerRef: "vllm.host-local/v1" } } },
+      servingProfileProvenance: {
+        preset: { id: "local-model-profile.vllm.spark.v1" },
+        recipe: { backend: "vllm" },
+      },
     });
   });
 

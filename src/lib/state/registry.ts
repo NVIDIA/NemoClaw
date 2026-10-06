@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import {
+  parseAppliedPolicySelection,
+  parseModelSelectionProvenance,
+} from "../domain/telemetry/provenance";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -40,7 +45,6 @@ export {
   type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
@@ -59,15 +63,12 @@ export {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 };
+export { hasLegacyDgxStationQualificationAuthority } from "./registry/rebuild-authority";
 export {
   addExtraProvider,
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
-export {
-  listManagedMcpCredentialReservations,
-  type ManagedMcpCredentialReservation,
-} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -95,6 +96,11 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  hasSandboxLifecycleAuthority,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
@@ -104,8 +110,6 @@ export type {
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
-export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -202,6 +206,11 @@ function assertPendingCreateIdentityMatchesRegistration(
     ["sandbox name", checkpoint.sandboxName === requestedEntry.name],
     ["gateway name", checkpoint.gatewayName === requestedEntry.gatewayName],
     ["gateway port", checkpoint.gatewayPort === requestedEntry.gatewayPort],
+    [
+      "gateway state directory",
+      (checkpoint.openshellGatewayStateDir ?? null) ===
+        (requestedEntry.openshellGatewayStateDir ?? null),
+    ],
     [
       "requested lifecycle generation",
       checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration,
@@ -403,6 +412,13 @@ export function registerSandbox(
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
     }
+    if (
+      entry.deferredN1xManagedVllmAccepted !== undefined &&
+      (entry.deferredN1xManagedVllmAccepted !== true ||
+        !isDeferredN1xManagedVllmAcceptanceRoute(entry))
+    ) {
+      throw new Error("Cannot register a sandbox with invalid N1x preview acceptance");
+    }
     const normalizedPolicyEntry = normalizeSandboxPolicyAttribution(entry);
     assertPendingCreateIdentityMatchesRegistration(
       recordedEntry,
@@ -468,6 +484,7 @@ export function registerSandbox(
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
+      deferredN1xManagedVllmAccepted: entry.deferredN1xManagedVllmAccepted,
       ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
@@ -498,12 +515,6 @@ export function registerSandbox(
           : null,
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
-      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
-        ? entry.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          }))
-        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
@@ -512,12 +523,26 @@ export function registerSandbox(
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      ...(parseAppliedPolicySelection(entry.appliedPolicySelection)
+        ? { appliedPolicySelection: parseAppliedPolicySelection(entry.appliedPolicySelection)! }
+        : {}),
+      ...(parseModelSelectionProvenance(entry.modelSelectionProvenance)
+        ? {
+            modelSelectionProvenance: parseModelSelectionProvenance(
+              entry.modelSelectionProvenance,
+            )!,
+          }
+        : {}),
+      managedStartupProtocol:
+        entry.managedStartupProtocol === "identity-bound" ||
+        entry.managedStartupProtocol === "legacy-unbound"
+          ? entry.managedStartupProtocol
+          : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -528,9 +553,11 @@ export function registerSandbox(
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      dashboardExternalUrl: entry.dashboardExternalUrl ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      openshellGatewayStateDir: entry.openshellGatewayStateDir ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
@@ -540,7 +567,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 
@@ -564,6 +595,8 @@ type SandboxInferenceRouteReservation = Pick<
 interface SandboxInferenceRouteReservationOptions {
   /** Refuse instead of changing any existing registry row. */
   requireAbsent?: boolean;
+  /** Caller-qualified abandoned registered row; compare and replace without publishing it. */
+  reclaimAbandoned?: SandboxEntry;
 }
 
 /**
@@ -576,10 +609,27 @@ export function reserveSandboxInferenceRoute(
   route: SandboxInferenceRouteReservation,
   options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
+  const abandoned = options.reclaimAbandoned
+    ? structuredClone(options.reclaimAbandoned)
+    : undefined;
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
     if (options.requireAbsent === true && existing !== undefined) return false;
+    if (
+      abandoned &&
+      (!isDeepStrictEqual(existing, abandoned) ||
+        abandoned.pendingRouteReservation !== true ||
+        abandoned.pendingCreateIdentity !== undefined ||
+        typeof abandoned.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(abandoned.createdAt)) ||
+        !route.reservationSessionId ||
+        typeof abandoned.reservationSessionId !== "string" ||
+        !abandoned.reservationSessionId ||
+        abandoned.reservationSessionId === route.reservationSessionId ||
+        abandoned.gatewayName !== route.gatewayName)
+    )
+      return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
@@ -620,7 +670,7 @@ export function reserveSandboxInferenceRoute(
     if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
       throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
     }
-    if (existing?.pendingRouteReservation === true) {
+    if (existing?.pendingRouteReservation === true && !abandoned) {
       const sameReservation =
         (sameExplicitHostLocalRoute &&
           existing.reservationSessionId === undefined &&
@@ -664,6 +714,7 @@ export function reserveSandboxInferenceRoute(
     const next = normalizeSandboxPolicyAttribution({
       ...existingForReservation,
       pendingRouteReservation: true,
+      deferredN1xManagedVllmAccepted: undefined,
       reservationSessionId:
         route.reservationSessionId ??
         (existing?.pendingRouteReservation === true ? existing.reservationSessionId : undefined),
@@ -699,6 +750,15 @@ const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEnt
   "model",
   "openshellDriver",
   "preferredInferenceApi",
+  "provider",
+]);
+const DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "endpointSource",
+  "endpointUrl",
+  "hostLocalInferenceReceipt",
+  "model",
+  "nimContainer",
+  "openshellDriver",
   "provider",
 ]);
 
@@ -739,10 +799,61 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    if (
+      updates.appliedPolicySelection !== undefined &&
+      !parseAppliedPolicySelection(updates.appliedPolicySelection)
+    )
+      throw new Error("Invalid applied policy selection");
+    if (
+      updates.modelSelectionProvenance !== undefined &&
+      !parseModelSelectionProvenance(updates.modelSelectionProvenance)
+    )
+      throw new Error("Invalid model selection provenance");
+    const next = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    const routeFields = [
+      "provider",
+      "model",
+      "endpointUrl",
+      "credentialEnv",
+      "preferredInferenceApi",
+      "nimContainer",
+    ] as const;
+    if (
+      routeFields.some(
+        (field) =>
+          Object.hasOwn(updates, field) && !isDeepStrictEqual(updates[field], current[field]),
+      ) &&
+      !Object.hasOwn(updates, "modelSelectionProvenance")
+    ) {
+      next.modelSelectionProvenance = undefined;
+    }
+    if (
+      current.deferredN1xManagedVllmAccepted === true &&
+      Object.entries(updates).some(
+        ([field, value]) =>
+          DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+          !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),
+      )
+    ) {
+      next.deferredN1xManagedVllmAccepted = undefined;
+    }
+    data.sandboxes[name] = next;
     save(data);
     return true;
   });
+}
+
+/** Persist intentional-stop state while containing registry write failures. */
+export function recordSandboxStopIntent(
+  name: string,
+  stopped: boolean,
+  update: typeof updateSandbox,
+): boolean {
+  try {
+    return update(name, { stopped });
+  } catch {
+    return false;
+  }
 }
 
 /** Publish a missing gateway port only while the complete qualified row remains current. */
@@ -832,6 +943,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
   });
 }
 
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
+    return true;
+  });
+}
+
 /** Atomically capture and remove one registry row for a reversible lifecycle operation. */
 export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
@@ -898,12 +1031,20 @@ export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: st
   };
 }
 
-export function setDefault(name: string): boolean {
+export function setDefault(name: string, options?: { appliedPolicySelection: unknown }): boolean {
   return withLock(() => {
     const current = load();
     if (current.sandboxes[name]?.pendingRouteReservation === true) return false;
     const registry = reversibleRemoval.setDefaultInRegistry(current, name);
     if (!registry) return false;
+    if (options) {
+      const entry = registry.sandboxes[name];
+      if (entry) {
+        const selection = parseAppliedPolicySelection(options.appliedPolicySelection);
+        if (selection) entry.appliedPolicySelection = selection;
+        else delete entry.appliedPolicySelection;
+      }
+    }
     save(registry);
     return true;
   });

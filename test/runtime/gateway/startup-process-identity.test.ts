@@ -46,6 +46,7 @@ def scenario(
     expected_start="424242",
     expected_namespace="trusted",
     limit=32768,
+    mode_selection=False,
 ):
     with tempfile.TemporaryDirectory() as root:
         proc_root = os.path.join(root, "proc")
@@ -68,6 +69,9 @@ def scenario(
             )
         guard.PROC_ROOT = proc_root
         guard.MAX_PROC_ENTRIES = limit
+        if mode_selection:
+            guard._startup_markers_absent = lambda identity: True
+            return guard.mutable_config_modes(guard.Identity(0, 0, 1000, 1000))
         return guard._startup_process_identity_is_live(
             expected_start,
             os.stat(namespaces[expected_namespace]).st_ino,
@@ -79,6 +83,8 @@ def supervised_scenario(
     limit=32768,
     required_pid=None,
     namespace_access=True,
+    mode_selection=False,
+    markers_absent=True,
 ):
     with tempfile.TemporaryDirectory() as root:
         proc_root = os.path.join(root, "proc")
@@ -130,6 +136,9 @@ def supervised_scenario(
                 return original_namespace_reader(proc_pid_fd)
             guard._proc_pid_namespace_inode = child_only_namespace_reader
         try:
+            if mode_selection:
+                guard._startup_markers_absent = lambda identity: markers_absent
+                return guard.mutable_config_modes(guard.Identity(0, 0, 1000, 1000))
             return guard._openshell_supervised_nonroot_start_is_live(
                 0,
                 1000,
@@ -149,6 +158,7 @@ misplaced_start = b"bash\0/tmp/evil.sh\0/usr/local/bin/nemoclaw-start\0"
 empty_argument_spoof = b"bash\0\0/usr/local/bin/nemoclaw-start\0"
 proof = {
     "remapped": scenario([(412, "424242", entrypoint, "trusted")]),
+    "remapped_command": scenario([(412, "424242", entrypoint_with_command, "trusted")]),
     "stale": scenario([(412, "999999", entrypoint, "trusted")]),
     "spoof": scenario([(412, "424242", spoof, "trusted")]),
     "nonroot": scenario([(412, "424242", entrypoint, "trusted", 1000)]),
@@ -175,6 +185,14 @@ proof.update({
     ]),
     "openshell_supervised_direct_command": supervised_scenario([
         (412, "424242", direct_entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_supervisor_with_retained_command": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+        (413, "525252", b"bash\0/usr/local/bin/nemoclaw-start\0node\0-e\0retained-probe\0", 1000, 413, 1),
+    ]),
+    "openshell_supervisor_with_retained_direct_command": supervised_scenario([
+        (412, "424242", direct_entrypoint, 1000, 412, 1),
+        (413, "525252", b"/usr/local/bin/nemoclaw-start\0node\0-e\0retained-probe\0", 1000, 413, 1),
     ]),
     "openshell_noncanonical_bash": supervised_scenario([
         (412, "424242", noncanonical_bash, 1000, 412, 1),
@@ -241,16 +259,26 @@ proof.update({
         (412, "424242", entrypoint, 1000, 1, 1, "nested"),
     ], required_pid=413),
 })
+if len(sys.argv) > 2:
+    child = (412, "424242", entrypoint, 1000, 412, 1)
+    proof = {
+        "same_user": supervised_scenario([child], mode_selection=True),
+        "root_child": supervised_scenario([
+            (412, "424242", entrypoint, 0, 412, 1),
+        ], mode_selection=True),
+        "root_marker": supervised_scenario([child], mode_selection=True, markers_absent=False),
+        "direct_same_user": scenario([(1, "424242", entrypoint, "trusted", 1000)], mode_selection=True),
+        "direct_root": scenario([(1, "424242", entrypoint, "trusted", 0)], mode_selection=True),
+        "direct_foreign_user": scenario([(1, "424242", entrypoint, "trusted", 1001)], mode_selection=True),
+        "direct_spoof": scenario([(1, "424242", spoof, "trusted", 1000)], mode_selection=True),
+    }
 print(json.dumps(proof))
 `;
 
-const GUARDS = [
-  ["OpenClaw", path.resolve("scripts/openclaw-config-guard.py")],
-  ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
-] as const;
+const GUARDS = [["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")]] as const;
 
-function runIdentityHarness(guardPath: string) {
-  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
+function runIdentityHarness(guardPath: string, ...args: string[]) {
+  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath, ...args], {
     encoding: "utf-8",
     timeout: 5000,
   });
@@ -273,6 +301,7 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
     } = runIdentityHarness(guardPath);
     expect(proof).toEqual({
       remapped: true,
+      remapped_command: true,
       stale: false,
       spoof: false,
       nonroot: false,
@@ -282,6 +311,8 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       bounded: false,
       openshell_supervised: true,
       openshell_supervised_direct: true,
+      openshell_supervisor_with_retained_command: false,
+      openshell_supervisor_with_retained_direct_command: false,
       openshell_landlock_all_namespaces_denied: true,
       openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
@@ -290,29 +321,29 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       // #6565 reproduces nested PID namespaces only for OpenClaw. Hermes keeps
       // its independently tested same-namespace topology until it has a
       // Hermes-specific reproduction or acceptance requirement.
-      openshell_nested_pid_namespace: name === "OpenClaw",
+      openshell_nested_pid_namespace: false,
       openshell_cross_namespace_outer_pid: false,
-      openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
-      openshell_nested_landlock_supervisor_namespace_denied: name === "OpenClaw",
+      openshell_nested_landlock_all_namespaces_denied: false,
+      openshell_nested_landlock_supervisor_namespace_denied: false,
       openshell_non_direct_child: false,
       openshell_spoof: false,
       openshell_duplicate: false,
       openshell_required_child: true,
       openshell_wrong_required_child: false,
-      openshell_nested_required_child: name === "OpenClaw",
+      openshell_nested_required_child: false,
       openshell_nested_wrong_required_child: false,
     });
   });
 });
 
-describe.each(GUARDS)("%s exact startup argv", (_name, guardPath) => {
+describe.each(GUARDS)("%s exact startup argv", (name, guardPath) => {
   it("rejects a trusted script path smuggled in an unrelated argv (#6565)", () => {
     const proof = runIdentityHarness(guardPath);
 
     expect(proof.openshell_argv_spoof).toBe(false);
     expect(proof.openshell_nested_argv_spoof).toBe(false);
-    expect(proof.openshell_supervised_command).toBe(true);
-    expect(proof.openshell_supervised_direct_command).toBe(true);
+    expect(proof.openshell_supervised_command).toBe(name === "Hermes");
+    expect(proof.openshell_supervised_direct_command).toBe(name === "Hermes");
     expect(proof.openshell_noncanonical_bash).toBe(false);
     expect(proof.openshell_misplaced_start).toBe(false);
     expect(proof.openshell_empty_argument_spoof).toBe(false);

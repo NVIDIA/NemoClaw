@@ -6,7 +6,7 @@ export function stripAnsi(value: string): string {
 }
 
 function looksLikeJsonStart(trimmedLine: string): boolean {
-  return /^\{\s*(?:"|}|$)/.test(trimmedLine) || /^\[\s*(?:[\[{"\-0-9tfn]|\]|$)/.test(trimmedLine);
+  return /^\{\s*(?:"|}|$)/.test(trimmedLine) || /^\[\s*(?:[[{"\-0-9tfn]|\]|$)/.test(trimmedLine);
 }
 
 export function parseJsonFromText(raw: string): unknown {

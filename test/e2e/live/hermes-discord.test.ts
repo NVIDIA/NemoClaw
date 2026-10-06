@@ -686,7 +686,6 @@ PY`,
     const fakeRest = await startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
       kind: "discord-message",
       imageScript: "fake-discord-message-api.mts",
-      nodeArgs: ["--experimental-strip-types"],
       containerPrefix: "nemoclaw-fake-discord-rest-hermes",
       portEnv: "FAKE_DISCORD_MESSAGE_API_PORT",
       captureFileEnv: "FAKE_DISCORD_MESSAGE_API_CAPTURE_FILE",

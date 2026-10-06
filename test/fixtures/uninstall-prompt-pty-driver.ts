@@ -54,32 +54,39 @@ const knownGatewayListResult: RunResult = {
   stderr: "",
 };
 
-const { exitCode } = runUninstallPlan(
-  { assumeYes: false, deleteModels: false, keepOpenShell: true },
-  {
-    commandExists: (command) => command === "openshell",
-    // Hermetic env: the runtime merges the real process.env, so a developer
-    // shell exporting NEMOCLAW_* knobs (non-interactive mode, destroy-user-
-    // data acknowledgement, agent branding) would change which prompts run
-    // and what they print. Pin them empty so scenarios behave identically on
-    // every machine.
-    env: {
-      HOME: home,
-      NEMOCLAW_AGENT: "",
-      NEMOCLAW_NON_INTERACTIVE: "",
-      NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
-      TMPDIR: home,
-    } as NodeJS.ProcessEnv,
-    existsSync: fs.existsSync,
-    kill: () => true,
-    rmSync: (() => {}) as never,
-    run: (command, args) =>
-      command === "openshell" && args[0] === "gateway" && args[1] === "list"
-        ? knownGatewayListResult
-        : okResult,
-    runDocker: () => okResult,
-    // readLine and isTty are deliberately NOT injected: the default
-    // readLineFromStdin/isStdinTty pair reading the pty is what is under test.
-  },
-);
-process.exit(exitCode);
+async function main(): Promise<void> {
+  const { exitCode } = await runUninstallPlan(
+    { assumeYes: false, deleteModels: false, keepOpenShell: true },
+    {
+      commandExists: (command) => command === "openshell",
+      // Hermetic env: the runtime merges the real process.env, so a developer
+      // shell exporting NEMOCLAW_* knobs (non-interactive mode, destroy-user-
+      // data acknowledgement, agent branding) would change which prompts run
+      // and what they print. Pin them empty so scenarios behave identically on
+      // every machine.
+      env: {
+        HOME: home,
+        NEMOCLAW_AGENT: "",
+        NEMOCLAW_NON_INTERACTIVE: "",
+        NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+        TMPDIR: home,
+      } as NodeJS.ProcessEnv,
+      existsSync: fs.existsSync,
+      kill: () => true,
+      rmSync: (() => {}) as never,
+      run: (command, args) =>
+        command === "openshell" && args[0] === "gateway" && args[1] === "list"
+          ? knownGatewayListResult
+          : okResult,
+      runDocker: () => okResult,
+      // readLine and isTty are deliberately NOT injected: the default
+      // readLineFromStdin/isStdinTty pair reading the pty is what is under test.
+    },
+  );
+  process.exit(exitCode);
+}
+
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

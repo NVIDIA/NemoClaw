@@ -162,56 +162,6 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     onboardSessionState.recreate = null;
   });
 
-  it.each([
-    ["destroyPreparedAt", "without bridges", false],
-    ["destroyPreparedAt", "with bridges", true],
-    ["destroyPendingAt", "without bridges", false],
-    ["destroyPendingAt", "with bridges", true],
-  ] as const)(
-    "preserves %s and blocks absent-sandbox recreation %s",
-    (marker, _bridgeState, withBridge) => {
-      const runCaptureOpenshell = vi.fn(() => null);
-      registryState.sandbox = {
-        name: "alpha",
-        agent: "openclaw",
-        mcp: {
-          bridges: withBridge
-            ? {
-                github: {
-                  server: "github",
-                  agent: "openclaw",
-                  adapter: "mcporter",
-                  url: "https://mcp.example.test/mcp",
-                  env: ["GITHUB_TOKEN"],
-                  providerName: "alpha-mcp-github",
-                  providerId: "provider-123",
-                  policyName: "mcp-github",
-                  addedAt: "2026-07-02T22:49:42.000Z",
-                },
-              }
-            : {},
-          [marker]: "2026-07-02T22:49:42.000Z",
-        },
-      };
-      const before = JSON.stringify(registryState.sandbox);
-      const helpers = createSandboxLifecycleHelpers({
-        runCaptureOpenshell,
-        getGatewayName: () => "nemoclaw-18081",
-        fetchGatewayAuthTokenFromSandbox: () => null,
-        agentProductName: () => "OpenClaw",
-        prompt: async () => "no",
-        isAffirmativeAnswer: () => false,
-      });
-
-      expect(() => helpers.inspectSandboxForCreate("alpha")).toThrow(
-        /incomplete MCP destroy transaction.*finish cleanup before recreating/i,
-      );
-      expect(runCaptureOpenshell).not.toHaveBeenCalled();
-      expect(registryState.removeSandbox).not.toHaveBeenCalled();
-      expect(JSON.stringify(registryState.sandbox)).toBe(before);
-    },
-  );
-
   it("keeps the source registry row when OpenShell reports no sandbox (#7736)", () => {
     const rows = new Map<string, SandboxEntry>([
       ["beta", { name: "beta", agent: "openclaw", toolDisclosure: "progressive" }],
@@ -224,7 +174,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell: () => null,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -243,7 +193,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -252,12 +202,52 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     expect(helpers.inspectSandboxForCreate("alpha")).toMatchObject({
       existingEntry: registryState.sandbox,
       liveExists: false,
-      preservedMcpState: undefined,
     });
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "--gateway", "nemoclaw-18081", "alpha"],
       { ignoreError: true },
     );
     expect(registryState.removeSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("selection drift confirmation", () => {
+  it("shows one native identity namespace and suppresses terminal controls", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      lines.push(String(line ?? ""));
+    });
+    const prompt = vi.fn(async () => "no");
+    const helpers = createSandboxLifecycleHelpers({
+      runCaptureOpenshell: () => null,
+      getGatewayName: () => "nemoclaw-18081",
+      fetchGatewayAuthTokenFromSandbox: async () => null,
+      agentProductName: () => "OpenClaw",
+      prompt,
+      isAffirmativeAnswer: () => false,
+    });
+
+    await helpers.confirmRecreateForSelectionDrift(
+      "alpha",
+      {
+        changed: true,
+        providerChanged: true,
+        modelChanged: true,
+        existingProvider: "inference\u001b]52;c;attack\u0007",
+        existingModel: "model-b",
+        requestedProvider: "inference",
+        requestedModel: "model-a",
+        unknown: false,
+      },
+      "inference",
+      "model-a",
+    );
+
+    const output = lines.join("\n");
+    expect(output).not.toContain("\u001b");
+    expect(output).toContain("Current:   provider=unknown  model=model-b");
+    expect(output).toContain("Requested: provider=inference  model=model-a");
+    expect(output).not.toContain("compatible-endpoint");
+    expect(prompt).toHaveBeenCalledExactlyOnceWith("  Recreate sandbox 'alpha' now? [y/N]: ");
   });
 });

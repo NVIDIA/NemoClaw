@@ -1,53 +1,60 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
-  configSet,
-  extractDotpath,
-  readSandboxConfig,
-  resolveAgentConfig,
-} from "../sandbox/config";
+  initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute,
+  type InitializeOpenclawInferenceRoute,
+} from "./openclaw/initial-inference-route";
 
-type WebSearchSelection = { fetchEnabled?: boolean } | null;
+const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
 
-interface OpenClawWebSearchReuseDeps {
-  readEnabled(sandboxName: string): unknown;
-  disable(sandboxName: string): Promise<void>;
+export async function isOpenclawGatewayReady(
+  sandboxName: string,
+  port: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  timeoutMs = 3_000,
+): Promise<boolean> {
+  const boundedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(3_000, Math.floor(timeoutMs)) : 3_000;
+  const curlTimeoutSeconds = String(Math.max(1, boundedTimeoutMs) / 1_000);
+  try {
+    const result = await sandboxCommandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "selected" },
+      command: [
+        "curl",
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        curlTimeoutSeconds,
+        `http://127.0.0.1:${String(port)}/health`,
+      ],
+      tty: false,
+    });
+    return (
+      result.outcome.kind === "completed" &&
+      OPENCLAW_ALIVE_HTTP_CODES.has(Number.parseInt(result.stdout.trim(), 10))
+    );
+  } catch {
+    return false;
+  }
 }
 
-const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
-  readEnabled: (sandboxName) => {
-    const target = resolveAgentConfig(sandboxName);
-    if (target.agentName !== "openclaw") {
-      throw new Error(
-        `Cannot reconcile OpenClaw web search for '${sandboxName}': the sandbox runs '${target.agentName}'.`,
-      );
-    }
-    return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
-  },
-  disable: (sandboxName) =>
-    configSet(sandboxName, {
-      key: "tools.web.search.enabled",
-      value: "false",
-      restart: true,
-    }),
-};
-
-/**
- * Onboarding can reuse an already-ready sandbox without rerunning the image
- * generator. Apply a newly disabled web-search choice to the live OpenClaw
- * config through its guarded config writer on both fresh and resumed reuse.
- */
-export async function reconcileOpenClawWebSearchForReuse(
-  sandboxName: string,
-  webSearchConfig: WebSearchSelection,
-  revalidateSandboxIdentity?: (operation: string) => void,
-  deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
-): Promise<void> {
-  if (webSearchConfig?.fetchEnabled === true) return;
-  if (deps.readEnabled(sandboxName) !== true) return;
-  revalidateSandboxIdentity?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
-  await deps.disable(sandboxName);
+export function createOpenclawGatewayReadinessProbe(
+  readSandbox: (sandboxName: string) => { dashboardPort?: number | null } | null,
+  defaultPort: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): (sandboxName: string, timeoutMs?: number) => Promise<boolean> {
+  return (sandboxName, timeoutMs) =>
+    isOpenclawGatewayReady(
+      sandboxName,
+      readSandbox(sandboxName)?.dashboardPort ?? defaultPort,
+      sandboxCommandExecutor,
+      timeoutMs,
+    );
 }
 
 export interface ConfigureOpenclawSandboxDeps {
@@ -56,11 +63,7 @@ export interface ConfigureOpenclawSandboxDeps {
     provider: string,
     model: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): void;
-  reconcileWebSearch(
-    sandboxName: string,
-    webSearchConfig: WebSearchSelection,
-    revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied?: boolean,
   ): Promise<void>;
 }
 
@@ -69,24 +72,38 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied = false,
   ): Promise<void> {
-    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidateSandboxIdentity);
-    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
+    await deps.syncNemoClawConfigInSandbox(
+      sandboxName,
+      provider,
+      model,
+      revalidateSandboxIdentity,
+      managedProfileApplied,
+    );
   };
 }
 
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
+  shouldRestartNativeGateway(provider: string): boolean;
+  restartNativeGateway(sandboxName: string): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        failureLayer: string;
+        detail: string;
+      }
+  >;
   configureOpenclawSandbox(
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void>;
+  initializeOpenclawInferenceRoute?: InitializeOpenclawInferenceRoute;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {
@@ -94,18 +111,41 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
+    preferredInferenceApi: string | null = null,
+    initializeNativeInferenceRoute = false,
+    gatewayName?: string,
+    settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    await deps.configureOpenclawSandbox(
-      sandboxName,
-      model,
-      provider,
-      webSearchConfig,
-      revalidateSandboxIdentity,
-    );
+    await deps.configureOpenclawSandbox(sandboxName, model, provider, revalidateSandboxIdentity);
+    if (initializeNativeInferenceRoute) {
+      if (!gatewayName) {
+        throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
+      if (settleOpenclawPairingBeforeRestart && !(await settleOpenclawPairingBeforeRestart())) {
+        throw new Error(
+          `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
+        );
+      }
+      await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+        sandboxName,
+        model,
+        provider,
+        preferredInferenceApi,
+        gatewayName,
+        revalidateSandboxIdentity,
+      );
+    } else if (deps.shouldRestartNativeGateway(provider)) {
+      revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
+      const restart = await deps.restartNativeGateway(sandboxName);
+      if (!restart.ok) {
+        throw new Error(
+          `OpenClaw native gateway restart failed during setup (${restart.failureLayer}): ${restart.detail}`,
+        );
+      }
+    }
     revalidateSandboxIdentity?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };

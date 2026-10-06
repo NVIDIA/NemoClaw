@@ -62,7 +62,7 @@ spec:
       - name: --moe-backend
         value: marlin
       - name: --max-num-seqs
-        value: 1
+        value: 2
       - name: --max-num-batched-tokens
         value: 4096
       - name: --enable-chunked-prefill

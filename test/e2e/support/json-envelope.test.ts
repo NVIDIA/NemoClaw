@@ -22,10 +22,13 @@ describe("E2E JSON envelope parsing", () => {
     ).toEqual({ sessions: [{ key: "agent:main:main" }] });
   });
 
-  it("ignores bracket-prefixed diagnostics before the JSON envelope", () => {
-    expect(parseJsonFromText('[warn] retrying after transient warning\n["session-a"]')).toEqual([
-      "session-a",
-    ]);
+  it.each([
+    { name: "strings", json: '["session-a"]', expected: ["session-a"] },
+    { name: "nested arrays", json: '[["session-a"]]', expected: [["session-a"]] },
+    { name: "objects", json: '[{"key":"session-a"}]', expected: [{ key: "session-a" }] },
+    { name: "literals", json: "[null,true,false,-1]", expected: [null, true, false, -1] },
+  ])("ignores bracket-prefixed diagnostics before arrays of $name", ({ json, expected }) => {
+    expect(parseJsonFromText(`[warn] retrying after transient warning\n${json}`)).toEqual(expected);
   });
 
   it("throws when a JSON-looking envelope cannot be parsed", () => {

@@ -112,19 +112,19 @@ describe("compatible-endpoint context window", () => {
     expect(messages.some((m) => m.includes("Keeping configured context window"))).toBe(true);
   });
 
-  it.each([
-    "0",
-    "abc",
-    "-5",
-    "9999999999",
-  ])("ignores the invalid NEMOCLAW_CONTEXT_WINDOW override %j and auto-detects instead (#6293)", async (badValue) => {
-    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 32_768 }] }));
-    const { env, messages } = await apply({ fetchModels }, { NEMOCLAW_CONTEXT_WINDOW: badValue });
+  it.each(["0", "abc", "-5", "9999999999"])(
+    "ignores the invalid NEMOCLAW_CONTEXT_WINDOW override %j and auto-detects instead (#6293)",
+    async (badValue) => {
+      const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 32_768 }] }));
+      const { env, messages } = await apply({ fetchModels }, { NEMOCLAW_CONTEXT_WINDOW: badValue });
 
-    expect(fetchModels).toHaveBeenCalled();
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
-    expect(messages.some((m) => m.includes("Ignoring invalid NEMOCLAW_CONTEXT_WINDOW"))).toBe(true);
-  });
+      expect(fetchModels).toHaveBeenCalled();
+      expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+      expect(messages.some((m) => m.includes("Ignoring invalid NEMOCLAW_CONTEXT_WINDOW"))).toBe(
+        true,
+      );
+    },
+  );
 
   it("clears an invalid explicit override when the endpoint also cannot be probed (#6293)", async () => {
     const fetchModels = vi.fn(() => null);
@@ -187,20 +187,23 @@ describe("compatible-endpoint context window", () => {
     "http://169.254.169.254/v1",
     "http://172.16.0.1/v1",
     "http://192.168.1.1/v1",
-  ])("rejects the non-loopback private-IP endpoint %s before probing /v1/models SSRF (#6293)", async (endpointUrl) => {
-    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
-    const messages: string[] = [];
-    const env: NodeJS.ProcessEnv = {};
-    await applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
-      env,
-      fetchModels,
-      logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
+  ])(
+    "rejects the non-loopback private-IP endpoint %s before probing /v1/models SSRF (#6293)",
+    async (endpointUrl) => {
+      const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+      const messages: string[] = [];
+      const env: NodeJS.ProcessEnv = {};
+      await applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
+        env,
+        fetchModels,
+        logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
+      });
 
-    expect(fetchModels).not.toHaveBeenCalled();
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-    expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
-  });
+      expect(fetchModels).not.toHaveBeenCalled();
+      expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+      expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
+    },
+  );
 
   it("probes an exactly allowlisted private endpoint with its address capability (#6861)", async () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
@@ -252,41 +255,40 @@ describe("compatible-endpoint context window", () => {
     expect(messages).toEqual(["  ✓ Using endpoint max_model_len: 65536 tokens"]);
   });
 
-  it.each([
-    "http://127.0.0.1:8000/v1",
-    "http://localhost:8000/v1",
-    "http://[::1]:8000/v1",
-  ])("probes a loopback endpoint %s and propagates its max_model_len (#6293)", async (endpointUrl) => {
-    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
-    const env: NodeJS.ProcessEnv = {};
-    await applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
-      env,
-      fetchModels,
-      logger: { log: () => undefined, warn: () => undefined },
-    });
+  it.each(["http://127.0.0.1:8000/v1", "http://localhost:8000/v1", "http://[::1]:8000/v1"])(
+    "probes a loopback endpoint %s and propagates its max_model_len (#6293)",
+    async (endpointUrl) => {
+      const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+      const env: NodeJS.ProcessEnv = {};
+      await applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
+        env,
+        fetchModels,
+        logger: { log: () => undefined, warn: () => undefined },
+      });
 
-    expect(fetchModels).toHaveBeenCalled();
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
-  });
+      expect(fetchModels).toHaveBeenCalled();
+      expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    },
+  );
 
-  it.each([
-    "10.0.0.8",
-    "169.254.169.254",
-  ])("refuses the /v1/models probe when a public host resolves to private %s via the DNS preflight (#6293)", async (privateAddress) => {
-    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
-    const messages: string[] = [];
-    const env: NodeJS.ProcessEnv = {};
-    await applyCompatibleEndpointContextWindow("https://public-name.example/v1", "model-a", {
-      env,
-      fetchModels,
-      resolveHost: async () => [{ address: privateAddress, family: 4 }],
-      logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
+  it.each(["10.0.0.8", "169.254.169.254"])(
+    "refuses the /v1/models probe when a public host resolves to private %s via the DNS preflight (#6293)",
+    async (privateAddress) => {
+      const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+      const messages: string[] = [];
+      const env: NodeJS.ProcessEnv = {};
+      await applyCompatibleEndpointContextWindow("https://public-name.example/v1", "model-a", {
+        env,
+        fetchModels,
+        resolveHost: async () => [{ address: privateAddress, family: 4 }],
+        logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
+      });
 
-    expect(fetchModels).not.toHaveBeenCalled();
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-    expect(messages.some((m) => m.includes(privateAddress))).toBe(true);
-  });
+      expect(fetchModels).not.toHaveBeenCalled();
+      expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+      expect(messages.some((m) => m.includes(privateAddress))).toBe(true);
+    },
+  );
 
   it("probes when the injected resolver returns a public address (#6293)", async () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));

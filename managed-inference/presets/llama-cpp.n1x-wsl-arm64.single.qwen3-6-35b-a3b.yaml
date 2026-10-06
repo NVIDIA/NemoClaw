@@ -13,7 +13,7 @@ metadata:
     evidence: managed-inference-catalog-compiler-v1
 
 spec:
-  selection: explicit-only
+  selection: automatic
   priority: 470
 
   requirements:

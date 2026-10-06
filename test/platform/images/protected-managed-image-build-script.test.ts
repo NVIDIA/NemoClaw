@@ -24,17 +24,24 @@ const REPO_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url
 const SCRIPT = path.join(REPO_ROOT, "scripts/checks/build-protected-managed-images.sh");
 const REVISION = "a".repeat(40);
 const DIGEST = "b".repeat(64);
+const OPENCLAW_BASE = `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST}`;
+const HERMES_BASE = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${DIGEST}`;
+const DCODE_BASE = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${DIGEST}`;
+const PREPARED_IDENTITY = `${REVISION} linux/amd64 ${OPENCLAW_BASE} ${HERMES_BASE} ${DCODE_BASE}`;
 
 let testRoot = "";
 let stubBin = "";
 let dockerLog = "";
+let buildxConfigLog = "";
 let dockerBuildCount = "";
 let dockerBuildFailureMode = "";
+let receiptVerifyStatus = "";
 let seedLog = "";
 let registryCurlExit = "";
 let registryLog = "";
 let registryStatus = "";
 let teeFailureMode = "";
+let imageUser = "";
 
 function writeExecutable(name: string, source: string): void {
   const target = path.join(stubBin, name);
@@ -48,6 +55,7 @@ function stubBuildInvocation(): void {
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_DOCKER_LOG"
+printf '%s\n' "\${BUILDX_CONFIG:-}" >>"$NEMOCLAW_TEST_BUILDX_CONFIG_LOG"
 case "$*" in
   "buildx imagetools inspect "*) printf '{}\n' ;;
   "buildx build "*)
@@ -68,7 +76,7 @@ case "$*" in
         ;;
       npm-registry-dns-once:1 | npm-registry-dns-always:1 | npm-registry-dns-always:2)
         printf '%s\n' '#128 0.180 ERROR: curl failed: curl: (6) Could not resolve host: registry.npmjs.org' >&2
-        printf '%s\n' 'ERROR: failed to build: failed to solve: process "/bin/sh -c node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm" did not complete successfully: exit code: 1' >&2
+        printf '%s\n' 'ERROR: failed to build: failed to solve: process "/bin/sh -c node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm" did not complete successfully: exit code: 1' >&2
         exit 42
         ;;
       npm-registry-dns-near-match:1)
@@ -78,7 +86,16 @@ case "$*" in
     esac
     ;;
   "pull "*) ;;
-  "image inspect "*) printf '[]\n' ;;
+  "image inspect "*)
+    case "$*" in
+      *"/openclaw@"*) agent=openclaw ;;
+      *"/hermes@"*) agent=hermes ;;
+      *"/langchain-deepagents-code@"*) agent=langchain-deepagents-code ;;
+      *) exit 93 ;;
+    esac
+    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"protected-1-1","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
+      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM"
+    ;;
   *) exit 91 ;;
 esac
 `,
@@ -89,7 +106,7 @@ esac
 case "$*" in
   *containerimage.digest*) printf 'sha256:${DIGEST}\\n' ;;
   *"if length == 1 then .[0].Id"*) printf 'sha256:${DIGEST}\\n' ;;
-  *"--arg agent "*) printf '{}\\n' ;;
+  *"--arg agent "* | *".manifests |"*) PATH="$NEMOCLAW_TEST_REAL_PATH" command jq "$@" ;;
   *"-se "*) printf '[]\\n' ;;
   *) ;;
 esac
@@ -101,8 +118,18 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
-mode="$4"
-shift 4
+if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
+  while (($# > 0)); do
+    if [[ "$1" == "--result" && "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS" == 0 ]]; then
+      printf '{"status":"clean"}\\n' >"$2"
+      break
+    fi
+    shift
+  done
+  exit "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS"
+fi
+mode="$3"
+shift 3
 output=""
 while (($# > 0)); do
   case "$1" in
@@ -138,14 +165,28 @@ esac
 }
 
 function completeImportedAgentCaches(cacheRoot: string): void {
-  for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+  for (const agent of [
+    "hermes",
+    "langchain-deepagents-code",
+    "npm12",
+    "openclaw-system",
+    "hermes-system",
+    "langchain-deepagents-code-system",
+  ]) {
     mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
-    writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
+    writeFileSync(
+      path.join(cacheRoot, agent, "index.json"),
+      JSON.stringify({
+        manifests: [{ digest: `sha256:${DIGEST}` }],
+      }),
+      "utf8",
+    );
   }
 }
 
 function completeImportedCache(cacheRoot: string): void {
   completeImportedAgentCaches(cacheRoot);
+  writeFileSync(path.join(cacheRoot, "prepared-inputs"), `${PREPARED_IDENTITY}\n`);
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
   mkdirSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed"));
@@ -156,6 +197,12 @@ function completeImportedCache(cacheRoot: string): void {
   );
   mkdirSync(path.join(cacheRoot, "messaging-npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"), "{}\n", "utf8");
+}
+
+function completeAuditEvidence(auditDirectory: string): void {
+  mkdirSync(auditDirectory, { recursive: true });
+  writeFileSync(path.join(auditDirectory, "mcporter-runtime.receipt.json"), '{"result":"pass"}\n');
+  writeFileSync(path.join(auditDirectory, "mcporter-runtime.raw.json"), '{"metadata":{}}\n');
 }
 
 function completeSourceBoundary(sourceRoot: string): void {
@@ -220,8 +267,11 @@ function runBuild(
   sourceRoot: string,
   extraArgs: readonly string[] = [],
   platform = "linux/amd64",
+  environment: NodeJS.ProcessEnv = {},
 ) {
   const output = path.join(testRoot, "contracts.json");
+  const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
+  const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
   return spawnSync(
     "bash",
     [
@@ -249,17 +299,26 @@ function runBuild(
       encoding: "utf8",
       env: {
         ...process.env,
+        BUILDX_CONFIG: "",
+        DOCKER_CONFIG: "",
+        GITHUB_ACTIONS: "",
+        HOME: "",
+        NEMOCLAW_TEST_BUILDX_CONFIG_LOG: buildxConfigLog,
         NEMOCLAW_TEST_DOCKER_BUILD_COUNT: dockerBuildCount,
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
+        NEMOCLAW_TEST_IMAGE_PLATFORM: effectivePlatform,
+        NEMOCLAW_TEST_IMAGE_USER: imageUser,
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
         NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
+        NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS: receiptVerifyStatus,
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: testRoot,
+        ...environment,
       },
     },
   );
@@ -269,13 +328,16 @@ beforeEach(() => {
   testRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-build-"));
   stubBin = path.join(testRoot, "bin");
   dockerLog = path.join(testRoot, "docker.log");
+  buildxConfigLog = path.join(testRoot, "buildx-config.log");
   dockerBuildCount = path.join(testRoot, "docker-build-count");
   dockerBuildFailureMode = "";
+  receiptVerifyStatus = "0";
   seedLog = path.join(testRoot, "seed.log");
   registryCurlExit = "0";
   registryLog = path.join(testRoot, "registry.log");
   registryStatus = "404";
   teeFailureMode = "";
+  imageUser = "sandbox";
   mkdirSync(stubBin);
   writeExecutable(
     "docker",
@@ -323,6 +385,78 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
+  it("retains the setup-buildx builder after isolated Docker authentication", () => {
+    const home = path.join(testRoot, "home");
+    const setupBuildxConfig = path.join(home, ".docker", "buildx");
+    mkdirSync(setupBuildxConfig, { recursive: true });
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, [], "linux/amd64", {
+      DOCKER_CONFIG: path.join(testRoot, "isolated-docker-auth"),
+      GITHUB_ACTIONS: "true",
+      HOME: home,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(new Set(readFileSync(buildxConfigLog, "utf8").trim().split("\n"))).toEqual(
+      new Set([realpathSync(setupBuildxConfig)]),
+    );
+  });
+
+  it.each(["linux/amd64", "linux/arm64"])(
+    "builds every agent as sandbox by default on %s",
+    (platform) => {
+      stubBuildInvocation();
+
+      const result = runBuild(REPO_ROOT, [], platform);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(recordedBuildInvocations()).toHaveLength(3);
+      expect(
+        recordedBuildInvocations().every((invocation) =>
+          invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("preserves an explicitly selected runtime user", () => {
+    stubBuildInvocation();
+    imageUser = "root";
+    const result = runBuild(REPO_ROOT, ["--runtime-user", "root"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(
+      recordedBuildInvocations().every((invocation) =>
+        invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an image whose final Config.User does not match the selected runtime user", () => {
+    stubBuildInvocation();
+    imageUser = "root";
+
+    const result = runBuild(REPO_ROOT);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
+  });
+
+  it.each(["0", "Root", "sandbox\nroot"])(
+    "rejects unreviewed protected runtime user %j before invoking Docker",
+    (runtimeUser) => {
+      const result = runBuild(REPO_ROOT, ["--runtime-user", runtimeUser]);
+
+      expect(result.status, result.stderr).toBe(2);
+      expect(existsSync(dockerLog)).toBe(false);
+    },
+  );
+
   it("passes the selected Buildx architecture explicitly to every Dockerfile", () => {
     stubBuildInvocation();
 
@@ -331,11 +465,22 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("hermes")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--build-arg TARGETARCH=arm64",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
   });
 
@@ -371,11 +516,15 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg TARGETARCH=arm64",
+    );
   });
 
-  it("passes each agent one empty absolute cache export root", () => {
+  it("exports prepared inputs and only the layer caches consumed offline", () => {
     const cacheRoot = path.join(testRoot, "export-cache");
     stubBuildInvocation();
 
@@ -383,16 +532,34 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(cacheRoot)).toBe(true);
-    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(readFileSync(path.join(cacheRoot, "prepared-inputs"), "utf8")).toBe(
+      `${PREPARED_IDENTITY}\n`,
+    );
+    expect(recordedBuildInvocations()).toHaveLength(7);
+    expect(recordedBuildInvocations()).toEqual([
+      expect.stringContaining("io.nvidia.nemoclaw.agent=openclaw"),
+      expect.stringContaining(
+        `--target npm12 --provenance=false --sbom=false --build-arg BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/npm12,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining(
+        `--target openclaw-system --provenance=false --sbom=false --build-arg BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/openclaw-system,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining("io.nvidia.nemoclaw.agent=hermes"),
+      expect.stringContaining(
+        `--file ${REPO_ROOT}/agents/hermes/Dockerfile --platform linux/amd64 --target hermes-system --provenance=false --sbom=false --build-arg BASE_IMAGE=${HERMES_BASE} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/hermes-system,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining("io.nvidia.nemoclaw.agent=langchain-deepagents-code"),
+      expect.stringContaining(
+        `--file ${REPO_ROOT}/agents/langchain-deepagents-code/Dockerfile --platform linux/amd64 --target langchain-deepagents-code-system --provenance=false --sbom=false --build-arg BASE_IMAGE=${DCODE_BASE} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/langchain-deepagents-code-system,tar=false ${REPO_ROOT}`,
+      ),
+    ]);
 
     expect({
       openclaw: recordedBuildInvocation("openclaw"),
       hermes: recordedBuildInvocation("hermes"),
       "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
     }).toEqual({
-      openclaw: expect.stringContaining(
-        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/openclaw,mode=max`,
-      ),
+      openclaw: expect.not.stringContaining("--cache-to"),
       hermes: expect.stringContaining(
         `--cache-to type=local,dest=${realpathSync(cacheRoot)}/hermes,mode=max`,
       ),
@@ -450,14 +617,50 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("rejects an incomplete imported cache before invoking Docker", () => {
+  it("rejects online preparation during offline consumption", () => {
+    const cacheRoot = path.join(testRoot, "cache");
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot, "--cache-from", cacheRoot]);
+    expect(result.status).toBe(2);
+    expect(existsSync(cacheRoot)).toBe(false);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it.each([
+    "hermes",
+    "npm12",
+    "openclaw-system",
+    "hermes-system",
+    "langchain-deepagents-code-system",
+  ])("rejects an imported cache missing %s before invoking Docker", (stage) => {
     const cacheRoot = path.join(testRoot, "imported-cache");
-    mkdirSync(cacheRoot);
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, stage), { recursive: true });
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("imported cache is incomplete for openclaw");
+    expect(result.stderr).toContain(`imported cache is incomplete for ${stage}`);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it.each([
+    ["revision", REVISION],
+    ["platform", "linux/amd64"],
+    ["OpenClaw base", OPENCLAW_BASE],
+    ["Hermes base", HERMES_BASE],
+    ["Deep Agents Code base", DCODE_BASE],
+  ])("rejects prepared inputs for another %s before invoking Docker", (_field, original) => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    writeFileSync(
+      path.join(cacheRoot, "prepared-inputs"),
+      PREPARED_IDENTITY.replace(original, "different"),
+    );
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("prepared inputs do not match");
     expect(existsSync(dockerLog)).toBe(false);
   });
 
@@ -496,6 +699,51 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
+  it("rejects incomplete reviewed audit evidence before invoking Docker (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    mkdirSync(auditRoot);
+    writeFileSync(path.join(auditRoot, "mcporter-runtime.receipt.json"), "", "utf8");
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("reviewed audit evidence is incomplete");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("binds external evidence to the trusted verifier and candidate graph (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    receiptVerifyStatus = "42";
+
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
+    const verification = readFileSync(seedLog, "utf8");
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(verification).toContain(`${REPO_ROOT}/scripts/lib/npm-audit-receipt.mts`);
+    expect(verification).toContain(
+      `--package-json ${REPO_ROOT}/agents/openclaw/mcporter-runtime/package.json`,
+    );
+    expect(verification).toContain(`--audit-config ${REPO_ROOT}/ci/reviewed-npm-audit.json`);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
   it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
@@ -510,10 +758,17 @@ describe("protected managed-image build-cache boundary", () => {
     const originalSeedNames = readdirSync(sourceSeed).sort();
     const originalMcpSeedNames = readdirSync(sourceMcpSeed).sort();
     const originalMessagingSeedNames = readdirSync(sourceMessagingSeed).sort();
+    const auditRoot = path.join(testRoot, "audit-evidence");
     completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
     stubBuildInvocation();
 
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
@@ -539,6 +794,33 @@ describe("protected managed-image build-cache boundary", () => {
       ),
     });
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-context npm12=oci-layout://${realpathSync(cacheRoot)}/npm12@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-context openclaw-system=oci-layout://${realpathSync(cacheRoot)}/openclaw-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("hermes")).toContain(
+      `--build-context hermes-system=oci-layout://${realpathSync(cacheRoot)}/hermes-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      `--build-context langchain-deepagents-code-system=oci-layout://${realpathSync(cacheRoot)}/langchain-deepagents-code-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(auditRoot)}/mcporter-runtime.receipt.json`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--secret id=nemoclaw-mcporter-audit-raw-report,src=${realpathSync(auditRoot)}/mcporter-runtime.raw.json`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toMatch(
+      /--secret id=nemoclaw-mcporter-audit-policy-result,src=\S+\/mcporter-runtime[.]policy[.]json/,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-arg NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${DIGEST}`,
+    );
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
       "--no-cache",
@@ -557,13 +839,40 @@ describe("protected managed-image build-cache boundary", () => {
     expect(readdirSync(sourceMessagingSeed).sort()).toEqual(originalMessagingSeedNames);
   });
 
+  it.each(["missing", "ambiguous", "mutable"])(
+    "rejects a %s prepared image before invoking Docker",
+    (state) => {
+      const cacheRoot = path.join(testRoot, "imported-cache");
+      const auditRoot = path.join(testRoot, "audit-evidence");
+      completeImportedCache(cacheRoot);
+      completeAuditEvidence(auditRoot);
+      stubBuildInvocation();
+      const manifests = {
+        missing: [],
+        ambiguous: [{ digest: `sha256:${DIGEST}` }, { digest: `sha256:${DIGEST}` }],
+        mutable: [{ digest: "latest" }],
+      }[state];
+      writeFileSync(path.join(cacheRoot, "npm12", "index.json"), JSON.stringify({ manifests }));
+
+      const result = runBuild(REPO_ROOT, [
+        "--cache-from",
+        cacheRoot,
+        "--audit-evidence-from",
+        auditRoot,
+      ]);
+
+      expect(result.status).not.toBe(0);
+      expect(existsSync(dockerLog)).toBe(false);
+    },
+  );
+
   it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     completeImportedAgentCaches(cacheRoot);
 
     symlinkSync(
       path.join(cacheRoot, "hermes", "index.json"),
-      path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),
+      path.join(cacheRoot, "hermes-system", "blobs", "sha256", "nested-link"),
     );
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);

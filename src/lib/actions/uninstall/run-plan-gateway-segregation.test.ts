@@ -16,6 +16,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
@@ -30,10 +31,10 @@ import {
 const STATIC_TEST_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-segregation-static-"),
 );
+const NAMED_GATEWAY_ABSENCE = "No gateway metadata found for nemoclaw.";
+const REMOVE_UNSUPPORTED = "unrecognized subcommand 'remove'";
 
-afterAll(() => {
-  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
-});
+afterAll(() => fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true }));
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -72,6 +73,7 @@ function writeScopedGatewayState(home: string, port = 8080): string {
   const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(
@@ -138,7 +140,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       executable: "/usr/local/bin/openshell-gateway",
       commandLine: "/usr/local/bin/openshell-gateway --name nemoclaw --port 8091",
     },
-  ])("refuses scoped cleanup when $title", ({ executable, commandLine }) => {
+  ])("refuses scoped cleanup when $title", async ({ executable, commandLine }) => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-proof-"));
     try {
       const shared = path.join(tmpHome, ".nemoclaw");
@@ -159,10 +161,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const warnings: string[] = [];
       const externalPid = 4242;
 
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -211,7 +213,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", () => {
+  it("does not mutate an external gateway registration when bulk cleanup is not owned (#11831)", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
@@ -220,10 +222,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
       ],
     ]);
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        commandExists: (command) => command === "openshell",
+        commandExists: (command) => command === "openshell" || command === "docker",
         env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
@@ -250,20 +252,20 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
-    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls).not.toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls).not.toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 
-  it("fails before uninstall effects when gateway authority revalidation fails (#6576)", () => {
+  it("fails before uninstall effects when gateway authority revalidation fails (#6576)", async () => {
     const run = vi.fn(() => ok());
     const runDocker = vi.fn(() => ok());
     const rmSync = vi.fn();
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
@@ -284,7 +286,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     expect(rmSync).not.toHaveBeenCalled();
   });
 
-  it("falls back to legacy gateway destroy only when gateway remove is unsupported", () => {
+  it("falls back to legacy gateway destroy only when gateway remove is unsupported", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
@@ -293,10 +295,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
       ],
     ]);
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        commandExists: (command) => command !== "pgrep",
         env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
@@ -317,40 +319,129 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     expect(openshellCalls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 
-  it("does not hide a current gateway remove failure behind the legacy verb", () => {
-    const calls: Array<{ args: string[]; command: string }> = [];
-    const warnings: string[] = [];
-    const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
-      ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: "permission denied" }],
-    ]);
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        rmSync: vi.fn(),
-        run: (command, args) => {
-          calls.push({ args, command });
-          return responses.get([command, ...args].join(" ")) ?? ok();
+  it.each([
+    {
+      name: "a connection refusal",
+      diagnostic: "",
+      expectedCause: "OpenShell could not reach the selected gateway.",
+      stdoutDiagnostic: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+    },
+    {
+      name: "a permission error",
+      diagnostic: "permission denied; ACCESS_TOKEN=must-not-be-logged",
+      expectedCause: "OpenShell could not authorize the gateway operation.",
+    },
+    { name: "an unverified generic absence", diagnostic: "gateway not found" },
+    { name: "a named absence while still registered", diagnostic: NAMED_GATEWAY_ABSENCE },
+    {
+      name: "an absence with a failed gateway-list postcondition",
+      postcondition: { status: 1, stdout: "", stderr: "connection refused" } satisfies RunResult,
+    },
+    { name: "an absence with invalid JSON", postcondition: ok("{") },
+    { name: "an absence with a non-array list", postcondition: ok("{}") },
+    { name: "an absence with an invalid list entry", postcondition: ok(JSON.stringify([{}])) },
+    { name: "an unrelated not-found error", diagnostic: "gateway service endpoint not found" },
+    {
+      name: "a generic absence plus another failure",
+      diagnostic: "gateway not found\nconnection refused",
+      expectedCause: "OpenShell could not reach the selected gateway.",
+    },
+    {
+      name: "a named absence plus another failure",
+      diagnostic: "No gateway metadata found for nemoclaw.\nconnection refused",
+      expectedCause: "OpenShell could not reach the selected gateway.",
+    },
+    {
+      name: "a different gateway absence",
+      diagnostic: "No gateway metadata found for 'other'. Request for nemoclaw failed",
+    },
+    {
+      name: "a legacy destroy failure",
+      diagnostic: REMOVE_UNSUPPORTED,
+      expectedCause: "OpenShell could not authorize the gateway operation.",
+      legacyDestroyDiagnostic: "permission denied",
+    },
+    {
+      name: "a named legacy absence while still registered",
+      diagnostic: REMOVE_UNSUPPORTED,
+      legacyDestroyDiagnostic: NAMED_GATEWAY_ABSENCE,
+    },
+  ])(
+    "preserves state when gateway cleanup reports $name (#9859)",
+    async ({
+      diagnostic,
+      expectedCause = "The OpenShell gateway operation failed.",
+      legacyDestroyDiagnostic,
+      postcondition,
+      stdoutDiagnostic = "",
+    }) => {
+      const calls: Array<{ args: string[]; command: string }> = [];
+      const logs: string[] = [];
+      const rmSync = vi.fn();
+      const warnings: string[] = [];
+      let removeAttempted = false;
+      const removeDiagnostic = diagnostic ?? NAMED_GATEWAY_ABSENCE;
+      const responses = new Map<string, RunResult>([
+        [
+          "openshell gateway remove nemoclaw",
+          { status: 1, stdout: stdoutDiagnostic, stderr: removeDiagnostic },
+        ],
+      ]);
+      responses.set(
+        "openshell gateway destroy -g nemoclaw",
+        legacyDestroyDiagnostic
+          ? {
+              status: 1,
+              stdout: "",
+              stderr: legacyDestroyDiagnostic,
+            }
+          : ok(),
+      );
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: (command) => command !== "pgrep",
+          env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+          error: (line) => warnings.push(line),
+          existsSync: () => false,
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync,
+          run: (command, args) => {
+            calls.push({ args, command });
+            const key = [command, ...args].join(" ");
+            removeAttempted ||= key === "openshell gateway remove nemoclaw";
+            return key === "openshell gateway list -o json"
+              ? removeAttempted && postcondition !== undefined
+                ? postcondition
+                : ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : (responses.get(key) ?? ok());
+          },
+          runDocker: () => ok(""),
         },
-        runDocker: () => ok(""),
-        error: (line) => warnings.push(line),
-      },
-    );
+      );
 
-    expect(result.exitCode).toBe(0);
-    const openshellCalls = calls
-      .filter(({ command }) => command === "openshell")
-      .map(({ args }) => args);
-    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
-    expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
-    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
-  });
+      expect(result.exitCode).toBe(1);
+      const openshellCalls = calls
+        .filter(({ command }) => command === "openshell")
+        .map(({ args }) => args);
+      expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+      const usedLegacyDestroy = legacyDestroyDiagnostic !== undefined;
+      expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(usedLegacyDestroy);
+      expect(warnings.join("\n")).toContain("Could not remove gateway registration 'nemoclaw':");
+      expect(warnings.join("\n")).toContain(expectedCause);
+      expect(warnings.join("\n")).not.toContain("must-not-be-logged");
+      expect(warnings).not.toContain("Gateway 'nemoclaw' is already absent");
+      expect(warnings).toContain(
+        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+      );
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(logs).not.toContain("[4/6] NemoClaw CLI");
+      expect(logs).not.toContain("Claws retracted. Until next time.");
+    },
+  );
 
-  it("preserves the gateways/ subtree so uninstalling one environment leaves the others", () => {
+  it("preserves the gateways/ subtree so uninstalling one environment leaves the others", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gwpreserve-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -378,10 +469,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const logs: string[] = [];
       const kill = vi.fn(() => true);
       const run = vi.fn((_command: string, _args: string[]) => ok());
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_NON_INTERACTIVE: "",
@@ -400,8 +491,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
-      expect(adapterStateEntries.every((name) =>
-          Object.is(fs.existsSync(path.join(stateDir, name)), true))).toBe(true);
+      expect(
+        adapterStateEntries.map((name) => fs.existsSync(path.join(stateDir, name))),
+      ).not.toContain(false);
       expect(kill).not.toHaveBeenCalled();
       expect(
         run.mock.calls.some(
@@ -415,7 +507,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("does not scan or signal a sibling Bedrock adapter during selected-gateway uninstall (#9552)", () => {
+  it("does not scan or signal a sibling Bedrock adapter during selected-gateway uninstall (#9552)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-scope-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -439,10 +531,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const kill = vi.fn((_pid: number) => true);
       let adapterExited = false;
 
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
         {
-          commandExists: (command) => command === "lsof" || command === "openshell",
+          commandExists: (command) =>
+            command === "lsof" || command === "openshell" || command === "docker",
           env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -486,7 +579,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("keeps the host-shared /swapfile when other gateway-port environments remain", () => {
+  it("keeps the host-shared /swapfile when other gateway-port environments remain", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-swap-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -495,10 +588,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const runCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          commandExists: (command) => command !== "pgrep",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "" } as NodeJS.ProcessEnv,
           existsSync: (target) =>
             target === "/swapfile" || (target.startsWith(tmpHome) && fs.existsSync(target)),
@@ -548,7 +641,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const runCalls: string[][] = [];
 
       const deps = {
-        commandExists: (command: string) => command !== "docker" && command !== "pgrep",
+        commandExists: (command: string) => command !== "pgrep",
         env: {
           HOME: tmpHome,
           NEMOCLAW_GATEWAY_PORT: String(port),
@@ -569,7 +662,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       };
       const options = { assumeYes: true, deleteModels: false, keepOpenShell: true };
 
-      const protectedResult = runPortUninstall(options, deps);
+      const protectedResult = await runPortUninstall(options, deps);
       expect(protectedResult.exitCode).toBe(0);
       expect(runCalls.some((args) => args[0] === "swapoff")).toBe(false);
       expect(fs.existsSync(path.join(stateDir, "managed_swap"))).toBe(true);
@@ -577,7 +670,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.rmSync(defaultSession);
       fs.mkdirSync(selectedEnv, { recursive: true });
       runCalls.length = 0;
-      const result = runPortUninstall(options, deps);
+      const result = await runPortUninstall(options, deps);
 
       expect(result.exitCode).toBe(0);
       expect(runCalls).toContainEqual(["swapoff", "/swapfile"]);
@@ -607,10 +700,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome, port);
       const runCalls: string[][] = [];
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          commandExists: (command) => command !== "pgrep",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -668,7 +761,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome, port);
       const runCalls: string[][] = [];
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -677,7 +770,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: true,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           existsSync: (target) =>
             target === "/swapfile" || (target.startsWith(tmpHome) && fs.existsSync(target)),
@@ -739,7 +832,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(migration.migratedSandboxNames).toEqual(["selected-box"]);
       writeScopedGatewayState(tmpHome, selectedPort);
       const calls: Array<{ command: string; args: string[] }> = [];
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -748,7 +841,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(selectedPort),
@@ -818,7 +911,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const calls: Array<{ command: string; args: string[] }> = [];
 
-      const result = runDefaultUninstall(
+      const result = await runDefaultUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -827,7 +920,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: "8080",
@@ -940,12 +1033,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const kill = vi.fn((_pid: number, _signal?: NodeJS.Signals | number) => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
-        ps: [
-          "default-id image openshell-cluster-nemoclaw",
-          `selected-id image openshell-cluster-nemoclaw-${String(port)}`,
-        ].join("\n"),
+        ps: ["default-id image openshell-cluster-nemoclaw"].join("\n"),
       };
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: true,
@@ -983,7 +1073,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(openshellCalls.some((args) => args[0] === "provider")).toBe(false);
       expect(runCalls.some(({ command }) => command === "npm" || command === "ollama")).toBe(false);
-      expect(dockerCalls).toContainEqual(["rm", "-f", "selected-id"]);
+      expect(dockerCalls.some((args) => args[0] === "rm")).toBe(false);
       expect(dockerCalls).not.toContainEqual(["rm", "-f", "default-id"]);
       expect(dockerCalls.some((args) => args[0] === "rmi")).toBe(false);
       expect(fs.existsSync(selected)).toBe(false);
@@ -994,8 +1084,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      expect(proxyStateEntries.every((entry) =>
-          Object.is(fs.existsSync(path.join(shared, entry)), true))).toBe(true);
+      expect(
+        proxyStateEntries.map((entry) => fs.existsSync(path.join(shared, entry))),
+      ).not.toContain(false);
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );
@@ -1004,7 +1095,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("removes host-shared resources when the only gateways/ entries are OpenShell orphans (#7315)", () => {
+  it("removes host-shared resources when the only gateways/ entries are OpenShell orphans (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-orphan-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1023,10 +1114,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -1054,7 +1145,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("removes host-shared resources when the only sibling registry row is an OpenShell orphan (#7315)", () => {
+  it("removes host-shared resources when the only sibling registry row is an OpenShell orphan (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-orphan-registry-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1073,10 +1164,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -1104,7 +1195,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("keeps host-shared resources when a sibling registry row is a live OpenShell gateway (#7315)", () => {
+  it("keeps host-shared resources when a sibling registry row is a live OpenShell gateway (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-live-registry-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1121,10 +1212,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1149,7 +1240,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("refuses host-wide cleanup when OpenShell is unavailable and no sibling files exist (#7315)", () => {
+  it("refuses host-wide cleanup when OpenShell is unavailable and no sibling files exist (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-openshell-"));
     try {
       const servicePath = path.join(
@@ -1166,7 +1257,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const logs: string[] = [];
       const rmSync = vi.fn();
       const warnings: string[] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
           commandExists: (command) => command === "npm" || command === "systemctl",
@@ -1216,7 +1307,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       case: "the gateway list is not an array",
       gatewayListResponse: ok(JSON.stringify({ name: "nemoclaw" })),
     },
-  ])("keeps host-shared resources when $case (#7315)", ({ gatewayListResponse }) => {
+  ])("keeps host-shared resources when $case (#7315)", async ({ gatewayListResponse }) => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-malformed-list-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1246,10 +1337,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1275,7 +1366,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("switches to scoped cleanup when a sibling gateway appears before destruction (#7315)", () => {
+  it("switches to scoped cleanup when a sibling gateway appears before destruction (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-new-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1298,10 +1389,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const openshellCalls: string[][] = [];
       const warnings: string[] = [];
       let gatewayListCalls = 0;
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1336,7 +1427,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("keeps host-shared resources when a gateways/ entry is a live OpenShell gateway (#7315)", () => {
+  it("keeps host-shared resources when a gateways/ entry is a live OpenShell gateway (#7315)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-live-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -1367,10 +1458,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       let proxyProcessIsRunning = true;
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1396,8 +1487,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
       expect(proxyProcessIsRunning).toBe(true);
-      expect(proxyStateEntries.every((entry) =>
-          Object.is(fs.existsSync(path.join(stateDir, entry)), true))).toBe(true);
+      expect(
+        proxyStateEntries.map((entry) => fs.existsSync(path.join(stateDir, entry))),
+      ).not.toContain(false);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

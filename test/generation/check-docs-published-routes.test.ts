@@ -12,12 +12,11 @@ import {
   buildPublishedRouteIndex,
   extractMarkdownLinks,
   findBrokenChangelogRoutes,
-  findBrokenPublishedInferenceRoutes,
-  findBrokenPublishedManageSandboxRoutes,
   findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
   findMissingDirectLegacyReleaseNotesRedirects,
+  publishedSourcePages,
   renderPublishedPageBodies,
   resolvePublishedRoute,
 } from "../../scripts/check-docs-published-routes.mts";
@@ -111,6 +110,32 @@ ${body}
 }
 
 describe("published docs route checking", () => {
+  it("checks static MDX hrefs, including multiline attributes, outside code examples", () => {
+    const body = [
+      '<Card data-href="../ignored"',
+      " href=",
+      '  "/user-guide/openclaw/reference/commands" />',
+      "<Link href={",
+      '  "../missing-page"',
+      "} />",
+      '`<Card href="../inline-example" />`',
+      "```mdx",
+      '<Card href="../code-example" />',
+      "```",
+    ].join("\n");
+    expect(extractMarkdownLinks(body)).toEqual([
+      { text: "MDX href", target: "/user-guide/openclaw/reference/commands", line: 2 },
+      { text: "MDX href", target: "../missing-page", line: 4 },
+    ]);
+    withDocsSource(commandsSource(body), (docsDir) => {
+      const index = buildPublishedRouteIndex(navYaml);
+      const violations = findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir);
+      expect(violations.map(({ target }) => target)).toEqual([
+        "../missing-page",
+        "../missing-page",
+      ]);
+    });
+  });
   it.each(["openclaw", "hermes", "deepagents", "pi"])(
     "indexes the native changelog route for %s",
     (variant) => {
@@ -357,33 +382,12 @@ redirects:
     });
   });
 
-  it("can guard inference links without expanding checks to unrelated links", () => {
-    const index = buildPublishedRouteIndex(navYaml);
-    const source = commandsSource(`
-See [Missing Inference](../inference/missing).
-See [Missing Other Page](../other/missing).
-`);
-
-    withDocsSource(source, (docsDir) => {
-      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
-        expect.objectContaining({
-          fromRoute: "/user-guide/openclaw/reference/commands",
-          resolved: "/user-guide/openclaw/inference/missing",
-        }),
-        expect.objectContaining({
-          fromRoute: "/user-guide/hermes/reference/commands",
-          resolved: "/user-guide/hermes/inference/missing",
-        }),
-      ]);
-    });
-  });
-
-  it("includes inference section roots in focused route violations", () => {
+  it("includes inference section roots in published route violations", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource("See [Missing Inference Root](../inference).");
 
     withDocsSource(source, (docsDir) => {
-      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
+      expect(findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir)).toEqual([
         expect.objectContaining({
           fromRoute: "/user-guide/openclaw/reference/commands",
           resolved: "/user-guide/openclaw/inference",
@@ -396,37 +400,12 @@ See [Missing Other Page](../other/missing).
     });
   });
 
-  it("can guard Manage Sandboxes links without expanding checks to unrelated links", () => {
-    const index = buildPublishedRouteIndex(navYaml);
-    const source = commandsSource(`
-See [Missing Sandbox Page](../manage-sandboxes/operate-sandboxes/missing).
-See [Missing Other Page](../other/missing).
-`);
-
-    withDocsSource(source, (docsDir) => {
-      expect(
-        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
-      ).toEqual([
-        expect.objectContaining({
-          fromRoute: "/user-guide/openclaw/reference/commands",
-          resolved: "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/missing",
-        }),
-        expect.objectContaining({
-          fromRoute: "/user-guide/hermes/reference/commands",
-          resolved: "/user-guide/hermes/manage-sandboxes/operate-sandboxes/missing",
-        }),
-      ]);
-    });
-  });
-
-  it("includes Manage Sandboxes section roots in focused route violations", () => {
+  it("includes Manage Sandboxes section roots in published route violations", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource("See [Missing Manage Sandboxes Root](../manage-sandboxes).");
 
     withDocsSource(source, (docsDir) => {
-      expect(
-        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
-      ).toEqual([
+      expect(findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir)).toEqual([
         expect.objectContaining({
           resolved: "/user-guide/openclaw/manage-sandboxes",
         }),
@@ -435,28 +414,6 @@ See [Missing Other Page](../other/missing).
         }),
       ]);
     });
-  });
-});
-
-describe("Pi documentation routes", () => {
-  const index = buildPublishedRouteIndex();
-
-  it("publishes the Pi quickstart, operations, and support reference only in the Pi guide", () => {
-    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
-    expect([
-      index.routes.has("/user-guide/openclaw/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/openclaw/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/openclaw/reference/pi-support"),
-      index.routes.has("/user-guide/hermes/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/hermes/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/hermes/reference/pi-support"),
-      index.routes.has("/user-guide/deepagents/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/deepagents/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/deepagents/reference/pi-support"),
-    ]).toEqual([false, false, false, false, false, false, false, false, false]);
   });
 });
 
@@ -532,6 +489,41 @@ describe("Manage Sandboxes extension routes", () => {
 
     expect(quickstartPage.body.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
   });
+});
+
+describe("Pi documentation routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes every Pi page in the Pi guide", () => {
+    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/inference/configure-model-limits")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
+  });
+
+  it("maps Pi-only onboarding and commands exclusively to the Pi guide", () => {
+    expect(
+      index.sourceToRoutes.get("get-started/quickstart-pi.mdx")?.map(({ route }) => route),
+    ).toEqual(["/user-guide/pi/get-started/quickstart"]);
+    expect(
+      index.sourceToRoutes.get("reference/pi-commands.mdx")?.map(({ route }) => route),
+    ).toEqual(["/user-guide/pi/reference/commands"]);
+  });
+
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "keeps Pi-only pages out of the %s guide",
+    (variant) => {
+      expect(index.routes.has(`/user-guide/${variant}/get-started/quickstart-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/manage-sandboxes/run-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/reference/pi-support`)).toBe(false);
+      expect(
+        index.routes.has(
+          `/user-guide/${variant}/inference/manage-inference/configure-model-limits`,
+        ),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("Documentation Engineering routes", () => {
@@ -713,5 +705,23 @@ describe("gateway lifecycle authority routes", () => {
 describe("native changelog legacy routes", () => {
   it("redirects every retired Release Notes route directly to the changelog", () => {
     expect(findMissingDirectLegacyReleaseNotesRedirects()).toEqual([]);
+  });
+});
+
+describe("published page coverage (#12328)", () => {
+  const index = buildPublishedRouteIndex();
+  const sources = publishedSourcePages(index);
+
+  it("checks every source docs/index.yml actually publishes, not a fixed allowlist", () => {
+    // A page outside the old hand-maintained allowlist must still be covered,
+    // so a page can never silently drop out of route checking again.
+    expect(sources).toContain("get-started/quickstart.mdx");
+    expect(sources).toContain("about/overview.mdx");
+    expect(sources.length).toBeGreaterThan(100);
+  });
+
+  it("has no unresolved internal link on any published page", () => {
+    const violations = sources.flatMap((source) => findBrokenPublishedRoutes(source, index));
+    expect(violations).toEqual([]);
   });
 });

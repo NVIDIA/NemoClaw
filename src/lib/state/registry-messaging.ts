@@ -9,6 +9,7 @@ import {
   getDisabledChannelIdsFromPlan,
   getMessagingChannelConfigFromPlan,
   parseSandboxMessagingPlan,
+  type SandboxMessagingPlanParseOptions,
 } from "../messaging/plan-validation";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { SandboxRegistry } from "./registry";
@@ -52,9 +53,10 @@ export function serializeSandboxMessagingStateForDisk(
 
 export function getMessagingPlanFromEntry(
   entry: EntryWithMessaging | null | undefined,
+  options: SandboxMessagingPlanParseOptions = {},
 ): SandboxMessagingPlan | null {
   if (entry?.messaging?.schemaVersion !== 1) return null;
-  return parseSandboxMessagingPlan(entry.messaging.plan);
+  return parseSandboxMessagingPlan(entry.messaging.plan, options);
 }
 
 export function getHydratedMessagingPlanFromEntry(

@@ -5,6 +5,7 @@ import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
 import { isSafeModelId } from "../validation";
 import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
+import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 
 export { promptVllmModel, type VllmModelPromptOptions } from "./vllm-prompt";
 
@@ -36,6 +37,8 @@ export interface PromptValidationResult {
 }
 
 export interface ModelPromptOptions {
+  onModelSelected?: (source: ModelSelectionProvenance["modelSource"]) => void;
+  catalogSelectionSource?: "product_catalog" | "provider_catalog";
   promptFn?: (question: string) => Promise<string>;
   errorLine?: (message: string) => void;
   writeLine?: (message: string) => void;
@@ -84,6 +87,8 @@ function shouldDeferValidationFailure(validation: PromptValidationResult): boole
 
 function resolvePromptOptions(options: ModelPromptOptions = {}) {
   return {
+    onModelSelected: options.onModelSelected,
+    catalogSelectionSource: options.catalogSelectionSource ?? "product_catalog",
     promptFn: options.promptFn ?? prompt,
     errorLine: options.errorLine ?? console.error,
     writeLine: options.writeLine ?? console.log,
@@ -126,11 +131,13 @@ export async function promptManualModelId(
           deps.errorLine(`  ${validation.message}`);
         }
         if (shouldDeferValidationFailure(validation)) {
+          deps.onModelSelected?.("custom");
           return trimmed;
         }
         continue;
       }
     }
+    deps.onModelSelected?.("custom");
     return trimmed;
   }
 }
@@ -167,6 +174,7 @@ export async function promptCloudModel(
   }
   const index = parseInt(choice || String(defaultListChoice), 10) - 1;
   if (Number.isFinite(index) && index >= 0 && index < deps.cloudModelOptions.length) {
+    deps.onModelSelected?.(deps.catalogSelectionSource);
     return deps.cloudModelOptions[index].id;
   }
 
@@ -250,9 +258,11 @@ export async function promptRemoteModel(
   }
   const index = parseInt(choice || String(defaultChoice), 10) - 1;
   if (currentDefaultChoice !== null && index === currentDefaultChoice - 1) {
+    deps.onModelSelected?.(defaultIndex >= 0 ? deps.catalogSelectionSource : "unknown");
     return defaultModel;
   }
   if (Number.isFinite(index) && index >= 0 && index < visibleOptions.length) {
+    deps.onModelSelected?.(deps.catalogSelectionSource);
     return visibleOptions[index];
   }
   if (index === visibleOptions.length) {
@@ -292,6 +302,7 @@ async function promptFullRemoteModelList(
   }
   const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
   if (Number.isFinite(index) && index >= 0 && index < modelOptions.length) {
+    deps.onModelSelected?.(deps.catalogSelectionSource);
     return modelOptions[index];
   }
 
@@ -326,11 +337,13 @@ export async function promptInputModel(
           deps.errorLine(`  ${validation.message}`);
         }
         if (shouldDeferValidationFailure(validation)) {
+          deps.onModelSelected?.("custom");
           return trimmed;
         }
         continue;
       }
     }
+    deps.onModelSelected?.("custom");
     return trimmed;
   }
 }

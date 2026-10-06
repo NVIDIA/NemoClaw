@@ -240,14 +240,12 @@ export interface MessagingWorkflowPlannerSandboxContext {
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
-export interface MessagingWorkflowPlannerChannelAddContext
-  extends MessagingWorkflowPlannerSandboxContext {
+export interface MessagingWorkflowPlannerChannelAddContext extends MessagingWorkflowPlannerSandboxContext {
   readonly channelId: MessagingChannelId;
   readonly isInteractive: boolean;
 }
 
-export interface MessagingWorkflowPlannerChannelMutationContext
-  extends MessagingWorkflowPlannerSandboxContext {
+export interface MessagingWorkflowPlannerChannelMutationContext extends MessagingWorkflowPlannerSandboxContext {
   readonly channelId: MessagingChannelId;
 }
 

@@ -23,7 +23,7 @@ const onboardProviders = require("../providers") as {
 
 export type ResumeProviderShimDeps = {
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
-  providerExistsInGateway(name: string, gatewayName: string): boolean;
+  providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
   replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
   /** Recover an exact gateway-scoped managed runtime; false means no managed owner state exists. */

@@ -6,7 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
+import {
+  selectAuthorizedChatModel,
+  selectAuthorizedChatModelForCli,
+} from "../lib/select-authorized-chat-model.mts";
 
 const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
@@ -136,5 +139,23 @@ describe("authorized alternate chat model selection", () => {
       }),
     ).rejects.toThrow("none of the first 1 listed chat models passed validation");
     expect(probeModel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps probe progress out of the standalone selector result", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      selectAuthorizedChatModelForCli({
+        apiKey: "test-key",
+        currentModel,
+        endpoint,
+        fetchModels: () => ({ ok: true, ids: ["gpt-a"] }),
+        probeModel: async () => {
+          console.log("transient probe retry");
+          return { ok: true };
+        },
+      }),
+    ).resolves.toBe("gpt-a");
+    expect(stderr).toHaveBeenCalledWith("transient probe retry");
   });
 });

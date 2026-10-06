@@ -33,22 +33,22 @@ function runSourced(body: string, extraEnv: Record<string, string> = {}) {
 }
 
 describe("DGX Station forced-factory-runtime preparation", () => {
-  it.each([
-    ["ibacm.service"],
-    ["rtkit-daemon.service"],
-  ])("tolerates the unrelated failed unit %s (#7236)", (unit) => {
-    const tolerated = runSourced(
-      `
+  it.each([["ibacm.service"], ["rtkit-daemon.service"]])(
+    "tolerates the unrelated failed unit %s (#7236)",
+    (unit) => {
+      const tolerated = runSourced(
+        `
 STATION_HOST_PROFILE=forced-factory-runtime
 systemctl() { printf '${unit} loaded failed failed Unrelated\n'; }
 check_failed_units
 `,
-    );
-    expect(tolerated.result.status, tolerated.output).toBe(0);
-    expect(tolerated.output).toMatch(
-      new RegExp(`condition-qualified forced-factory-runtime failed unit: ${unit}`),
-    );
-  });
+      );
+      expect(tolerated.result.status, tolerated.output).toBe(0);
+      expect(tolerated.output).toMatch(
+        new RegExp(`condition-qualified forced-factory-runtime failed unit: ${unit}`),
+      );
+    },
+  );
 
   it("still blocks unrelated and preparation-critical failed units (#7236)", () => {
     const unrelated = runSourced(

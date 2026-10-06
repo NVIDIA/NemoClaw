@@ -10,13 +10,17 @@ test("missing semantic phase metadata", () => {
   throw new Error(bodyExecutionError);
 });
 
-test("invalid semantic phase transitions", {
-  meta: {
-    e2ePhases: ["prepare fixture behavior", "exercise fixture behavior"],
+test(
+  "invalid semantic phase transitions",
+  {
+    meta: {
+      e2ePhases: ["prepare fixture behavior", "exercise fixture behavior"],
+    },
   },
-}, ({ progress }) => {
-  progress.phase(selectedPhase);
-  progress.phase("undeclared fixture behavior");
-  progress.phase("exercise fixture behavior");
-  throw new Error(bodyExecutionError);
-});
+  ({ progress }) => {
+    progress.phase(selectedPhase);
+    progress.phase("undeclared fixture behavior");
+    progress.phase("exercise fixture behavior");
+    throw new Error(bodyExecutionError);
+  },
+);

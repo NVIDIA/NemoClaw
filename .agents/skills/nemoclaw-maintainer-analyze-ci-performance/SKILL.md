@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-analyze-ci-performance
-description: Analyze retained NemoClaw CI timing evidence for slow CLI tests or base-image publication latency. Use for CI performance, slow tests, Vitest timing artifacts, base-image publication timing, runner queue latency, or publication-gate analysis.
+description: "Analyze retained NemoClaw CI timings for slow CLI tests, runner queues, or base-image publication."
 user_invocable: true
 ---
 
@@ -16,7 +16,7 @@ Run one read-only standalone analyzer from a NemoClaw checkout. Both commands us
 Use retained `cli-vitest-results` artifacts to rank consistently slow tests and files. The CI workflow retains this historical input for 14 days:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/analyze-recent-cli-timings.mts \
   --workdir "$PWD"
 ```
@@ -30,7 +30,7 @@ The analyzer requires at least two usable retained reports. It rejects compresse
 Compare main-push E2E runs that publish a same-commit base image with runs that reuse a prior publication:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/analyze-base-image-publication-timings.mts \
   --workdir "$PWD"
 ```

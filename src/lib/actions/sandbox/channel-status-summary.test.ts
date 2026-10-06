@@ -4,10 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   entry,
-  makeDeps,
+  makeDeps as makeSyncDeps,
   showSandboxChannelStatus,
   withTelegramProbe,
 } from "./channel-status.test-helpers";
+
+function makeDeps(options: Parameters<typeof makeSyncDeps>[0]) {
+  const result = makeSyncDeps(options);
+  const execSandbox = result.deps.execSandbox;
+  return {
+    ...result,
+    deps: {
+      ...result.deps,
+      execSandbox: async (...args: Parameters<typeof execSandbox>) => execSandbox(...args),
+    },
+  };
+}
 
 describe("showSandboxChannelStatus summary", () => {
   it("emits a compact all-channel report when no channel is selected", async () => {

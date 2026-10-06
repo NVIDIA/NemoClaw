@@ -16,15 +16,126 @@ import {
   startCompatibleMock,
 } from "../live/mcp-bridge-servers.ts";
 import {
+  assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpToolDiscovery,
+  buildMcpStatusRequestEvidence,
   hasSuccessfulAuthenticatedMcpDiscovery,
   runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
+  withMcpToolCallFailureEvidence,
+  buildHermesGatewayIdentityProbe,
+  buildDeepAgentsConfigProbe,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
+
+describe("MCP failed tool-call evidence", () => {
+  it("keeps the existing config and process probes unchanged", () => {
+    expect(buildHermesGatewayIdentityProbe()).toBe(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    );
+    const probe = buildDeepAgentsConfigProbe("https://fixture.invalid/mcp", "fake", "secret");
+    expect(probe).toContain("entry = data['mcpServers'][\"fake\"]");
+    expect(probe).toContain("assert entry['type'] == 'http'");
+    expect(probe).toContain("assert entry['url'] == \"https://fixture.invalid/mcp\"");
+    expect(probe).toContain("assert re.fullmatch(");
+    expect(probe).toContain('assert "secret" not in text');
+  });
+  function setup() {
+    const requests: FakeMcpRequest[] = [];
+    const host = { nemoclaw: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+    const artifacts = { writeJson: vi.fn().mockResolvedValue("evidence.json") };
+    const options = {
+      artifacts,
+      requests,
+      artifactPrefix: "distinct",
+      sandboxName: "openclaw",
+      serverName: "distinct",
+      credentialEnvName: "DISTINCT_MCP_SECRET",
+      expectedSecret: "secret",
+      redactionValues: ["secret"],
+    };
+    return { host, artifacts, options, requests };
+  }
+
+  it("does not probe or write evidence after a successful call", async () => {
+    const { host, artifacts, options } = setup();
+    await withMcpToolCallFailureEvidence(async () => {}, host, options);
+    expect(host.nemoclaw).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("snapshots only failed-call metadata before probing the distinct server", async () => {
+    const { host, artifacts, options, requests } = setup();
+    requests.push(request("old-request"));
+    const failure = new Error("original tool assertion");
+    host.nemoclaw.mockImplementation(async () => {
+      requests.push(request("diagnostic-request"));
+    });
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          requests.push(request("tools/list", { auth: "Bearer secret", body: "private-body" }));
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+    expect(artifacts.writeJson).toHaveBeenCalledExactlyOnceWith(
+      "distinct-failed-call-requests.json",
+      {
+        requests: [
+          {
+            httpMethod: "POST",
+            rpcMethod: "tools/list",
+            responseStatus: 200,
+            credentialKind: "resolved",
+          },
+        ],
+      },
+    );
+    expect(host.nemoclaw).toHaveBeenCalledWith(
+      ["openclaw", "mcp", "status", "distinct", "--tools", "--json"],
+      expect.objectContaining({
+        timeoutMs: 60000,
+        killGraceMs: 1000,
+        captureLimitBytes: 16384,
+        redactionValues: ["secret"],
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("private-body");
+  });
+
+  it("preserves the original failure if both diagnostic operations fail", async () => {
+    const { host, artifacts, options } = setup();
+    host.nemoclaw.mockRejectedValue(new Error("status unavailable"));
+    artifacts.writeJson.mockImplementation(() => {
+      throw new Error("artifact unavailable");
+    });
+    const failure = new Error("original failure");
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+  });
+});
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const LEGACY_SESSION_ID = "opaque-legacy-session";
@@ -146,6 +257,55 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 let compatibleMock: StartedHttpServer | undefined;
 const artifactRoots: string[] = [];
 
+describe("MCP status request evidence", () => {
+  it("classifies resolved, control, and other requests without retaining bearer values", () => {
+    const controlBearer = "probe-control-bearer";
+    const evidence = buildMcpStatusRequestEvidence(
+      [
+        request("initialize"),
+        request("initialize", {
+          auth: `Bearer ${controlBearer}`,
+          responseStatus: 401,
+          responseHasResult: false,
+        }),
+        request("tools/list", {
+          auth: "Bearer unrelated-bearer",
+          responseStatus: 403,
+          responseHasResult: false,
+        }),
+      ],
+      EXPECTED_SECRET,
+      controlBearer,
+    );
+
+    expect(evidence).toEqual({
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 200,
+          credentialKind: "resolved",
+        },
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 401,
+          credentialKind: "control",
+        },
+        {
+          httpMethod: "POST",
+          rpcMethod: "tools/list",
+          responseStatus: 403,
+          credentialKind: "other",
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toMatch(
+      new RegExp(`${EXPECTED_SECRET}|${controlBearer}|unrelated-bearer`),
+    );
+  });
+});
+
 afterEach(async () => {
   await compatibleMock?.close();
   compatibleMock = undefined;
@@ -211,6 +371,29 @@ function recordToolResult(
 }
 
 describe("authenticated MCP rediscovery evidence", () => {
+  it("accepts status discovery after the credential control request", async () => {
+    const fakeMcp = fakeDiscoveryServer([
+      request("initialize", {
+        auth: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 401,
+        responseHasResult: false,
+      }),
+      successfulInitialize(),
+      request("notifications/initialized"),
+      request("tools/list"),
+    ]);
+
+    await expect(
+      assertAuthenticatedMcpDiscovery(fakeMcp, {
+        requestOffset: 0,
+        expectedSecret: EXPECTED_SECRET,
+        label: "trusted-private status discovery",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("accepts successful tool discovery in one negotiated session", () => {
     expect(
       hasSuccessfulAuthenticatedMcpDiscovery(
@@ -284,17 +467,191 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
-  it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
+  it("retries one connection failure, records denied authentication, and restores the credential (#10944)", async () => {
+    const requests: FakeMcpRequest[] = [];
+    const setSecret = vi.fn();
+    const fakeMcp = { requests, setSecret } as unknown as FakeMcpHttpsServer;
+    const provider = {
+      present: true,
+      state: "configured",
+      attached: true,
+      credentialReady: true,
+    };
+    const policy = { present: true, state: "configured" };
+    const adapter = { registered: true };
+    const host = {
+      nemoclaw: vi
+        .fn()
+        .mockImplementationOnce(async () => ({
+          exitCode: 1,
+          stdout: JSON.stringify({
+            provider,
+            policy,
+            adapter,
+            toolDiscovery: {
+              ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
+              commandStatus: 0,
+              failedStage: "initialization",
+              failureClass: "connection",
+              detail: "MCP request failed",
+            },
+          }),
+          stderr: "",
+        }))
+        .mockImplementationOnce(async () => {
+          requests.push(
+            successfulInitialize(),
+            request("notifications/initialized"),
+            request("tools/list"),
+            request("tools/list"),
+          );
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: true,
+                count: 2,
+                tools: ["fake_echo", "fake_status"],
+                truncated: false,
+                commandStatus: 0,
+              },
+            }),
+            stderr: "",
+          };
+        })
+        .mockImplementationOnce(async () => {
+          requests.push(
+            request("initialize", {
+              sessionId: "",
+              protocolVersion: "",
+              responseStatus: 401,
+              responseHasResult: false,
+            }),
+          );
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: false,
+                count: 0,
+                tools: [],
+                truncated: false,
+                commandStatus: 0,
+                failedStage: "initialization",
+                failureClass: "authentication",
+                detail: "MCP endpoint rejected the request (HTTP 401)",
+              },
+            }),
+            stderr: "",
+          };
+        }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = discoveryArtifacts();
+    const progress = { event: vi.fn() };
+
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
+      sandboxName: "sandbox",
+      artifactPrefix: "hermes",
+      deniedSecret: "denied-secret",
+      hostSecret: EXPECTED_SECRET,
+      progress,
+    });
+
+    expect(host.nemoclaw).toHaveBeenCalledTimes(3);
+    expect(progress.event).toHaveBeenCalledOnce();
+    expect(setSecret.mock.calls).toEqual([["denied-secret"], [EXPECTED_SECRET]]);
+    expect(artifacts.writeJson).toHaveBeenLastCalledWith(
+      "hermes-mcp-tool-discovery-denied-auth.json",
+      expect.objectContaining({
+        toolDiscovery: expect.objectContaining({
+          commandStatus: 0,
+          failedStage: "initialization",
+          failureClass: "authentication",
+        }),
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("denied-secret");
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain(EXPECTED_SECRET);
+  });
+
+  it.each([
+    [
+      "a failed command",
+      1,
+      "not-json",
+      "runtime failed",
+      "openclaw mcp status --tools --json failed: not-json\nruntime failed",
+    ],
+    [
+      "a successful command",
+      0,
+      "not-json",
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+    [
+      "a successful command with incomplete JSON",
+      0,
+      JSON.stringify({
+        provider: {
+          present: true,
+          state: "configured",
+          attached: true,
+          credentialReady: true,
+        },
+        policy: { present: true, state: "configured" },
+        adapter: { registered: true },
+        toolDiscovery: {},
+      }),
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+  ])(
+    "does not retry malformed status output from %s (#10944)",
+    async (_case, exitCode, stdout, stderr, expectedError) => {
+      const host = {
+        nemoclaw: vi.fn(async () => ({ exitCode, stdout, stderr })),
+      } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+      const artifacts = discoveryArtifacts();
+      const progress = { event: vi.fn() };
+
+      await expect(
+        assertAuthenticatedMcpToolDiscovery(host, fakeDiscoveryServer(), {
+          artifacts,
+          sandboxName: "sandbox",
+          artifactPrefix: "openclaw",
+          hostSecret: EXPECTED_SECRET,
+          progress,
+        }),
+      ).rejects.toThrow(expectedError);
+
+      expect(host.nemoclaw).toHaveBeenCalledOnce();
+      expect(progress.event).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).not.toHaveBeenCalled();
+    },
+  );
+
+  it("writes redacted diagnostics before rejecting an exit-zero failed discovery (#8746)", async () => {
     const statusJson = {
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolution: { detail: STATUS_SECRET },
         token: STATUS_SECRET,
       },
-      policy: { registryPresent: true, gatewayPresent: true, token: STATUS_SECRET },
+      policy: { present: true, state: "configured", token: STATUS_SECRET },
       adapter: { registered: true, detail: STATUS_SECRET, sessionId: STATUS_SECRET },
       trustedPrivateTarget: {
         state: "match" as const,
@@ -307,7 +664,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
-        detail: "MCP tool discovery request failed",
+        commandStatus: 0,
+        failedStage: "initialization" as const,
+        failureClass: "connection" as const,
+        detail: "MCP request failed",
         credential: STATUS_SECRET,
       },
     };
@@ -339,13 +699,13 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const diagnostics = await fs.readFile(artifactPath, "utf8");
     expect(JSON.parse(diagnostics)).toEqual({
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolutionPresent: true,
       },
-      policy: { registryPresent: true, gatewayPresent: true },
+      policy: { present: true, state: "configured" },
       adapter: { registered: true, detailPresent: true },
       trustedPrivateTarget: { state: "match", detailPresent: true },
       toolDiscovery: {
@@ -353,7 +713,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
-        detail: "MCP tool discovery request failed",
+        commandStatus: 0,
+        failedStage: "initialization",
+        failureClass: "connection",
+        detail: "MCP request failed",
       },
       requests: [
         {
@@ -383,13 +746,9 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);
   });
 
-  it("retries one generic transport failure before any request reaches the fixture", () => {
+  it("retries one connection failure before any request reaches the fixture", () => {
     expect(
-      shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
-        [],
-        1,
-      ),
+      shouldRetryMcpToolDiscoveryTransportFailure({ ok: false, failureClass: "connection" }, [], 1),
     ).toBe(true);
   });
 
@@ -399,7 +758,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
   ])("does not retry when %s", (_case, requests, attempt) => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
+        { ok: false, failureClass: "connection" },
         requests as FakeMcpRequest[],
         attempt as number,
       ),
@@ -408,11 +767,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
 
   it("does not retry a classified product or endpoint failure", () => {
     expect(
-      shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
-        [],
-        1,
-      ),
+      shouldRetryMcpToolDiscoveryTransportFailure({ ok: false, failureClass: "protocol" }, [], 1),
     ).toBe(false);
   });
 });
@@ -443,45 +798,48 @@ describe("authenticated MCP discovery restart retry", () => {
     ["metadata-bearing", { sessionId: SESSION_ID, protocolVersion: PROTOCOL_VERSION }],
     ["wrong-path", { path: "/health", responseStatus: 404 }],
     ["body-bearing", { body: "unexpected readiness body" }],
-  ])("does not restart after a %s HEAD request arrived after the offset", async (_case, override) => {
-    const readinessHead: FakeMcpRequest = {
-      method: "HEAD",
-      path: "/mcp",
-      auth: "",
-      body: "",
-      sessionId: "",
-      protocolVersion: "",
-      responseStatus: 405,
-    };
-    const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
-    const failure = new Error("discovery failed after observed HEAD request");
-    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
-    const restart = vi.fn().mockResolvedValueOnce(undefined);
-    const artifacts = discoveryArtifacts();
+  ])(
+    "does not restart after a %s HEAD request arrived after the offset",
+    async (_case, override) => {
+      const readinessHead: FakeMcpRequest = {
+        method: "HEAD",
+        path: "/mcp",
+        auth: "",
+        body: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 405,
+      };
+      const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
+      const failure = new Error("discovery failed after observed HEAD request");
+      const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+      const restart = vi.fn().mockResolvedValueOnce(undefined);
+      const artifacts = discoveryArtifacts();
 
-    await expect(
-      assertAuthenticatedMcpDiscoveryWithOneRestart(
-        fakeMcp,
-        discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
-        { assertDiscovery },
-      ),
-    ).rejects.toBe(failure);
+      await expect(
+        assertAuthenticatedMcpDiscoveryWithOneRestart(
+          fakeMcp,
+          discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
+          { assertDiscovery },
+        ),
+      ).rejects.toBe(failure);
 
-    expect(restart).not.toHaveBeenCalled();
-    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
-      schemaVersion: 1,
-      attempts: [
-        {
-          attempt: 1,
-          requestCount: 1,
-          classification: "request-observed",
-          restartDecision: "no-restart",
-          outcome: "failed",
-        },
-      ],
-      finalOutcome: "failed-no-restart",
-    });
-  });
+      expect(restart).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+        schemaVersion: 1,
+        attempts: [
+          {
+            attempt: 1,
+            requestCount: 1,
+            classification: "request-observed",
+            restartDecision: "no-restart",
+            outcome: "failed",
+          },
+        ],
+        finalOutcome: "failed-no-restart",
+      });
+    },
+  );
 
   it("does not retry after the fixture received a request", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
@@ -782,19 +1140,28 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [{ name: DEFERRED_TOOL_NAME }] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+      tools: { [DEFERRED_TOOL_NAME]: { description: "Deferred echo" } },
+    });
 
     const description = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_describe",
-      { name: DEFERRED_TOOL_NAME },
+      { names: [DEFERRED_TOOL_NAME] },
     );
     recordToolResult(messages, description, {
-      name: DEFERRED_TOOL_NAME,
-      parameters: { properties: { challenge: { type: "string" } } },
+      tools: {
+        [DEFERRED_TOOL_NAME]: {
+          description: "Deferred echo",
+          parameters: { properties: { challenge: { type: "string" } } },
+        },
+      },
     });
 
     const deferredCall = expectToolCall(
@@ -812,6 +1179,27 @@ describe("Hermes deferred MCP tool discovery", () => {
     expect(finalMessage.tool_calls).toBeUndefined();
   });
 
+  it("accepts the Hermes 0.20.6 multi-query tool_search result", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+      tools: { [DEFERRED_TOOL_NAME]: { description: "Deferred echo" } },
+    });
+
+    expectToolCall(await requestCompatibleMessage(compatibleMock, messages), "tool_describe", {
+      names: [DEFERRED_TOOL_NAME],
+    });
+  });
+
   it("stops after one well-formed tool_search miss", async () => {
     compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
@@ -819,10 +1207,15 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+      tools: {},
+    });
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({
@@ -839,10 +1232,102 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [{ unexpected: true }] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [{ unexpected: true }] }],
+      tools: {},
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects ambiguous legacy and multi-query tool_search results", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      matches: [{ name: DEFERRED_TOOL_NAME }],
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects a legacy-only Hermes tool_search result", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      matches: [{ name: DEFERRED_TOOL_NAME }],
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "missing total",
+      {
+        queries: [DEFERRED_TOOL_NAME],
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+        tools: {},
+      },
+    ],
+    [
+      "missing tools",
+      {
+        queries: [DEFERRED_TOOL_NAME],
+        total_available: 1,
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+      },
+    ],
+    [
+      "wrong query echo",
+      {
+        queries: ["different query"],
+        total_available: 1,
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+        tools: {},
+      },
+    ],
+  ])("rejects a Hermes tool_search result with %s", async (_condition, result) => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, result);
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({

@@ -87,6 +87,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
+      undefined,
     );
     expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
@@ -133,7 +134,7 @@ describe("handleSandboxState", () => {
       hostLocalInferenceRouteOnly: true,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({ endpointSource: null });
   });
 
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
@@ -234,7 +235,7 @@ describe("handleSandboxState", () => {
       authoritativeResumeConfig: true,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({});
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({});
   });
 
   it("does not persist an authoritative policy tier in sandbox create state", async () => {
@@ -247,7 +248,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.resolveCreateIntent.mock.calls[0]?.[0]).not.toHaveProperty("policyTier");
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).not.toHaveProperty("policyTier");
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).not.toHaveProperty("policyTier");
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {
@@ -282,7 +283,7 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       observabilityEnabled: true,
     });
     expect(session.observabilityEnabled).toBe(true);
@@ -359,7 +360,7 @@ describe("handleSandboxState", () => {
       requestedObservabilityEnabled: false,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       observabilityEnabled: false,
       observabilityRequestedExplicitly: true,
     });
@@ -417,7 +418,7 @@ describe("handleSandboxState", () => {
         requestedObservabilityEnabled: requested,
       });
 
-      expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
         recreate: true,
         observabilityEnabled: requested,
       });
@@ -456,7 +457,7 @@ describe("handleSandboxState", () => {
         sandboxName: "saved",
       });
 
-      expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
         recreate: true,
         observabilityEnabled: requested,
       });
@@ -514,7 +515,7 @@ describe("handleSandboxState", () => {
       requestedObservabilityEnabled: false,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       recreate: true,
       observabilityEnabled: false,
     });
@@ -557,6 +558,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
+      undefined,
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -845,6 +847,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
+      undefined,
     );
   });
 
@@ -1019,6 +1022,7 @@ describe("handleSandboxState", () => {
           targetIntentFingerprint: expect.any(String),
         }),
       }),
+      undefined,
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -1047,50 +1051,6 @@ describe("handleSandboxState", () => {
       }),
     ).rejects.toThrow("Tavily credential rejected");
 
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
-  it("fails before credential or registry mutation when Tavily collides with managed MCP", async () => {
-    const session = createSession({
-      sandboxName: "saved",
-      webSearchConfig: { fetchEnabled: true, provider: "brave" },
-    });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      agentSupportsWebSearchProvider: () => true,
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://mcp.example.com/mcp",
-              env: ["TAVILY_API_KEY"],
-              policyName: "saved-mcp-search",
-              addedAt: "2026-07-03T00:00:00.000Z",
-            },
-          },
-        },
-      }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        webSearchConfig: { fetchEnabled: true, provider: "brave" },
-        env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("already owns TAVILY_API_KEY"),
-    );
-    expect(calls.validateBrave).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
@@ -1152,6 +1112,7 @@ describe("handleSandboxState", () => {
           targetIntentFingerprint: expect.any(String),
         }),
       }),
+      undefined,
     );
     expect(result.webSearchConfig).toBeNull();
   });

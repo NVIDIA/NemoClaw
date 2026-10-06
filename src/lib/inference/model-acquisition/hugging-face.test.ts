@@ -58,8 +58,8 @@ function observer(): HuggingFaceModelAcquisitionObserver {
 }
 
 function forcedRemoveCall(): ReturnType<typeof dockerSpawn>["mock"]["calls"][number] {
-  const call = dockerSpawn.mock.calls.find(([args]) =>
-    Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
+  const call = dockerSpawn.mock.calls.find(
+    ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
   );
   expect(call).toBeDefined();
   return call as ReturnType<typeof dockerSpawn>["mock"]["calls"][number];
@@ -132,17 +132,14 @@ describe("Hugging Face model acquisition", () => {
     ]);
   });
 
-  it.each([
-    "",
-    "../model.gguf",
-    "/model.gguf",
-    "--revision",
-    "model/../other.gguf",
-  ])("rejects an exact filename that is not a normalized repository-relative path %j (#8279)", (filename) => {
-    expect(() => buildHuggingFaceModelDownloadArgv(request({ filename }))).toThrow(
-      "Hugging Face filename must be one normalized repository-relative path",
-    );
-  });
+  it.each(["", "../model.gguf", "/model.gguf", "--revision", "model/../other.gguf"])(
+    "rejects an exact filename that is not a normalized repository-relative path %j (#8279)",
+    (filename) => {
+      expect(() => buildHuggingFaceModelDownloadArgv(request({ filename }))).toThrow(
+        "Hugging Face filename must be one normalized repository-relative path",
+      );
+    },
+  );
 
   it.each([
     "",
@@ -422,7 +419,9 @@ describe("Hugging Face model acquisition", () => {
     expect(dockerSpawn).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadCall = dockerSpawn.mock.calls.find(
+      ([args]) => Array.isArray(args) && args[0] === "run",
+    );
     const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
     expect(forcedRemoveCall()).toEqual([
@@ -452,17 +451,24 @@ describe("Hugging Face model acquisition", () => {
     const cleanupProc = mockProcess();
     dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
     const resultPromise = acquireHuggingFaceModel(
-      request({ dockerEnv: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" } }),
+      request({
+        dockerEnv: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" },
+      }),
       observer(),
     );
 
     await vi.advanceTimersByTimeAsync(1_000);
-    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadCall = dockerSpawn.mock.calls.find(
+      ([args]) => Array.isArray(args) && args[0] === "run",
+    );
     const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
     expect(forcedRemoveCall()).toEqual([
       ["rm", "--force", containerName],
-      { env: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" }, stdio: "ignore" },
+      {
+        env: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" },
+        stdio: "ignore",
+      },
     ]);
     let settled = false;
     void resultPromise.then(() => {
@@ -484,7 +490,7 @@ describe("Hugging Face model acquisition", () => {
     vi.unstubAllEnvs();
   });
 
-  it("reports Docker context precedence for manual cleanup without exposing the host (#10346)", async () => {
+  it("reports Docker host precedence for manual cleanup without exposing credentials (#12223)", async () => {
     vi.useFakeTimers();
     vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
     const proc = mockProcess();
@@ -505,11 +511,10 @@ describe("Hugging Face model acquisition", () => {
     const result = await resultPromise;
     expect(result).toEqual({
       ok: false,
-      reason: expect.stringContaining("Docker context remote-builder"),
+      reason: expect.stringContaining("Docker host ssh://ignored.example.test"),
     });
     expect(result).toEqual({ ok: false, reason: expect.any(String) });
     const reason = "reason" in result ? result.reason : "";
-    expect(reason).not.toContain("ignored.example.test");
     expect(reason).not.toContain("secret");
     expect(forcedRemoveCall()[1]).toEqual({
       env: {
@@ -566,7 +571,10 @@ describe("Hugging Face model acquisition", () => {
       source: "HF_TOKEN",
     });
     expect(
-      hfDownloadAuthentication({ HF_TOKEN: " ", HUGGING_FACE_HUB_TOKEN: "hf_fallback" }),
+      hfDownloadAuthentication({
+        HF_TOKEN: " ",
+        HUGGING_FACE_HUB_TOKEN: "hf_fallback",
+      }),
     ).toEqual({ authenticated: true, source: "HUGGING_FACE_HUB_TOKEN" });
     expect(hfDownloadAuthentication({})).toEqual({ authenticated: false });
   });

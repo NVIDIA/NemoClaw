@@ -79,7 +79,6 @@ const CATALOGUE_CREDENTIAL_BOUNDARIES = {
   "catalogue-nvidia-api": "NVIDIA API key",
   "catalogue-nvidia-inference": "NVIDIA inference API key",
   "catalogue-github-read": "GitHub read token",
-  "catalogue-brave-nvidia-inference": "Brave and NVIDIA inference API keys",
 } as const;
 
 export async function resolveReportPr(input: {
@@ -394,10 +393,10 @@ export function renderE2eReport(input: {
             : resultsUnavailable
               ? "⚠️ E2E results unavailable"
               : noResultsReported
-              ? "⚠️ No E2E results reported"
-              : skipped.length > 0 && passed.length === 0
-                ? "⚠️ No selected tests ran"
-                : passingStatus;
+                ? "⚠️ No E2E results reported"
+                : skipped.length > 0 && passed.length === 0
+                  ? "⚠️ No selected tests ran"
+                  : passingStatus;
 
   const lines = [
     `### E2E Target Results — ${status}`,

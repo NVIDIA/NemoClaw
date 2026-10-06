@@ -32,16 +32,18 @@ const RESULT: DockerGpuPatchResult = {
 describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("still rolls back when pre-rollback diagnostic capture fails", () => {
+  it("still rolls back when pre-rollback diagnostic capture fails", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    const openShellGpuDiagnostics = { collect: vi.fn(() => []) };
     const deps = {
       runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
+      openShellGpuDiagnostics,
       sleep: vi.fn(),
       dockerCapture: vi.fn(() => ""),
     };
-    const finalizeBackup = vi.fn(() => ({
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: false,
       rolledBack: true,
     }));
@@ -54,7 +56,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => RESULT),
-        waitForSupervisor: vi.fn(() => false),
+        waitForSupervisor: vi.fn(async () => false),
         capturePreRollbackDiagnostics: vi.fn(() => {
           throw new Error("disk full");
         }),
@@ -64,10 +66,15 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(finalizeBackup).toHaveBeenCalledWith({ result: RESULT, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Error),
+      expect.objectContaining({ openShellGpuDiagnostics }),
+    );
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringContaining(
         "Could not capture the failed GPU container before rollback: disk full",
@@ -75,7 +82,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     );
   });
 
-  it("captures before rollback when ensureApplied performs the recreate after create exits", () => {
+  it("captures before rollback when ensureApplied performs the recreate after create exits", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = {
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -84,9 +91,9 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       dockerCapture: vi.fn(() => ""),
     };
     const recreatePatch = vi.fn(() => RESULT);
-    const waitForSupervisor = vi.fn(() => false);
+    const waitForSupervisor = vi.fn(async () => false);
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: false,
       rolledBack: true,
     }));
@@ -105,8 +112,8 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       },
     });
 
-    patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.ensureApplied();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(recreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ waitForSupervisor: false }),
@@ -120,7 +127,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards the pre-rollback classification when bundle collection fails (#7996)", () => {
+  it("forwards the pre-rollback classification when bundle collection fails (#7996)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = {
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -142,18 +149,18 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       deps,
       overrides: {
         recreatePatch: vi.fn(() => RESULT),
-        waitForSupervisor: vi.fn(() => false),
+        waitForSupervisor: vi.fn(async () => false),
         capturePreRollbackDiagnostics: vi.fn(() => ({
           classification,
           diagnostics: null,
         })),
-        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: true })),
+        finalizeBackup: vi.fn(async () => ({ backupRemoved: false, rolledBack: true })),
         onPatchFailureExit,
       },
     });
 
-    patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.ensureApplied();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     // The printer cannot rely on the replacement remaining inspectable after
     // rollback, so this hand-off preserves the exit-code evidence.
@@ -164,7 +171,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     );
   });
 
-  it("passes a null pre-rollback classification when capture returns nothing (#7996)", () => {
+  it("passes a null pre-rollback classification when capture returns nothing (#7996)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = {
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -180,15 +187,15 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       deps,
       overrides: {
         recreatePatch: vi.fn(() => RESULT),
-        waitForSupervisor: vi.fn(() => false),
+        waitForSupervisor: vi.fn(async () => false),
         capturePreRollbackDiagnostics: vi.fn(() => null),
-        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: true })),
+        finalizeBackup: vi.fn(async () => ({ backupRemoved: false, rolledBack: true })),
         onPatchFailureExit,
       },
     });
 
-    patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.ensureApplied();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(onPatchFailureExit).toHaveBeenCalledWith(
       "alpha",
@@ -197,7 +204,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     );
   });
 
-  it("uses exact-ID cleanup when a restored sandbox retains the failed replacement (#7996)", () => {
+  it("uses exact-ID cleanup when a restored sandbox retains the failed replacement (#7996)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const stderr: string[] = [];
     vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
@@ -275,7 +282,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
         deps,
         overrides: {
           recreatePatch: vi.fn(() => result),
-          waitForSupervisor: vi.fn(() => false),
+          waitForSupervisor: vi.fn(async () => false),
           capturePreRollbackDiagnostics: (...args) => {
             captured = captureDockerGpuPreRollbackDiagnostics(...args);
             return captured;
@@ -283,8 +290,8 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
         },
       });
 
-      patch.ensureApplied();
-      expect(() => patch.waitForSupervisorReconnectIfNeeded()).toThrow(/__test_exit__/);
+      await patch.ensureApplied();
+      await expect(patch.waitForSupervisorReconnectIfNeeded()).rejects.toThrow(/__test_exit__/);
 
       const preRollback = (captured as DockerGpuPreRollbackDiagnostics | null)?.diagnostics;
       const preRollbackSummary = fs.readFileSync(

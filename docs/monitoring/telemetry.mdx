@@ -1,0 +1,151 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NemoClaw Product Telemetry"
+sidebar-title: "Product Telemetry"
+description: "Review NemoClaw telemetry fields, exclusions, opt-out instructions, and separate component controls."
+agent-variants: ["openclaw", "hermes", "deepagents", "pi"]
+---
+
+NemoClaw telemetry describes completed product operations and recorded configuration, not individual users or agent activity.
+This page explains the collection boundary and how to disable it.
+
+<Note>
+Production delivery remains disabled in this candidate.
+Collection-service approval, registered schema validation, stored-record verification, and launch approval must precede activation.
+The planned production default follows OpenShell: enabled collection with a documented environment opt-out.
+</Note>
+
+## Collected Records
+
+When enabled, the client uses these eight event families.
+
+| Event Family | Recorded Meaning |
+|---|---|
+| `nemoclaw_install_completed` | One successful installation or update after finalization and cleanup. |
+| `nemoclaw_configuration_completed` | One committed published configuration, with approved agent, model, provider, API, messaging, and configuration fields. |
+| `nemoclaw_sandbox_count_observed` | The published sandbox registration count in one complete snapshot, including zero. |
+| `nemoclaw_agent_runtime_observed` | Configured-agent counts grouped by an approved runtime category. |
+| `nemoclaw_managed_agent_version_observed` | Managed-agent counts grouped by a product-owned public version category. |
+| `nemoclaw_model_observed` | Recorded primary-route assignments grouped by public model, provider, API, and selection-source categories. |
+| `nemoclaw_messaging_observed` | Configured messaging categories, deduplicated within each published sandbox. |
+| `nemoclaw_configuration_observed` | One host-platform observation or grouped sandbox configuration observations. |
+
+Common fields include the NemoClaw build version, normalized CPU architecture, observation and send timestamps, operation, and fixed product source.
+Host fields distinguish operating system, architecture, and Windows Subsystem for Linux context from the sandbox operating system.
+Configuration fields include compute driver, recorded GPU state, web search, configured observability, image ownership, and confirmed policy tier.
+Approved public agent, model, provider, API, messaging, and managed-version values use checked-in allowlists.
+Missing values remain `unknown`; unapproved private values become `other` or `custom`, without transmitting their original text.
+Install and update completions do not infer unrelated agent or sandbox configuration.
+
+Location fields include country, region, city, source, precision, status, and observation time.
+No location resolver is currently configured.
+The client sends empty location strings with `not_configured` status instead of inferring geography from an IP address, timezone, language, hostname, or test label.
+Empty location strings mean no value was observed; they are not a place or an observation time.
+The transport uses one type per field.
+`webSearchEnabled` and `observabilityEnabled` use the strings `true`, `false`, or `unknown`.
+An unavailable `policyTier` uses `unknown` with its existing status.
+These encodings preserve every field and distinguish unavailable values from false flags or reported locations.
+An approved location source remains required before location lookup can be enabled.
+
+## Excluded Data and Measurement Limits
+
+The client does not report prompts, messages, credentials, private model names, endpoint values, account names, hostnames, private paths, logs, or errors.
+User, device, session, installation, sandbox, and route identifiers remain undefined or absent.
+The shared client ID identifies NemoClaw, not an installation.
+
+Operation totals do not measure unique users, unique installations, active agents, inference traffic, or message delivery.
+Repeated configuration snapshots do not establish current fleet size or retention.
+Configuration records describe committed state, which can differ from a live agent or route.
+Each published sandbox reports its recorded primary agent and route.
+Unused startup profiles do not become additional active agents or routes.
+
+Collection-service retention, deletion, access, and connection-metadata handling remain approval requirements.
+This candidate does not establish a retention period or claim that opting out deletes prior records.
+The existing `None` permission values do not establish consent or collection approval.
+
+## Disable NemoClaw Telemetry
+
+Set the exact value `1` in the environment that starts the installer or host CLI.
+Other values, including `true`, do not activate this opt-out.
+
+For one installation and its child processes, use this command.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_DISABLE_TELEMETRY=1 bash
+```
+
+For the current shell and commands it subsequently starts, export the setting.
+
+```bash
+export NEMOCLAW_DISABLE_TELEMETRY=1
+```
+
+For one onboarding command, use this assignment.
+
+```bash
+NEMOCLAW_DISABLE_TELEMETRY=1 $$nemoclaw onboard
+```
+
+The client checks opt-out before loading telemetry configuration, reading telemetry state, looking up location, building a payload, or sending it.
+The product command still runs normally.
+Delivery failures do not change the product result; the client makes no retry and creates no queue or persistent outbox.
+
+An inline assignment applies only to that command and its children.
+A terminal export applies only to that shell and processes it subsequently starts.
+For later shells, retain the setting in your shell startup configuration.
+For services or scheduled jobs, set it in their own process environment and restart the affected process.
+An export cannot change an already running process.
+Verify the setting in each relevant process after restart, update, reinstall, rebuild, or restore.
+There is no separate NemoClaw preference store or telemetry enable, disable, status, or preview command.
+
+To remove the override from the current shell, use this command.
+
+```bash
+unset NEMOCLAW_DISABLE_TELEMETRY
+```
+
+Removing the override does not activate an unconfigured telemetry sender.
+It also does not remove the setting from a shell startup file or service configuration.
+
+## Control Other Components Separately
+
+NemoClaw's switch affects only its own telemetry.
+It does not change OpenShell, agent, model-provider, messaging-service, or operator-configured exporter behavior.
+
+| Component | Separate Control and Boundary |
+|---|---|
+| OpenShell | Set `OPENSHELL_TELEMETRY_ENABLED=false` on the actual gateway deployment, or retain Helm `server.telemetryEnabled=false`. OpenShell propagates its setting to its own sandbox supervisors. |
+| OpenClaw | Feature statistics, automatic update requests, and configured OpenTelemetry export have separate OpenClaw controls. Disabling one does not disable the others. |
+| Hermes, Deep Agents, Pi, and other tools | Refer to the selected component's documentation and configured exporters. NemoClaw does not override their independent controls. |
+| Model providers and messaging services | Provider requests and channel traffic follow the provider's own privacy terms and configuration. |
+
+Refer to [OpenShell Telemetry](https://docs.nvidia.com/openshell/latest/observability/telemetry) for gateway controls and excluded data.
+Refer to [OpenClaw Usage Telemetry and Update Checks](https://docs.openclaw.ai/gateway/telemetry) for its statistics and update-request controls.
+Refer to [OpenClaw OpenTelemetry](https://docs.openclaw.ai/gateway/opentelemetry) for configured trace export.
+
+## Identify Controlled QA Records
+
+Schema `2.1` requires a string `testLabel` in every event.
+An ordinary record uses an empty string.
+A QA record uses `qa-<campaign>:<case>:attempt-<number>`.
+Campaign and case names contain lowercase letters, digits, and hyphens, not names, machine IDs, or other identities.
+An attempt is an integer from 1 through 999 without leading zeroes.
+Campaign names are at most 32 characters; case names are at most 40 characters.
+
+The candidate selects the fixed user acceptance testing (UAT) endpoint only when both `NEMOCLAW_TELEMETRY_ENV=uat` and a valid `NEMOCLAW_TELEMETRY_TEST_LABEL` are present.
+The label alone cannot enable telemetry or select an endpoint.
+Unknown environment selectors leave delivery disabled.
+An absent, empty, or malformed label suppresses UAT before configuration, registry, host, or location collection.
+Opt-out and automated-test guards still take priority.
+
+The normal installer and host CLI pass the temporary label to every record, including the derived host observation.
+The client rejects mixed-label batches instead of removing labels or sending unmarked records.
+The setting is inherited by child processes and is not saved in product state.
+Production remains disabled.
+
+Before sending a QA event, register schema `2.2`, confirm the collection policy, and verify the approved storage and dashboard record fields.
+Schema `2.0` does not contain this required marker and cannot validate the new payload.
+Use the same normal product command and sender for QA; do not substitute a separate sample sender.
+After testing, unset both QA environment variables or close the test shell.
+Verify test records are marked and excluded from ordinary dashboard totals.

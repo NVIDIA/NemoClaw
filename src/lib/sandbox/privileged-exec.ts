@@ -9,6 +9,7 @@ import type {
 } from "../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../onboard/runtime-provider/current";
 import {
+  DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "../onboard/runtime-provider/privileged-sandbox-control-errors";
@@ -18,6 +19,7 @@ import {
   validateStoppedSandboxStatePaths,
 } from "../onboard/runtime-provider/stopped-sandbox-state-cleanup";
 import * as registry from "../state/registry";
+import { executeHermesPortableGatewaySupervisorAction } from "../onboard/experimental/hermes-portable-lifecycle";
 
 type SandboxEntry = import("../state/registry").SandboxEntry;
 
@@ -30,6 +32,21 @@ export interface PrivilegedSandboxCommandOptions {
 }
 
 const DEFAULT_PRIVILEGED_SANDBOX_COMMAND_TIMEOUT_MS = 15_000;
+
+/** Select receipt-owned Hermes control before ordinary provider discovery. */
+export function executePortableGatewaySupervisorAction(
+  sandboxName: string,
+  request: Parameters<typeof executeHermesPortableGatewaySupervisorAction>[2],
+  env?: NodeJS.ProcessEnv,
+) {
+  const entry = registry.getSandbox(sandboxName);
+  return executeHermesPortableGatewaySupervisorAction(
+    sandboxName,
+    entry?.gatewayName ? { ...entry, gatewayName: entry.gatewayName } : null,
+    request,
+    { readRegistry: registry.getSandbox, ...(env ? { env } : {}) },
+  );
+}
 
 function readSandboxEntry(sandboxName: string): SandboxEntry {
   const entry = registry.getSandbox?.(sandboxName) ?? null;
@@ -198,6 +215,12 @@ export function isDirectSandboxFallbackUnavailableError(
   error: unknown,
 ): error is DirectSandboxFallbackUnavailableError {
   return error instanceof DirectSandboxFallbackUnavailableError;
+}
+
+export function isDirectSandboxContainerNotFoundError(
+  error: unknown,
+): error is DirectSandboxContainerNotFoundError {
+  return error instanceof DirectSandboxContainerNotFoundError;
 }
 
 export function isPinnedSandboxContainerIdentityChangedError(

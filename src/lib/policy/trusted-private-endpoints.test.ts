@@ -19,14 +19,10 @@ function lookup(records: Record<string, string[]>): EndpointDnsLookupFn {
 }
 
 describe("trusted private custom policy preparation", () => {
-  it.each([
-    "10.20.30.40",
-    "127.0.0.1",
-    "169.254.169.254",
-    "fe80::1",
-    "metadata.google.internal",
-  ])("rejects an untrusted private or special-use endpoint host %s", async (host) => {
-    const input = preset(`preset:
+  it.each(["10.20.30.40", "127.0.0.1", "169.254.169.254", "fe80::1", "metadata.google.internal"])(
+    "rejects an untrusted private or special-use endpoint host %s",
+    async (host) => {
+      const input = preset(`preset:
   name: private
 network_policies:
   service:
@@ -36,10 +32,11 @@ network_policies:
         protocol: rest
 `);
 
-    await expect(prepareTrustedPrivatePolicyPresets([input], [])).rejects.toThrow(
-      /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
-    );
-  });
+      await expect(prepareTrustedPrivatePolicyPresets([input], [])).rejects.toThrow(
+        /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+      );
+    },
+  );
 
   it("preserves public and OpenShell bridge endpoints without private trust", async () => {
     const input = preset(`preset:
@@ -83,9 +80,9 @@ network_policies:
       - { host: 169.254.169.254, port: 80, protocol: rest }
 `);
 
-    await expect(
-      prepareTrustedPrivatePolicyPresets([input], ["169.254.169.254"]),
-    ).rejects.toThrow(/failed destination preflight/i);
+    await expect(prepareTrustedPrivatePolicyPresets([input], ["169.254.169.254"])).rejects.toThrow(
+      /failed destination preflight/i,
+    );
   });
 
   it("does not let one trusted endpoint authorize an untrusted special-use sibling", async () => {

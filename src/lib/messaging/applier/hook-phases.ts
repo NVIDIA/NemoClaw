@@ -114,13 +114,6 @@ export function applyHealthChecks(
   return applyMessagingHooksForPhase(plan, "health-check", options);
 }
 
-export function applyStatusChecks(
-  plan: SandboxMessagingPlan,
-  options?: MessagingHookPhaseOptions,
-): ReturnType<typeof applyMessagingHooksForPhase> {
-  return applyMessagingHooksForPhase(plan, "status", options);
-}
-
 export function applyDiagnostics(
   plan: SandboxMessagingPlan,
   options?: MessagingHookPhaseOptions,

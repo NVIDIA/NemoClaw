@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,14 +15,16 @@ function runHermesApiPortBootstrap(apiPort: string) {
   try {
     const scriptPath = path.join(tmpDir, "run.sh");
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
+    const start = source.indexOf('_dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"');
     const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
+    assert(start >= 0 && end > start, "Hermes API port bootstrap markers not found");
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "set -- true",
+        '_chat_ui_port=""',
         source.slice(start, end).trimEnd(),
         'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
       ].join("\n"),
@@ -33,6 +36,8 @@ function runHermesApiPortBootstrap(apiPort: string) {
       timeout: 5000,
       env: {
         ...process.env,
+        CHAT_UI_URL: "",
+        NEMOCLAW_DASHBOARD_PORT: "18789",
         NEMOCLAW_HERMES_API_PORT: apiPort,
       },
     });
@@ -49,14 +54,13 @@ describe("agents/hermes/start.sh API port allocation", () => {
     expect(run.stdout).toContain("PUBLIC_PORT=8645");
   });
 
-  it.each([
-    "8641",
-    "8653",
-    "9000",
-  ])("rejects Hermes API port %s outside the allocation range", (port) => {
-    const run = runHermesApiPortBootstrap(port);
+  it.each(["8641", "8653", "9000"])(
+    "rejects Hermes API port %s outside the allocation range",
+    (port) => {
+      const run = runHermesApiPortBootstrap(port);
 
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
-  });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
+    },
+  );
 });

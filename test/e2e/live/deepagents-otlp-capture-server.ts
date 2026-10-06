@@ -10,6 +10,7 @@ export const DEFAULT_MAX_OTLP_BODY_BYTES = 1_048_576;
 export const DEFAULT_MAX_CAPTURE_BYTES = 16 * 1_048_576;
 export const DEFAULT_MAX_CAPTURE_REQUESTS = 128;
 const OTLP_CONTENT_TYPE = "application/x-protobuf";
+const NATIVE_PODMAN_HOST_BRIDGE = "169.254.2.2";
 const FORBIDDEN_EXPORTER_HEADERS = new Set([
   "authorization",
   "cookie",
@@ -65,6 +66,7 @@ export function isPrivateBridgeIpv4(value: string, allowLoopback = false): boole
   if (!octets) return false;
   if (allowLoopback && octets[0] === 127) return true;
   return (
+    value === NATIVE_PODMAN_HOST_BRIDGE ||
     octets[0] === 10 ||
     (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
     (octets[0] === 192 && octets[1] === 168)
@@ -154,7 +156,7 @@ export async function startOtlpCaptureServers(
     throw new Error("maxCaptureRequests must be a positive safe integer");
   }
   if (!isPrivateBridgeIpv4(options.bindIp, options.allowLoopback === true)) {
-    throw new Error(`refusing non-private OTLP capture bind address: ${options.bindIp}`);
+    throw new Error(`refusing unapproved OTLP capture bind address: ${options.bindIp}`);
   }
   const requestedCaptureDir = path.resolve(options.captureDir);
   const captureStat = fs.lstatSync(requestedCaptureDir);
@@ -325,7 +327,7 @@ async function main(): Promise<void> {
     decoyPort < 1
   ) {
     throw new Error(
-      "usage: deepagents-otlp-capture-server.ts <capture-dir> <private-bind-ip> <collector-port> <decoy-port>",
+      "usage: deepagents-otlp-capture-server.ts <capture-dir> <approved-bind-ip> <collector-port> <decoy-port>",
     );
   }
   const started = await startOtlpCaptureServers({

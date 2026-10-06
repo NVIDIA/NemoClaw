@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-classify-ci-failure
-description: Classify one NemoClaw GitHub Actions job failure from bounded, redacted logs and an optional retained artifact. Use for CI failure classification, failed job diagnosis, or artifact-backed failure evidence.
+description: "Classify one failed NemoClaw GitHub Actions job using bounded, redacted logs and optional retained artifacts."
 user_invocable: true
 ---
 
@@ -9,10 +9,15 @@ user_invocable: true
 
 # Classify a CI Failure
 
+When the failed job is part of E2E, first load
+[Audit E2E Assertions](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
+This classifier can locate the failure signature. Its bounded output does not replace the
+complete log review and itemized source audit required before an E2E repair push or expensive rerun.
+
 Run the classifier from a NemoClaw checkout:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts \
   --workdir "$PWD" --job-id <job-id>
 ```

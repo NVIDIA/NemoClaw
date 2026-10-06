@@ -22,7 +22,7 @@ const CUSTOM_OPENCLAW_NO_RETRY = {
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({
+    executeSandboxCommand: async (_name: string, _script: string) => ({
       status: 0,
       stdout: "200",
       stderr: "",
@@ -36,7 +36,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 
 function makeFailedCustomOpenClawDeps(runtimeProbeStdout: string) {
   return makeDeps({
-    executeSandboxCommand: (_name: string, script: string) =>
+    executeSandboxCommand: async (_name: string, script: string) =>
       script.includes("nemoclaw-runtime-probe-v1")
         ? { status: 0, stdout: runtimeProbeStdout, stderr: "" }
         : { status: 0, stdout: "000", stderr: "" },
@@ -86,7 +86,7 @@ describe("verifyDeployment", () => {
 
   it("treats HTTP 401 as a live gateway with device auth enabled (#2342)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "401", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "401", stderr: "" }),
       probeHostPort: () => 401,
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
@@ -97,7 +97,7 @@ describe("verifyDeployment", () => {
 
   it("reports unhealthy when gateway returns 000 (not running)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "000", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(false);
@@ -154,7 +154,7 @@ describe("verifyDeployment", () => {
 
   it("keeps generic guidance when the custom sandbox is unreachable", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => null,
+      executeSandboxCommand: async () => null,
       probeHostPort: () => 0,
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, CUSTOM_OPENCLAW_NO_RETRY);
@@ -167,7 +167,7 @@ describe("verifyDeployment", () => {
   it("does not probe the custom runtime contract when diagnosis is disabled", async () => {
     const scripts: string[] = [];
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         scripts.push(script);
         return { status: 0, stdout: "000", stderr: "" };
       },
@@ -179,7 +179,7 @@ describe("verifyDeployment", () => {
 
   it("hint surfaces both the in-sandbox gateway log (via nemoclaw logs) and the host OpenShell log (#3563)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "000", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     const gwDiag = result.diagnostics.find((d) => d.link === "gateway");
@@ -195,7 +195,7 @@ describe("verifyDeployment", () => {
 
   it("reports unhealthy when sandbox is unreachable (SSH failed)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => null,
+      executeSandboxCommand: async () => null,
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(false);
@@ -216,7 +216,7 @@ describe("verifyDeployment", () => {
 
   it("reports unhealthy when the inference route is unreachable (#6849)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         if (script.includes("inference.local")) {
           return { status: 0, stdout: "000", stderr: "" };
         }
@@ -234,7 +234,7 @@ describe("verifyDeployment", () => {
 
   it("reports unhealthy when only the inference route returns HTTP 5xx (#6849)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => ({
+      executeSandboxCommand: async (_name: string, script: string) => ({
         status: 0,
         stdout: script.includes("inference.local") ? "503" : "200",
         stderr: "",
@@ -275,7 +275,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: [],
         configuredChannels: [],
@@ -295,7 +295,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: [],
         configuredChannels: ["telegram"],
@@ -323,7 +323,7 @@ describe("verifyDeployment", () => {
   it("does not falsely warn when runtime probe corroborates every configured channel", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: ["telegram"],
         configuredChannels: ["telegram"],
@@ -349,7 +349,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: [],
         configuredChannels: ["telegram"],
@@ -381,7 +381,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: [],
         configuredChannels: [],
@@ -406,7 +406,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: false,
         visibleChannels: [],
         configuredChannels: [],
@@ -431,7 +431,7 @@ describe("verifyDeployment", () => {
     let probeCalls = 0;
     const deps = makeDeps({
       getMessagingChannels: () => [],
-      probeChannelRuntimeStatus: () => {
+      probeChannelRuntimeStatus: async () => {
         probeCalls += 1;
         return {
           ok: true,
@@ -460,7 +460,7 @@ describe("verifyDeployment", () => {
 
   it("detects gateway version from openclaw --version", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
           return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
@@ -473,7 +473,7 @@ describe("verifyDeployment", () => {
 
   it("extracts the gateway version from decorated output (#5896)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) =>
+      executeSandboxCommand: async (_name: string, script: string) =>
         script.includes("openclaw --version")
           ? {
               status: 0,
@@ -490,7 +490,7 @@ describe("verifyDeployment", () => {
 
   it("rejects malformed gateway version output (#5896)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) =>
+      executeSandboxCommand: async (_name: string, script: string) =>
         script.includes("openclaw --version")
           ? { status: 0, stdout: "OpenClaw development build\n", stderr: "" }
           : { status: 0, stdout: "200", stderr: "" },
@@ -503,7 +503,7 @@ describe("verifyDeployment", () => {
 
   it("rejects gateway versions with extra dotted components (#5896)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) =>
+      executeSandboxCommand: async (_name: string, script: string) =>
         script.includes("openclaw --version")
           ? { status: 0, stdout: "OpenClaw 2026.5.27.1\n", stderr: "" }
           : { status: 0, stdout: "200", stderr: "" },
@@ -516,7 +516,7 @@ describe("verifyDeployment", () => {
 
   it("rejects version output from a failed OpenClaw command (#5896)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) =>
+      executeSandboxCommand: async (_name: string, script: string) =>
         script.includes("openclaw --version")
           ? { status: 1, stdout: "OpenClaw v2026.5.27\n", stderr: "command failed" }
           : { status: 0, stdout: "200", stderr: "" },
@@ -529,7 +529,7 @@ describe("verifyDeployment", () => {
 
   it("reports null version when gateway is down (skips version probe)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "000", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.verification.gatewayVersion).toBeNull();
@@ -548,7 +548,7 @@ describe("verifyDeployment", () => {
 
   it("reports HTTP 502 as gateway not running", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "502", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "502", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(false);
@@ -557,7 +557,7 @@ describe("verifyDeployment", () => {
 
   it("inference route working when HTTP response received (even 401)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         if (script.includes("inference.local")) {
           return { status: 0, stdout: "401", stderr: "" };
         }
@@ -571,7 +571,7 @@ describe("verifyDeployment", () => {
   it("keeps the inference route reachability probe below the OpenClaw cron preflight timeout", async () => {
     const scripts: string[] = [];
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         scripts.push(script);
         return { status: 0, stdout: "200", stderr: "" };
       },
@@ -586,7 +586,7 @@ describe("verifyDeployment", () => {
   it("retries the gateway probe and recovers when the gateway comes up late (#3563)", async () => {
     let gatewayCalls = 0;
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
           return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
@@ -615,7 +615,7 @@ describe("verifyDeployment", () => {
   it("keeps polling through a cold OpenClaw gateway startup before verification (#8901)", async () => {
     let elapsedMs = 0;
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => ({
+      executeSandboxCommand: async (_name: string, script: string) => ({
         status: 0,
         stdout: script.includes("openclaw --version")
           ? "2026.5.27"
@@ -661,7 +661,7 @@ describe("verifyDeployment", () => {
       .mockReturnValueOnce({ status: 0, stdout: "000", stderr: "" })
       .mockReturnValue({ status: 0, stdout: "200", stderr: "" });
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) =>
+      executeSandboxCommand: async (_name: string, script: string) =>
         script.includes("inference.local")
           ? probeInference()
           : { status: 0, stdout: "200", stderr: "" },
@@ -682,7 +682,7 @@ describe("verifyDeployment", () => {
   it("does not retry inference after the gateway retry budget is exhausted (#6849)", async () => {
     const scripts: string[] = [];
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         scripts.push(script);
         return { status: 0, stdout: "000", stderr: "" };
       },
@@ -708,7 +708,7 @@ describe("verifyDeployment", () => {
 
   it("gives up after retry budget is exhausted and surfaces the last failure detail", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "000", stderr: "" }),
       probeHostPort: () => 0,
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, {
@@ -727,7 +727,7 @@ describe("formatVerificationDiagnostics", () => {
       "my-sandbox",
       chain,
       makeDeps({
-        executeSandboxCommand: (_name: string, script: string) => {
+        executeSandboxCommand: async (_name: string, script: string) => {
           if (script.includes("openclaw --version")) {
             return { status: 0, stdout: "2026.5.27", stderr: "" };
           }
@@ -743,7 +743,7 @@ describe("formatVerificationDiagnostics", () => {
 
   it("prints failure diagnostics with hints when unhealthy", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
+      executeSandboxCommand: async () => ({ status: 0, stdout: "000", stderr: "" }),
       probeHostPort: () => 0,
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
@@ -758,7 +758,7 @@ describe("formatVerificationDiagnostics", () => {
     // dropped on the healthy path; the user only learned of the failure
     // from the dashboard's "No channels found" panel later.
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
           return { status: 0, stdout: "2026.5.18", stderr: "" };
         }
@@ -766,7 +766,7 @@ describe("formatVerificationDiagnostics", () => {
       },
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
-      probeChannelRuntimeStatus: () => ({
+      probeChannelRuntimeStatus: async () => ({
         ok: true,
         visibleChannels: [],
         configuredChannels: ["telegram"],

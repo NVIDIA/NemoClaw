@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as commandTransport from "../../src/lib/adapters/sandbox/command-transport";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { addSandboxChannel } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as httpProbe from "../../src/lib/adapters/http/probe";
 import * as runtime from "../../src/lib/adapters/openshell/runtime";
 import * as store from "../../src/lib/credentials/store";
@@ -126,7 +126,6 @@ let saveCredentialSpy: MockInstance;
 let deleteCredentialSpy: MockInstance;
 let updateSandboxSpy: MockInstance;
 let applyPresetSpy: MockInstance;
-let removePresetSpy: MockInstance;
 let loadPresetForSandboxSpy: MockInstance;
 let providerSpy: MockInstance;
 let rebuildSpy: MockInstance;
@@ -204,7 +203,7 @@ beforeEach(() => {
     throw new ExitError(code);
   }) as never);
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
 
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
@@ -219,11 +218,11 @@ beforeEach(() => {
 
   loadPresetForSandboxSpy = vi
     .spyOn(policies, "loadPresetForSandbox")
-    .mockImplementation((sandboxName, presetName) => {
+    .mockImplementation(async (sandboxName, presetName) => {
       callOrder.push(`loadPresetForSandbox:${sandboxName}:${presetName}`);
       return presetContent;
     });
-  vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("absent");
   vi.spyOn(policies, "listPresets").mockImplementation(() =>
     ["telegram", "slack", "discord", "whatsapp", "npm", "github"].map((name) => ({
       name,
@@ -231,15 +230,17 @@ beforeEach(() => {
       description: `${name} test preset`,
     })),
   );
-  applyPresetSpy = vi.spyOn(policies, "applyPreset").mockImplementation((name, presetName) => {
-    callOrder.push(`applyPreset:${presetName}`);
-    return applyPresetResult;
-  });
-  removePresetSpy = vi.spyOn(policies, "removePreset").mockImplementation((_name, presetName) => {
+  applyPresetSpy = vi
+    .spyOn(policies, "applyPreset")
+    .mockImplementation(async (name, presetName) => {
+      callOrder.push(`applyPreset:${presetName}`);
+      return applyPresetResult;
+    });
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_name, presetName) => {
     callOrder.push(`removePreset:${presetName}`);
     return true;
   });
-  vi.spyOn(policies, "getAppliedPresets").mockImplementation(() => appliedPresets);
+  vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => appliedPresets);
 
   getCredentialSpy = vi
     .spyOn(store, "getCredential")
@@ -272,9 +273,10 @@ beforeEach(() => {
     .mockImplementation(() => successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -292,15 +294,14 @@ beforeEach(() => {
   });
 
   execSpy = vi
-    .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((_name, command) => {
+    .spyOn(commandTransport, "executeSandboxExecCommand")
+    .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -426,15 +427,24 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         entry === `applyPreset:${channel}` ? [index] : [],
       );
       expect(presetCallIndexes).toHaveLength(2);
-      expect(presetCallIndexes[0]).toBeLessThan(
-        callOrder.indexOf("upsertMessagingProviders"),
-      );
-      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
-        presetCallIndexes[1],
-      );
+      expect(presetCallIndexes[0]).toBeLessThan(callOrder.indexOf("upsertMessagingProviders"));
+      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(presetCallIndexes[1]);
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
+
+  it("rejects the Discord placeholder before changing channel state (#10668)", async () => {
+    process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
@@ -601,7 +611,16 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
-  it("keeps plan state and skips provider delete when rollback detach fails", async () => {
+  it("keeps plan state and does not retry provider delete when rollback detach fails", async () => {
+    registryEntry = {
+      ...registryEntry,
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "fingerprint-1",
+    } as SandboxEntry;
+    vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+      "fingerprint-1",
+    );
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);
@@ -611,21 +630,28 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         callOrder.push(`applyPreset:${presetName}`);
         return false;
       });
-    runOpenshellSpy.mockImplementation((args: string[]) =>
-      args.slice(0, 3).join(" ") === "sandbox provider detach"
-        ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
-        : successfulOpenshellResult(),
-    );
+    runOpenshellSpy.mockImplementation((args: string[]) => {
+      const command = args.slice(0, 2).join(" ");
+      return command === "provider delete"
+        ? {
+            ...successfulOpenshellResult(),
+            status: 1,
+            stderr: "provider is attached to sandbox(es): test-sb.",
+          }
+        : args.slice(0, 3).join(" ") === "sandbox provider detach"
+          ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
+          : successfulOpenshellResult();
+    });
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(runOpenshellSpy.mock.calls.map(([args]) => args)).not.toContainEqual([
-      "provider",
-      "delete",
-      "test-sb-telegram-bridge",
-    ]);
+    expect(
+      runOpenshellSpy.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args.slice(0, 2).join(" ") === "provider delete"),
+    ).toEqual([["provider", "delete", "-g", "nemoclaw", "test-sb-telegram-bridge"]]);
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
     expect(printedText()).toContain("'nemoclaw test-sb channels remove telegram'");
     expect(callOrder).not.toContain("promptAndRebuild");
@@ -648,6 +674,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         definitions.map((definition: { name: string }) => definition.name),
       ),
     ).toEqual([["test-sb-telegram-bridge"], ["test-sb-telegram-bridge"]]);
+    expect(providerSpy.mock.calls.map(([, , options]) => options)).toEqual([
+      { replaceExisting: true },
+      { replaceExisting: true },
+    ]);
     expect(callOrder).not.toContain("promptAndRebuild");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
   });
@@ -764,12 +794,12 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     expect(printedText()).toContain("'telegram' bridge startup detected");
   });
 
-  it("warns when the baked config does not mark the channel enabled", async () => {
+  it("warns when the current config does not mark the channel enabled", async () => {
     testConfig = { channels: { telegram: { accounts: { default: {} } } } };
 
     await addSandboxChannel("test-sb", { channel: "telegram" });
 
-    expect(printedText()).toContain("was not marked enabled in baked");
+    expect(printedText()).toContain("was not marked enabled in the current");
   });
 
   it("warns when the gateway log shows no bridge breadcrumb yet", async () => {
@@ -815,15 +845,15 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     await addSandboxChannel("test-sb", { channel: "whatsapp" });
 
     expect(execSpy).not.toHaveBeenCalled();
-    expect(printedText()).not.toContain("was not marked enabled in baked openclaw.json");
+    expect(printedText()).not.toContain("was not marked enabled in the current openclaw.json");
   });
 });
 
 describe("channel preset source-of-truth", () => {
   it.each(knownChannelNames())(
     "channel $name ships a preset that parsePresetPolicyKeys accepts",
-    (name) => {
-      const content = policies.loadPresetForSandbox("test-sb", name);
+    async (name) => {
+      const content = await policies.loadPresetForSandbox("test-sb", name);
       expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
       expect(
         policies.parsePresetPolicyKeys(content!).length,

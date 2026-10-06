@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +30,7 @@ type BarrierOptions = {
 };
 
 type PromotionResult = {
+  aliasBytes: Record<string, string>;
   calls: string[];
   cohortContract: Record<string, unknown> | null;
   platformContracts: Record<string, Record<string, unknown>>;
@@ -39,17 +41,24 @@ type PromotionResult = {
 type PromotionOptions = {
   mutate?: CandidateMutation;
   publicationCohort?: string;
+  releaseTag?: string;
+  retainStalePointerAliases?: boolean;
 };
 
 function imageFor(agent: (typeof publicationAgents)[number]): string {
   return `ghcr.io/nvidia/nemoclaw/${agent}-sandbox`;
 }
 
+function referenceStatePath(root: string, reference: string): string {
+  const digest = createHash("sha256").update(reference).digest("hex");
+  return path.join(root, "references", `${digest}.raw`);
+}
+
 function digestFor(agentIndex: number, platformIndex: number, offset: number): string {
   return `sha256:${(offset + agentIndex * 2 + platformIndex).toString(16).padStart(64, "0")}`;
 }
 
-function candidates(): Candidate[] {
+function candidates(releaseTag: string | null = null): Candidate[] {
   return publicationAgents.flatMap((agent, agentIndex) =>
     publicationPlatforms.map((platform, platformIndex) => {
       const image = imageFor(agent);
@@ -151,11 +160,11 @@ function candidates(): Candidate[] {
           source: {
             repository,
             revision,
-            ref: "refs/heads/main",
+            ref: releaseTag ? `refs/tags/${releaseTag}` : "refs/heads/main",
             cohort,
           },
           run: { id: Number(runId), attempt: Number(runAttempt) },
-          release: null,
+          release: releaseTag,
         },
       };
     }),
@@ -301,19 +310,29 @@ agent_for_reference() {
     *) return 1 ;;
   esac
 }
+reference_path() {
+  reference_digest="$(printf '%s' "$1" | sha256sum | awk '{print $1}')"
+  printf '%s/references/%s.raw\n' "$STATE_ROOT" "$reference_digest"
+}
+store_reference() {
+  install -d -m 0700 "$STATE_ROOT/references"
+  cp "$2" "$(reference_path "$1")"
+}
 if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools create" ]; then
   shift 3
-  tag=""
+  tags=()
   metadata=""
   files=()
+  source_reference=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --tag) tag="$2"; shift 2 ;;
+      --tag) tags+=("$2"); shift 2 ;;
       --metadata-file) metadata="$2"; shift 2 ;;
       --file) files+=("$2"); shift 2 ;;
-      *) shift ;;
+      *) source_reference="$1"; shift ;;
     esac
   done
+  tag="\${tags[0]:-}"
   if [[ "$tag" == *':cohort-'* ]]; then
     agent="$(agent_for_reference "$tag")"
     if [ -n "\${FAIL_COHORT_AGENT:-}" ] && [ "$agent" = "$FAIL_COHORT_AGENT" ]; then
@@ -334,20 +353,39 @@ if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools create" ]; then
         size: $size
       }
     }' > "$metadata"
+    for alias in "\${tags[@]}"; do
+      store_reference "$alias" "$raw"
+    done
+    store_reference "\${tag%:*}@$digest" "$raw"
+  elif [ -n "$source_reference" ]; then
+    source_path="$(reference_path "$source_reference")"
+    if [ ! -f "$source_path" ]; then
+      exit 92
+    fi
+    if [ "\${RETAIN_STALE_POINTER_ALIASES:-}" != "1" ]; then
+      for alias in "\${tags[@]}"; do
+        store_reference "$alias" "$source_path"
+      done
+    fi
   fi
 elif [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ] &&
      [ "\${5:-}" = "--raw" ]; then
-  agent="$(agent_for_reference "$4")"
-  cat "$STATE_ROOT/$agent.raw"
+  cat "$(reference_path "$4")"
 fi
 `,
   );
   fs.chmodSync(path.join(bin, "docker"), 0o755);
-  const candidateValues = options.mutate ? options.mutate(candidates()) : candidates();
+  const sourceCandidates = candidates(options.releaseTag);
+  const candidateValues = options.mutate ? options.mutate(sourceCandidates) : sourceCandidates;
   fs.writeFileSync(
     candidateSet,
     `${JSON.stringify(candidateValues.map(({ contract }) => contract))}\n`,
   );
+  if (options.retainStalePointerAliases) {
+    const stalePointer = referenceStatePath(root, `${imageFor("openclaw")}:${revision}`);
+    fs.mkdirSync(path.dirname(stalePointer));
+    fs.writeFileSync(stalePointer, '{"stale":true}\n');
+  }
 
   try {
     const result = spawnSync("bash", ["-c", `${script}\n${pointerScript}`], {
@@ -358,12 +396,14 @@ fi
         CANDIDATE_SET: candidateSet,
         DOCKER_CALLS: calls,
         FAIL_COHORT_AGENT: failCohortAgent,
+        GITHUB_REF: options.releaseTag ? `refs/tags/${options.releaseTag}` : "refs/heads/main",
         GITHUB_REPOSITORY: repository,
         GITHUB_RUN_ATTEMPT: runAttempt,
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         PUBLICATION_COHORT: options.publicationCohort ?? cohort,
+        RETAIN_STALE_POINTER_ALIASES: options.retainStalePointerAliases ? "1" : "",
         RUNNER_TEMP: root,
         STATE_ROOT: root,
       },
@@ -381,7 +421,16 @@ fi
       }
     }
     const cohortContract = path.join(contracts, "cohort.json");
+    const aliasBytes: Record<string, string> = {};
+    for (const agent of publicationAgents) {
+      for (const tag of [revision, options.releaseTag].filter(Boolean)) {
+        const alias = `${imageFor(agent)}:${tag}`;
+        const aliasPath = referenceStatePath(root, alias);
+        if (fs.existsSync(aliasPath)) aliasBytes[alias] = fs.readFileSync(aliasPath, "utf8");
+      }
+    }
     return {
+      aliasBytes,
       calls: fs.existsSync(calls)
         ? fs.readFileSync(calls, "utf8").split(/\r?\n/u).filter(Boolean)
         : [],

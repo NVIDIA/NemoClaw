@@ -1,24 +1,36 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as registry from "../../state/registry";
+import type { RegistryRemovalReceipt } from "../../state/registry-reversible-removal";
+import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
+
+type SandboxRemovalReceipt = RegistryRemovalReceipt<SandboxEntry>;
 
 export interface RebuildRegistryRollbackOptions {
   sandboxName: string;
   preparedBackupRecovery: boolean;
   staleRecovery: boolean;
-  getRecoveryRegistrySnapshot: () => registry.SandboxRegistry | null;
+  getRecoveryRegistrySnapshot: () => SandboxRegistry | null;
   log: (message: string) => void;
 }
 
 export interface RebuildRegistryRollback {
-  recordRemoval(receipt: registry.SandboxRemovalReceipt | null): void;
+  recordRemoval(receipt: SandboxRemovalReceipt | null): void;
   restoreForRetry(): void;
 }
 
 interface RebuildRegistryRollbackDeps {
-  restoreSandboxEntry?: typeof registry.restoreSandboxEntry;
-  restoreSandboxEntryIfMissing?: typeof registry.restoreSandboxEntryIfMissing;
+  restoreSandboxEntry: (
+    entry: SandboxEntry,
+    options?: {
+      defaultTransition?: {
+        readonly from: string | null;
+        readonly to: string;
+        readonly expectedRevision: number;
+      };
+    },
+  ) => void;
+  restoreSandboxEntryIfMissing: (receipt: SandboxRemovalReceipt) => boolean;
 }
 
 /**
@@ -28,12 +40,10 @@ interface RebuildRegistryRollbackDeps {
  */
 export function createRebuildRegistryRollback(
   options: RebuildRegistryRollbackOptions,
-  deps: RebuildRegistryRollbackDeps = {},
+  deps: RebuildRegistryRollbackDeps,
 ): RebuildRegistryRollback {
-  const restoreSandboxEntry = deps.restoreSandboxEntry ?? registry.restoreSandboxEntry;
-  const restoreSandboxEntryIfMissing =
-    deps.restoreSandboxEntryIfMissing ?? registry.restoreSandboxEntryIfMissing;
-  let removedRegistryReceipt: registry.SandboxRemovalReceipt | null = null;
+  const { restoreSandboxEntry, restoreSandboxEntryIfMissing } = deps;
+  let removedRegistryReceipt: SandboxRemovalReceipt | null = null;
   let registryEntryRemoved = false;
   let rollbackAttempted = false;
 

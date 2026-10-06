@@ -359,6 +359,7 @@ export async function createHermesPortableUninstallFixture(
   );
   const resolver = createHermesPortableOllamaInferenceResolver({
     runtimeContext: { authority: runtime, environmentScope },
+    gatewayName: "nemoclaw",
     credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
     getReservationSessionId: () => "portable-session",
     runGatewayOpenshell: gatewayProvider.run,

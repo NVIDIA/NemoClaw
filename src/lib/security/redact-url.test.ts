@@ -9,10 +9,17 @@ import {
 } from "../../../test/helpers/security-token-fixtures";
 
 import { redact, redactUrl } from "./redact.js";
+import { URL_TOKEN_PATTERN } from "./redact-url.js";
 
 const credentialLabel = ["api", "Key"].join("");
 
 describe("URL redaction", () => {
+  it("preserves the exported regex for callers using native string matching", () => {
+    expect(
+      "first HTTPS://example.test/a then custom+scheme://example.test/b".match(URL_TOKEN_PATTERN),
+    ).toEqual(["HTTPS://example.test/a", "custom+scheme://example.test/b"]);
+  });
+
   it.each([
     ["SOCKS", "socks5://socks-user:socks-password@proxy.example:1080"],
     ["mixed-case FTP", "FtP://ftp-user:ftp-password@files.example/path"],

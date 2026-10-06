@@ -62,6 +62,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
+  doctor: [
+    {
+      group: "Troubleshooting",
+      order: 36,
+      flags: "[--json|--text]",
+    },
+  ],
   gc: [
     {
       group: "Cleanup",
@@ -242,7 +249,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 15,
       description: "Stop NIM + delete sandbox",
-      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
+      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]",
     },
   ],
   "sandbox:download": [
@@ -461,24 +468,10 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "<skill>",
     },
   ],
-  "sandbox:snapshot:create": [
+  "sandbox:skill:list": [
     {
-      group: "Sandbox Management",
-      order: 7,
-      flags: "[--name <name>]",
-    },
-  ],
-  "sandbox:snapshot:list": [
-    {
-      group: "Sandbox Management",
-      order: 8,
-    },
-  ],
-  "sandbox:snapshot:restore": [
-    {
-      group: "Sandbox Management",
-      order: 9,
-      flags: "[selector] [--to <dst>] [--force] [--yes|-y]",
+      group: "Skills",
+      order: 16.2,
     },
   ],
   "sandbox:status": [

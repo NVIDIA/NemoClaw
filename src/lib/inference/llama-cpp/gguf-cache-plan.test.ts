@@ -101,14 +101,14 @@ describe("compileLlamaCppGgufCachePlan", () => {
     ["file name", { path: "other.Q4_K_M.gguf" }],
     ["file digest", { digest: `sha256:${"d".repeat(64)}` }],
     ["file size", { sizeBytes: 1025 }],
-  ] satisfies readonly [
-    string,
-    RecipeOverrides,
-  ][])("changes the cache key when the immutable %s changes (#8279)", (_field, overrides) => {
-    const baseline = compileLlamaCppGgufCachePlan(recipe());
-    const changed = compileLlamaCppGgufCachePlan(recipe(overrides));
+  ] satisfies readonly [string, RecipeOverrides][])(
+    "changes the cache key when the immutable %s changes (#8279)",
+    (_field, overrides) => {
+      const baseline = compileLlamaCppGgufCachePlan(recipe());
+      const changed = compileLlamaCppGgufCachePlan(recipe(overrides));
 
-    expect(changed.cache.key).not.toBe(baseline.cache.key);
-    expect(changed.planDigest).not.toBe(baseline.planDigest);
-  });
+      expect(changed.cache.key).not.toBe(baseline.cache.key);
+      expect(changed.planDigest).not.toBe(baseline.planDigest);
+    },
+  );
 });

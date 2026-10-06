@@ -208,7 +208,6 @@ function main(): void {
   const settings = readSettings(process.env);
   const configDir = join(homedir(), ".deepagents");
   mkdirSync(join(configDir, ".state"), { recursive: true, mode: 0o770 });
-  mkdirSync(join(configDir, "skills"), { recursive: true, mode: 0o770 });
 
   const configPath = join(configDir, "config.toml");
   const config = buildConfig(settings);

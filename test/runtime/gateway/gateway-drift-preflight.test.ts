@@ -98,6 +98,10 @@ case "\${1:-}" in
       printf 'Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:8080\n'
       exit 0
     fi
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "-o" ] && [ "\${4:-}" = "json" ]; then
+      printf '%s\n' '[{"name":"nemoclaw","endpoint":"http://127.0.0.1:8080","active":true}]'
+      exit 0
+    fi
     ;;
   sandbox)
     if [ "\${2:-}" = "list" ]; then

@@ -188,9 +188,9 @@ describe("persisted engine authority", () => {
       normalizePersistedEngineAuthority({ ...authority, authorityId: "not-an-authority" }),
     ).toThrow("endpoint authority identity is malformed");
     expect(() => parsePersistedEngineAuthority(JSON.stringify(authority))).toThrow("not canonical");
-    expect(() =>
-      parsePersistedEngineAuthority(`{\"value\":\"${"x".repeat(17 * 1024)}\"}\n`),
-    ).toThrow("too large");
+    expect(() => parsePersistedEngineAuthority(`{"value":"${"x".repeat(17 * 1024)}"}\n`)).toThrow(
+      "too large",
+    );
   });
 
   it("rejects a conflicting record for the same operation", () => {

@@ -113,7 +113,10 @@ function describeBackend(backendUrl: string): { authority: string; portClause: s
   }
 }
 
-function resolveOllamaRemediationPort(backendUrl: string | undefined, fallbackPort: number): string {
+function resolveOllamaRemediationPort(
+  backendUrl: string | undefined,
+  fallbackPort: number,
+): string {
   if (!backendUrl) return String(fallbackPort);
   try {
     return new URL(backendUrl).port || String(fallbackPort);

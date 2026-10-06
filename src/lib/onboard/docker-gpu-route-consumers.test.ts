@@ -140,7 +140,7 @@ describe("selected route consumers", () => {
   it("skips compatibility-only inference gates after native wins", async () => {
     const execInSandbox = vi.fn();
     expect(
-      verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
+      await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
         sandboxName: "alpha",
         dockerDriverGateway: true,
         selectedRoute: "native",

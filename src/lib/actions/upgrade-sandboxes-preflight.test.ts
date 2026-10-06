@@ -41,6 +41,13 @@ vi.mock("../state/registry", () => ({
   listSandboxes: mocks.listSandboxes,
 }));
 vi.mock("../state/sandbox", () => ({ getLatestBackup: mocks.getLatestBackup }));
+vi.mock("./telemetry/completion", () => ({
+  completedNestedConfigurationCount: () => 0,
+  withConfigurationCompletion: (
+    _operation: unknown,
+    run: (complete: () => void) => Promise<void>,
+  ) => run(() => undefined),
+}));
 
 import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
 
@@ -167,6 +174,44 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
       { currentNemoclawVersion: "0.0.74" },
     );
     expect(logSpy.mock.calls.flat().join("\n")).toContain("All sandboxes are up to date");
+  });
+
+  it("reports publisher-managed external images without probing or rebuilding them", async () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        {
+          name: "alpha",
+          provider: "nvidia-prod",
+          model: "nemotron",
+          workload: {
+            schemaVersion: 1,
+            kind: "external-image",
+            reference,
+            platform: "linux/amd64",
+            runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+            shared: true,
+          },
+        },
+      ],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await upgradeSandboxes({ auto: true });
+
+    expect(mocks.checkAgentVersion).not.toHaveBeenCalled();
+    expect(mocks.classifyUpgradeableSandboxes).toHaveBeenCalledWith(
+      [],
+      new Set(["alpha"]),
+      expect.any(Function),
+      { currentNemoclawVersion: "0.0.74" },
+    );
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(reference);
+    expect(output).toContain("publisher-managed; not automatically replaced");
+    expect(output).toContain("No automatically managed sandboxes require an upgrade");
+    expect(output).not.toContain("All sandboxes are up to date");
+    expect(upgradeSandboxesDependencies.rebuildSandbox).not.toHaveBeenCalled();
   });
 
   it("does not classify, assess backups, or rebuild when the read-only list exits on drift (#7279)", async () => {

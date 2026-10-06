@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
   CompiledServingCatalog,
+  ResolvedLlamaCppInferenceSelection,
   ServingProfileProvenance,
   ServingRecipe,
   ServingSupportState,
@@ -94,6 +95,32 @@ export function servingProfileProvenance(
       runtime && typeof runtime.imageDownloadSizeBytes === "number"
         ? runtime.imageDownloadSizeBytes
         : null,
+    estimatedModelDownloadBytes: modelDownloadBytes(recipe),
+  };
+}
+
+/** Preserve the exact catalog decision that authorized a managed llama.cpp install. */
+export function servingProfileProvenanceFromResolvedLlamaCpp(
+  resolved: ResolvedLlamaCppInferenceSelection,
+): ServingProfileProvenance {
+  const { preset, recipe } = resolved;
+  return {
+    schemaVersion: 1,
+    catalogDigest: resolved.catalogDigest,
+    preset: {
+      id: preset.metadata.id,
+      digest: resolved.presetDigest,
+      displayName: preset.metadata.displayName ?? preset.metadata.id,
+      supportState: supportState(preset.spec.selection, preset.metadata.supportState),
+    },
+    recipe: {
+      id: recipe.metadata.id,
+      digest: resolved.recipeDigest,
+      backend: recipe.spec.backend,
+    },
+    model: { id: recipe.spec.model.id, revision: recipe.spec.model.revision },
+    runtimeImage: recipe.spec.runtime.image,
+    estimatedImageDownloadBytes: recipe.spec.runtime.imageDownloadSizeBytes,
     estimatedModelDownloadBytes: modelDownloadBytes(recipe),
   };
 }

@@ -4,20 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveOpenshell } from "../adapters/openshell/resolve";
-import { ROOT, runCapture } from "../runner";
+import { cliOpenShellInstalledVersionObserver } from "../adapters/openshell/installed-version-cli";
+import { parseOpenShellVersionFromText } from "../adapters/openshell/version-text";
+import { ROOT } from "../runner";
 
-export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.106";
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.116";
 
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
-  const openshellBin = resolveOpenshell();
-  if (!versionOutput && !openshellBin) return null;
-  const output = String(
-    versionOutput ?? runCapture([openshellBin as string, "-V"], { ignoreError: true }),
-  ).trim();
-  const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
-  if (match) return match[1];
-  return null;
+  if (versionOutput !== null) return parseOpenShellVersionFromText(versionOutput);
+  const observation = cliOpenShellInstalledVersionObserver.observeInstalledVersion();
+  return observation.ok ? observation.version : null;
 }
 
 /**
@@ -98,9 +94,9 @@ export function isOpenshellDevVersion(versionOutput: string | null | undefined):
 }
 
 export function shouldAllowOpenshellAboveBlueprintMax(
-  versionOutput: string | null | undefined,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+  _versionOutput: string | null | undefined,
+  _platform: NodeJS.Platform = process.platform,
+  _env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
+  return false;
 }

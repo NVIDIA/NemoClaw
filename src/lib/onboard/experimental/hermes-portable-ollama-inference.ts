@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { SandboxEntry } from "../../state/registry";
+import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
+import {
+  inspectHermesPortableUninstallDirectoryAuthority,
+  retireHermesPortableUninstallDirectory,
+} from "../../state/hermes-portable-uninstall/authority";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import {
@@ -25,6 +31,8 @@ import {
   assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent,
   assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent,
   prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
   type HostLocalInferenceLifecycleSandbox,
 } from "../runtime-provider/host-local-inference-lifecycle";
 import type {
@@ -33,7 +41,10 @@ import type {
   HostLocalInferenceStartupSelectionResolver,
   HostLocalInferenceStartupRequest,
 } from "../runtime-provider/host-local-inference-routing";
-import { prepareHermesPortablePublishedHostLocalInferenceStartup } from "../runtime-provider/host-local-inference-routing";
+import {
+  HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+  prepareHermesPortablePublishedHostLocalInferenceStartup,
+} from "../runtime-provider/host-local-inference-routing";
 import {
   createFilePersistedEngineAuthorityStore,
   openFilePersistedEngineAuthorityStore,
@@ -81,6 +92,7 @@ import {
 import {
   createHermesPortableOllamaGatewayTransaction,
   hasHermesPortableOllamaRecoveryContainer,
+  prepareHermesPortableOllamaProviderRetirement,
   prepareHermesPortableOllamaPublishedInferenceAuthority,
   prepareHermesPortableOllamaPublishedReceiptAuthority,
   type HermesPortableOllamaGatewayRunner,
@@ -99,6 +111,7 @@ const SAFE_CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
 
 export interface HermesPortableOllamaInferenceResolverOptions {
   readonly runtimeContext: PortableOnboardRuntimeContext | null;
+  readonly gatewayName: string;
   readonly credentialEnv: string;
   readonly getReservationSessionId: () => string | null | undefined;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
@@ -107,6 +120,14 @@ export interface HermesPortableOllamaInferenceResolverOptions {
   readonly captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   readonly captureGpuDevices?: () => readonly string[];
   readonly captureCdiDevices?: () => readonly string[];
+}
+
+export interface HermesPortableOllamaFreshRetirementInput {
+  readonly application: string;
+  readonly sandboxName: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly acceleration: "cpu" | "nvidia-gpu";
 }
 
 function digest(value: object): string {
@@ -140,6 +161,160 @@ function requirePortableOllamaModel(model: string): string {
     throw new Error("Hermes Portable Ollama has an invalid selected model authority.");
   }
   return model;
+}
+
+/** Retire exact abandoned Portable Ollama publication state before a same-name fresh start. */
+export async function retireHermesPortableOllamaFreshState(
+  options: HermesPortableOllamaInferenceResolverOptions,
+  input: HermesPortableOllamaFreshRetirementInput,
+): Promise<boolean> {
+  if (input.application !== "hermes" || input.provider !== "ollama-local") return false;
+  if (input.acceleration !== "nvidia-gpu") return false;
+  if (!options.runtimeContext) return false;
+  if (!SAFE_CREDENTIAL_ENV.test(options.credentialEnv)) {
+    throw new Error("Hermes Portable Ollama gateway credential authority is invalid.");
+  }
+  requirePortableOllamaModel(input.model);
+
+  const runtimeContext = options.runtimeContext;
+  assertCurrentPortableHostFenceHeld(runtimeContext.authority.homeDir);
+  if (!runtimeContext.environmentScope) {
+    throw new Error("Hermes Portable inference has no active environment authority.");
+  }
+  const root = options.stateDir ?? defaultPortableDemoStateDir(process.env);
+  const inferenceStateDir = hermesPortableInferenceStateDir(root, input.sandboxName);
+  const initialDirectoryAuthority =
+    inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir);
+  if (initialDirectoryAuthority === null) return false;
+  if (!fs.existsSync(path.join(inferenceStateDir, "portable-inference.json"))) return false;
+
+  const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+    directory: inferenceStateDir,
+    gatewayName: options.gatewayName,
+    sandboxName: input.sandboxName,
+    credentialEnv: options.credentialEnv,
+  });
+  const receipt = published.receipt;
+  if (
+    receipt.service !== "ollama" ||
+    receipt.runtime.kind !== "container" ||
+    receipt.inference === undefined ||
+    receipt.publication === undefined
+  ) {
+    throw new Error("Hermes Portable fresh start found different published inference authority.");
+  }
+
+  const sourceEnv = runtimeContext.environmentScope.createHermesPortablePodmanSourceEnvironment(
+    runtimeContext.authority,
+  );
+  const socketAuthority = (
+    options.captureSocketAuthority ??
+    ((socketPath, uid) => capturePodmanSocketAuthority(socketPath, { uid }))
+  )(runtimeContext.authority.socketPath, runtimeContext.authority.uid);
+  const executableAuthority = captureHermesPortablePodmanExecutableAuthority(
+    socketAuthority,
+    runtimeContext.authority,
+    sourceEnv,
+    options.podmanAuthorityDeps,
+  );
+  const engines = createHermesPortablePodmanOperationEngines(
+    executableAuthority,
+    socketAuthority,
+    runtimeContext.authority,
+    sourceEnv,
+    options.podmanAuthorityDeps,
+  );
+  const captureGpuDevices = () =>
+    captureQualifiedGpuDevices(
+      options.captureGpuDevices ?? captureCurrentGpuDevices,
+      options.captureCdiDevices ?? captureCurrentCdiDevices,
+    );
+  const authorityQualification = Object.freeze({
+    expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
+    captureCurrentCdiDevices: () => captureGpuDevices(),
+    assertCurrentAuthority: engines.assertTransactionCurrent,
+  });
+  const authority = qualifyPodmanInferenceAuthority(
+    engines.hostLocalInference,
+    authorityQualification,
+  );
+  const networkAuthority = capturePortableNetworkAuthority(engines.hostLocalInference);
+  const authorityStore = openFilePersistedEngineAuthorityStore(inferenceStateDir);
+  const routeAuthorityStore = createUnusedRouteAuthorityStore();
+  const bundle = createPodmanRuntimeProviderBundle({
+    engines: {
+      hostDoctor: engines.hostDoctor,
+      hostLocalInference: engines.hostLocalInference,
+      sandboxLifecycle: engines.sandboxLifecycle,
+    },
+    hostLocalInference: {
+      authority,
+      authorityQualification,
+      authorityStore,
+      routeAuthorityStore,
+      externalNetwork: networkAuthority,
+      onFailureEvidence: (evidence) => {
+        const message = redactOnboardDiagnosticText(evidence.message);
+        if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
+      },
+      redactSensitive: redactOnboardDiagnosticText,
+    },
+    preflight: { platform: "linux", architecture: "x64" },
+  });
+  const lifecycleRow: HostLocalInferenceLifecycleSandbox = Object.freeze({
+    name: input.sandboxName,
+    agent: "hermes",
+    provider: "ollama-local",
+    model: receipt.inference.model,
+    endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+    endpointSource: "inference-set",
+    credentialEnv: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: options.gatewayName,
+    lifecycleGeneration: receipt.publication.transactionId,
+    openshellDriver: bundle.identity.id,
+    hostLocalInferenceReceipt: published.serializedReceipt,
+  });
+  const preparedRuntime = prepareSandboxHostLocalInferenceDestroyAuthority(bundle, lifecycleRow, {
+    environment: sourceEnv,
+  });
+  if (!preparedRuntime) {
+    throw new Error("Hermes Portable fresh start could not bind its published runtime authority.");
+  }
+  const provider = prepareHermesPortableOllamaProviderRetirement({
+    directory: inferenceStateDir,
+    transactionId: receipt.publication.transactionId,
+    targetSha256: receipt.publication.targetSha256,
+    gatewayName: options.gatewayName,
+    sandboxName: input.sandboxName,
+    model: receipt.inference.model,
+    credentialEnv: options.credentialEnv,
+    runGatewayOpenshell: options.runGatewayOpenshell,
+    allowAbsent: true,
+  });
+
+  await provider.removeAndVerify();
+  provider.verifyAbsent();
+  published.assertCurrent();
+  const retired = retirePreparedHostLocalInferenceAuthority(bundle, lifecycleRow, preparedRuntime, [
+    lifecycleRow,
+  ]);
+  if (retired.status === "shared" || retired.status === "retained") {
+    throw new Error("Hermes Portable fresh start could not retire its exact managed runtime.");
+  }
+  retireHermesPortableUninstallDirectory(inferenceStateDir, initialDirectoryAuthority);
+  return true;
+}
+
+/** Bind fresh retirement and startup resolution to one operation-scoped authority source. */
+export function createHermesPortableOllamaInferenceBindings(
+  options: HermesPortableOllamaInferenceResolverOptions,
+) {
+  return Object.freeze({
+    resolveHostLocalInferenceStartupSelection: createHermesPortableOllamaInferenceResolver(options),
+    retireHostLocalInferenceFreshState: (input: HostLocalInferenceStartupSelectionInput) =>
+      retireHermesPortableOllamaFreshState(options, input),
+  });
 }
 
 function createUnusedRouteAuthorityStore(): HostLocalInferenceRouteAuthorityStore {
@@ -220,6 +395,10 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
     readonly onComplete: (durationMs: number) => void;
   };
   readonly measure: <T>(stage: HermesPortableOllamaRecoveryTimingStage, operation: () => T) => T;
+  readonly measureAsync: <T>(
+    stage: HermesPortableOllamaRecoveryTimingStage,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   readonly finish: (
     runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"],
     counts: Pick<
@@ -289,6 +468,23 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
         onComplete: (durationMs: number) => recordExternalStage(stage, durationMs),
       }),
     measure: measureStage,
+    async measureAsync(stage, operation) {
+      const stageStartedAt = safeTimingNow(now);
+      const frame = { childMs: 0 };
+      activeStages.push(frame);
+      try {
+        return await operation();
+      } finally {
+        const duration = elapsed(stageStartedAt, safeTimingNow(now));
+        activeStages.pop();
+        durations.set(
+          stage,
+          Math.min(9_999_999, (durations.get(stage) ?? 0) + Math.max(0, duration - frame.childMs)),
+        );
+        const parent = activeStages.at(-1);
+        if (parent) parent.childMs = Math.min(9_999_999, parent.childMs + duration);
+      }
+    },
     finish(runtimeAction, counts, result = "proved"): void {
       if (finished) return;
       finished = true;
@@ -336,8 +532,9 @@ function writeHermesPortablePublishedResumeTiming(
   );
 }
 
-const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming =
-  Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming });
+const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming = Object.freeze({
+  onComplete: writeHermesPortablePublishedResumeTiming,
+});
 
 interface PreparedHermesPortableOllamaRecoveryEntry {
   readonly registryRecovery: PreparedPortableRegistryRecovery;
@@ -431,8 +628,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
           assertForwardAuthority: runtimeOptions.assertForwardAuthority,
         },
         publishedResumeTiming:
-          runtimeOptions.publishedResumeTiming ??
-          DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+          runtimeOptions.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
         onFailureEvidence: (evidence) => {
           const message = redactOnboardDiagnosticText(evidence.message);
           if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -459,8 +655,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
             environment: options.env,
           },
           publishedResumeTiming:
-            runtimeOptions.publishedResumeTiming ??
-            DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+            runtimeOptions.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           onFailureEvidence: (evidence) => {
             const message = redactOnboardDiagnosticText(evidence.message);
             if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -575,8 +770,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
               assertForwardAuthority: options.publishedRecovery.assertForwardAuthority,
             },
             publishedResumeTiming:
-              options.publishedResumeTiming ??
-              DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+              options.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           }
         : {}),
       authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),
@@ -667,22 +861,24 @@ function atOllamaRecoveryPhase<T>(phase: HermesPortableOllamaRecoveryPhase, oper
 }
 
 export interface HermesPortableOllamaRecoveryInput {
-  readonly intent: "connect-probe-only";
+  readonly intent: "connect-probe-only" | "connect-interactive";
   readonly sandboxName: string;
   readonly entry: SandboxEntry;
   readonly env?: NodeJS.ProcessEnv;
   readonly stateDir?: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
-  readonly verifyRoute: () => SandboxEntry;
-  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly verifyRoute: () => Promise<SandboxEntry>;
+  readonly prepareProbeDependency?: () =>
+    | HermesPortableOllamaPreparedProbeDependency
+    | Promise<HermesPortableOllamaPreparedProbeDependency>;
   readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
 }
 
 export interface HermesPortableOllamaPreparedProbeDependency {
   readonly release: () => void;
-  readonly rollback: () => void;
+  readonly rollback: () => void | Promise<void>;
 }
 
 interface HermesPortableOllamaRecoveryDeps {
@@ -874,6 +1070,7 @@ export function inspectHermesPortableOllamaReadinessRuntime(
   const inferenceStateDir = hermesPortableInferenceStateDir(stateDir, input.sandboxName);
   const published = deps.preparePublishedReceiptAuthority({
     directory: inferenceStateDir,
+    gatewayName: input.operatingReceipt.gatewayName,
     sandboxName: input.sandboxName,
     credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
   });
@@ -947,12 +1144,12 @@ function restoreStoppedRuntime(
 }
 
 /** Resume and re-prove only the exact published Hermes Portable Ollama runtime. */
-export function recoverHermesPortableOllamaInference(
+export async function recoverHermesPortableOllamaInference(
   input: HermesPortableOllamaRecoveryInput,
   overrides: Partial<HermesPortableOllamaRecoveryDeps> = {},
-): HermesPortableOllamaRecoveryResult {
-  if (input.intent !== "connect-probe-only") {
-    failRecovery("recovery is restricted to connect --probe-only");
+): Promise<HermesPortableOllamaRecoveryResult> {
+  if (input.intent !== "connect-probe-only" && input.intent !== "connect-interactive") {
+    failRecovery("recovery requires a supported connect intent");
   }
   const deps = { ...DEFAULT_RECOVERY_DEPS, ...overrides };
   const recoveryTiming = createHermesPortableOllamaRecoveryTimingRecorder(deps.recoveryTiming);
@@ -1057,6 +1254,7 @@ export function recoverHermesPortableOllamaInference(
       atOllamaRecoveryPhase("PRIVATE_PUBLICATION_AUTHORITY", () => {
         const current = deps.preparePublishedAuthority({
           directory: hermesPortableInferenceStateDir(stateDir, operating.receipt.sandboxName),
+          gatewayName: operating.receipt.gatewayName,
           sandboxName: input.sandboxName,
           credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
           runGatewayOpenshell: input.runGatewayOpenshell,
@@ -1168,8 +1366,8 @@ export function recoverHermesPortableOllamaInference(
       assertPreparedAuthorityCurrent(true);
       requireRetainedCurrent();
     };
-    const verifyFinalRoute = (): void => {
-      const verified = input.verifyRoute();
+    const verifyFinalRoute = async (): Promise<void> => {
+      const verified = await input.verifyRoute();
       if (!isDeepStrictEqual(verified, input.entry)) {
         failRecovery("final route verification returned different registry authority");
       }
@@ -1204,10 +1402,10 @@ export function recoverHermesPortableOllamaInference(
           );
           requireRetainedCurrent();
         });
-        recoveryTiming.measure("route", verifyFinalRoute);
-        preparedDependency = recoveryTiming.measure(
+        await recoveryTiming.measureAsync("route", verifyFinalRoute);
+        preparedDependency = await recoveryTiming.measureAsync(
           "dependency",
-          () => input.prepareProbeDependency?.() ?? null,
+          async () => (await input.prepareProbeDependency?.()) ?? null,
         );
         recoveryTiming.measure("finalCurrentness", requireCompletionCurrent);
         registryRecovery.release();
@@ -1217,7 +1415,7 @@ export function recoverHermesPortableOllamaInference(
       } catch (error) {
         if (preparedDependency) {
           try {
-            preparedDependency.rollback();
+            await preparedDependency.rollback();
           } catch (rollbackError) {
             throw rollbackError;
           }
@@ -1274,10 +1472,10 @@ export function recoverHermesPortableOllamaInference(
         );
         requireRetainedCurrent();
       });
-      recoveryTiming.measure("route", verifyFinalRoute);
-      preparedDependency = recoveryTiming.measure(
+      await recoveryTiming.measureAsync("route", verifyFinalRoute);
+      preparedDependency = await recoveryTiming.measureAsync(
         "dependency",
-        () => input.prepareProbeDependency?.() ?? null,
+        async () => (await input.prepareProbeDependency?.()) ?? null,
       );
       const finalizePublishedResume = prepared.finalizePublishedResume;
       if (!finalizePublishedResume) {
@@ -1299,7 +1497,7 @@ export function recoverHermesPortableOllamaInference(
       let dependencyRollbackError: unknown = null;
       if (preparedDependency) {
         try {
-          preparedDependency.rollback();
+          await preparedDependency.rollback();
         } catch (rollbackError) {
           dependencyRollbackError = rollbackError;
         }
@@ -1438,6 +1636,7 @@ export function createHermesPortableOllamaInferenceResolver(
       directory: stateDir,
       transactionId,
       targetSha256,
+      gatewayName: options.gatewayName,
       sandboxName: input.sandboxName,
       model,
       credentialEnv: options.credentialEnv,

@@ -104,36 +104,37 @@ describe("commitRebuildRoutePreflight", () => {
     expect(remoteProviders.length).toBeGreaterThan(0);
   });
 
-  it.each(
-    remoteProviders,
-  )("migrates missing shared-gateway credential identity for $providerName (#7798)", (providerConfig) => {
-    const routeOverrides = remoteProviderRouteOverrides.get(providerConfig.providerName) ?? {};
-    const target = sandbox("target", providerConfig.providerName, {
-      ...routeOverrides,
-      credentialEnv: providerConfig.credentialEnv,
-    });
-    const peer = sandbox("peer", providerConfig.providerName, routeOverrides);
-    const state = transactionDependencies(registry(target, peer));
+  it.each(remoteProviders)(
+    "migrates missing shared-gateway credential identity for $providerName (#7798)",
+    (providerConfig) => {
+      const routeOverrides = remoteProviderRouteOverrides.get(providerConfig.providerName) ?? {};
+      const target = sandbox("target", providerConfig.providerName, {
+        ...routeOverrides,
+        credentialEnv: providerConfig.credentialEnv,
+      });
+      const peer = sandbox("peer", providerConfig.providerName, routeOverrides);
+      const state = transactionDependencies(registry(target, peer));
 
-    const result = commitRebuildRoutePreflight(
-      {
-        sandboxName: target.name,
-        gatewayName: "nemoclaw",
-        targetUpdate: targetUpdate(target),
-      },
-      state.dependencies,
-    );
+      const result = commitRebuildRoutePreflight(
+        {
+          sandboxName: target.name,
+          gatewayName: "nemoclaw",
+          targetUpdate: targetUpdate(target),
+        },
+        state.dependencies,
+      );
 
-    expect(result).toMatchObject({
-      ok: true,
-      receipt: {
-        migratedSandboxNames: ["peer"],
-      },
-    });
-    expect(state.persisted().sandboxes.target?.credentialEnv).toBe(providerConfig.credentialEnv);
-    expect(state.persisted().sandboxes.peer?.credentialEnv).toBe(providerConfig.credentialEnv);
-    expect(state.save).toHaveBeenCalledOnce();
-  });
+      expect(result).toMatchObject({
+        ok: true,
+        receipt: {
+          migratedSandboxNames: ["peer"],
+        },
+      });
+      expect(state.persisted().sandboxes.target?.credentialEnv).toBe(providerConfig.credentialEnv);
+      expect(state.persisted().sandboxes.peer?.credentialEnv).toBe(providerConfig.credentialEnv);
+      expect(state.save).toHaveBeenCalledOnce();
+    },
+  );
 
   it("migrates two missing credential identities across sequential shared-route rebuilds (#7615, #7798)", () => {
     const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
@@ -164,28 +165,29 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.save).toHaveBeenCalledTimes(2);
   });
 
-  it.each(
-    LOCAL_INFERENCE_PROVIDERS,
-  )("keeps credential-free local provider %s compatible (#7798)", (provider) => {
-    const target = sandbox("target", provider);
-    const peer = sandbox("peer", provider);
-    const state = transactionDependencies(registry(target, peer));
+  it.each(LOCAL_INFERENCE_PROVIDERS)(
+    "keeps credential-free local provider %s compatible (#7798)",
+    (provider) => {
+      const target = sandbox("target", provider);
+      const peer = sandbox("peer", provider);
+      const state = transactionDependencies(registry(target, peer));
 
-    const result = commitRebuildRoutePreflight(
-      {
-        sandboxName: target.name,
-        gatewayName: "nemoclaw",
-        targetUpdate: targetUpdate(target),
-      },
-      state.dependencies,
-    );
+      const result = commitRebuildRoutePreflight(
+        {
+          sandboxName: target.name,
+          gatewayName: "nemoclaw",
+          targetUpdate: targetUpdate(target),
+        },
+        state.dependencies,
+      );
 
-    expect(result).toMatchObject({
-      ok: true,
-      receipt: { migratedSandboxNames: [] },
-    });
-    expect(state.persisted().sandboxes.peer?.credentialEnv).toBeNull();
-  });
+      expect(result).toMatchObject({
+        ok: true,
+        receipt: { migratedSandboxNames: [] },
+      });
+      expect(state.persisted().sandboxes.peer?.credentialEnv).toBeNull();
+    },
+  );
 
   it("keeps credential-free routed inference compatible (#7798)", () => {
     const target = sandbox("target", "nvidia-router");

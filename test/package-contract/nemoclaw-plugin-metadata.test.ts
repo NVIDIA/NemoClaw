@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import {
   createMinimumOpenClawPluginApi,
   MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
@@ -80,9 +81,36 @@ describe("packed NemoClaw plugin metadata", () => {
     const pluginModule = await import(pathToFileURL(extensionPath).href);
     expect(pluginModule.default).toBeTypeOf("function");
     const { api, registrations } = createMinimumOpenClawPluginApi();
+    api.config = {
+      agents: { defaults: { model: { primary: "inference/nvidia/package-model" } } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "${PACKAGE_INFERENCE_KEY}",
+            models: [{ id: "nvidia/package-model", contextWindow: 64000, maxTokens: 4000 }],
+          },
+        },
+      },
+    };
     expect(() => pluginModule.default(api)).not.toThrow();
     expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
-    expect(registrations.providers).toEqual([expect.objectContaining({ id: "inference" })]);
+    expect(registrations.providers).toEqual([
+      expect.objectContaining({
+        id: "inference",
+        envVars: ["PACKAGE_INFERENCE_KEY"],
+        models: {
+          chat: [
+            {
+              id: "inference/nvidia/package-model",
+              label: "nvidia/package-model",
+              contextWindow: 64000,
+              maxOutput: 4000,
+            },
+          ],
+        },
+      }),
+    ]);
     expect(registrations.hookNames).toEqual(
       expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
     );
@@ -109,6 +137,20 @@ describe("packed NemoClaw plugin metadata", () => {
     expect(compareRelease(buildVersion, gatewayMinimum)).toBeGreaterThanOrEqual(0);
   });
 
+  it("registers commands and hooks without a fallback provider when native primary is absent", async () => {
+    const packageJson = readPluginPackage();
+    const [extension] = requireStringArray(packageJson.openclaw?.extensions, "openclaw.extensions");
+    const pluginModule = await import(pathToFileURL(path.join(pluginRoot, extension!)).href);
+    const { api, registrations } = createMinimumOpenClawPluginApi();
+
+    expect(() => pluginModule.default(api)).not.toThrow();
+    expect(registrations.providers).toEqual([]);
+    expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
+    expect(registrations.hookNames).toEqual(
+      expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
+    );
+  });
+
   it("includes every declared extension in the npm package", () => {
     const packageJson = readPluginPackage();
     const extensions = requireStringArray(packageJson.openclaw?.extensions, "openclaw.extensions");
@@ -119,10 +161,11 @@ describe("packed NemoClaw plugin metadata", () => {
       timeout: 30_000,
     });
     expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
-    const report = JSON.parse(packed.stdout) as Array<{ files?: Array<{ path?: string }> }>;
-    const packedPaths = new Set((report[0]?.files ?? []).map((entry) => entry.path));
+    const packedPaths = new Set(npmPackFilePaths(packed.stdout));
 
     expect(packedPaths).toContain("openclaw.plugin.json");
-    expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(true);
+    expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(
+      true,
+    );
   });
 });

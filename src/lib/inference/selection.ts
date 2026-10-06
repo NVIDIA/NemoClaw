@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reasoning-mode";
+import { classifyTelemetryApi } from "../domain/telemetry/dimensions";
+import {
+  parseModelSelectionProvenance,
+  type ModelSelectionProvenance,
+} from "../domain/telemetry/provenance";
 
 export {
   type ReasoningEffortRequest,
@@ -20,16 +25,23 @@ export interface InferenceSelection {
   compatibleEndpointReasoning: "true" | "false" | null;
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance;
 }
 
 export type EffectiveReasoningEffort = ReasoningEffort | "endpoint-default";
 
 export type InferenceSelectionInput =
   | (Partial<
-      Omit<InferenceSelection, "compatibleEndpointReasoning" | "compatibleEndpointReasoningEffort">
+      Omit<
+        InferenceSelection,
+        | "compatibleEndpointReasoning"
+        | "compatibleEndpointReasoningEffort"
+        | "modelSelectionProvenance"
+      >
     > & {
       compatibleEndpointReasoning?: unknown;
       compatibleEndpointReasoningEffort?: unknown;
+      modelSelectionProvenance?: unknown;
     })
   | null
   | undefined;
@@ -75,6 +87,7 @@ function nullableCompatibleEndpointReasoningEffort(
 export function normalizeInferenceSelection(input: InferenceSelectionInput): InferenceSelection {
   const provider = nullableString(input?.provider);
   const endpointUrl = nullableString(input?.endpointUrl);
+  const provenance = parseModelSelectionProvenance(input?.modelSelectionProvenance);
   return {
     provider,
     model: nullableString(input?.model),
@@ -91,6 +104,7 @@ export function normalizeInferenceSelection(input: InferenceSelectionInput): Inf
       input?.compatibleEndpointReasoningEffort,
     ),
     nimContainer: nullableString(input?.nimContainer),
+    ...(provenance ? { modelSelectionProvenance: provenance } : {}),
   };
 }
 
@@ -122,6 +136,18 @@ export function getEffectiveReasoningEffort(
 
 export function inferenceSelectionRegistryFields(
   input: InferenceSelectionInput,
+  modelSource?: ModelSelectionProvenance["modelSource"],
 ): InferenceSelection {
-  return normalizeInferenceSelection(input);
+  const selection = normalizeInferenceSelection(input);
+  // Direct command input remains custom even when its text matches a catalog.
+  return modelSource === undefined
+    ? selection
+    : {
+        ...selection,
+        modelSelectionProvenance: {
+          schemaVersion: 1,
+          modelSource,
+          apiFamily: classifyTelemetryApi(selection.preferredInferenceApi),
+        },
+      };
 }

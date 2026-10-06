@@ -12,6 +12,10 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import {
+  captureModelSelectionSnapshot,
+  matchingModelSelectionSnapshot,
+} from "../../state/registry/model-selection";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
@@ -21,6 +25,7 @@ import {
   assessRebuildAmbientEnv,
   assessRebuildInferencePreflight,
   canonicalCustomEndpointUrl,
+  getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
 } from "./rebuild-resume-preflight";
 
@@ -41,6 +46,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly modelSelectionProvenance?: import("../../domain/telemetry/provenance").ModelSelectionProvenance;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -105,9 +111,9 @@ export function prepareRebuildResumeConfig(
   );
   const sessionSelectionMatchesRegistry = Boolean(
     matchingSessionSelection &&
-      (!registrySelection.provider ||
-        matchingSessionSelection.provider === registrySelection.provider) &&
-      (!registrySelection.model || matchingSessionSelection.model === registrySelection.model),
+    (!registrySelection.provider ||
+      matchingSessionSelection.provider === registrySelection.provider) &&
+    (!registrySelection.model || matchingSessionSelection.model === registrySelection.model),
   );
   const legacySelection = sessionSelectionMatchesRegistry ? matchingSessionSelection : null;
   const trustedSelection = normalizeInferenceSelection({
@@ -155,7 +161,7 @@ export function prepareRebuildResumeConfig(
   }
   const compatibleEndpointReasoning = trustedSelection.compatibleEndpointReasoning;
   const compatibleEndpointReasoningEffort = trustedSelection.compatibleEndpointReasoningEffort;
-  const { credentialEnv, rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
+  const { rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
     assessRebuildInferencePreflight({
       sandboxName,
       sessionMatchesSandbox,
@@ -230,8 +236,25 @@ export function prepareRebuildResumeConfig(
     );
     return null;
   }
+  const credentialEnv = getRebuildCredentialEnvFromRegistry(
+    trustedSelection.provider,
+    trustedSelection.credentialEnv,
+    endpointUrl,
+  );
 
+  const modelSelectionProvenance = matchingModelSelectionSnapshot(
+    captureModelSelectionSnapshot(sb),
+    {
+      provider: trustedSelection.provider,
+      model: trustedSelection.model,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi: trustedSelection.preferredInferenceApi,
+      nimContainer: trustedSelection.nimContainer,
+    },
+  );
   return {
+    ...(modelSelectionProvenance ? { modelSelectionProvenance } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,
     model: trustedSelection.model,

@@ -101,7 +101,7 @@ function load(): LoadedNetworks {
     if (isNodeEnoent(err)) throw missingPrivateNetworksError(source);
     throw err;
   }
-  if (cached && cached.source === source && cached.mtimeMs === mtimeMs && cached.size === size) {
+  if (cached?.source === source && cached.mtimeMs === mtimeMs && cached.size === size) {
     cached.checkedAtMs = now;
     return cached;
   }

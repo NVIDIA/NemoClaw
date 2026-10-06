@@ -23,16 +23,16 @@ function getKnownMessagingChannels(
   return [...new Set(channels.filter((channel) => known.has(channel)))];
 }
 
-export function getNonInteractiveStoredMessagingChannels(
+export async function getNonInteractiveStoredMessagingChannels(
   resume: boolean,
   sessionChannels: string[] | null | undefined,
   sandboxName: string | null,
   messagingChannels: readonly MessagingChannel[],
   hasMessagingToken: (envKey: string) => boolean,
   getRegistryMessagingAuthority: (sandboxName: string) => RegistryMessagingAuthority,
-  providerExists: (providerName: string) => boolean,
+  providerExists: (providerName: string) => boolean | Promise<boolean>,
   nonInteractive: boolean,
-): string[] | null {
+): Promise<string[] | null> {
   if (!nonInteractive) return null;
   if (resume && Array.isArray(sessionChannels)) {
     const knownSessionChannels = getKnownMessagingChannels(sessionChannels, messagingChannels);
@@ -53,10 +53,15 @@ export function getNonInteractiveStoredMessagingChannels(
     messagingChannels,
   );
   const disabledChannels = new Set(getDisabledChannelsFromPlan(registryAuthority.plan));
-  const reusableChannels = configuredChannels.filter((channel) => {
-    if (disabledChannels.has(channel)) return false;
-    const providers = getMessagingProviderNamesForChannel(sandboxName, channel);
-    return providers.length > 0 && providers.every((provider) => providerExists(provider));
-  });
+  const reusableChannels = (
+    await Promise.all(
+      configuredChannels.map(async (channel) => {
+        if (disabledChannels.has(channel)) return null;
+        const providers = getMessagingProviderNamesForChannel(sandboxName, channel);
+        const exists = await Promise.all(providers.map((provider) => providerExists(provider)));
+        return providers.length > 0 && exists.every(Boolean) ? channel : null;
+      }),
+    )
+  ).filter((channel): channel is string => channel !== null);
   return reusableChannels.length > 0 ? reusableChannels : null;
 }

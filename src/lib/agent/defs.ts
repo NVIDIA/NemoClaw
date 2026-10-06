@@ -29,28 +29,26 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
-  AgentStateDirectory,
-  AgentStateFile,
   AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
   readBoolean,
   readDashboard,
+  readDeferredOnboarding,
   readHealthProbe,
   readInference,
   readMcpCapability,
   readObject,
   readPortArray,
-  readStateFiles,
   readString,
   readStringArray,
   readStringMap,
   readUserManagedFiles,
   readVersionScheme,
 } from "./manifest-readers";
-import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
-import { readStateDirectories, stateDirectoryPaths, stateDirectoryPrefixes } from "./state-directory-contract";
+import { readAgentRuntime } from "./runtime-manifest";
+import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -65,20 +63,9 @@ export type {
   AgentMcpAdapter,
   AgentMcpCapability,
   AgentMcpSupport,
-  AgentStateDirectory,
-  AgentStateDirectoryPath,
-  AgentStateDirectoryPrefix,
-  AgentStateFile,
-  AgentStateFileStrategy,
   AgentVersionScheme,
-  StateFileFreshHeader,
-  StateFileKeyAllowlistRestoreOwnership,
-  StateFileOpenClawRestoreOwnership,
-  StateFileRestoreMerge,
-  StateFileRestoreOwnership,
-  StateFileUserKey,
-  StateFileUserKeyType,
 } from "./definition-types";
+export type { AgentSkillIntegration } from "./skill-integration";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
@@ -117,7 +104,9 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
+        .filter(
+          (entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env),
+        )
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -172,23 +161,20 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const config = readObject(raw, "config");
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
-  if (raw.runtime_auth_state_dirs !== undefined) {
+  const skillIntegration = readAgentSkillIntegration(raw);
+  const retiredStateInventoryField = ["state_dirs", "state_files", "runtime_auth_state_dirs"].find(
+    (field) => raw[field] !== undefined,
+  );
+  if (retiredStateInventoryField) {
     throw new Error(
-      "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
+      `Agent manifest field '${retiredStateInventoryField}' is retired; native rebuilds persist the complete agent home`,
     );
   }
-  const stateDirectories = readStateDirectories(raw);
-  const stateDirs = stateDirectoryPaths(stateDirectories);
-  const stateDirPrefixes = stateDirectoryPrefixes(stateDirectories);
-  const backupStateDirs = stateDirectoryPaths(stateDirectories, { backup: true });
-  const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
-  const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
-  const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
-  const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
+  const deferredOnboarding = readDeferredOnboarding(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -206,9 +192,9 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     forward_ports: forwardPorts,
     health_probe: healthProbe,
     config,
+    deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
-    state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -267,36 +253,8 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
       return mcp;
     },
 
-    get stateDirectories(): AgentStateDirectory[] {
-      return stateDirectories;
-    },
-
-    get stateDirs(): string[] {
-      return stateDirs;
-    },
-
-    get stateDirPrefixes(): string[] {
-      return stateDirPrefixes;
-    },
-
-    get backupStateDirs(): string[] {
-      return backupStateDirs;
-    },
-
-    get backupStateDirPrefixes(): string[] {
-      return backupStateDirPrefixes;
-    },
-
-    get nonBackupStateDirs(): string[] {
-      return nonBackupStateDirs;
-    },
-
-    get nonBackupStateDirPrefixes(): string[] {
-      return nonBackupStateDirPrefixes;
-    },
-
-    get stateFiles(): AgentStateFile[] {
-      return stateFiles ?? [];
+    get skillIntegration(): AgentSkillIntegration | null {
+      return skillIntegration;
     },
 
     get userManagedFiles(): string[] {

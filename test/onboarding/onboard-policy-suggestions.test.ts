@@ -60,22 +60,18 @@ const {
   agentRequiredPresetAdditions,
   filterSuppressedAgentRequiredPresets,
   suppressedAgentRequiredPresets,
-} =
-  require("../../src/lib/onboard/policy-tier-suppression") as {
-    agentRequiredPresetAdditions: (
-      agent: string | null | undefined,
-      env: NodeJS.ProcessEnv,
-    ) => string[];
-    filterSuppressedAgentRequiredPresets: (
-      presetNames: string[],
-      tierName: string | null | undefined,
-      agent: string | null | undefined,
-    ) => string[];
-    suppressedAgentRequiredPresets: (
-      tierName: string,
-      agent: string | null | undefined,
-    ) => string[];
-  };
+} = require("../../src/lib/onboard/policy-tier-suppression") as {
+  agentRequiredPresetAdditions: (
+    agent: string | null | undefined,
+    env: NodeJS.ProcessEnv,
+  ) => string[];
+  filterSuppressedAgentRequiredPresets: (
+    presetNames: string[],
+    tierName: string | null | undefined,
+    agent: string | null | undefined,
+  ) => string[];
+  suppressedAgentRequiredPresets: (tierName: string, agent: string | null | undefined) => string[];
+};
 
 function setOrUnset(key: string, value: string | undefined): void {
   value === undefined ? delete process.env[key] : (process.env[key] = value);
@@ -102,6 +98,7 @@ describe("onboard policy preset suggestions", () => {
     "pypi",
     "huggingface",
     "brew",
+    "brew-balanced",
     "brave",
     "tavily",
     "slack",
@@ -170,15 +167,7 @@ describe("onboard policy preset suggestions", () => {
   // one never suggested). Assert both paths yield exactly
   // `allMessagingChannelPolicyPresets` for every channel individually and combined.
   it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
-    const channels = [
-      "slack",
-      "discord",
-      "telegram",
-      "teams",
-      "whatsapp",
-      "wechat",
-      "googlechat",
-    ];
+    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat", "googlechat"];
     const knownNames = [...known, "teams", "whatsapp", "wechat"];
     const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
     const channelPresetsFromSuggestions = (enabled: string[]) =>
@@ -305,7 +294,7 @@ describe("onboard policy preset suggestions", () => {
     ).not.toContain("observability-otlp-local");
   });
 
-  it("balanced OpenClaw with web search returns exactly brave brew huggingface npm openclaw-pricing pypi and excludes weather", () => {
+  it("balanced OpenClaw selects development presets and pricing without weather", () => {
     const knownWithPricing = [...known, "openclaw-pricing"];
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
@@ -316,13 +305,30 @@ describe("onboard policy preset suggestions", () => {
     });
     expect([...suggestions].sort()).toEqual([
       "brave",
-      "brew",
+      "brew-balanced",
       "huggingface",
       "npm",
       "openclaw-pricing",
       "pypi",
     ]);
     expect(suggestions).not.toContain("weather");
+  });
+
+  it("selects the Balanced common-egress presets without search for OpenClaw", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: [...known, "openclaw-pricing"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: false,
+    });
+    expect([...suggestions].sort()).toEqual([
+      "brew-balanced",
+      "huggingface",
+      "npm",
+      "openclaw-pricing",
+      "pypi",
+    ]);
   });
 
   it("adds openclaw-pricing to tier suggestions when agent is openclaw", () => {
@@ -426,7 +432,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced", "brave"]);
   });
 
   it("keeps Brave in balanced tier defaults when built-in search is configured", () => {
@@ -436,7 +442,7 @@ describe("onboard policy preset suggestions", () => {
       webSearchConfig: { fetchEnabled: true },
       webSearchSupported: true,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced", "brave"]);
   });
 
   it.each(["balanced", "open"])(
@@ -502,7 +508,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known.filter((name) => name !== "brave"),
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced"]);
   });
 
   it("omits web-search presets when web search is unsupported", () => {
@@ -525,7 +531,7 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: known,
       webSearchSupported: false,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced"]);
   });
 
   it("adds all Hermes Nous tool policy presets for Hermes open tier only", () => {
@@ -623,6 +629,42 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
+  // The Open tier's own messaging channel presets are tier egress defaults
+  // (per the tier's documented preset list), not per-channel opt-ins, so
+  // OpenClaw must resolve every one of them even with no messaging channel
+  // enabled -- unlike Balanced/Restricted, which have no messaging defaults
+  // to begin with. Only Hermes recovery prunes tier defaults down to the
+  // recorded enabled set (see the Hermes-scoped tests below). (#11058)
+  it("resolves every Open tier default including messaging channel presets for OpenClaw with no channels enabled (#11058)", () => {
+    const knownOpenTierNames = [...known, "teams", "whatsapp", "wechat", "openclaw-pricing"];
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: [],
+      knownPresetNames: knownOpenTierNames,
+    });
+
+    expect([...suggestions].sort()).toEqual(
+      [
+        "brave",
+        "brew",
+        "discord",
+        "huggingface",
+        "jira",
+        "npm",
+        "openclaw-pricing",
+        "outlook",
+        "public-reference",
+        "pypi",
+        "slack",
+        "teams",
+        "telegram",
+        "wechat",
+        "weather",
+        "whatsapp",
+      ].sort(),
+    );
+  });
+
   it("omits repository-owned Hermes messaging presets until their channels are active", () => {
     const inactive = computeSetupPresetSuggestions("open", {
       agent: "hermes",
@@ -662,26 +704,26 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).not.toContain("discord");
   });
 
-  it.each(["openclaw", "hermes"])(
-    "omits credential-bound Discord egress for %s until the channel is selected",
-    (agent) => {
-      const inactive = computeSetupPresetSuggestions("open", {
-        agent,
-        enabledChannels: [],
-        knownPresetNames: known,
-        env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
-      });
-      const active = computeSetupPresetSuggestions("open", {
-        agent,
-        enabledChannels: ["discord"],
-        knownPresetNames: known,
-        env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
-      });
+  // Hermes recovery records the full enabled-channel set, so it (unlike
+  // OpenClaw, see #11058 above) still prunes a tier-default messaging preset
+  // down to that set until the channel is selected.
+  it("omits credential-bound Discord egress for hermes until the channel is selected", () => {
+    const inactive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+      env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
+    });
+    const active = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["discord"],
+      knownPresetNames: known,
+      env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
+    });
 
-      expect(inactive).not.toContain("discord");
-      expect(active).toContain("discord");
-    },
-  );
+    expect(inactive).not.toContain("discord");
+    expect(active).toContain("discord");
+  });
 
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {

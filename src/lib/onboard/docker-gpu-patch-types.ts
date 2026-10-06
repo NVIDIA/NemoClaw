@@ -1,6 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import type {
+  OpenShellGpuDiagnosticArtifact,
+  OpenShellGpuDiagnostics,
+} from "../adapters/openshell/gpu-diagnostics";
+import type { SandboxGpuProofResult } from "../state/registry";
+
+export interface SandboxCreateRuntimePatch {
+  maybeApplyDuringCreate(): void | Promise<void>;
+  replacementRuntimeId?(): string | null;
+  createFailureMessage(): string | null;
+  exitOnPatchError(): void | Promise<void>;
+  rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
+  ensureApplied(): void | Promise<void>;
+  waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
+  commitAfterReady(options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }): void | Promise<void>;
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+  selectedMode(): {
+    readonly kind: string;
+    readonly label: string;
+    readonly device: string;
+    readonly args: readonly string[];
+  } | null;
+  printReadinessFailureIfEnabled(): void;
+  verifyGpuOrExit(
+    verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
+  ): Promise<SandboxGpuProofResult>;
+}
+
 type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
@@ -23,6 +54,8 @@ type ContainerDnsProbeFn = (
 ) => import("./preflight").DnsProbeResult;
 
 export type DockerGpuPatchDeps = {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   dockerCapture?: DockerCaptureFn;
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
@@ -57,6 +90,16 @@ export type DockerGpuPatchDeps = {
    */
   errorPhaseDebouncePolls?: number;
 };
+
+export type DockerGpuDiagnosticDeps = Pick<
+  DockerGpuPatchDeps,
+  | "openShellGpuDiagnostics"
+  | "runCaptureOpenshell"
+  | "dockerCapture"
+  | "dockerLogs"
+  | "homedir"
+  | "now"
+>;
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
 export type DockerGpuPatchBackend = "generic" | "jetson";
@@ -176,6 +219,14 @@ export type DockerGpuPatchSandboxSnapshot = {
   sandboxPhase: string | null;
   sandboxListLine: string | null;
   patchedContainerState: DockerContainerState | null;
+  /**
+   * The typed OpenShell observations used to derive the phase. Keeping the
+   * observations with the snapshot lets the diagnostics writer persist the
+   * same evidence without invoking the external collector a second time.
+   * Presence records an attempted collection; an empty array records a failed
+   * or empty attempt that must not be retried by the writer.
+   */
+  openShellDiagnosticArtifacts?: readonly OpenShellGpuDiagnosticArtifact[];
 };
 
 export type DockerGpuPatchFailureKind =

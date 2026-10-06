@@ -10,9 +10,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { normalizeMode } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
-  assertHermesConfig,
-  assertNoOpenClawTransportErrors,
-  assertOpenClawConfig,
+  buildOpenClawFirstTurnLatencyEvidence,
   CLI,
   chatContent,
   cleanupTurnSandbox,
@@ -23,14 +21,13 @@ import {
   installSandbox,
   MAX_TURN_SECONDS,
   OPENCLAW_SANDBOX,
-  openclawConfigCommand,
   openclawTurn,
   responseBodyAndStatus,
   route,
-  waitHermesHealth,
 } from "./agent-turn-latency-helpers.ts";
 
 const TIMEOUT_MS = testTimeout(90 * 60_000);
+const MAX_HOST_DISPATCH_OVERHEAD_MS = 60_000;
 
 // A real latency measurement needs a real hosted endpoint; the shared
 // adapter's hermetic `mock` mode would just measure a loopback round trip
@@ -49,7 +46,7 @@ runAgentTurnLatencyTest(
         "prepare clean inference hosts",
         "install OpenClaw sandbox",
         "validate OpenClaw inference route",
-        "run OpenClaw hosted inference turns",
+        "run OpenClaw hosted inference turn",
         "replace OpenClaw with Hermes sandbox",
         "validate Hermes inference route",
         "run Hermes hosted inference turn",
@@ -57,17 +54,29 @@ runAgentTurnLatencyTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
+      maxHostDispatchOverheadMs: MAX_HOST_DISPATCH_OVERHEAD_MS,
     };
     await artifacts.target.declare({
       id: "agent-turn-latency",
-      boundary: "two real sandboxes + hosted inference + OpenClaw agent turns + Hermes API turn",
+      boundary:
+        "two real sandboxes + hosted inference + one OpenClaw host CLI JSON turn with open stdin + one Hermes API turn",
       openclawSandbox: OPENCLAW_SANDBOX,
       hermesSandbox: HERMES_SANDBOX,
     });
+    lifecycle.trackInstallerGatewayUserService();
     cleanup.trackDisposable("remove gateway nemoclaw", async () => {
       await host.cleanupGatewayRegistration("nemoclaw", {
         artifactName: "cleanup-gateway-destroy-turn-latency",
@@ -134,52 +143,45 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
-    expect(resultText(openclawRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(openclawRoute)).toContain(inference.model);
-    const openclawConfig = await sandbox.execShell(
-      OPENCLAW_SANDBOX,
-      trustedSandboxShellScript(openclawConfigCommand()),
-      {
-        artifactName: "openclaw-config",
-        env: env(OPENCLAW_SANDBOX, "openclaw", inference),
-        onOutput: progress.onOutput,
-        redactionValues: inference.redactionValues(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(openclawConfig.exitCode, resultText(openclawConfig)).toBe(0);
-    assertOpenClawConfig(openclawConfig.stdout, inference.model);
-
-    progress.phase("run OpenClaw hosted inference turns");
-    const openclaw = await openclawTurn(sandbox, inference, progress);
-    expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclaw.result));
-    expect(
-      containsAnswer(parseOpenClawAgentText(openclaw.result.stdout), "42"),
-      resultText(openclaw.result),
-    ).toBe(true);
-    expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
-
-    const openclawFollowUp = await openclawTurn(sandbox, inference, progress, {
-      artifactName: "openclaw-agent-follow-up-turn",
-      prompt: "What is seven multiplied by eight? Reply with only the integer, no extra words.",
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(openclawRoute)).toContain(expected);
+    }
+    progress.phase("run OpenClaw hosted inference turn");
+    const firstTurn = await openclawTurn(host, inference, progress, {
+      artifactName: "openclaw-agent-turn",
+      args: [
+        "--json",
+        "-m",
+        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      ],
+      stdin: "open-pipe",
     });
-    expect(openclawFollowUp.result.exitCode, resultText(openclawFollowUp.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclawFollowUp.result));
+    expect(firstTurn.result.exitCode, resultText(firstTurn.result)).toBe(0);
+    const openclawAnswer = parseOpenClawAgentText(firstTurn.result.stdout);
+    expect(containsAnswer(openclawAnswer, "42"), resultText(firstTurn.result)).toBe(true);
+    expect(firstTurn.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+    const firstTurnTiming = buildOpenClawFirstTurnLatencyEvidence(
+      firstTurn.result.stdout,
+      firstTurn.elapsedMs,
+    );
+    // This excludes the reported agent duration, so slow inference cannot hide
+    // a multi-minute wait in host dispatch, transport, or CLI startup.
     expect(
-      containsAnswer(parseOpenClawAgentText(openclawFollowUp.result.stdout), "56"),
-      resultText(openclawFollowUp.result),
-    ).toBe(true);
-    expect(openclawFollowUp.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+      firstTurnTiming.firstTurnHostOverheadMs,
+      JSON.stringify(firstTurnTiming),
+    ).toBeLessThanOrEqual(MAX_HOST_DISPATCH_OVERHEAD_MS);
     results.openclaw = {
-      firstTurnElapsedMs: openclaw.elapsedMs,
-      followUpTurnElapsedMs: openclawFollowUp.elapsedMs,
+      ...firstTurnTiming,
+      answer: openclawAnswer,
+      elapsedMs: firstTurn.elapsedMs,
+      model: inference.model,
+      provider: inference.expectedRouteProvider,
     };
 
     progress.phase("replace OpenClaw with Hermes sandbox");
     const openclawDestroy = await host.command(
       "node",
-      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes"],
+      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes", "--cleanup-gateway"],
       {
         artifactName: "destroy-openclaw-before-hermes",
         env: env(OPENCLAW_SANDBOX, "openclaw", inference),
@@ -208,23 +210,9 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
-    expect(resultText(hermesRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(hermesRoute)).toContain(inference.model);
-    const hermesHealth = await waitHermesHealth(sandbox, inference, progress);
-    expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
-    const hermesConfig = await sandbox.exec(
-      HERMES_SANDBOX,
-      ["cat", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "hermes-config",
-        env: env(HERMES_SANDBOX, "hermes", inference),
-        onOutput: progress.onOutput,
-        redactionValues: inference.redactionValues(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(hermesConfig.exitCode, resultText(hermesConfig)).toBe(0);
-    assertHermesConfig(hermesConfig.stdout, inference.model);
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(hermesRoute)).toContain(expected);
+    }
 
     const payload = JSON.stringify({
       model: inference.model,
@@ -252,10 +240,17 @@ runAgentTurnLatencyTest(
     const hermesMs = Number((process.hrtime.bigint() - hermesStarted) / 1_000_000n);
     expect(hermesTurn.exitCode, resultText(hermesTurn)).toBe(0);
     const hermesResponse = responseBodyAndStatus(hermesTurn.stdout);
+    const hermesAnswer = chatContent(hermesResponse.body);
     expect(hermesResponse.status, resultText(hermesTurn)).toBe("200");
-    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(true);
+    expect(containsAnswer(hermesAnswer, "42"), resultText(hermesTurn)).toBe(true);
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
-    results.hermes = { elapsedMs: hermesMs };
+    results.hermes = {
+      answer: hermesAnswer,
+      elapsedMs: hermesMs,
+      httpStatus: hermesResponse.status,
+      model: inference.model,
+      provider: inference.expectedRouteProvider,
+    };
     progress.phase("record hosted inference timing evidence");
     await artifacts.writeJson("turn-latency-results.json", results);
   },

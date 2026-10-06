@@ -211,11 +211,9 @@ function getTrustedPrivateResolveAddresses(
   }
   const targetHost = normalizeHostname(target.hostname);
   const authorityAddresses =
-    opts.pinnedAddresses.length > 0
-      ? opts.pinnedAddresses
-      : isIP(targetHost) !== 0
-        ? [targetHost]
-        : opts.pinnedAddresses;
+    opts.pinnedAddresses.length === 0 && isIP(targetHost) !== 0
+      ? [targetHost]
+      : opts.pinnedAddresses;
   return assertTrustedPrivateEndpointCapability(
     target.hostname,
     authorityAddresses,

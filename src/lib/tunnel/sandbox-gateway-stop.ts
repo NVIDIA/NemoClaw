@@ -180,7 +180,7 @@ function stopSandboxChannelsViaKubectl(
       pod,
       "--",
       "sh",
-      "-lc",
+      "-c",
       gatewayStopScript,
     ],
     { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },

@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS,
   FIXED_TAR_INTEGRITY,
   FIXED_TAR_TARBALL,
   FIXED_TAR_VERSION,
@@ -33,7 +34,10 @@ function writeJson(file: string, value: object): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0", tarVersion: string) {
+function fixture(
+  npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0" | "12.0.2",
+  tarVersion: string,
+) {
   const root = temporaryDirectory();
   const npmRoot = path.join(root, "npm");
   const replacementRoot = path.join(root, "replacement");
@@ -42,7 +46,11 @@ function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0", tarVe
     version: npmVersion,
     dependencies: {
       tar:
-        npmVersion === "11.18.0" ? "^7.5.19" : npmVersion.startsWith("10.") ? "^7.5.11" : "^7.5.13",
+        npmVersion === "11.18.0" || npmVersion === "12.0.2"
+          ? "^7.5.19"
+          : npmVersion.startsWith("10.")
+            ? "^7.5.11"
+            : "^7.5.13",
     },
     bundleDependencies: ["other", "tar"],
   });
@@ -74,6 +82,7 @@ describe("npm bundled node-tar remediation", () => {
       "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
     );
     expect(FIXED_TAR_TARBALL).toBe("https://registry.npmjs.org/tar/-/tar-7.5.21.tgz");
+    expect(BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(6 * 120_000 + 5 * 2_000);
   });
 
   it.each([
@@ -82,6 +91,7 @@ describe("npm bundled node-tar remediation", () => {
     ["Node.js 24.18 npm", "11.16.0", "7.5.15"],
     ["reviewed npm advisory release", "11.18.0", "7.5.19"],
     ["reviewed npm affected boundary", "11.18.0", "7.5.20"],
+    ["reviewed npm 12 release", "12.0.2", "7.5.19"],
   ] as const)("replaces the complete affected tree for %s", (_label, npmVersion, tarVersion) => {
     const target = fixture(npmVersion, tarVersion);
 
@@ -195,6 +205,19 @@ describe("npm bundled node-tar remediation", () => {
           commands.push(command);
           expect(command).toBe("curl");
           expect(args).toContain(FIXED_TAR_TARBALL);
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "--retry",
+              "5",
+              "--retry-all-errors",
+              "--retry-delay",
+              "2",
+              "--connect-timeout",
+              "15",
+              "--max-time",
+              "120",
+            ]),
+          );
           const outputIndex = args.indexOf("--output");
           expect(outputIndex).toBeGreaterThanOrEqual(0);
           fs.writeFileSync(args[outputIndex + 1]!, "mismatched archive bytes\n");
@@ -204,9 +227,9 @@ describe("npm bundled node-tar remediation", () => {
 
     expect(commands).toEqual(["curl"]);
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
-    expect(
-      fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js")),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js"))).toBe(
+      false,
+    );
     expect(fs.readdirSync(path.join(target.npmRoot, "node_modules"))).toEqual(["tar"]);
     expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow("bundles affected tar@7.5.19");
   });
@@ -274,7 +297,7 @@ describe("npm bundled node-tar remediation", () => {
     const drifted = fixture("10.9.7", "7.5.11");
     const manifestPath = path.join(drifted.npmRoot, "package.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    manifest.version = "12.0.0";
+    manifest.version = "13.0.0";
     writeJson(manifestPath, manifest);
     expect(() => patchBundledNpmTar(drifted)).toThrow("layout has drifted");
 

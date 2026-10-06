@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
   confirmHostLocalInferenceAuthority,
@@ -11,14 +17,14 @@ import {
 } from "../../../onboard/runtime-provider/host-local-inference-lifecycle";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
+import { captureModelSelectionSnapshot } from "../../../state/registry/model-selection";
 import * as sandboxState from "../../../state/sandbox";
-import {
-  executePrivilegedSandboxCommand,
-  withPrivilegedSandboxExecutionLease,
-} from "../../../sandbox/privileged-exec";
-import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
-import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
+import {
+  captureSandboxRuntimeSnapshot,
+  prepareSandboxStoppedStateCapture,
+} from "./provider-lifecycle";
+import type { PreparedStoppedNativeState } from "../../../state/state-directory-restore";
 
 type SnapshotBackupAuthority = Pick<
   sandboxState.BackupOptions,
@@ -36,188 +42,50 @@ interface SnapshotBackupAuthorityDependencies {
   readonly prepareHostLocalInference: typeof prepareSandboxHostLocalInferenceAuthority;
   readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
-  readonly captureOpenClawStateFile: typeof captureOpenClawStateFile;
 }
 
-const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
-const OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
-const OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS = 30_000;
-const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
-const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
-const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
-const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
-const OPENCLAW_CONFIG_NAME = "openclaw.json";
-export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
-maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
-directory = sys.argv[1]
-name = sys.argv[2]
-protocol = "${OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX}"
-def fail(status, reason):
-    print(protocol + reason, file=sys.stderr)
-    raise SystemExit(status)
-directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-try:
-    directory_fd = os.open(directory, directory_flags)
-except OSError:
-    fail(10, "directory-unavailable")
-try:
-    directory_before = os.fstat(directory_fd)
-    try:
-        file_fd = os.open(name, file_flags, dir_fd=directory_fd)
-    except FileNotFoundError:
-        fail(2, "missing")
-    except OSError:
-        fail(10, "file-unavailable")
-    try:
-        before = os.fstat(file_fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            fail(11, "unsafe-file-metadata")
-        if before.st_size > maximum:
-            fail(12, "size-limit-exceeded")
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(file_fd, min(64 * 1024, maximum + 1 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > maximum:
-                fail(12, "size-limit-exceeded")
-        after = os.fstat(file_fd)
-        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
-        if identity(before) != identity(after) or identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
-            fail(13, "file-changed-during-read")
-        directory_current = os.stat(directory, follow_symlinks=False)
-        if (directory_before.st_dev, directory_before.st_ino) != (directory_current.st_dev, directory_current.st_ino) or not stat.S_ISDIR(directory_current.st_mode):
-            fail(13, "directory-changed-during-read")
-        sys.stdout.buffer.write(b"".join(chunks))
-    finally:
-        os.close(file_fd)
-finally:
-    os.close(directory_fd)
-`;
+type SnapshotBackupControlOptions = Pick<
+  sandboxState.BackupOptions,
+  "deadlineMs" | "deferSanitizationDeadlineCleanup" | "deferCompletionPublication"
+>;
 
-type OpenClawConfigCaptureFailure =
-  | "missing"
-  | "directory-unavailable"
-  | "file-unavailable"
-  | "unsafe-file-metadata"
-  | "size-limit-exceeded"
-  | "file-changed-during-read"
-  | "directory-changed-during-read";
+type SnapshotBackupOverrides = Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
+  Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>;
 
-function captureFailureProtocol(stderr: unknown): OpenClawConfigCaptureFailure | null {
-  if (
-    (Buffer.isBuffer(stderr) && stderr.length > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES) ||
-    (typeof stderr === "string" &&
-      Buffer.byteLength(stderr) > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES)
-  ) {
-    return null;
-  }
-  const value = Buffer.isBuffer(stderr)
-    ? stderr.toString("utf8")
-    : typeof stderr === "string"
-      ? stderr
-      : "";
-  const line = value.endsWith("\n") ? value.slice(0, -1) : value;
-  if (!line.startsWith(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX) || /[\r\n]/.test(line)) {
-    return null;
-  }
-  const reason = line.slice(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX.length);
-  switch (reason) {
-    case "missing":
-    case "directory-unavailable":
-    case "file-unavailable":
-    case "unsafe-file-metadata":
-    case "size-limit-exceeded":
-    case "file-changed-during-read":
-    case "directory-changed-during-read":
-      return reason;
-    default:
-      return null;
-  }
-}
-
-function captureFailureDiagnostic(stderr: unknown): string | null {
-  const value = Buffer.isBuffer(stderr)
-    ? stderr.subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES).toString("utf8")
-    : typeof stderr === "string"
-      ? Buffer.from(stderr)
-          .subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES)
-          .toString("utf8")
-      : "";
-  const sanitized = sanitizeReadinessText(value, 240).replace(/\s+/g, " ").trim();
-  return sanitized || null;
-}
-
-export function captureOpenClawStateFile(
+export function discardIncompleteBackup(
   sandboxName: string,
-  request: sandboxState.StateFileCaptureRequest,
-): sandboxState.StateFileCaptureResult | null {
-  if (
-    request.dir !== "/sandbox/.openclaw" ||
-    request.spec.path !== "openclaw.json" ||
-    request.spec.strategy !== "copy"
-  ) {
-    return null;
+  result: sandboxState.BackupResult,
+  cleanupDeadlineMs: number,
+  operation: string,
+): sandboxState.BackupResult {
+  const publishedManifest = result.manifest;
+  const backupPath = publishedManifest?.backupPath;
+  if (!publishedManifest || !backupPath) return result;
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, cleanupDeadlineMs)) {
+    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
   }
+  const cleanupError = `Failed ${operation} backup at '${backupPath}' could not be removed`;
+  let manifest = publishedManifest;
+  let invalidationError: string | null = null;
   try {
-    return withPrivilegedSandboxExecutionLease(
-      sandboxName,
-      "OpenClaw config snapshot capture",
-      () => {
-        const result = executePrivilegedSandboxCommand(
-          sandboxName,
-          [
-            "/usr/bin/python3",
-            "-I",
-            "-S",
-            "-c",
-            OPENCLAW_CONFIG_CAPTURE_SCRIPT,
-            OPENCLAW_CONFIG_DIRECTORY,
-            OPENCLAW_CONFIG_NAME,
-          ],
-          {
-            sanitizeEnvironment: true,
-            timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
-            maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
-          },
-        );
-        const protocolFailure = captureFailureProtocol(result.stderr);
-        if (
-          result.status === 2 &&
-          result.signal === null &&
-          !result.error &&
-          protocolFailure === "missing"
-        ) {
-          return { outcome: "missing" };
-        }
-        if (
-          result.status !== 0 ||
-          result.signal !== null ||
-          result.error ||
-          !Buffer.isBuffer(result.stdout)
-        ) {
-          const primaryDetail =
-            result.error?.message ??
-            (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-          const stderrDetail = protocolFailure
-            ? `reason ${protocolFailure}`
-            : captureFailureDiagnostic(result.stderr);
-          const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
-          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
-        }
-        return { outcome: "backed_up", data: result.stdout };
-      },
-    );
+    manifest = sandboxState.markRebuildBackupIncomplete(manifest);
   } catch (error) {
-    return {
-      outcome: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    };
+    invalidationError = error instanceof Error ? error.message : String(error);
+  }
+  const retainedError = invalidationError
+    ? `${cleanupError}; the retained manifest could not be marked incomplete: ${invalidationError}`
+    : cleanupError;
+  return {
+    ...result,
+    manifest,
+    error: result.error ? `${result.error}. ${retainedError}` : retainedError,
+  };
+}
+
+function requireAuthorityBudget(deadlineMs: number | undefined): void {
+  if (deadlineMs !== undefined && deadlineMs <= Date.now()) {
+    throw new Error("provider snapshot authority deadline expired");
   }
 }
 
@@ -230,7 +98,6 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   // Keep the call late-bound so tests and alternative state stores can replace
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
-  captureOpenClawStateFile,
 };
 
 function failure(error: unknown): sandboxState.BackupResult {
@@ -245,12 +112,12 @@ function failure(error: unknown): sandboxState.BackupResult {
   };
 }
 
-function backupStateOnly(
+function backupState(
   dependencies: SnapshotBackupAuthorityDependencies,
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "captureStateFile">,
+  options: sandboxState.BackupOptions,
 ): sandboxState.BackupResult {
-  return options.name === undefined && options.captureStateFile === undefined
+  return Object.keys(options).length === 0
     ? dependencies.backup(sandboxName)
     : dependencies.backup(sandboxName, options);
 }
@@ -268,7 +135,9 @@ function readAuthority(entry: SandboxEntry) {
 function captureManagedAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
+  requireAuthorityBudget(deadlineMs);
   const authority = readAuthority(entry);
   if (!authority) return null;
   const provider = dependencies.requireProvider(entry);
@@ -277,13 +146,15 @@ function captureManagedAuthority(
       `runtime provider '${provider.identity.id}' does not accept the managed workload receipt`,
     );
   }
-  const runtimeSnapshot = dependencies.captureRuntime(provider, entry);
+  const runtimeSnapshot = dependencies.captureRuntime(provider, entry, deadlineMs);
+  requireAuthorityBudget(deadlineMs);
   const workload = authority.receipt;
 
   return {
     runtimeSnapshot,
     workload,
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) {
         throw new Error(`sandbox '${entry.name}' is no longer registered`);
@@ -299,7 +170,8 @@ function captureManagedAuthority(
       ) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      const currentRuntime = dependencies.captureRuntime(currentProvider, current);
+      const currentRuntime = dependencies.captureRuntime(currentProvider, current, deadlineMs);
+      requireAuthorityBudget(deadlineMs);
       if (!isDeepStrictEqual(currentRuntime, runtimeSnapshot)) {
         throw new Error(`sandbox '${entry.name}' runtime changed during backup`);
       }
@@ -310,14 +182,20 @@ function captureManagedAuthority(
 function captureHostLocalInferenceAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): Pick<
   sandboxState.BackupOptions,
   "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "validateBeforePublish"
 > | null {
   const receipt = entry.hostLocalInferenceReceipt;
   if (typeof receipt !== "string") return null;
+  requireAuthorityBudget(deadlineMs);
   const provider = dependencies.requireProvider(entry);
-  const prepared = dependencies.prepareHostLocalInference(provider, entry);
+  const prepared =
+    deadlineMs === undefined
+      ? dependencies.prepareHostLocalInference(provider, entry)
+      : dependencies.prepareHostLocalInference(provider, entry, { deadlineMs });
+  requireAuthorityBudget(deadlineMs);
   if (!prepared) {
     if (entry.hostLocalInferenceProvenance) {
       throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
@@ -330,6 +208,7 @@ function captureHostLocalInferenceAuthority(
       ? { hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance }
       : {}),
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) throw new Error(`sandbox '${entry.name}' is no longer registered`);
       if (current.hostLocalInferenceReceipt !== receipt) {
@@ -346,7 +225,12 @@ function captureHostLocalInferenceAuthority(
       if (currentProvider.identity.id !== provider.identity.id) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      if (deadlineMs === undefined) {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      } else {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared, { deadlineMs });
+      }
+      requireAuthorityBudget(deadlineMs);
     },
   };
 }
@@ -354,9 +238,10 @@ function captureHostLocalInferenceAuthority(
 function captureSnapshotAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
-  const managed = captureManagedAuthority(entry, dependencies);
-  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies);
+  const managed = captureManagedAuthority(entry, dependencies, deadlineMs);
+  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies, deadlineMs);
   if (!managed && !hostLocal) return null;
   return {
     ...(managed?.runtimeSnapshot === undefined ? {} : { runtimeSnapshot: managed.runtimeSnapshot }),
@@ -366,7 +251,9 @@ function captureSnapshotAuthority(
       : { hostLocalInferenceReceipt: hostLocal.hostLocalInferenceReceipt }),
     ...(hostLocal?.hostLocalInferenceProvenance === undefined
       ? {}
-      : { hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance }),
+      : {
+          hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance,
+        }),
     validateBeforePublish: () => {
       managed?.validateBeforePublish?.();
       hostLocal?.validateBeforePublish?.();
@@ -382,30 +269,203 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name"> = {},
-  overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
-    Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
+  optionsOrOverrides: SnapshotBackupControlOptions | SnapshotBackupOverrides,
+  overridesOrStopped?: SnapshotBackupOverrides | PreparedStoppedNativeState,
+  stoppedNativeStateOverride?: PreparedStoppedNativeState,
 ): sandboxState.BackupResult {
+  const legacyCall = "getSandbox" in optionsOrOverrides;
+  let options: sandboxState.BackupOptions = legacyCall ? {} : optionsOrOverrides;
+  const overrides = (
+    legacyCall ? optionsOrOverrides : overridesOrStopped
+  ) as SnapshotBackupOverrides;
+  const stoppedNativeState = legacyCall
+    ? (overridesOrStopped as PreparedStoppedNativeState | undefined)
+    : stoppedNativeStateOverride;
   const dependencies = { ...defaultDependencies, ...overrides };
   const entry = dependencies.getSandbox(sandboxName);
-  if (!entry) return backupStateOnly(dependencies, sandboxName, options);
-
-  const stateFileOptions: Pick<sandboxState.BackupOptions, "captureStateFile"> =
-    !entry.agent || entry.agent === "openclaw"
-      ? {
-          captureStateFile: (request) =>
-            dependencies.captureOpenClawStateFile(sandboxName, request),
-        }
-      : {};
-  const backupOptions = { ...options, ...stateFileOptions };
+  if (!entry) return backupState(dependencies, sandboxName, options);
+  const modelSelectionSnapshot = captureModelSelectionSnapshot(entry);
+  if (modelSelectionSnapshot) options = { ...options, modelSelectionSnapshot };
 
   let authority: SnapshotBackupAuthority | null;
   try {
-    authority = captureSnapshotAuthority(entry, dependencies);
+    authority = captureSnapshotAuthority(entry, dependencies, options.deadlineMs);
   } catch (error) {
     return failure(error);
   }
-  return authority
-    ? dependencies.backup(sandboxName, { ...backupOptions, ...authority })
-    : backupStateOnly(dependencies, sandboxName, backupOptions);
+  if (!stoppedNativeState) {
+    return authority
+      ? backupState(dependencies, sandboxName, { ...options, ...authority })
+      : backupState(dependencies, sandboxName, options);
+  }
+  return dependencies.backup(sandboxName, {
+    ...options,
+    ...(authority ?? {}),
+    nativeStateSource: {
+      root: "/sandbox",
+      directory: stoppedNativeState.nativeDirectory,
+      assertCurrent: stoppedNativeState.assertCurrent,
+    },
+    validateBeforePublish: () => authority?.validateBeforePublish?.(),
+  });
+}
+
+function rejectStoppedState(message: string): never {
+  throw new Error(message);
+}
+
+function makePrivateTreeRemovable(root: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  fs.chmodSync(root, stat.mode | 0o300);
+  for (const name of fs.readdirSync(root)) {
+    const child = path.join(root, name);
+    const childStat = fs.lstatSync(child);
+    if (childStat.isDirectory() && !childStat.isSymbolicLink()) {
+      makePrivateTreeRemovable(child);
+    }
+  }
+}
+
+/** Prepare a private complete native-state copy before inspecting a stopped source. */
+export async function prepareStoppedAgentState(
+  sandboxName: string,
+  getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
+): Promise<PreparedStoppedNativeState | null> {
+  const dependencies = { ...defaultDependencies, getSandbox };
+  const entry = getSandbox(sandboxName);
+  const agentName = entry?.agent ?? "openclaw";
+  if (!entry || (agentName !== "openclaw" && agentName !== "langchain-deepagents-code"))
+    return null;
+  const authority = captureSnapshotAuthority(entry, dependencies);
+  const runtime = authority?.runtimeSnapshot;
+  if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
+  const capture = prepareSandboxStoppedStateCapture(
+    dependencies.requireProvider(entry),
+    entry,
+    runtime,
+    {
+      nativeRoot: "/sandbox",
+      managedStateRoots:
+        authority.workload.kind === "managed-image"
+          ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
+          : [],
+    },
+  );
+  if (!capture) return null;
+  const assertCurrent = (): void => {
+    const current = getSandbox(sandboxName);
+    if (
+      !current ||
+      current.gatewayName !== entry.gatewayName ||
+      current.lifecycleLiveIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint
+    ) {
+      rejectStoppedState("Stopped source registration changed during recovery.");
+    }
+    authority.validateBeforePublish?.();
+    capture.assertCurrent();
+  };
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-state-"));
+  fs.chmodSync(temporary, 0o700);
+  const archivePath = path.join(temporary, "source.tar");
+  const raw = path.join(temporary, "raw");
+  const cleanupOnExit = (): void => {
+    try {
+      makePrivateTreeRemovable(raw);
+      fs.rmSync(temporary, { recursive: true, force: true });
+    } catch {
+      /* private files remain owner-only */
+    }
+  };
+  const dispose = (): void => {
+    makePrivateTreeRemovable(raw);
+    fs.rmSync(temporary, { recursive: true, force: true });
+    process.removeListener("exit", cleanupOnExit);
+  };
+  process.once("exit", cleanupOnExit);
+  try {
+    const descriptor = fs.openSync(archivePath, "wx", 0o600);
+    try {
+      // The provider archive and its extracted private tree coexist until the
+      // archive is validated and removed. Reserve capacity for both copies.
+      const maxBytes = sandboxState.nativeStateCaptureMaxBytes(temporary, undefined, 2);
+      if (maxBytes === 0) {
+        rejectStoppedState("Stopped state capture has no backup-disk space available.");
+      }
+      await capture.capture(descriptor, maxBytes);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const archive = { filePath: archivePath };
+    let unsupported = false;
+    const listingFailure = runTarListing(
+      archive,
+      ["-tvf", "-"],
+      "stopped state inventory",
+      (line) => {
+        if (!["-", "d", "l", "h"].includes(line[0] ?? "")) unsupported = true;
+      },
+    );
+    if (listingFailure || unsupported)
+      rejectStoppedState("Stopped state contains an unsupported archive entry.");
+    fs.mkdirSync(raw, { mode: 0o700 });
+    const validation = sandboxState.validateTarEntries(archive, raw);
+    if (!validation.safe) rejectStoppedState("Stopped state archive failed snapshot validation.");
+    if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
+      rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
+    }
+    if (sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries).length > 0) {
+      rejectStoppedState("Stopped state archive contains an unsafe hard-link extraction layout.");
+    }
+    // This provider-owned stream has already containment-checked hard-link
+    // targets and limited headers to files, directories, and links. Extract
+    // into a new private directory without resolving symlink targets: absolute
+    // and system-targeting links are legitimate native-home content, and tar
+    // must preserve them rather than write through them.
+    const extracted = spawnSync("tar", ["-xf", archivePath, "--no-same-owner", "-C", raw], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+    });
+    if (extracted.status !== 0 || extracted.error || extracted.signal) {
+      rejectStoppedState("Stopped state archive failed snapshot extraction.");
+    }
+    const sourceRoot = fs.lstatSync(raw);
+    if (!sourceRoot.isDirectory() || sourceRoot.isSymbolicLink())
+      rejectStoppedState("Stopped agent native root is not a directory.");
+    fs.chmodSync(raw, 0o700);
+    const agentDirectory = agentName === "openclaw" ? ".openclaw" : ".deepagents";
+    let directory = path.join(raw, agentDirectory);
+    try {
+      const configRoot = fs.lstatSync(directory);
+      if (!configRoot.isDirectory() || configRoot.isSymbolicLink()) {
+        rejectStoppedState("Stopped agent config root is not a directory.");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        rejectStoppedState(error instanceof Error ? error.message : String(error));
+      }
+      directory = path.join(temporary, "empty-agent-config");
+      fs.mkdirSync(directory, { mode: 0o700 });
+    }
+    fs.unlinkSync(archivePath);
+    assertCurrent();
+    return {
+      sandboxName,
+      agentName,
+      nativeDirectory: raw,
+      directory,
+      cleanupDirectory: temporary,
+      assertCurrent,
+      dispose,
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
 }

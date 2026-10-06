@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -280,7 +281,6 @@ async function expectAggregatePublicFetchFailure(
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
-
   it("reduces OpenClaw public-fetch traces without retaining fetched content or URL queries", () => {
     const source = "www.wikidata.org";
     const evidence = reduceOpenClawToolEvidence(
@@ -332,21 +332,46 @@ describe("common-egress agent parsing and classification helpers", () => {
     ).toEqual(evidence);
   });
 
-  it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
+  it("executes the generated reducer script against OpenClaw SQLite session artifacts", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-reducer-"));
     try {
-      const sessionPath = join(directory, "session.jsonl");
-      const trajectoryPath = join(directory, "trajectory.jsonl");
-      writeFileSync(sessionPath, `${publicFetchSessionJsonLines()}\n`);
-      writeFileSync(trajectoryPath, `${publicFetchTrajectory()}\n`);
+      const databasePath = join(directory, "openclaw-agent.sqlite");
+      const database = new DatabaseSync(databasePath);
+      database.exec(`
+        CREATE TABLE transcript_events (
+          session_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          event_json TEXT NOT NULL,
+          PRIMARY KEY (session_id, seq)
+        ) STRICT;
+        CREATE TABLE trajectory_runtime_events (
+          session_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          event_json TEXT NOT NULL,
+          PRIMARY KEY (session_id, seq)
+        ) STRICT;
+      `);
+      const insertTranscript = database.prepare(
+        "INSERT INTO transcript_events (session_id, seq, event_json) VALUES (?, ?, ?)",
+      );
+      const [assistantEvent, toolResultEvent] = publicFetchSessionJsonLines().split("\n");
+      insertTranscript.run("session-under-test", 0, assistantEvent);
+      insertTranscript.run("session-under-test", 1, toolResultEvent);
+      insertTranscript.run("unrelated-session", 0, JSON.stringify({ ignored: true }));
+      database
+        .prepare(
+          "INSERT INTO trajectory_runtime_events (session_id, seq, event_json) VALUES (?, ?, ?)",
+        )
+        .run("session-under-test", 0, publicFetchTrajectory());
+      database.close();
 
       const result = spawnSync(
         process.execPath,
         [
           "-e",
           buildOpenClawToolEvidenceReducerScript(PUBLIC_FETCH_EXPECTATION),
-          sessionPath,
-          trajectoryPath,
+          databasePath,
+          "session-under-test",
         ],
         { encoding: "utf8" },
       );
@@ -1198,7 +1223,8 @@ describe("common-egress agent parsing and classification helpers", () => {
         ...result,
         exitCode: 0,
         reply: "The command is waiting for your approval to execute.",
-        response: "The command is waiting for your approval to execute. Please approve it to proceed.",
+        response:
+          "The command is waiting for your approval to execute. Please approve it to proceed.",
       }),
     ).toEqual({ passed: false, failureClass: "transient-external" });
     expect(classifyHermesAgentAssertion(result)).toEqual({

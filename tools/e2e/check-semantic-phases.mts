@@ -374,6 +374,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "options.progress" },
   ],
   ["test/e2e/fixtures/shell-probe.ts#run", { kind: "path", path: "this.progress" }],
+  [
+    "tools/e2e/dgx-station-cleanup.mts#runStationCleanupCommand",
+    { kind: "path", path: "options.progress" },
+  ],
   ["test/e2e/fixtures/docker-probe.ts#run", { kind: "path", path: "this.progress" }],
   [
     "test/e2e/live/openshell-gateway-auth-source-contract-helpers.ts#runOpenShellGatewayAuthSourceContractScenarioUnchecked",
@@ -392,6 +396,7 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "options.progress" },
   ],
   ["test/e2e/live/ollama-auth-proxy.test.ts#spawnLogged", { kind: "path", path: "progress" }],
+  ["test/e2e/live/gpu-e2e-helpers.ts#startAttachedOllama", { kind: "path", path: "progress" }],
   [
     "test/e2e/live/podman-cpu-lifecycle-helpers.ts#startPinnedGateway",
     { kind: "path", path: "progress" },
@@ -418,6 +423,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
   ],
   [
     "test/e2e/live/dashboard-connect-handoff.ts#runDashboardConnectUntilForwardHandoff",
+    { kind: "path", path: "options.progress" },
+  ],
+  [
+    "test/e2e/fixtures/hermes-acp-live.ts#runHermesAcpLiveScenario",
     { kind: "path", path: "options.progress" },
   ],
 ]);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
@@ -30,7 +31,6 @@ import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
-import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -115,11 +115,13 @@ export type RebuildRecreateOnboardOpts = {
   recreateModel: string | null;
   recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   controlUiPort: number | null;
   targetGatewayName: string;
   targetGatewayPort: number;
+  runtimeSelection?: OpenShellRuntimeSelection;
   onboardLockAlreadyHeld: true;
   deferProcessExit: true;
   /** Target fingerprint of the replacement journal opened before deletion. */
@@ -128,13 +130,16 @@ export type RebuildRecreateOnboardOpts = {
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
-  /** Recorded managed-vLLM intent admitted only by the N1x readiness exception. */
+  /** Recorded provider intent admitted only by the N1x readiness exception. */
   allowDeferredN1xManagedVllm?: true;
+  /** Internal legacy Hermes rebuild authority for the pre-v0.0.97 Station admission rule. */
+  allowLegacyDgxStationQualification?: true;
+  /** Explicit request to replace an eligible Deferred N1x managed-vLLM runtime. */
+  reinstallDeferredN1xManagedVllm?: true;
   /** Target-scoped authority admitted by the authoritative rebuild preflight. */
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   autoYes: boolean;
@@ -154,6 +159,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
+  storedFromImage?: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
@@ -199,6 +205,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     recreateModel: args.sb?.model ?? null,
     recreatePreferredInferenceApi: args.sb?.preferredInferenceApi ?? null,
     fromDockerfile: args.storedFromDockerfile,
+    fromImage: args.storedFromImage ?? null,
     sandboxGpu: gpuOverrides.sandboxGpu,
     sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,
     controlUiPort: managesDashboard ? (dashboardPort ?? null) : null,

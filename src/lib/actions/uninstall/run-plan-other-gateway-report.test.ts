@@ -70,14 +70,14 @@ function withManagedAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   });
 }
 
-function uninstallOutputFor(
+async function uninstallOutputFor(
   registry: string | null,
   liveGatewayNames: readonly string[],
   retainedGatewayPorts: readonly number[] = [],
   env: NodeJS.ProcessEnv = { NO_COLOR: "1" },
   stderrIsTty = false,
   stderrHasColors = stderrIsTty,
-): { logs: string[]; warnings: string[] } {
+): Promise<{ logs: string[]; warnings: string[] }> {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-report-"));
   const logs: string[] = [];
   const warnings: string[] = [];
@@ -93,7 +93,7 @@ function uninstallOutputFor(
     writeRegistry[registry === null ? "absent" : "present"]();
     const gatewayList = JSON.stringify(liveGatewayNames.map((name) => ({ name })));
 
-    runUninstallPlan(
+    await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       withManagedAuthority({
         commandExists: () => true,
@@ -130,8 +130,8 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     ["a live sibling gateway with no registry row", null],
   ] as const)(
     "warns that %s remains after the selected-port uninstall (#8797)",
-    (_scenario, registry) => {
-      const { logs, warnings } = uninstallOutputFor(registry, ["nemoclaw", "nemoclaw-9000"]);
+    async (_scenario, registry) => {
+      const { logs, warnings } = await uninstallOutputFor(registry, ["nemoclaw", "nemoclaw-9000"]);
 
       expect(warnings).toContainEqual(
         expect.stringContaining("⚠ Other NemoClaw gateway-port environments remain on this host"),
@@ -147,23 +147,29 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     },
   );
 
-  it("colors the retained gateway warning only for interactive stderr without NO_COLOR (#8797)", () => {
+  it("colors the retained gateway warning only for interactive stderr without NO_COLOR (#8797)", async () => {
     vi.stubEnv("NO_COLOR", undefined);
-    const { warnings } = uninstallOutputFor(null, ["nemoclaw", "nemoclaw-9000"], [], {}, true);
-    const { warnings: redirectedWarnings } = uninstallOutputFor(
+    const { warnings } = await uninstallOutputFor(
+      null,
+      ["nemoclaw", "nemoclaw-9000"],
+      [],
+      {},
+      true,
+    );
+    const { warnings: redirectedWarnings } = await uninstallOutputFor(
       null,
       ["nemoclaw", "nemoclaw-9000"],
       [],
       {},
     );
-    const { warnings: noColorWarnings } = uninstallOutputFor(
+    const { warnings: noColorWarnings } = await uninstallOutputFor(
       null,
       ["nemoclaw", "nemoclaw-9000"],
       [],
       { NO_COLOR: "" },
       true,
     );
-    const { warnings: unsupportedColorWarnings } = uninstallOutputFor(
+    const { warnings: unsupportedColorWarnings } = await uninstallOutputFor(
       null,
       ["nemoclaw", "nemoclaw-9000"],
       [],
@@ -189,8 +195,8 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     expect(unsupportedColorWarnings).not.toContainEqual(expect.stringContaining("\x1b[33m"));
   });
 
-  it("stays silent about other gateway ports when this host has none", () => {
-    const { logs, warnings } = uninstallOutputFor(null, ["nemoclaw"]);
+  it("stays silent about other gateway ports when this host has none", async () => {
+    const { logs, warnings } = await uninstallOutputFor(null, ["nemoclaw"]);
 
     expect(logs).not.toContainEqual(
       expect.stringContaining("gateway-port environments remain on this host"),
@@ -202,8 +208,8 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     expect(warnings).not.toContainEqual(expect.stringContaining("--all-gateway-ports"));
   });
 
-  it("keeps shared host resources for a failed sweep port whose gateway is already gone (#7791)", () => {
-    const { logs, warnings } = uninstallOutputFor(null, ["nemoclaw"], [9000]);
+  it("keeps shared host resources for a failed sweep port whose gateway is already gone (#7791)", async () => {
+    const { logs, warnings } = await uninstallOutputFor(null, ["nemoclaw"], [9000]);
 
     expect(warnings).toContainEqual("  · gateway 'nemoclaw-9000' on port 9000");
     expect(logs).toContainEqual(
@@ -214,9 +220,9 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     );
   });
 
-  it("returns nonzero when the orphan gateway-process scan cannot run", () => {
+  it("returns nonzero when the orphan gateway-process scan cannot run", async () => {
     const errors: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
       withManagedAuthority({
         commandExists: (command) => command === "openshell",

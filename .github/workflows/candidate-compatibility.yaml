@@ -57,7 +57,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - id: identity
         name: Resolve official candidate provenance
@@ -73,7 +76,7 @@ jobs:
           nemoclaw_sha="$(git -C candidate-source rev-parse --verify HEAD^{commit})"
           [[ "$nemoclaw_sha" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::NemoClaw ref did not resolve to a full commit SHA"; exit 1; }
           [[ -z "$(git -C candidate-source status --short --untracked-files=no)" ]] || { echo "::error::checkout is not clean before candidate resolution"; exit 1; }
-          node --experimental-strip-types controller/tools/candidate-compat.mts resolve \
+          node controller/tools/candidate-compat.mts resolve \
             --nemoclaw-sha "$nemoclaw_sha" \
             --component "$COMPONENT" \
             --candidate "$CANDIDATE" \
@@ -89,7 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --experimental-strip-types controller/tools/candidate-compat.mts plan \
+          node controller/tools/candidate-compat.mts plan \
             --component "$COMPONENT" \
             --e2e-workflow candidate-source/.github/workflows/e2e.yaml \
             --e2e-registry candidate-source/test/e2e/registry/definitions/baseline.ts \
@@ -142,9 +145,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: candidate-source/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source
@@ -165,7 +171,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --experimental-strip-types controller/tools/candidate-compat.mts materialize \
+          node controller/tools/candidate-compat.mts materialize \
             --receipt candidate-input/candidate-receipt.json \
             --resolution-id "$RESOLUTION_ID" \
             --directory "${RUNNER_TEMP}/candidate-runtime" \
@@ -212,7 +218,7 @@ jobs:
           set -euo pipefail
           mkdir -p candidate-results
           if [[ "$CANDIDATE_OUTCOME" == success && "$LANE_OUTCOME" == success ]]; then
-            node --experimental-strip-types controller/tools/candidate-compat.mts verify-invocations \
+            node controller/tools/candidate-compat.mts verify-invocations \
               --receipt candidate-input/candidate-receipt.json \
               --resolution-id "$RESOLUTION_ID" \
               --log "$NEMOCLAW_CANDIDATE_INVOCATION_LOG" \
@@ -270,9 +276,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: candidate-source/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source
@@ -291,7 +300,7 @@ jobs:
           RESOLUTION_ID: ${{ needs.resolve.outputs.resolution_id }}
         run: |
           set -euo pipefail
-          node --experimental-strip-types controller/tools/candidate-compat.mts materialize \
+          node controller/tools/candidate-compat.mts materialize \
             --receipt candidate-input/candidate-receipt.json \
             --resolution-id "$RESOLUTION_ID" \
             --directory "${RUNNER_TEMP}/candidate-runtime" \
@@ -304,7 +313,7 @@ jobs:
         continue-on-error: true
         working-directory: candidate-source
         env:
-          DOCKER_GRPC_PROBE_IMAGE: node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+          DOCKER_GRPC_PROBE_IMAGE: node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract
           E2E_JOB: "1"
           E2E_TARGET_ID: openshell-gateway-auth-contract
@@ -331,7 +340,7 @@ jobs:
           mkdir -p candidate-results
           lane=live:openshell-gateway-auth-contract
           if [[ "$CANDIDATE_OUTCOME" == success && "$LANE_OUTCOME" == success ]]; then
-            node --experimental-strip-types controller/tools/candidate-compat.mts verify-invocations \
+            node controller/tools/candidate-compat.mts verify-invocations \
               --receipt candidate-input/candidate-receipt.json \
               --resolution-id "$RESOLUTION_ID" \
               --log "$NEMOCLAW_CANDIDATE_INVOCATION_LOG" \
@@ -353,7 +362,7 @@ jobs:
         if: ${{ always() }}
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract
-        run: node --experimental-strip-types --no-warnings controller/tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"
+        run: node --no-warnings controller/tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"
 
       - name: Upload live evidence
         if: ${{ always() }}
@@ -415,7 +424,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --experimental-strip-types controller/tools/candidate-compat.mts finalize \
+          node controller/tools/candidate-compat.mts finalize \
             --receipt candidate-input/candidate-receipt.json \
             --resolution-id "$RESOLUTION_ID" \
             --plan candidate-input/candidate-plan.json \

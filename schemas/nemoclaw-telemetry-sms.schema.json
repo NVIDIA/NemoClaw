@@ -1,0 +1,2571 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "schemaMeta": {
+    "schemaVersion": "2.2",
+    "clientId": "2247027956751513",
+    "clientName": "NemoClaw",
+    "definitionVersion": "2.0",
+    "personalization": "anonymous"
+  },
+  "description": "Approved NemoClaw operation and configuration observations with public categories, host fields, approximate location, and field status. Production approval remains separate.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/events/nemoclaw_install_completed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_configuration_completed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_sandbox_count_observed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_agent_runtime_observed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_managed_agent_version_observed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_model_observed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_messaging_observed"
+    },
+    {
+      "$ref": "#/definitions/events/nemoclaw_configuration_observed"
+    }
+  ],
+  "definitions": {
+    "types": {},
+    "events": {
+      "nemoclaw_install_completed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Measure completed operations with approved public dimensions and no entity identifiers or user content. Consent and collection approval remain required."
+          }
+        },
+        "description": "A NemoClaw install or update completed successfully; configuration is not inferred from unrelated state.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "install",
+              "update"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "operation"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt"
+        ]
+      },
+      "nemoclaw_configuration_completed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Measure approved committed configuration and approximate location without entity identifiers, private values, or user content. Activation remains separate."
+          }
+        },
+        "description": "One committed primary or published configuration observation, not an install count or unique environment.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "primary_configuration",
+              "published_configuration"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "openclaw",
+              "hermes",
+              "langchain-deepagents-code",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "Qwen/Qwen3.6-27B-FP8",
+              "nvidia/nemotron-3-ultra-550b-a55b",
+              "nvidia/nvidia/nemotron-3-ultra",
+              "deepseek-ai/DeepSeek-V4-Flash",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "nvidia",
+              "openai",
+              "anthropic",
+              "google-gemini",
+              "openrouter",
+              "hermes",
+              "ollama",
+              "vllm",
+              "llama-cpp",
+              "compatible-endpoint",
+              "custom",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "anthropic-messages",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "linux",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "docker",
+              "podman",
+              "kubernetes",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "not_configured",
+              "configured_unverified",
+              "verified",
+              "failed",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "true",
+              "false",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "true",
+              "false",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "managed",
+              "custom",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "restricted",
+              "balanced",
+              "open",
+              "personal",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "reported",
+              "not_observed",
+              "not_persisted",
+              "invalid"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "reported",
+              "not_observed",
+              "invalid"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt"
+        ]
+      },
+      "nemoclaw_sandbox_count_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Count published environment registrations without identifiers. Activation remains separate."
+          }
+        },
+        "description": "The published environment count in one complete snapshot; zero is valid.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "count"
+        ]
+      },
+      "nemoclaw_agent_runtime_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Count recorded configured agent runtime categories without identifiers. Activation remains separate."
+          }
+        },
+        "description": "A nonzero count of recorded configured agents using one approved runtime category.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "agent_runtime": {
+            "enum": [
+              "openclaw",
+              "hermes",
+              "langchain-deepagents-code",
+              "other"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "agent_runtime",
+          "count"
+        ]
+      },
+      "nemoclaw_managed_agent_version_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Count approved managed-agent version categories without raw custom versions. Activation remains separate."
+          }
+        },
+        "description": "A nonzero managed-agent version count from valid product-owned workload provenance.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "agent_runtime": {
+            "enum": [
+              "openclaw",
+              "hermes",
+              "langchain-deepagents-code",
+              "other"
+            ],
+            "type": "string"
+          },
+          "managed_agent_version": {
+            "enum": [
+              "2026.9.2",
+              "0.21.3",
+              "0.1.55",
+              "other"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "agent_runtime",
+          "managed_agent_version",
+          "count"
+        ]
+      },
+      "nemoclaw_model_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Count recorded agent-route assignments using approved public model, provider, API, and selection categories. Activation remains separate."
+          }
+        },
+        "description": "A nonzero recorded primary-route assignment count, not inference activity or a unique route count.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "Qwen/Qwen3.6-27B-FP8",
+              "nvidia/nemotron-3-ultra-550b-a55b",
+              "nvidia/nvidia/nemotron-3-ultra",
+              "deepseek-ai/DeepSeek-V4-Flash",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "nvidia",
+              "openai",
+              "anthropic",
+              "google-gemini",
+              "openrouter",
+              "hermes",
+              "ollama",
+              "vllm",
+              "llama-cpp",
+              "compatible-endpoint",
+              "custom",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "anthropic-messages",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "model_source": {
+            "enum": [
+              "product_catalog",
+              "provider_catalog",
+              "custom",
+              "local",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "known_model_key": {
+            "enum": [
+              "qwen3_6_27b_fp8",
+              "nemotron3_ultra_550b_a55b",
+              "nemotron3_ultra",
+              "deepseek_v4_flash",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "provider_profile": {
+            "enum": [
+              "nvidia",
+              "openai",
+              "anthropic",
+              "google-gemini",
+              "openrouter",
+              "hermes",
+              "ollama",
+              "vllm",
+              "llama-cpp",
+              "compatible-endpoint",
+              "custom",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "api_family": {
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "anthropic-messages",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "model_source",
+          "known_model_key",
+          "provider_profile",
+          "api_family",
+          "count"
+        ]
+      },
+      "nemoclaw_messaging_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Count configured messaging categories without credentials, identities, or messages. Activation remains separate."
+          }
+        },
+        "description": "A nonzero count of published environments with one configured channel category, deduplicated per environment.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "messaging_channel": {
+            "enum": [
+              "telegram",
+              "discord",
+              "wechat",
+              "slack",
+              "whatsapp",
+              "teams",
+              "googlechat",
+              "other"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "messaging_channel",
+          "count"
+        ]
+      },
+      "nemoclaw_configuration_observed": {
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Measure closed host-platform and recorded sandbox-configuration categories without private inventory. Activation remains separate."
+          }
+        },
+        "description": "One host-platform observation or a nonzero sandbox-signal count from a complete snapshot.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": [
+              "nemoclaw"
+            ]
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})(?![\\s\\S])"
+          },
+          "operation": {
+            "enum": [
+              "onboard",
+              "inference_set",
+              "destroy",
+              "clone",
+              "restore",
+              "rebuild",
+              "recovery",
+              "messaging_add",
+              "messaging_remove"
+            ],
+            "type": "string"
+          },
+          "configurationScope": {
+            "enum": [
+              "aggregate"
+            ],
+            "type": "string"
+          },
+          "hostOS": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "other",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostContext": {
+            "enum": [
+              "native",
+              "wsl",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "hostArch": {
+            "enum": [
+              "arm",
+              "arm64",
+              "ia32",
+              "loong64",
+              "mips",
+              "mipsel",
+              "ppc",
+              "ppc64",
+              "riscv64",
+              "s390",
+              "s390x",
+              "x64",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "agentHarnessStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "modelId": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "modelStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "providerProfile": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "apiFamily": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOS": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "sandboxOSStatus": {
+            "enum": [
+              "reported",
+              "unapproved",
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "computeDriver": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "gpuState": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "webSearchEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observabilityEnabled": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "imageOwnership": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTier": {
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "policyTierStatus": {
+            "enum": [
+              "not_persisted"
+            ],
+            "type": "string"
+          },
+          "configuredMessagingChannels": {
+            "type": "array",
+            "maxItems": 0,
+            "items": {
+              "enum": [
+                "telegram",
+                "discord",
+                "wechat",
+                "slack",
+                "whatsapp",
+                "teams",
+                "googlechat",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "messagingStatus": {
+            "enum": [
+              "not_observed"
+            ],
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^(?:[A-Z]{2})?(?![\\s\\S])"
+          },
+          "countryName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "regionName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "cityName": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 96,
+            "pattern": "^(?:[\\p{L}\\p{M}\\p{N}.,'()’\\-](?:[\\p{L}\\p{M}\\p{N} .,'()’\\-]*[\\p{L}\\p{M}\\p{N}.,'()’\\-])?)?(?![\\s\\S])"
+          },
+          "locationSource": {
+            "enum": [
+              "none",
+              "approved_network_origin",
+              "approved_deployment"
+            ],
+            "type": "string"
+          },
+          "locationStatus": {
+            "enum": [
+              "not_configured",
+              "unavailable",
+              "partial",
+              "reported"
+            ],
+            "type": "string"
+          },
+          "locationPrecision": {
+            "enum": [
+              "none",
+              "country",
+              "region",
+              "city"
+            ],
+            "type": "string"
+          },
+          "locationObservedAt": {
+            "type": "string",
+            "pattern": "^(?:\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z)?(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "scope": {
+            "enum": [
+              "host",
+              "sandbox"
+            ],
+            "type": "string"
+          },
+          "signal": {
+            "enum": [
+              "host_platform",
+              "compute_driver",
+              "gpu_state",
+              "web_search_enabled",
+              "observability_enabled",
+              "image_ownership",
+              "policy_tier"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "enum": [
+              "linux",
+              "wsl",
+              "macos",
+              "other",
+              "unknown",
+              "docker",
+              "podman",
+              "kubernetes",
+              "not_configured",
+              "configured_unverified",
+              "verified",
+              "failed",
+              "true",
+              "false",
+              "managed",
+              "custom",
+              "restricted",
+              "balanced",
+              "open",
+              "personal"
+            ]
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "testLabel",
+          "operation",
+          "configurationScope",
+          "hostOS",
+          "hostContext",
+          "hostArch",
+          "agentHarnessId",
+          "agentHarnessStatus",
+          "modelId",
+          "modelStatus",
+          "providerProfile",
+          "apiFamily",
+          "sandboxOS",
+          "sandboxOSStatus",
+          "computeDriver",
+          "gpuState",
+          "webSearchEnabled",
+          "observabilityEnabled",
+          "imageOwnership",
+          "policyTier",
+          "policyTierStatus",
+          "configuredMessagingChannels",
+          "messagingStatus",
+          "countryCode",
+          "countryName",
+          "regionName",
+          "cityName",
+          "locationSource",
+          "locationStatus",
+          "locationPrecision",
+          "locationObservedAt",
+          "scope",
+          "signal",
+          "value",
+          "count"
+        ]
+      }
+    }
+  }
+}

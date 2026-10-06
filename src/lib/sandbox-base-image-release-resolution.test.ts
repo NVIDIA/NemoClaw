@@ -231,8 +231,12 @@ describe("sandbox base-image release resolution", () => {
       suppressOutput: true,
     });
     expect(dockerMocks.pull).toHaveBeenCalledTimes(1);
-    expect(state.validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
-    expect(state.validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
+    expect(state.validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF, {
+      source: "version-tag",
+    });
+    expect(state.validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF, {
+      source: "version-tag",
+    });
     expect(dockerMocks.build).toHaveBeenCalledTimes(1);
   });
 

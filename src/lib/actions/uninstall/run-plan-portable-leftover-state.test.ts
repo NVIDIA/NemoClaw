@@ -54,7 +54,7 @@ function scope(prefix: string) {
 
 function deps(host: ReturnType<typeof scope>): UninstallRunDeps {
   return {
-    commandExists: (command) => command === "openshell",
+    commandExists: (command) => command === "openshell" || command === "docker",
     env: { HOME: host.homeDir },
     hasPortableRuntimeCleanup,
     isTty: false,
@@ -89,8 +89,8 @@ function deps(host: ReturnType<typeof scope>): UninstallRunDeps {
   };
 }
 
-function uninstall(host: ReturnType<typeof scope>, destroyUserData = false) {
-  return runUninstallPlanBase(
+async function uninstall(host: ReturnType<typeof scope>, destroyUserData = false) {
+  return await runUninstallPlanBase(
     { assumeYes: true, deleteModels: false, destroyUserData, keepOpenShell: false },
     withSuccessfulPreUninstallBackup(deps(host)),
   );

@@ -11,6 +11,7 @@
  * registry list. The diagnostic below has to fail loud for paired-but-idle.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
@@ -34,36 +35,31 @@ import {
 import { createBuiltInMessagingHookRegistry } from "../../messaging/hooks";
 import {
   readChannelHealthOutputs,
-  runMessagingStatusHooks,
+  runMessagingStatusHooksAsync,
 } from "../../messaging/hooks/status-runner";
 import * as policies from "../../policy";
 import * as registry from "../../state/registry";
 import { buildConfigStatusSignals } from "./channel-status-config";
 
-// runner.ts (which process-recovery transitively depends on) uses a few CJS
-// `require()` calls that vitest's CLI-test project cannot resolve at import
-// time. The default in-sandbox exec implementation lives in this lazy loader
-// so unit tests can inject an `execSandbox` mock without pulling the runner.
-function loadProcessRecovery(): typeof import("./process-recovery") {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("./process-recovery") as typeof import("./process-recovery");
+// Resolve the default native transport only when callers do not inject an executor.
+function loadCommandTransport(): typeof import("../../adapters/sandbox/command-transport") {
+  return require("../../adapters/sandbox/command-transport") as typeof import("../../adapters/sandbox/command-transport");
 }
 
 type ExecRunner = (
   sandboxName: string,
   command: string,
   timeoutMs?: number,
-) => {
-  status: number;
-  stdout: string;
-  stderr: string;
-} | null;
+) => Promise<{ status: number; stdout: string; stderr: string } | null>;
 
 type StatusDeps = {
   loadAgent?: (name: string) => AgentDefinition;
   getSandbox?: typeof registry.getSandbox;
-  getAppliedPresets?: (sandboxName: string) => string[];
-  getGatewayPresets?: (sandboxName: string, timeoutMs?: number) => string[] | null;
+  getAppliedPresets?: (sandboxName: string, timeoutMs?: number) => string[] | Promise<string[]>;
+  getGatewayPresets?: (
+    sandboxName: string,
+    timeoutMs?: number,
+  ) => string[] | null | Promise<string[] | null>;
   execSandbox?: ExecRunner;
   now?: () => Date;
   nowMs?: () => number;
@@ -153,12 +149,22 @@ function severityLabel(severity: DiagnosticSeverity): string {
   }
 }
 
-function defaultExec(
+async function defaultExec(
   sandboxName: string,
   command: string,
   timeoutMs?: number,
-): { status: number; stdout: string; stderr: string } | null {
-  return loadProcessRecovery().executeSandboxExecCommand(sandboxName, command, timeoutMs);
+): Promise<{ status: number; stdout: string; stderr: string } | null> {
+  try {
+    return await loadCommandTransport().executeSandboxExecCommand(
+      sandboxName,
+      command,
+      timeoutMs,
+      {},
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
+  }
 }
 
 function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {
@@ -293,18 +299,18 @@ export function exitCodeFor(report: ChannelStatusReport): number {
   return 0;
 }
 
-function buildBasicChannelReport(
+async function buildBasicChannelReport(
   sandboxName: string,
   channelName: string,
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
   options: { readonly includeDeepDiagnostics?: boolean; readonly channelPaused?: boolean } = {},
-): ChannelStatusBasicReport {
+): Promise<ChannelStatusBasicReport> {
   const entry = deps.getSandbox(sandboxName);
   const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
   const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
-  const appliedPresets = deps.getAppliedPresets(sandboxName);
+  const appliedPresets = await deps.getAppliedPresets(sandboxName);
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
   const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
@@ -331,7 +337,7 @@ function buildBasicChannelReport(
       : `run \`${CLI_NAME} ${sandboxName} policy add ${policyPresets[0]}\``,
   });
   if (enabled) {
-    signals.push(...buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps));
+    signals.push(...(await buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps)));
   }
   if (diagnostic.deepProbe !== undefined) {
     // Channel has a deep probe this path does not run: the summary view never
@@ -418,25 +424,25 @@ function channelHealthStatusHook(channelName: string, agent: AgentDefinition) {
 // with no breadcrumb producer for the requested agent (e.g. Hermes
 // telegram), so the caller falls back to the basic report when no health
 // output is returned.
-function runChannelHealthHook(
+async function runChannelHealthHook(
   sandboxName: string,
   channelName: string,
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
   probeTimeoutMs?: number,
-): ChannelHealthReport | undefined {
+): Promise<ChannelHealthReport | undefined> {
   const entry = deps.getSandbox(sandboxName);
   const channelEnabledInRegistry = registry
     .getConfiguredMessagingChannelsFromEntry(entry)
     .includes(channelName);
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
-  const appliedPresets = deps.getAppliedPresets(sandboxName);
+  const appliedPresets = await deps.getAppliedPresets(sandboxName);
   const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
   let presetOnGateway: boolean | null = null;
   try {
-    const gatewayPresets = deps.getGatewayPresets(sandboxName);
+    const gatewayPresets = await deps.getGatewayPresets(sandboxName);
     presetOnGateway =
       gatewayPresets === null
         ? null
@@ -445,13 +451,19 @@ function runChannelHealthHook(
     presetOnGateway = null;
   }
 
-  const results = runMessagingStatusHooks({
+  const results = await runMessagingStatusHooksAsync({
     agent: agent.name === "hermes" ? "hermes" : "openclaw",
     channels: new Set([channelName]),
     currentSandbox: sandboxName,
     hookRegistry: createBuiltInMessagingHookRegistry({
       statusHealth: {
-        executeSandboxCommand: deps.execSandbox,
+        executeSandboxCommand: async (...args) => {
+          try {
+            return await deps.execSandbox(...args);
+          } catch {
+            return null;
+          }
+        },
         timeoutMs: probeTimeoutMs,
       },
     }),
@@ -467,7 +479,7 @@ function runChannelHealthHook(
   return results.flatMap(readChannelHealthOutputs)[0];
 }
 
-function collectChannelReport(
+async function collectChannelReport(
   sandboxName: string,
   channelName: string,
   agent: AgentDefinition,
@@ -475,7 +487,7 @@ function collectChannelReport(
   diagnostic: MessagingChannelDiagnosticSpec,
   hasHealthHook: boolean,
   deadlineMs?: number,
-): ChannelStatusSingleReport {
+): Promise<ChannelStatusSingleReport> {
   const collectionDeps = deadlineMs === undefined ? deps : withStatusDeadline(deps, deadlineMs);
   const probeTimeoutMs =
     deadlineMs === undefined
@@ -487,7 +499,7 @@ function collectChannelReport(
   const channelIsPaused = disabledChannels.has(channelName);
   const healthReport =
     hasHealthHook && !channelIsPaused
-      ? runChannelHealthHook(
+      ? await runChannelHealthHook(
           sandboxName,
           channelName,
           agent,
@@ -497,7 +509,7 @@ function collectChannelReport(
         )
       : undefined;
   if (!healthReport) {
-    const basicReport = buildBasicChannelReport(
+    const basicReport = await buildBasicChannelReport(
       sandboxName,
       channelName,
       agent,
@@ -521,7 +533,7 @@ function collectChannelReport(
       },
     };
   }
-  const configSignals = buildConfigStatusSignals(
+  const configSignals = await buildConfigStatusSignals(
     sandboxName,
     channelName,
     collectionDeps.getSandbox(sandboxName),
@@ -544,13 +556,28 @@ function withStatusDeadline(deps: Required<StatusDeps>, deadlineMs: number): Req
   };
   return {
     ...deps,
-    getGatewayPresets: (sandboxName, requestedTimeoutMs) => {
+    getAppliedPresets: async (sandboxName, requestedTimeoutMs) => {
       const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
-      return timeoutMs === null ? null : deps.getGatewayPresets(sandboxName, timeoutMs);
+      if (timeoutMs === null) return [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          deps.getAppliedPresets(sandboxName, timeoutMs),
+          new Promise<string[]>((resolve) => {
+            timer = setTimeout(() => resolve([]), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
-    execSandbox: (sandboxName, command, requestedTimeoutMs) => {
+    getGatewayPresets: async (sandboxName, requestedTimeoutMs) => {
       const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
-      return timeoutMs === null ? null : deps.execSandbox(sandboxName, command, timeoutMs);
+      return timeoutMs === null ? null : await deps.getGatewayPresets(sandboxName, timeoutMs);
+    },
+    execSandbox: async (sandboxName, command, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : await deps.execSandbox(sandboxName, command, timeoutMs);
     },
   };
 }
@@ -559,7 +586,7 @@ async function waitForChannelReadiness(
   sandboxName: string,
   channelName: string,
   readinessSupported: boolean,
-  collect: (deadlineMs?: number) => ChannelStatusSingleReport,
+  collect: (deadlineMs?: number) => Promise<ChannelStatusSingleReport>,
   options: ChannelStatusOptions,
   deps: Required<StatusDeps>,
 ): Promise<ChannelStatusWaitReport> {
@@ -591,7 +618,7 @@ async function waitForChannelReadiness(
     };
 
   let attempts = 1;
-  let status = collect(deadlineMs);
+  let status = await collect(deadlineMs);
   let lastObserved = readReadiness(status);
   let elapsedMs = Math.max(0, deps.nowMs() - startedAt);
   while (lastObserved.state === "waiting" && elapsedMs < timeoutMs) {
@@ -599,12 +626,14 @@ async function waitForChannelReadiness(
     elapsedMs = Math.max(0, deps.nowMs() - startedAt);
     if (elapsedMs >= timeoutMs) break;
     attempts += 1;
-    status = collect(deadlineMs);
+    status = await collect(deadlineMs);
     lastObserved = readReadiness(status);
     elapsedMs = Math.max(0, deps.nowMs() - startedAt);
   }
   const state: ChannelStatusWaitState =
-    lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
+    lastObserved.state === "waiting" || (elapsedMs >= timeoutMs && lastObserved.state !== "ready")
+      ? "timeout"
+      : lastObserved.state;
   return {
     schemaVersion: 1,
     sandbox: sandboxName,
@@ -657,18 +686,21 @@ export async function showSandboxChannelStatus(
   const agent = deps.loadAgent(entry.agent || "openclaw");
 
   if (!channelArg) {
-    const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(entry);
+    const channels: ChannelStatusSingleReport[] = [];
+    for (const channelName of registry.getConfiguredMessagingChannelsFromEntry(entry)) {
+      const diagnostic = getChannelStatusDiagnostic(channelName);
+      channels.push(
+        diagnostic
+          ? await buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {
+              includeDeepDiagnostics: false,
+            })
+          : buildUnknownConfiguredChannelReport(sandboxName, channelName),
+      );
+    }
     const report: ChannelStatusReport = {
       schemaVersion: 1,
       sandbox: sandboxName,
-      channels: configuredChannels.map((channelName) => {
-        const diagnostic = getChannelStatusDiagnostic(channelName);
-        return diagnostic
-          ? buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {
-              includeDeepDiagnostics: false,
-            })
-          : buildUnknownConfiguredChannelReport(sandboxName, channelName);
-      }),
+      channels,
     };
     if (!(asJson && quietJson)) {
       renderReport(report, asJson, deps);
@@ -714,7 +746,7 @@ export async function showSandboxChannelStatus(
         options,
         deps,
       )
-    : collect();
+    : await collect();
 
   if (!(asJson && quietJson)) {
     renderReport(report, asJson, deps);

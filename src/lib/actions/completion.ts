@@ -253,7 +253,7 @@ typeset -ga ${cache}
 
 _${id}_load_sandboxes() {
   if (( ! ${loaded} )); then
-    ${cache}=("\${(@f)\"$(${bin} completion --list-sandbox-names 2>/dev/null)\"}")
+    ${cache}=("\${(@f)"$(${bin} completion --list-sandbox-names 2>/dev/null)"}")
     ${loaded}=1
   fi
 }

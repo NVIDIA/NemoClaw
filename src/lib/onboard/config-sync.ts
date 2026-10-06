@@ -2,64 +2,82 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ProviderSelectionConfig } from "../inference/config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
-  runConnectScript: (sandboxName: string, scriptContent: string) => void;
+  runConnectScript: (sandboxName: string, scriptContent: string) => Promise<void>;
+  managedProfileApplied?: boolean;
 }
 
 export interface NemoClawConfigSyncDeps {
   getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
-  run(argv: string[], options: Record<string, unknown>): unknown;
-  openshellArgv(args: string[]): string[];
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
 }
 
 const skipSandboxIdentityRevalidation = (_operation: string): void => undefined;
 
 export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
-  return function syncNemoClawConfigInSandbox(
+  return async function syncNemoClawConfigInSandbox(
     sandboxName: string,
     provider: string,
     model: string,
     revalidateSandboxIdentity: (operation: string) => void = skipSandboxIdentityRevalidation,
-  ): void {
-    runSandboxConfigSync(sandboxName, {
+    managedProfileApplied = false,
+  ): Promise<void> {
+    await runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
-      runConnectScript: (name, scriptContent) => {
+      managedProfileApplied,
+      runConnectScript: async (name, scriptContent) => {
         revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
-        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(name)), {
-          stdio: ["pipe", "ignore", "inherit"],
+        const result = await deps.sandboxCommandExecutor.runBuffered({
+          sandboxName: name,
+          target: selectedOpenShellGateway(),
+          command: ["/bin/bash", "-s"],
+          tty: false,
           input: scriptContent,
         });
+        if (result.stderr) process.stderr.write(result.stderr);
+        if (result.outcome.kind === "failed") throw new Error(result.outcome.error.message);
+        if (result.outcome.exitCode !== 0) {
+          throw new Error(`OpenShell command failed (exit ${String(result.outcome.exitCode)})`);
+        }
       },
     });
   };
 }
 
-/** Run config sync without allocating the interactive sandbox terminal transport. */
-export function sandboxConfigSyncArgs(sandboxName: string): string[] {
-  return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "/bin/bash", "-s"];
-}
-
-// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
-// inside the sandbox. Idempotent — safe to invoke from the rebuild resume
-// path where the Dockerfile leaves config.json as a zero-byte placeholder
+// Write `~/.nemoclaw/config.json` inside the sandbox and initialize managed-profile
+// session state when needed. Also replace the historical zero-byte placeholder
 // that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
-export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
+export async function runSandboxConfigSync(
+  sandboxName: string,
+  deps: RunSandboxConfigSyncDeps,
+): Promise<void> {
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
-  const script = buildSandboxConfigSyncScript(sandboxConfig);
-  deps.runConnectScript(sandboxName, script);
+  const script = buildSandboxConfigSyncScript(sandboxConfig, deps.managedProfileApplied === true);
+  await deps.runConnectScript(sandboxName, script);
 }
 
-export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // Do not rewrite openclaw.json at runtime. Model routing is handled by the
-  // host-side gateway (`openshell inference set` in Step 5), not from inside
-  // the sandbox. We write the NemoClaw selection config and normalize the
-  // mutable-default OpenClaw config permissions after the gateway has had a
-  // chance to perform its own startup initialization.
-  return `
+export function buildSandboxConfigSyncScript(
+  selectionConfig: ProviderSelectionConfig & { agent?: string; onboardedAt?: string },
+  managedProfileApplied = false,
+): string {
+  // Record onboarding intent for reuse comparisons, not OpenClaw runtime routing.
+  // Native OpenClaw edits never flow back into this selection record.
+  const metadata =
+    !selectionConfig.agent || selectionConfig.agent === "openclaw"
+      ? {
+          profile: selectionConfig.profile,
+          provider: selectionConfig.provider,
+          model: selectionConfig.model,
+          onboardedAt: selectionConfig.onboardedAt,
+        }
+      : selectionConfig;
+  const writeSelection = `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
 # The managed gateway always reads its NemoClaw state from /sandbox.
@@ -72,19 +90,31 @@ if [ -n "$nemoclaw_dir_uid" ] && [ "$nemoclaw_dir_uid" = "$current_uid" ]; then
   chmod 700 "$nemoclaw_dir"
 fi
 cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
+${JSON.stringify(metadata, null, 2)}
 EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
+`.trim();
+  // Retained Hermes sandboxes can contain an unrelated .openclaw directory.
+  if (selectionConfig.agent === "hermes") return writeSelection;
+  if (!managedProfileApplied) return writeSelection;
+  return `${writeSelection}
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-    find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chmod 2770 "$config_dir" 2>/dev/null || true
-    chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+  current_uid="$(id -u)"
+  config_dir_uid="$(stat -c '%u' "$config_dir" 2>/dev/null || echo '')"
+  if [ -L "$config_dir" ] || [ "$config_dir_uid" != "$current_uid" ]; then
+    echo "Refusing managed OpenClaw state initialization through an unowned directory" >&2
+    exit 1
   fi
+  for state_path in "$config_dir/agents" "$config_dir/agents/main" "$config_dir/agents/main/sessions"; do
+    if [ -L "$state_path" ]; then
+      echo "Refusing managed OpenClaw session initialization through a symlink" >&2
+      exit 1
+    fi
+  done
+  umask 077
+  mkdir -p "$config_dir/agents/main/sessions"
+  chmod 700 "$config_dir/agents" "$config_dir/agents/main" "$config_dir/agents/main/sessions"
 fi
-exit
-`.trim();
+exit`;
 }

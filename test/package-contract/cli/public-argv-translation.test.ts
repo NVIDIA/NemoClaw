@@ -99,24 +99,24 @@ describe("public route/display separation", () => {
     { verb: "get", args: ["--raw"] },
     { verb: "list", args: [] },
     { verb: "remove", args: ["github", "--yes"] },
-  ])("routes canonical and legacy policy $verb spellings to the same command (#7178)", ({
-    verb,
-    args,
-  }) => {
-    const commandId = `sandbox:policy:${verb}`;
-    const expectedArgs = ["alpha", ...args];
-    expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
-    expectNative(
-      translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
-      commandId,
-      expectedArgs,
-    );
-    expectNative(
-      translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
-      commandId,
-      expectedArgs,
-    );
-  });
+  ])(
+    "routes canonical and legacy policy $verb spellings to the same command (#7178)",
+    ({ verb, args }) => {
+      const commandId = `sandbox:policy:${verb}`;
+      const expectedArgs = ["alpha", ...args];
+      expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
+      expectNative(
+        translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
+        commandId,
+        expectedArgs,
+      );
+      expectNative(
+        translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
+        commandId,
+        expectedArgs,
+      );
+    },
+  );
 
   it("routes new policy subcommands only through their canonical two-token spelling (#7178)", () => {
     expectNative(
@@ -341,11 +341,6 @@ describe("translatePublicSandboxArgv", () => {
       ],
     );
     expectNative(
-      translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
-      "sandbox:snapshot:restore",
-      ["alpha", "latest"],
-    );
-    expectNative(
       translatePublicSandboxArgv("alpha", "gateway", ["restart", "--quiet"]),
       "sandbox:gateway:restart",
       ["alpha", "--quiet"],
@@ -379,18 +374,16 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha"],
       ["sandbox", "skill", "bogus", "alpha"],
     );
-    expectNative(
-      translatePublicSandboxArgv("alpha", "snapshot", ["bogus"]),
-      "sandbox:snapshot:bogus",
-      ["alpha"],
-      ["sandbox", "snapshot", "bogus", "alpha"],
-    );
   });
 
   it("reports unknown public sandbox actions before oclif execution", () => {
     expect(translatePublicSandboxArgv("alpha", "bogus", [])).toEqual({
       kind: "unknownPublicAction",
       action: "bogus",
+    });
+    expect(translatePublicSandboxArgv("alpha", "snapshot", ["create"])).toEqual({
+      kind: "unknownPublicAction",
+      action: "snapshot",
     });
   });
 

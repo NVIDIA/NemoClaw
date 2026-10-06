@@ -122,11 +122,6 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
   ])(
     "passes a malformed payload through to the build-time validator [case %#]",
     ({ index, value }) => {
-      // Host-side does not parse or shape-check; otherwise a malformed payload
-      // would be silently dropped while docs promise an image-build failure.
-      // The build-time validator in scripts/generate-openclaw-config.mts is the
-      // single source of truth for structured validation errors.
-
       const dockerfilePath = dockerfileWith(BASE_DOCKERFILE);
       withExtraAgentsEnv(value, () =>
         patchStagedDockerfile(

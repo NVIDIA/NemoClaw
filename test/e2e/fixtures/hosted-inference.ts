@@ -4,6 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { BUILD_ENDPOINT_URL } from "../../../src/lib/inference/provider-models.ts";
+import { validateNvidiaApiKeyValue } from "../../../src/lib/validation.ts";
 import {
   PORTABLE_INFERENCE_DESCRIPTOR_PATH,
   type PortableInferenceDescriptor,
@@ -19,6 +22,7 @@ export const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.c
 export const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 
 const PORTABLE_DESCRIPTOR_VALIDITY_MS = 60 * 60_000;
+const CREDENTIAL_ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
 export interface HostedInferenceSecrets {
   required(name: string): string;
@@ -26,14 +30,15 @@ export interface HostedInferenceSecrets {
 
 export interface HostedInferenceOptions {
   model?: string;
+  provider?: "build";
 }
 
 export interface HostedInferenceConfig {
   apiKey: string;
   sourceSecretName: typeof HOSTED_INFERENCE_SECRET;
-  credentialEnv: typeof HOSTED_INFERENCE_CREDENTIAL_ENV;
-  provider: typeof HOSTED_INFERENCE_PROVIDER;
-  providerName: typeof HOSTED_INFERENCE_PROVIDER_NAME;
+  credentialEnv: typeof HOSTED_INFERENCE_CREDENTIAL_ENV | typeof HOSTED_INFERENCE_SECRET;
+  provider: typeof HOSTED_INFERENCE_PROVIDER | "build";
+  providerName: typeof HOSTED_INFERENCE_PROVIDER_NAME | "nvidia-prod";
   env: NodeJS.ProcessEnv;
   model: string;
   endpointUrl: string;
@@ -44,6 +49,16 @@ export interface HostedInferenceModelsProbe {
   args: string[];
   command: "bash";
   env: NodeJS.ProcessEnv;
+}
+
+export function hostedInferenceCredentialReferencePattern(credentialEnv: string): RegExp {
+  if (!CREDENTIAL_ENV_NAME.test(credentialEnv)) {
+    throw new Error(`invalid hosted inference credential environment name: ${credentialEnv}`);
+  }
+  return new RegExp(
+    `^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${credentialEnv}$`,
+    "u",
+  );
 }
 
 function currentEffectiveUid(): number {
@@ -196,6 +211,26 @@ export function requireHostedInferenceConfig(
   options: HostedInferenceOptions = {},
 ): HostedInferenceConfig {
   const apiKey = secrets.required(HOSTED_INFERENCE_SECRET);
+  if (options.provider === "build") {
+    const error = validateNvidiaApiKeyValue(apiKey);
+    if (error) throw new Error(error.trim());
+    const model = env.NEMOCLAW_MODEL || options.model || DEFAULT_CLOUD_MODEL;
+    return {
+      apiKey,
+      sourceSecretName: HOSTED_INFERENCE_SECRET,
+      credentialEnv: HOSTED_INFERENCE_SECRET,
+      provider: "build",
+      providerName: "nvidia-prod",
+      endpointUrl: BUILD_ENDPOINT_URL,
+      model,
+      env: {
+        NEMOCLAW_PROVIDER: "build",
+        NEMOCLAW_MODEL: model,
+        [HOSTED_INFERENCE_SECRET]: apiKey,
+      },
+      contractLabel: "The Launchable uses the public NVIDIA endpoint and its nvapi credential",
+    };
+  }
   const endpointUrl = env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL;
   const model =
     env.NEMOCLAW_MODEL ||

@@ -11,7 +11,7 @@ import {
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
 } from "../../onboard/managed-startup/profile";
 import { parseNativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
-import type { SandboxWorkloadReceipt } from "./types";
+import type { LegacyDockerfilePlatformProof, SandboxWorkloadReceipt } from "./types";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
@@ -23,9 +23,73 @@ const MANAGED_REFERENCE_PATTERN = new RegExp(
   "u",
 );
 const MANAGED_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const EXTERNAL_REFERENCE_PATTERN =
+  /^(?=.{1,512}$)[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/u;
+const RUNTIME_IMAGE_CONTENT_ID_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const RELEASE_PATTERN = /^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
 const MAX_COHORT_BYTES = 128;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
+
+export function isExactExternalImageReference(value: unknown): value is string {
+  return typeof value === "string" && EXTERNAL_REFERENCE_PATTERN.test(value);
+}
+
+export function isRuntimeImageContentId(value: unknown): value is `sha256:${string}` {
+  return typeof value === "string" && RUNTIME_IMAGE_CONTENT_ID_PATTERN.test(value);
+}
+
+export function cloneLegacyDockerfilePlatformProof(
+  value: unknown,
+  reference: string | null,
+): LegacyDockerfilePlatformProof | undefined {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) ||
+    !Object.values(Object.getOwnPropertyDescriptors(value)).every((descriptor) =>
+      Object.hasOwn(descriptor, "value"),
+    )
+  ) {
+    return undefined;
+  }
+  const proof = value as Record<string, unknown>;
+  const keys = [
+    "schemaVersion",
+    "source",
+    "sandboxName",
+    "sandboxIdentityFingerprint",
+    "reference",
+    "runtimeImageContentId",
+    "platform",
+  ];
+  if (
+    Object.keys(proof).length !== keys.length ||
+    !keys.every((key) => Object.hasOwn(proof, key)) ||
+    proof.schemaVersion !== 1 ||
+    proof.source !== "applied-image-inspect" ||
+    typeof proof.sandboxName !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(proof.sandboxName) ||
+    typeof proof.sandboxIdentityFingerprint !== "string" ||
+    !SHA256_PATTERN.test(proof.sandboxIdentityFingerprint) ||
+    typeof proof.reference !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$/u.test(proof.reference) ||
+    proof.reference !== reference ||
+    !isRuntimeImageContentId(proof.runtimeImageContentId) ||
+    (proof.platform !== "linux/amd64" && proof.platform !== "linux/arm64")
+  ) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1,
+    source: "applied-image-inspect",
+    sandboxName: proof.sandboxName,
+    sandboxIdentityFingerprint: proof.sandboxIdentityFingerprint,
+    reference: proof.reference,
+    runtimeImageContentId: proof.runtimeImageContentId,
+    platform: proof.platform,
+  };
+}
 const STANDARD_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const MAX_CORPORATE_CA_BYTES = 128 * 1024;
 const MAX_CORPORATE_CA_ENCODED_BYTES = Math.ceil(MAX_CORPORATE_CA_BYTES / 3) * 4;
@@ -84,11 +148,32 @@ export function cloneSandboxWorkloadReceipt(
     if (value.shared !== false || (value.reference !== null && !nonEmptyString(value.reference))) {
       return undefined;
     }
+    const platformProof = cloneLegacyDockerfilePlatformProof(value.platformProof, value.reference);
+    if (value.platformProof !== undefined && platformProof === undefined) return undefined;
     return {
       schemaVersion: 1,
       kind: "legacy-dockerfile",
       reference: value.reference,
+      ...(platformProof === undefined ? {} : { platformProof }),
       shared: false,
+    };
+  }
+  if (value.kind === "external-image") {
+    if (
+      value.shared !== true ||
+      !isExactExternalImageReference(value.reference) ||
+      !MANAGED_PLATFORMS.has(value.platform) ||
+      !isRuntimeImageContentId(value.runtimeImageContentId)
+    ) {
+      return undefined;
+    }
+    return {
+      schemaVersion: 1,
+      kind: "external-image",
+      reference: value.reference,
+      platform: value.platform,
+      runtimeImageContentId: value.runtimeImageContentId,
+      shared: true,
     };
   }
   const encodedProfileBytes = decodeCanonicalBase64Url(value.encodedProfile);

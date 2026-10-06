@@ -92,6 +92,7 @@ export async function selectModel(args: {
     false,
     process.env.NEMOCLAW_MODEL,
     {
+      onModelSelected: args.state.onModelSelected,
       cloudModelMenuLabel: "OpenRouter cloud models",
       manualCredentialEnv: OPENROUTER_CREDENTIAL_ENV,
       manualCredentialMissingMessage:

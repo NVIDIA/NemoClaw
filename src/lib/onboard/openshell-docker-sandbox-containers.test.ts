@@ -50,12 +50,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        { inspectContainers, forceRemove },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers,
+        forceRemove,
+      }),
     ).toThrow("could not confirm exact Docker container removal");
 
     expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
@@ -70,12 +68,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      expectedContainerIds,
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", expectedContainerIds, vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove.mock.calls.map(([containerId]) => containerId)).toEqual(
       expectedContainerIds,
@@ -93,12 +89,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      [alreadyRemovedId, remainingId],
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", [alreadyRemovedId, remainingId], vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove).toHaveBeenCalledExactlyOnceWith(remainingId);
     expect(currentContainerIds).toEqual([]);
@@ -110,15 +104,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
+        forceRemove,
+      }),
     ).toThrow("refusing replacement cleanup");
 
     expect(forceRemove).not.toHaveBeenCalled();
@@ -129,15 +118,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([], 1)),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([], 1)),
+        forceRemove,
+      }),
     ).toThrow("malformed container identity row");
 
     expect(forceRemove).not.toHaveBeenCalled();
@@ -164,6 +148,38 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
 }
 
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
+  it("does not start container discovery after the shared deadline expires", () => {
+    const dockerRun = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual({ ok: false, error: "Docker sandbox query deadline expired" });
+    expect(dockerRun).not.toHaveBeenCalled();
+  });
+
+  it("reuses the validated remaining deadline for container inspection", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(EMPTY_RUNTIME_FIELDS), stderr: "" });
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual(expect.objectContaining({ ok: true, containerId: "container-a" }));
+    expect(dockerRun).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["inspect", "container-a"]),
+      expect.objectContaining({ timeout: 1 }),
+    );
+  });
+
   it("returns immutable identity, bookkeeping ref, and safe absence from one exact container", () => {
     const { dockerRun, result } = querySnapshot(EMPTY_RUNTIME_FIELDS);
 

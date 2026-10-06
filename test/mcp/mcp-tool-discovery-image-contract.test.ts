@@ -9,14 +9,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
-const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
-const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]:
-    "ad20bb9d5a40e91829a62ebca2942687b847dccc67e2cb13ea1f62cbdab25035",
-};
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -108,6 +104,12 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
+  it.each(dockerfiles)("executes the discovery runtime contract in %s", (dockerfilePath) => {
+    expectManagedToolDiscoveryRuntimeImageContract(
+      fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
+    );
+  });
+
   it.skipIf(process.platform === "win32")(
     "installs the complete pinned cache seed offline before registry access",
     async () => {
@@ -181,7 +183,10 @@ describe("MCP tool discovery image contract", () => {
       );
       const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
       const matches = (
-        Object.values(lock.packages) as Array<{ integrity?: string; resolved?: string }>
+        Object.values(lock.packages) as Array<{
+          integrity?: string;
+          resolved?: string;
+        }>
       ).filter(
         (entry) =>
           entry.integrity === integrity &&
@@ -209,19 +214,23 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "13b01881f36baa473ca63287ba312c9c7e58c34bc003933d49fac528c9b952a7",
+      relativePath: "managed-startup-direct-image-runtime.bundle",
+    },
+    {
+      expectedHash: "644398693661c5a4c42e7dada3bf6e630417e36cf41e26db8c844d00d443f00a",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "1ff9641d9bba01bd16459fc76b777b3719d2ffa0743c4d23874ccc955ee017f8",
+      expectedHash: "6c66bda4ed6f5844dd7a3e8108b9c2747caf132ed244bb2129cc92844ad6cc9b",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "9713deef264ef0faea967655e497c73fa6889057e9df827092722d6f00da8987",
+      expectedHash: "89587c2216914dd4c98933bb43d26b445086938f2dce7fe56d60ddf5d61a513a",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "47b9c1f7f1f5b6c9d5bf304953701b2cff107a81ced8a9646ea66ec12bc6b7f1",
+      expectedHash: "40452d737095fd4b9d2f69d483ae9da4b2074fbef5018a3a88df4095c2dec5d4",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
@@ -233,7 +242,22 @@ describe("MCP tool discovery image contract", () => {
       .createHash("sha256")
       .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
       .digest("hex");
-    expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
+    expect(actualHash, relativePath).toBe(expectedHash);
+  });
+
+  it("executes the direct managed-startup runtime entrypoint", () => {
+    const bundle = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+    );
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-startup-runtime-"));
+    const executable = path.join(fixture, "managed-startup-image-runtime.cjs");
+    fs.copyFileSync(bundle, executable);
+    const result = spawnSync(process.execPath, [executable], { encoding: "utf8" });
+    fs.rmSync(fixture, { recursive: true, force: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("usage: managed-startup-image-runtime");
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
@@ -250,15 +274,19 @@ describe("MCP tool discovery image contract", () => {
         path.join(bundleRoot, "mcp-tool-discovery/mcp-tool-discovery.bundle"),
         executablePath,
       );
-      const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
+      const discoveryResult = spawnSync(process.execPath, [executablePath], {
+        encoding: "utf8",
+      });
       expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
       expect(JSON.parse(discoveryResult.stdout)).toEqual({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "tool discovery received invalid runtime arguments",
+        failedStage: "preflight",
+        failureClass: "precondition",
       });
     } finally {
       fs.rmSync(executableFixture, { force: true, recursive: true });
@@ -335,7 +363,9 @@ describe("MCP tool discovery image contract", () => {
         })}\n`,
         { mode: 0o444 },
       );
-      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, {
+        mode: 0o444,
+      });
       const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
       const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
       const reviewedBundle = fs.readFileSync(bundlePath, "utf8");
@@ -415,7 +445,7 @@ describe("MCP tool discovery image contract", () => {
         "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
       );
       expect(dockerfile).toContain(
-        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
       );
       expect(dockerfile).toContain(
         `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
@@ -530,7 +560,7 @@ case "$invocation" in
     ;;
   3)
     echo 'npm error code ENOTCACHED' >&2
-    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
+    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
     exit 1
     ;;
   4|5)
@@ -569,9 +599,9 @@ exit 0
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
       } finally {

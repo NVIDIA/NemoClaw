@@ -3,8 +3,18 @@
 
 import { DEFAULT_DOCKER_DRIVER_NETWORK_NAME } from "./docker-network-authority";
 
+export {
+  PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
+  PORTABLE_REGISTRY_PORT,
+} from "../../domain/sandbox/image-tag";
+
 export const EXPERIMENTAL_PROFILE_ENV = "NEMOCLAW_EXPERIMENTAL_PROFILE";
 export const PORTABLE_EXPERIMENTAL_PROFILE = "portable";
+export const PORTABLE_ARCHITECTURE = Object.freeze({
+  host: "x64",
+  container: "amd64",
+} as const);
 export const PORTABLE_HOST_GATEWAY_IP = "169.254.2.2";
 // Netavark refuses bridge networks inside the RFC 3927 link-local block.
 // 10.87.0.0/24 is outside stock Podman's default bridge and automatic pools,
@@ -15,7 +25,6 @@ export const PORTABLE_HOST_GATEWAY_IP = "169.254.2.2";
 export const PORTABLE_REGISTRY_IP = "10.87.0.3";
 export const PORTABLE_DOCKER_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 export const PORTABLE_DOCKER_NETWORK_SUBNET = "10.87.0.0/24";
-export const PORTABLE_LOCAL_REGISTRY = "localhost:5000";
 
 export type ExperimentalOnboardProfile = typeof PORTABLE_EXPERIMENTAL_PROFILE;
 

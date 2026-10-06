@@ -88,14 +88,14 @@ function queryDockerSandboxContainerIds(
   timeoutMs: number,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
-  const requestedTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? Math.floor(timeoutMs)
-      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const requestedTimeoutMs = Math.floor(timeoutMs);
+  if (!Number.isFinite(timeoutMs) || requestedTimeoutMs <= 0) {
+    return { ok: false, ids: [], error: "Docker sandbox query deadline expired" };
+  }
   const result = run([...filterArgs, "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,
-    timeout: Math.max(1, Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs)),
+    timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
   });
   if (Number(result.status ?? 1) !== 0) {
     return {
@@ -129,6 +129,86 @@ export function queryOpenShellDockerSandboxContainers(
     deps,
     timeoutMs,
   );
+}
+
+/**
+ * Prove that one durable replacement ID is the sole OpenShell-owned Docker
+ * runtime for its immutable sandbox namespace. Resume callers use the stopped
+ * form before a name-scoped OpenShell start and the running form before
+ * acknowledging the recovered handoff.
+ */
+export function isExactOpenShellDockerSandboxReplacement(
+  sandboxName: string,
+  replacementContainerId: string,
+  requireRunning: boolean,
+  deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+  now: () => Date = () => new Date(),
+): boolean {
+  const expectedContainerId = replacementContainerId.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(expectedContainerId) || timeoutMs <= 0) return false;
+  const run = deps.dockerRun ?? dockerRun;
+  try {
+    const deadline = now().getTime() + timeoutMs;
+    const namespace = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, timeoutMs),
+      },
+    );
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      Number(namespace.status ?? 1) !== 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun: run },
+      remainingMs,
+      sandboxNamespace,
+    );
+    if (
+      !containers.ok ||
+      containers.ids.length !== 1 ||
+      containers.ids[0]?.trim().toLowerCase() !== expectedContainerId
+    ) {
+      return false;
+    }
+    if (!requireRunning) return true;
+    remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const inspect = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{json .State.Running}}",
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, remainingMs),
+      },
+    );
+    return Number(inspect.status ?? 1) === 0 && String(inspect.stdout ?? "").trim() === "true";
+  } catch {
+    return false;
+  }
 }
 
 type StaleDockerOrphanCleanupDeps = {
@@ -305,6 +385,9 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
 export interface OpenShellDockerSandboxRuntimeSnapshotOptions {
   /** Full transaction-owned container ID selected while a rollback backup is retained. */
   readonly expectedContainerId?: string;
+  /** Total budget for the complete provider observation. */
+  readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export function isImmutableDockerImageId(value: string): boolean {
@@ -482,8 +565,19 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   deps: DockerSandboxContainerQueryDeps = {},
   options: OpenShellDockerSandboxRuntimeSnapshotOptions = {},
 ): OpenShellDockerSandboxRuntimeSnapshotQuery {
-  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
+  const now = options.now ?? Date.now;
+  const totalTimeoutMs = Math.max(
+    1,
+    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, options.timeoutMs ?? DOCKER_SANDBOX_QUERY_TIMEOUT_MS),
+  );
+  const deadlineMs = now() + totalTimeoutMs;
+  const remainingTimeoutMs = () => Math.floor(deadlineMs - now());
+  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps, remainingTimeoutMs());
   if (!containers.ok) return { ok: false, error: containers.error };
+  const inspectTimeoutMs = remainingTimeoutMs();
+  if (inspectTimeoutMs <= 0) {
+    return { ok: false, error: "Docker runtime snapshot deadline expired" };
+  }
   const expectedContainerId = options.expectedContainerId;
   if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedContainerId)) {
     return { ok: false, error: "expected sandbox container ID is invalid" };
@@ -513,7 +607,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
     {
       ignoreError: true,
       suppressOutput: true,
-      timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+      timeout: inspectTimeoutMs,
     },
   );
   if (Number(inspect.status ?? 1) !== 0) {
@@ -547,6 +641,9 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   const runtime = fields[5];
   let nvidiaVisibleDevices: string | null = null;
   if (runtime.trim().toLowerCase() === "nvidia") {
+    if (remainingTimeoutMs() <= 0) {
+      return { ok: false, error: "Docker runtime snapshot deadline expired" };
+    }
     const visibleDevices = parseNvidiaVisibleDevices(
       run(
         [
@@ -560,7 +657,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
         {
           ignoreError: true,
           suppressOutput: true,
-          timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+          timeout: remainingTimeoutMs(),
         },
       ),
     );

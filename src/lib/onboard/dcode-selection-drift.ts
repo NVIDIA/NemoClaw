@@ -3,6 +3,8 @@
 
 import { getSandboxInferenceConfig } from "../inference/config";
 import { resolveManagedDcodeIdentity } from "../inference/managed-dcode/identity";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import type { SelectionDrift } from "./selection-drift";
 
 export type DcodeInferenceIdentity = {
@@ -15,10 +17,7 @@ export type DcodeInferenceIdentity = {
 export type DcodeSelectionDriftDeps = {
   getGatewayName(): string;
   requestedEndpointUrl?: string | null;
-  runCaptureOpenshell(
-    args: string[],
-    options?: { ignoreError?: boolean },
-  ): string | null | undefined;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
 };
 
 export type DcodeSelectionDriftReader = (
@@ -27,7 +26,7 @@ export type DcodeSelectionDriftReader = (
   requestedModel: string | null,
   preferredInferenceApi: string | null,
   requestedEndpointUrl: string | null,
-) => SelectionDrift;
+) => Promise<SelectionDrift>;
 
 const IDENTITY_FIELDS = ["Route", "Provider", "Model", "Endpoint"] as const;
 type IdentityField = (typeof IDENTITY_FIELDS)[number];
@@ -110,13 +109,13 @@ export function getExpectedDcodeInferenceIdentity(
   };
 }
 
-export function getDcodeSelectionDrift(
+export async function getDcodeSelectionDrift(
   sandboxName: string,
   requestedProvider: string | null,
   requestedModel: string | null,
   preferredInferenceApi: string | null,
   deps: DcodeSelectionDriftDeps,
-): SelectionDrift {
+): Promise<SelectionDrift> {
   const expected = getExpectedDcodeInferenceIdentity(
     requestedProvider,
     requestedModel,
@@ -125,22 +124,16 @@ export function getDcodeSelectionDrift(
   );
   if (!sandboxName || !expected) return { ...UNKNOWN_SELECTION_DRIFT };
 
-  let output: string | null | undefined;
+  let output: string | null = null;
   try {
-    output = deps.runCaptureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        "--gateway",
-        deps.getGatewayName(),
-        "--",
-        "/usr/local/bin/dcode",
-        "identity",
-      ],
-      { ignoreError: true },
-    );
+    const completed = await deps.commandExecutor.runBuffered({
+      sandboxName,
+      target: namedOpenShellGateway(deps.getGatewayName()),
+      command: ["/usr/local/bin/dcode", "identity"],
+    });
+    if (completed.outcome.kind === "completed" && completed.outcome.exitCode === 0) {
+      output = completed.stdout;
+    }
   } catch {
     return { ...UNKNOWN_SELECTION_DRIFT };
   }
@@ -164,7 +157,7 @@ export function getDcodeSelectionDrift(
 }
 
 export function createDcodeSelectionDriftReader(
-  runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
   getGatewayName: DcodeSelectionDriftDeps["getGatewayName"],
 ): DcodeSelectionDriftReader {
   return (
@@ -176,7 +169,7 @@ export function createDcodeSelectionDriftReader(
   ) =>
     getDcodeSelectionDrift(sandboxName, requestedProvider, requestedModel, preferredInferenceApi, {
       getGatewayName,
-      runCaptureOpenshell,
+      commandExecutor,
       requestedEndpointUrl,
     });
 }

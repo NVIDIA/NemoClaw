@@ -15,6 +15,7 @@ import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
+  readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
@@ -48,6 +49,27 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
+  it("accepts the read-only endpoint access emitted by OpenShell policy update", () => {
+    const policyPath = tempPolicy(
+      "read-only-host-edit.yaml",
+      `version: 1
+network_policies:
+  host_edit:
+    name: host_edit
+    endpoints:
+      - host: host-edit.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - path: /usr/bin/curl
+`,
+    );
+
+    expect(readValidatedRebuildPolicySource(policyPath).providers).toEqual([]);
+  });
+
   it("adds missing replacement access while preserving OpenShell's live choices", () => {
     const live = `
 version: 1
@@ -436,6 +458,23 @@ network_policies:
     expect(fs.existsSync(livePath)).toBe(true);
   });
 
+  it("materializes captured policy bytes even when the source path changes", () => {
+    const source = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
+    const livePath = tempPolicy("live-captured.yaml", source);
+    const replacementPath = tempPolicy("replacement-captured.yaml", source);
+    fs.writeFileSync(livePath, "network_policies:\n  broken: [\n", "utf8");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      livePolicySource: source,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+    });
+
+    expect(handoff.policyPath).not.toBe(livePath);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
+    expect(handoff.cleanup?.()).toBe(true);
+  });
+
   it("rejects live credential bindings outside the verified replacement plan", () => {
     const livePath = tempPolicy(
       "live-provider.yaml",
@@ -617,10 +656,7 @@ network_policies:
         agent === "openclaw"
           ? path.join(process.cwd(), "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml")
           : path.join(process.cwd(), "agents", "hermes", "policy-additions.yaml");
-      const baseSource = fs.readFileSync(
-        basePolicyPath,
-        "utf8",
-      );
+      const baseSource = fs.readFileSync(basePolicyPath, "utf8");
       const keysByChannel = getMessagingPolicyKeysByChannel({ agent });
       const keysFor = (selected: string[]) =>
         selected.flatMap((channel) => [...(keysByChannel[channel] ?? [])]);
@@ -634,9 +670,7 @@ network_policies:
       const activeDocument = YAML.parse(compose(channels));
       activeDocument.network_policies.nvidia.endpoints[0].host = "host-maintained.example.com";
       const activeSource = YAML.stringify(activeDocument);
-      expect(getCredentialBindingProviders(activeSource)).toContain(
-        `${sandboxName}-teams-bridge`,
-      );
+      expect(getCredentialBindingProviders(activeSource)).toContain(`${sandboxName}-teams-bridge`);
 
       const stopped = mergeReplacementPolicyAccess(
         activeSource,
@@ -656,9 +690,7 @@ network_policies:
         [],
         sandboxName,
       ).source;
-      expect(getCredentialBindingProviders(reenabled)).toContain(
-        `${sandboxName}-teams-bridge`,
-      );
+      expect(getCredentialBindingProviders(reenabled)).toContain(`${sandboxName}-teams-bridge`);
 
       const selectedRemoved = mergeReplacementPolicyAccess(
         reenabled,
@@ -685,7 +717,9 @@ network_policies:
       expect(Object.keys(finalPolicies)).not.toEqual(
         expect.arrayContaining(keysFor(removedChannels)),
       );
-      expect(Object.keys(finalPolicies)).toEqual(expect.arrayContaining(keysFor(remainingChannels)));
+      expect(Object.keys(finalPolicies)).toEqual(
+        expect.arrayContaining(keysFor(remainingChannels)),
+      );
     },
   );
 });

@@ -5,7 +5,7 @@
 // and the reviewed npm package inventory (#7338). Upstream repository advisories
 // are often published weeks before the global reviewed ecosystem record that
 // `npm audit` enforces, so this module turns the earlier signal into a traceable,
-// NON-blocking investigation prompt. It never replaces the reviewed npm audit
+// NON-blocking investigation prompt. It never replaces the npm audit
 // gate: only exact npm package-name plus semver-range matches are marked
 // "investigate", and ambiguous CPE-to-npm matches stay "informational".
 
@@ -171,26 +171,25 @@ export function parseAdvisory(input: unknown): ParsedAdvisory | null {
 
 /**
  * Build the reviewed package inventory from ci/reviewed-npm-audit.json:
- * every committed archive package and locked graph package spec.
+ * every committed archive package. Locked-graph identities come from their
+ * package-locks so a reviewed replacement cannot leave a stale config entry.
  */
 export function parseInventoryFromAuditConfig(config: unknown, origin: string): InventoryEntry[] {
   if (typeof config !== "object" || config === null) return [];
   const record = config as Record<string, unknown>;
   const inventory: InventoryEntry[] = [];
-  for (const key of ["archivePackages", "lockedGraphs"]) {
-    const entries = record[key];
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const packageSpec = (entry as Record<string, unknown>).packageSpec;
-      if (typeof packageSpec !== "string") continue;
-      const separator = packageSpec.lastIndexOf("@");
-      if (separator <= 0) continue;
-      const name = packageSpec.slice(0, separator);
-      const version = packageSpec.slice(separator + 1);
-      if (!parseVersion(version)) continue;
-      inventory.push({ name, version, origin });
-    }
+  const entries = record.archivePackages;
+  if (!Array.isArray(entries)) return inventory;
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const packageSpec = (entry as Record<string, unknown>).packageSpec;
+    if (typeof packageSpec !== "string") continue;
+    const separator = packageSpec.lastIndexOf("@");
+    if (separator <= 0) continue;
+    const name = packageSpec.slice(0, separator);
+    const version = packageSpec.slice(separator + 1);
+    if (!parseVersion(version)) continue;
+    inventory.push({ name, version, origin });
   }
   return inventory;
 }

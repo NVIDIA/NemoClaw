@@ -52,10 +52,7 @@ export type {
   PlatformQualificationProjection,
   StationProfile,
 } from "./platform-qualification.js";
-export {
-  collectPlatformIdentity,
-  projectPlatformQualification,
-} from "./platform-qualification.js";
+export { collectPlatformIdentity, projectPlatformQualification } from "./platform-qualification.js";
 export {
   createPublicHostProbeReadinessReport,
   createPublicReadinessReport,

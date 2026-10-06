@@ -8,7 +8,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  abortOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
+  finishOpenClawBackupQuiesce: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -25,19 +29,34 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
+  finishOpenClawBackupQuiesce: mocks.finishOpenClawBackupQuiesce,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
+}));
 
 import {
   type RebuildBackupPhaseInput,
+  releaseRebuildSourceOpenClawWindow,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "alpha", kind: "backup" },
+  });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
+  mocks.finishOpenClawBackupQuiesce.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -69,7 +88,52 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
-  it("captures the current OpenShell base policy in a private transaction file", () => {
+  it("retires the retained source window before the delete edge", async () => {
+    const window = { sandboxName: "alpha" };
+
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
+  it("releases an unchanged source backup without requesting doctor", async () => {
+    const window = { sandboxName: "alpha", kind: "backup" as const };
+
+    await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual({ ok: true });
+
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "identifies retained source and verified stop state on release failure (%s)",
+    async (stopped) => {
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const window = { sandboxName: "retained-alpha", kind: "backup" as const };
+      const failure = { ok: false, stage: "restart", detail: "gateway not healthy" };
+      mocks.finishOpenClawBackupQuiesce.mockResolvedValue(failure);
+      mocks.abortOpenClawPostRestoreDoctor.mockResolvedValue(
+        stopped ? { ok: true } : { ok: false, stage: "abort", detail: "stop not verified" },
+      );
+
+      await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual(failure);
+
+      expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(window);
+      expect(mocks.retireOpenClawPostRestoreDoctorForDelete).not.toHaveBeenCalled();
+      const text = warning.mock.calls.flat().join(" ");
+      expect(text).toContain("retained-alpha");
+      expect(text).toContain("recorded gateway");
+      expect(text).toContain("Preserve this sandbox and its backup");
+      expect(text).toContain(stopped ? "was stopped" : "not fully verified");
+      expect(text.includes("was stopped")).toBe(stopped);
+    },
+  );
+
+  it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
     const policyPath = path.join(directory, "policy.yaml");
@@ -77,9 +141,9 @@ describe("rebuild policy handoff", () => {
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     );
-    const result = runRebuildBackupPhase(
+    const result = await runRebuildBackupPhase(
       input(),
-      vi.fn(() => null),
+      vi.fn(async () => null),
     );
 
     expect(result?.policySourcePath).toBe(policyPath);
@@ -89,10 +153,66 @@ describe("rebuild policy handoff", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
       "alpha",
       "capture the live policy before sandbox replacement",
+      undefined,
     );
+    expect(mocks.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
   });
 
-  it("rejects a literal credential before creating a rebuild policy handoff", () => {
+  it("passes a prepared stopped native-state source into the rebuild backup", async () => {
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      agentName: "openclaw" as const,
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const backup = vi.fn(async () => null);
+
+    await runRebuildBackupPhase(input({ stoppedNativeState }), backup);
+
+    expect(stoppedNativeState.assertCurrent).toHaveBeenCalledOnce();
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ name: "alpha" }),
+      false,
+      expect.any(Function),
+      expect.any(Function),
+      stoppedNativeState,
+    );
+    expect(mocks.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
+  it("reports the retained source when backup fails before the pipeline takes ownership", async () => {
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.finishOpenClawBackupQuiesce.mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "gateway not healthy",
+    });
+    const backup = vi.fn(async () => {
+      throw new Error("backup transfer failed");
+    });
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow("backup transfer failed");
+
+    expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("retained sandbox 'alpha'"));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("was stopped"));
+  });
+
+  it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       [
@@ -104,25 +224,25 @@ describe("rebuild policy handoff", () => {
         "",
       ].join("\n"),
     );
-    const backup = vi.fn(() => null);
+    const backup = vi.fn(async () => null);
 
-    expect(() => runRebuildBackupPhase(input(), backup)).toThrow(
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
     expect(backup).not.toHaveBeenCalled();
     expect(mocks.secureTempFile).not.toHaveBeenCalled();
   });
 
-  it("never reconstructs a missing live policy from NemoClaw state", () => {
-    expect(() =>
+  it("never reconstructs a missing live policy from NemoClaw state", async () => {
+    await expect(
       runRebuildBackupPhase(
         input({ staleRecovery: true }),
-        vi.fn(() => null),
+        vi.fn(async () => null),
       ),
-    ).toThrow(/will not reconstruct policy from NemoClaw state/);
+    ).rejects.toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
-  it("binds an unsafe legacy handoff to a supported recovery transaction", () => {
+  it("binds an unsafe legacy handoff to a supported recovery transaction", async () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
     temporaryDirectories.push(backupPath);
     const legacyCredentialPolicy = [
@@ -135,7 +255,9 @@ describe("rebuild policy handoff", () => {
     ].join("\n");
     const sha256 = createHash("sha256").update(legacyCredentialPolicy).digest("hex");
     const file = `rebuild-policy-handoff.${sha256}.yaml`;
-    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, { mode: 0o600 });
+    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, {
+      mode: 0o600,
+    });
     const preparedRecoveryManifest = {
       version: 1,
       sandboxName: "alpha",
@@ -143,9 +265,6 @@ describe("rebuild policy handoff", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      failedBackupDirs: [],
-      stateFiles: [],
       dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: "digest",
@@ -154,12 +273,12 @@ describe("rebuild policy handoff", () => {
 
     let refusal: Error | null = null;
     try {
-      runRebuildBackupPhase(
+      await runRebuildBackupPhase(
         input({
           staleRecovery: true,
           preparedRecoveryManifest,
         }),
-        vi.fn(),
+        vi.fn(async () => null),
       );
     } catch (error) {
       refusal = error as Error;
@@ -198,104 +317,5 @@ describe("rebuild policy handoff", () => {
       gatewayPort: 8080,
       backupManifest: preparedRecoveryManifest,
     });
-  });
-});
-
-describe("rebuild backup safety", () => {
-  const completeMarkedManifest = {
-    agentType: "openclaw",
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/custom-openclaw-backup",
-    reconcileOpenClawImagePluginProvenance: true,
-    openclawImagePluginInstalls: [],
-  } as Record<string, unknown>;
-
-  function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
-    return {
-      sandboxName: "custom-openclaw",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxEntry: {
-        name: "custom-openclaw",
-        agent: "openclaw",
-        fromDockerfile: "/tmp/Dockerfile.custom",
-      },
-      staleRecovery: false,
-      preparedRecoveryManifest: null,
-      messagingPlan: null,
-      webSearchConfig: null,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      ...overrides,
-    } as RebuildBackupPhaseInput;
-  }
-
-  it("blocks a live custom image with missing plugin provenance before backup", () => {
-    const backup = vi.fn();
-    const input = customOpenClawInput();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).not.toHaveBeenCalled();
-  });
-
-  it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
-    const backup = vi.fn();
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
-    temporaryDirectories.push(backupPath);
-    const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
-    const result = runRebuildBackupPhase(
-      customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
-      backup,
-    );
-
-    expect(result?.backupManifest).toEqual(preparedManifest);
-    expect(result?.policySourcePath).toMatch(/rebuild-policy-handoff\.[a-f0-9]{64}\.yaml$/u);
-    expect(backup).not.toHaveBeenCalled();
-  });
-
-  it("blocks an unmarked legacy prepared manifest before replacement", () => {
-    const backup = vi.fn();
-    const input = customOpenClawInput({
-      preparedRecoveryManifest: {
-        agentType: "openclaw",
-        dir: "/sandbox/.openclaw",
-        backupPath: "/tmp/legacy-custom-openclaw-backup",
-        openclawImagePluginInstalls: [],
-      },
-    });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).not.toHaveBeenCalled();
-  });
-
-  it("revalidates a newly generated backup manifest before replacement", () => {
-    const backup = vi.fn(() => ({
-      agentType: "openclaw",
-      dir: "/sandbox/.openclaw",
-      backupPath: "/tmp/incomplete-custom-openclaw-backup",
-      reconcileOpenClawImagePluginProvenance: true,
-    }));
-    const input = customOpenClawInput({
-      sandboxEntry: {
-        name: "custom-openclaw",
-        agent: "openclaw",
-        fromDockerfile: "/tmp/Dockerfile.custom",
-        openclawImagePluginInstalls: [],
-      },
-    });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup as never)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).toHaveBeenCalledOnce();
   });
 });

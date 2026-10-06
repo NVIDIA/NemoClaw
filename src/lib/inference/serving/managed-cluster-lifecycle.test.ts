@@ -186,30 +186,31 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
     expect(harness.removeContainer).not.toHaveBeenCalled();
   });
 
-  it.each(
-    STOPPED_FOREIGN_CONTAINER_FIXTURES,
-  )("preserves a stopped foreign vLLM setup identified by $signal", async (container) => {
-    harness.snapshots[plan.roles[0].nodeId] = {
-      containers: [
-        {
-          id: "9".repeat(64),
-          name: container.name,
-          image: container.image,
-          running: false,
-          healthy: false,
-          labels: container.labels,
-        },
-      ],
-      listeningPorts: [],
-    };
+  it.each(STOPPED_FOREIGN_CONTAINER_FIXTURES)(
+    "preserves a stopped foreign vLLM setup identified by $signal",
+    async (container) => {
+      harness.snapshots[plan.roles[0].nodeId] = {
+        containers: [
+          {
+            id: "9".repeat(64),
+            name: container.name,
+            image: container.image,
+            running: false,
+            healthy: false,
+            labels: container.labels,
+          },
+        ],
+        listeningPorts: [],
+      };
 
-    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
+      const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
-    expect(result).toMatchObject({ ok: false, code: "conflict" });
-    expect(harness.stageNode).not.toHaveBeenCalled();
-    expect(harness.startContainer).not.toHaveBeenCalled();
-    expect(harness.removeContainer).not.toHaveBeenCalled();
-  });
+      expect(result).toMatchObject({ ok: false, code: "conflict" });
+      expect(harness.stageNode).not.toHaveBeenCalled();
+      expect(harness.startContainer).not.toHaveBeenCalled();
+      expect(harness.removeContainer).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not classify an arbitrary stopped container as a managed vLLM setup", () => {
     const snapshots = {

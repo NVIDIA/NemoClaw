@@ -121,6 +121,7 @@ function createDeps() {
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
     reserveSandboxInferenceRoute: calls.reserveRoute,
+    hasSandboxLifecycleAuthority: vi.fn(() => false),
     registryUpdateSandbox: calls.updateSandbox,
     checkpointSandboxIdentity: vi.fn(async () => undefined),
     prepareLocalProviderForInference: vi.fn(async () => null),
@@ -244,7 +245,7 @@ describe("provider route containment", () => {
     expect(calls.setupNim).toHaveBeenCalledOnce();
     expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
-      sandboxName: null,
+      sandboxName: "target-sandbox",
       route: {
         provider: "nvidia-prod",
         model: "nvidia/test",

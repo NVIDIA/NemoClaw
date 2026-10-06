@@ -245,7 +245,7 @@ def _sandbox_adapter_class():
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             """Run the bundled connect(), then start the REST pull it skipped."""
             connected = await super().connect(is_reconnect=is_reconnect)
-            # Hermes v2026.7.20 builds a fresh adapter for every reconnect, so this
+            # Hermes v2026.8.27 builds a fresh adapter for every reconnect, so this
             # never runs twice on one instance; a release that reuses the instance
             # would need the running pull replaced here.
             if connected and self._sandbox_subscription:

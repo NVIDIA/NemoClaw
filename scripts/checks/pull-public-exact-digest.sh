@@ -88,26 +88,30 @@ for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     status="$?"
   fi
 
-  if [ "$status" -ne 1 ]; then
-    echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status" >&2
-    exit "$status"
-  fi
+  last_line="$(awk 'NF { line=$0 } END { sub(/\r$/, "", line); print line }' "$attempt_log")"
   if grep -Fq "max depth exceeded" "$attempt_log"; then
     echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status failure=layer-depth-exceeded" >&2
     exit "$status"
   fi
   retryable_visibility=0
-  if grep -Eq '^Error response from daemon: Head .+: denied$' "$attempt_log" \
+  if [[ "$last_line" == *"$reference: not found" ]]; then
+    retryable_visibility=1
+  elif [ "$status" -eq 1 ] && { grep -Eq '^Error response from daemon: Head .+: denied$' "$attempt_log" \
     || grep -Fxq 'denied: permission_denied' "$attempt_log" \
     || grep -Fxq "ERROR: $reference: not found" "$attempt_log" \
     || grep -Eq '^(Error response from daemon: failed to resolve reference "ghcr[.]io/[^"]+": )?unexpected status from HEAD request to https://ghcr[.]io/.+: (401 Unauthorized|403 Forbidden|404 Not Found)$' "$attempt_log" \
     || grep -Eiq '(^|:[[:space:]]|[[:space:]])manifest unknown(:|[[:space:]]|$)' "$attempt_log" \
     || grep -Fq 'unexpected status from anonymous HEAD request' "$attempt_log" \
-    || grep -Fq 'failed to resolve exact digest from anonymous GHCR' "$attempt_log"; then
+    || grep -Fq 'failed to resolve exact digest from anonymous GHCR' "$attempt_log"; }; then
     retryable_visibility=1
   fi
   if [ "$retryable_visibility" -ne 1 ]; then
-    echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status failure=terminal-docker-exit-1" >&2
+    if [ "$status" -eq 1 ]; then
+      failure=" failure=terminal-docker-exit-1"
+    else
+      failure=""
+    fi
+    echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status${failure}" >&2
     exit "$status"
   fi
 

@@ -185,7 +185,12 @@ describe("WeChat hook implementations", () => {
           log: (message) => logs.push(message),
           saveCredential: (key, value) => saved.push({ key, value }),
           runLogin: () =>
-            runWechatHostQrLogin({ fetch, renderQr: () => {}, log: () => {}, sleep: async () => {} }),
+            runWechatHostQrLogin({
+              fetch,
+              renderQr: () => {},
+              log: () => {},
+              sleep: async () => {},
+            }),
         }),
       },
     ]);
@@ -305,9 +310,9 @@ describe("WeChat hook implementations", () => {
           value: {
             merge: {
               plugins: {
-                installs: {
+                entries: {
                   "openclaw-weixin": {
-                    spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+                    enabled: true,
                   },
                 },
               },

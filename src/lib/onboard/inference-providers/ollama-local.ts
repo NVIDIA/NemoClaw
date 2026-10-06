@@ -122,9 +122,9 @@ export async function setupOllamaLocalInference(
   // so the gateway never reads the user's host OPENAI_API_KEY for local
   // Ollama. GH #2519: a stale host OPENAI_API_KEY was leaking into the
   // inference path and producing 401s.
-  let providerResult: ReturnType<typeof upsertProvider>;
+  let providerResult: Awaited<ReturnType<typeof upsertProvider>>;
   try {
-    providerResult = upsertProvider(
+    providerResult = await upsertProvider(
       "ollama-local",
       "openai",
       OLLAMA_PROXY_CREDENTIAL_ENV,

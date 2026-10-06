@@ -21,11 +21,15 @@ import { testTimeout } from "../../helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
-const OPENSHELL_FIXTURE_VERSION = "0.0.106";
+const OPENSHELL_FIXTURE_VERSION = "0.0.116";
 
 // Output fixtures that mirror real OpenShell CLI output.
+const gatewayListNemoclaw = (gatewayName: string, port: number) =>
+  JSON.stringify([
+    { name: gatewayName, endpoint: `https://127.0.0.1:${String(port)}`, active: true },
+  ]);
 const gatewayInfoNemoclaw = (gatewayName: string, port: number) =>
-  `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${port}/\n`;
+  `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${String(port)}/\n`;
 
 const statusConnectedNemoclaw = (gatewayName: string, port: number) =>
   `Server Status\n\nGateway: ${gatewayName}\nServer: https://127.0.0.1:${port}/\nStatus: Connected\n`;
@@ -36,6 +40,8 @@ interface ScenarioScript {
   sandboxGet: Array<{ output: string; exit: number }>;
   // openshell status responses, cycled
   status: Array<{ output: string; exit: number }>;
+  // openshell gateway list responses, cycled
+  gatewayList: Array<{ output: string; exit: number }>;
   // openshell gateway info responses, cycled
   gatewayInfo: Array<{ output: string; exit: number }>;
   // openshell gateway select response
@@ -137,6 +143,10 @@ if (args[0] === "status") {
   emit(cycle("status", script.status));
 }
 
+if (args[0] === "gateway" && args[1] === "list") {
+  emit(cycle("gatewayList", script.gatewayList));
+}
+
 if (args[0] === "gateway" && args[1] === "info") {
   emit(cycle("gatewayInfo", script.gatewayInfo));
 }
@@ -174,7 +184,20 @@ if (args[0] === "inference" && args[1] === "get") {
   process.exit(0);
 }
 
-if (args[0] === "provider" && args[1] === "get") process.exit(0);
+if (args[0] === "provider" && args[1] === "get") {
+  process.stdout.write("Name: nvidia-prod\\nType: nvidia\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: <none>\\n");
+  process.exit(0);
+}
+
+if (args[0] === "provider" && args[1] === "list") {
+  process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.exit(0);
+}
+
+if (args.includes("forward") && args.includes("list")) {
+  process.stderr.write("No active forwards.\\n");
+  process.exit(0);
+}
 
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
@@ -270,7 +293,7 @@ if (a[0] === "inspect") {
   const responses = new Map([
     ["{{.State.Running}}", "true\\n"],
     ["{{json .NetworkSettings.Ports}}", JSON.stringify({[gatewayPort + "/tcp"]:[{HostPort:gatewayPort}]}) + "\\n"],
-    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.106\\n"],
+    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.116\\n"],
   ]);
   if (target !== expectedTarget || !responses.has(format)) process.exit(64);
   process.stdout.write(responses.get(format));
@@ -309,9 +332,22 @@ beforeEach(() => {
   dockerInvocationsFile = path.join(tmpDir, "docker-invocations.log");
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
-  fs.mkdirSync(registryDir, { recursive: true });
+  fs.mkdirSync(registryDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(installerInvocationsFile, "");
   fs.writeFileSync(dockerInvocationsFile, "");
+  // Image freshness has its own tests; this process fixture represents unchanged inputs.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "git"),
+    `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("diff") && args.includes("--quiet")) process.exit(0);
+const result = spawnSync("/usr/bin/git", args, { env: process.env, stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(homeLocalBin, "bash"),
     `#!${process.execPath}
@@ -366,6 +402,7 @@ describe("connect preserves the registry without reconstructing policy in scenar
       writeStubOpenshell({
         sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
         status: [{ output: statusConnectedNemoclaw(gatewayName, gatewayPort), exit: 0 }],
+        gatewayList: [{ output: gatewayListNemoclaw(gatewayName, gatewayPort), exit: 0 }],
         gatewayInfo: [{ output: gatewayInfoNemoclaw(gatewayName, gatewayPort), exit: 0 }],
         gatewaySelect: { output: "", exit: 0 },
         selectFlipsActive: false,

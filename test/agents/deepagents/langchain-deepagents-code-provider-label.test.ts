@@ -57,7 +57,7 @@ describe("LangChain Deep Agents Code managed provider label", () => {
       "langchain-deepagents-code",
       "generate-config.ts",
     );
-    execFileSync(process.execPath, ["--experimental-strip-types", generator], {
+    execFileSync(process.execPath, [generator], {
       env: {
         PATH: process.env.PATH,
         HOME: tempDir,

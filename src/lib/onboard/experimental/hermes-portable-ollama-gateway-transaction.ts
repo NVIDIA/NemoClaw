@@ -6,9 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { checkOpenAiInferenceProviderProfile } from "../../adapters/openshell/provider-profile-registration";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
+import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
 import {
   parseHostLocalInferenceReceipt,
@@ -28,6 +29,23 @@ const GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS = 30_000;
 const GATEWAY_PROVIDER_JOURNAL_FILE = "portable-gateway-provider.json";
 const TEMPORARY_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
+const PORTABLE_GATEWAY_STATE_RECOVERY =
+  "Existing state was preserved. To retry separately, choose a different sandbox name, an unused NEMOCLAW_GATEWAY_PORT, and a separate NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR. Retire preserved state only through its recorded lifecycle authority.";
+
+function portableGatewayStateConflict(message: string): GatewayStateConflictError {
+  return new GatewayStateConflictError(`${message} ${PORTABLE_GATEWAY_STATE_RECOVERY}`, {
+    hasRecoveryGuidance: true,
+  });
+}
+
+function readPortableGatewayState<T>(read: () => T): T {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof GatewayStateConflictError) throw error;
+    throw portableGatewayStateConflict(error instanceof Error ? error.message : String(error));
+  }
+}
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE, "");
@@ -257,7 +275,7 @@ type GatewayProviderJournalPhase =
 type GatewayProviderJournalIntent = Readonly<{
   transactionId: string;
   targetSha256: string;
-  gatewayName: "nemoclaw";
+  gatewayName: string;
   sandboxName: string;
   provider: "ollama-local";
   model: string;
@@ -274,6 +292,73 @@ type GatewayProviderJournal = Readonly<{
   intent: GatewayProviderJournalIntent;
   providerAuthority: GatewayProviderAuthority | null;
 }>;
+
+type GatewayProviderJournalRecoveryScope = Omit<
+  GatewayProviderJournalIntent,
+  "transactionId" | "providerCredentialEnv"
+>;
+
+function recoverGatewayProviderJournalTransactionId(
+  directory: string,
+  scope: GatewayProviderJournalRecoveryScope,
+): string | null {
+  const serialized = readPortableGatewayState(() =>
+    createPrivateStateFile(
+      directory,
+      GATEWAY_PROVIDER_JOURNAL_FILE,
+      "gateway provider journal",
+    ).readExact(),
+  );
+  if (serialized === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal is malformed.",
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal is malformed.",
+    );
+  }
+  const rawIntent = (parsed as Record<string, unknown>).intent;
+  if (typeof rawIntent !== "object" || rawIntent === null || Array.isArray(rawIntent)) {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal is malformed.",
+    );
+  }
+  const transactionId = (rawIntent as Record<string, unknown>).transactionId;
+  if (typeof transactionId !== "string" || !NETWORK_ID.test(transactionId)) {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal identity is malformed.",
+    );
+  }
+  const providerCredentialEnv = `${scope.credentialEnv}_${transactionId.toUpperCase()}`;
+  const intent: GatewayProviderJournalIntent = Object.freeze({
+    transactionId,
+    targetSha256: scope.targetSha256,
+    gatewayName: scope.gatewayName,
+    sandboxName: scope.sandboxName,
+    provider: scope.provider,
+    model: scope.model,
+    type: scope.type,
+    credentialEnv: scope.credentialEnv,
+    providerCredentialEnv,
+    baseUrl: scope.baseUrl,
+  });
+  if (
+    providerCredentialEnv.length > 128 ||
+    !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv) ||
+    !isDeepStrictEqual(rawIntent, intent)
+  ) {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal authority changed.",
+    );
+  }
+  return transactionId;
+}
 
 function createGatewayProviderJournalStore(
   directory: string,
@@ -350,8 +435,11 @@ function createGatewayProviderJournalStore(
     return journal;
   };
   const load = (): GatewayProviderJournal | null => {
-    const serialized = stateFile.readExact();
-    return serialized === null ? null : parse(serialized);
+    return readPortableGatewayState(() => {
+      const serialized = stateFile.readExact();
+      if (serialized === null) return null;
+      return parse(serialized);
+    });
   };
   const transition = (
     current: GatewayProviderJournal,
@@ -470,9 +558,7 @@ function gatewayCommandText(result: GatewayCommandResult): string {
 function gatewayReportsProviderAbsent(output: string, provider: string): boolean {
   const escaped = provider.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return (
-    new RegExp(`provider\\s+['\"\`]${escaped}['\"\`]\\s+(?:was\\s+)?not found`, "iu").test(
-      output,
-    ) ||
+    new RegExp(`provider\\s+['"\`]${escaped}['"\`]\\s+(?:was\\s+)?not found`, "iu").test(output) ||
     (/code:\s*['"]some requested entity was not found['"]/iu.test(output) &&
       /message:\s*['"]provider not found['"]/iu.test(output))
   );
@@ -512,13 +598,16 @@ function observeExactGatewayProvider(
     !Number.isSafeInteger(resourceVersion) ||
     resourceVersion < 1
   ) {
-    throw new Error("Hermes Portable inference found ambiguous gateway provider authority.");
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference found ambiguous gateway provider authority.",
+    );
   }
   return { kind: "present", id, resourceVersion };
 }
 
 function exactGatewayMutation(
   runGatewayOpenshell: HermesPortableOllamaGatewayRunner,
+  expectedGatewayName: string,
   expectedModel: string,
   expectedSandboxName: string,
   expectedCredentialEnv: string,
@@ -544,37 +633,48 @@ function exactGatewayMutation(
     observation.kind === "present" && observation.resourceVersion === 1
       ? Object.freeze({ id: observation.id, resourceVersion: observation.resourceVersion })
       : null;
-  const deleteRecordedProvider = (
+  const deleteRecordedProvider = async (
     provider: string,
     journal: GatewayProviderJournal,
-  ): GatewayProviderJournal => {
+  ): Promise<GatewayProviderJournal> => {
     const authority = journal.providerAuthority;
     if (journal.phase !== "rolling-back" || !authority) {
-      throw new Error("Hermes Portable inference gateway provider rollback journal is incomplete.");
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference gateway provider rollback journal is incomplete.",
+      );
     }
     const current = readExact(provider);
     if (current.kind === "absent") {
       return journalStore.transition(journal, "rolled-back", authority);
     }
     if (!matchesAuthority(current, authority)) {
-      throw new Error("Hermes Portable inference refused to mutate changed gateway authority.");
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference refused to mutate changed gateway authority.",
+      );
     }
-    const removed = runGatewayOpenshell(["provider", "delete", provider], {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+    const removed = await createManagedProviderAdapter((args, opts) =>
+      runGatewayOpenshell(args, {
+        ...opts,
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+      }),
+    ).deleteProvider({
+      target: { kind: "selected" },
+      providerName: provider,
+      timeoutMs: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
     });
     const after = readExact(provider);
     if (after.kind === "absent") {
       return journalStore.transition(journal, "rolled-back", authority);
     }
     if (!matchesAuthority(after, authority)) {
-      throw new Error(
+      throw portableGatewayStateConflict(
         "Hermes Portable inference gateway authority changed during recorded rollback.",
       );
     }
-    if (removed.status !== 0) {
+    if (!removed.ok) {
       throw new Error("Hermes Portable inference could not resume its gateway provider rollback.");
     }
     throw new Error("Hermes Portable inference gateway provider remained after recorded rollback.");
@@ -588,17 +688,21 @@ function exactGatewayMutation(
     matchesAuthority(providerAtEntry, journalAtEntry.providerAuthority);
   if (journalAtEntry === null || journalAtEntry.phase === "rolled-back") {
     if (providerAtEntry.kind !== "absent") {
-      throw new Error("Hermes Portable inference found an unowned existing gateway provider.");
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference found an unowned existing gateway provider.",
+      );
     }
   } else if (journalAtEntry.phase === "prepared") {
     if (providerAtEntry.kind !== "absent") {
-      throw new Error(
+      throw portableGatewayStateConflict(
         "Hermes Portable inference gateway provider appeared before recorded create.",
       );
     }
   } else if (journalAtEntry.phase === "creating") {
     if (providerAtEntry.kind === "present" && createdAuthority(providerAtEntry) === null) {
-      throw new Error("Hermes Portable inference recorded provider creation is ambiguous.");
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference recorded provider creation is ambiguous.",
+      );
     }
   } else if (journalAtEntry.phase === "rolling-back") {
     if (
@@ -606,18 +710,22 @@ function exactGatewayMutation(
       (!journalAtEntry.providerAuthority ||
         !matchesAuthority(providerAtEntry, journalAtEntry.providerAuthority))
     ) {
-      throw new Error("Hermes Portable inference recorded gateway provider authority changed.");
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference recorded gateway provider authority changed.",
+      );
     }
   } else if (
     !journalAtEntry.providerAuthority ||
     !matchesAuthority(providerAtEntry, journalAtEntry.providerAuthority)
   ) {
-    throw new Error("Hermes Portable inference recorded gateway provider authority changed.");
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference recorded gateway provider authority changed.",
+    );
   }
   const prepareGatewayMutation: HostLocalInferenceStartupSelection["prepareGatewayMutation"] =
     async (input) => {
       if (
-        input.gatewayName !== "nemoclaw" ||
+        input.gatewayName !== expectedGatewayName ||
         input.sandboxName !== expectedSandboxName ||
         input.provider !== "ollama-local" ||
         input.model !== expectedModel ||
@@ -628,28 +736,30 @@ function exactGatewayMutation(
       let journal = journalStore.load();
       let current = readExact(input.provider);
       if (journal?.phase === "rolling-back") {
-        journal = deleteRecordedProvider(input.provider, journal);
+        journal = await deleteRecordedProvider(input.provider, journal);
         current = readExact(input.provider);
       }
       if (receiptPublished) {
         if (journal?.phase !== "created" && journal?.phase !== "committed") {
-          throw new Error(
+          throw portableGatewayStateConflict(
             "Hermes Portable inference published route lacks gateway ownership state.",
           );
         }
       } else if (journal?.phase === "committed") {
-        throw new Error(
+        throw portableGatewayStateConflict(
           "Hermes Portable inference gateway ownership outlived its published receipt.",
         );
       }
       if (journal === null || journal.phase === "rolled-back") {
         if (current.kind !== "absent") {
-          throw new Error("Hermes Portable inference found an unowned existing gateway provider.");
+          throw portableGatewayStateConflict(
+            "Hermes Portable inference found an unowned existing gateway provider.",
+          );
         }
         journalStore.prepare(journal);
       } else if (journal.phase === "prepared") {
         if (current.kind !== "absent") {
-          throw new Error(
+          throw portableGatewayStateConflict(
             "Hermes Portable inference gateway provider appeared before recorded create.",
           );
         }
@@ -657,14 +767,18 @@ function exactGatewayMutation(
         if (current.kind === "present") {
           const authority = createdAuthority(current);
           if (!authority) {
-            throw new Error("Hermes Portable inference recorded provider creation is ambiguous.");
+            throw portableGatewayStateConflict(
+              "Hermes Portable inference recorded provider creation is ambiguous.",
+            );
           }
           journalStore.transition(journal, "created", authority);
         }
       } else {
         const authority = journal.providerAuthority;
         if (!authority || !matchesAuthority(current, authority)) {
-          throw new Error("Hermes Portable inference recorded gateway provider authority changed.");
+          throw portableGatewayStateConflict(
+            "Hermes Portable inference recorded gateway provider authority changed.",
+          );
         }
       }
       return Object.freeze({
@@ -687,47 +801,39 @@ function exactGatewayMutation(
           }
           let active = journalStore.load();
           if (!active) {
-            throw new Error("Hermes Portable inference gateway provider intent disappeared.");
+            throw portableGatewayStateConflict(
+              "Hermes Portable inference gateway provider intent disappeared.",
+            );
           }
           let before = readExact(input.provider);
-          const requireOpenAiProfile = () => {
-            const profile = checkOpenAiInferenceProviderProfile({
-              runOpenshell: (args, options) =>
-                runGatewayOpenshell(args, {
-                  ignoreError: true,
-                  suppressOutput: true,
-                  stdio: ["ignore", "pipe", "pipe"],
-                  timeout: options?.timeout ?? GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
-                }),
-            });
-            if (!profile.ok) {
-              throw new Error(profile.messages.join("\n"));
-            }
-          };
           if (active.phase === "created" || active.phase === "committed") {
             if (!active.providerAuthority || !matchesAuthority(before, active.providerAuthority)) {
-              throw new Error(
+              throw portableGatewayStateConflict(
                 "Hermes Portable inference recorded gateway provider authority changed.",
               );
             }
-            requireOpenAiProfile();
             return { ok: true };
           }
-          requireOpenAiProfile();
           if (active.phase === "prepared") {
             if (before.kind !== "absent") {
-              throw new Error("Hermes Portable inference provider name is no longer unclaimed.");
+              throw portableGatewayStateConflict(
+                "Hermes Portable inference provider name is no longer unclaimed.",
+              );
             }
             active = journalStore.transition(active, "creating", null);
             before = readExact(input.provider);
           }
           if (active.phase !== "creating") {
-            throw new Error("Hermes Portable inference gateway provider intent cannot create.");
+            throw portableGatewayStateConflict(
+              "Hermes Portable inference gateway provider intent cannot create.",
+            );
           }
           if (before.kind === "present") {
             const authority = createdAuthority(before);
             if (!authority) {
-              throw new Error("Hermes Portable inference recorded provider creation is ambiguous.");
+              throw portableGatewayStateConflict(
+                "Hermes Portable inference recorded provider creation is ambiguous.",
+              );
             }
             journalStore.transition(active, "created", authority);
             return { ok: true };
@@ -759,7 +865,7 @@ function exactGatewayMutation(
             if (after.kind === "absent" && result.status !== 0) {
               throw new Error("Hermes Portable inference could not create its gateway provider.");
             }
-            throw new Error(
+            throw portableGatewayStateConflict(
               "Hermes Portable inference gateway provider creation is indeterminate.",
             );
           }
@@ -774,23 +880,29 @@ function exactGatewayMutation(
             !active.providerAuthority ||
             !matchesAuthority(current, active.providerAuthority)
           ) {
-            throw new Error("Hermes Portable inference gateway provider authority changed.");
+            throw portableGatewayStateConflict(
+              "Hermes Portable inference gateway provider authority changed.",
+            );
           }
         },
-        rollback() {
+        async rollback() {
           let active = journalStore.load();
           if (!active) {
-            throw new Error(
+            throw portableGatewayStateConflict(
               "Hermes Portable inference gateway provider rollback intent disappeared.",
             );
           }
           if (active.phase === "committed") {
-            throw new Error("Hermes Portable inference refused rollback of a published provider.");
+            throw portableGatewayStateConflict(
+              "Hermes Portable inference refused rollback of a published provider.",
+            );
           }
           const observed = readExact(input.provider);
           if (active.phase === "rolled-back") {
             if (observed.kind !== "absent") {
-              throw new Error("Hermes Portable inference rolled-back gateway provider reappeared.");
+              throw portableGatewayStateConflict(
+                "Hermes Portable inference rolled-back gateway provider reappeared.",
+              );
             }
             return;
           }
@@ -801,7 +913,7 @@ function exactGatewayMutation(
             }
             const authority = active.phase === "creating" ? createdAuthority(observed) : null;
             if (!authority) {
-              throw new Error(
+              throw portableGatewayStateConflict(
                 "Hermes Portable inference refused rollback of unowned gateway authority.",
               );
             }
@@ -812,13 +924,13 @@ function exactGatewayMutation(
               !active.providerAuthority ||
               !matchesAuthority(observed, active.providerAuthority)
             ) {
-              throw new Error(
+              throw portableGatewayStateConflict(
                 "Hermes Portable inference refused to delete changed gateway authority.",
               );
             }
             active = journalStore.transition(active, "rolling-back", active.providerAuthority);
           }
-          deleteRecordedProvider(input.provider, active);
+          await deleteRecordedProvider(input.provider, active);
         },
       });
     };
@@ -829,6 +941,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -840,15 +953,34 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     options.targetSha256,
     () => {},
   );
-  const recoveredReceipt = receiptProbe.readPublished();
+  const recoveredReceipt = readPortableGatewayState(receiptProbe.readPublished);
   if (
     recoveredReceipt !== null &&
     (recoveredReceipt.publication === undefined ||
       recoveredReceipt.publication.targetSha256 !== options.targetSha256)
   ) {
-    throw new Error("Hermes Portable Ollama published transaction authority is inconsistent.");
+    throw portableGatewayStateConflict(
+      "Hermes Portable Ollama published transaction authority is inconsistent.",
+    );
   }
-  const transactionId = recoveredReceipt?.publication?.transactionId ?? options.transactionId;
+  const recoveryScope: GatewayProviderJournalRecoveryScope = Object.freeze({
+    targetSha256: options.targetSha256,
+    gatewayName: options.gatewayName,
+    sandboxName: options.sandboxName,
+    provider: "ollama-local",
+    model: options.model,
+    type: "openai",
+    credentialEnv: options.credentialEnv,
+    baseUrl: "http://host.openshell.internal:11434/v1",
+  });
+  const recoveredJournalTransactionId =
+    recoveredReceipt === null
+      ? recoverGatewayProviderJournalTransactionId(options.directory, recoveryScope)
+      : null;
+  const transactionId =
+    recoveredReceipt?.publication?.transactionId ??
+    recoveredJournalTransactionId ??
+    options.transactionId;
   const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
@@ -858,7 +990,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     Object.freeze({
       transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,
@@ -874,7 +1006,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     options.targetSha256,
     gatewayProviderJournal.markCommitted,
   );
-  const publishedReceipt = receiptWriter.readPublished();
+  const publishedReceipt = readPortableGatewayState(receiptWriter.readPublished);
   const gatewayJournalState = gatewayProviderJournal.load();
   if (
     (publishedReceipt !== null &&
@@ -882,10 +1014,13 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
       gatewayJournalState?.phase !== "committed") ||
     (publishedReceipt === null && gatewayJournalState?.phase === "committed")
   ) {
-    throw new Error("Hermes Portable Ollama gateway publication authority is inconsistent.");
+    throw portableGatewayStateConflict(
+      "Hermes Portable Ollama gateway publication authority is inconsistent.",
+    );
   }
   const gatewayMutation = exactGatewayMutation(
     options.runGatewayOpenshell,
+    options.gatewayName,
     options.model,
     options.sandboxName,
     options.credentialEnv,
@@ -918,6 +1053,7 @@ export interface HermesPortableOllamaPublishedReceiptAuthority {
 /** Bind the committed private receipt and journal without repeating the live provider observation. */
 export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
   readonly directory: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly credentialEnv: string;
 }): HermesPortableOllamaPublishedReceiptAuthority {
@@ -952,7 +1088,7 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
     Object.freeze({
       transactionId,
       targetSha256: receipt.publication.targetSha256,
-      gatewayName: "nemoclaw" as const,
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local" as const,
       model: receipt.inference.model,
@@ -982,6 +1118,7 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
 /** Re-prove an already committed Ollama publication without opening a mutation path. */
 export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: {
   readonly directory: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly credentialEnv: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
@@ -1016,7 +1153,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   const intent = Object.freeze({
     transactionId,
     targetSha256,
-    gatewayName: "nemoclaw" as const,
+    gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
     provider: "ollama-local" as const,
     model: receipt.inference.model,
@@ -1093,7 +1230,7 @@ export interface PreparedHermesPortableOllamaProviderRetirement {
     journalSha256: string;
   }>;
   readonly present: boolean;
-  readonly removeAndVerify: () => void;
+  readonly removeAndVerify: () => Promise<void>;
   readonly verifyAbsent: () => void;
 }
 
@@ -1102,6 +1239,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -1117,7 +1255,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
     Object.freeze({
       transactionId: options.transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,
@@ -1173,18 +1311,25 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
       journalSha256: createHash("sha256").update(expectedJournal, "utf8").digest("hex"),
     }),
     present: initial.kind === "present",
-    removeAndVerify() {
+    async removeAndVerify() {
       requireJournal();
       const current = observe();
       if (current.kind === "absent") return;
       if (!matches(current)) {
         throw new Error("Hermes Portable refused to remove changed gateway provider authority.");
       }
-      const removed = options.runGatewayOpenshell(["provider", "delete", "ollama-local"], {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+      const removed = await createManagedProviderAdapter((args, opts) =>
+        options.runGatewayOpenshell(args, {
+          ...opts,
+          ignoreError: true,
+          suppressOutput: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+        }),
+      ).deleteProvider({
+        target: { kind: "selected" },
+        providerName: "ollama-local",
+        timeoutMs: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
       });
       const after = observe();
       if (after.kind === "absent") {
@@ -1194,7 +1339,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
       if (!matches(after)) {
         throw new Error("Hermes Portable gateway provider changed during uninstall.");
       }
-      if (removed.status !== 0) {
+      if (!removed.ok) {
         throw new Error("Hermes Portable could not remove its exact gateway provider.");
       }
       throw new Error("Hermes Portable gateway provider remained after uninstall.");

@@ -37,6 +37,18 @@ describe("Hermes dashboard workflow boundary", () => {
     );
   });
 
+  it("requires the admitted dashboard, TUI and allocated API configuration (#11433)", () => {
+    const workflow = readHermesDashboardWorkflow();
+    workflow.jobs["hermes-e2e"].env!.NEMOCLAW_HERMES_API_PORT = "8642";
+    workflow.jobs["hermes-e2e"].env!.NEMOCLAW_HERMES_DASHBOARD_TUI = "0";
+    expect(validateHermesDashboardWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "hermes-e2e must qualify NEMOCLAW_HERMES_API_PORT=8643",
+        "hermes-e2e must qualify NEMOCLAW_HERMES_DASHBOARD_TUI=1",
+      ]),
+    );
+  });
+
   it("keeps the canonical checkout trust boundary", () => {
     const workflow = readHermesDashboardWorkflow();
     const checkout = workflow.jobs["hermes-e2e"].steps!.find((step) =>

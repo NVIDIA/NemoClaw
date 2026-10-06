@@ -67,30 +67,31 @@ function fakeHost() {
     host: {
       command,
       nemoclaw,
-      openshellCommandPath: "/reviewed/openshell",
+      commandPath: "/reviewed/nemoclaw",
     } as unknown as HostCliClient,
     nemoclaw,
   };
 }
 
 describe("OpenShell exact-main child contracts", () => {
-  it.each(
-    [ENTRYPOINT_CHILD_PROBE, EXEC_CHILD_PROBE],
-  )("keeps every embedded child probe syntactically executable [case %#]", (source) => {
-    const compiled = spawnSync(
-      "python3",
-      ["-c", "import sys; compile(sys.argv[1], '<exact-main-child-proof>', 'exec')", source],
-      { encoding: "utf8" },
-    );
-    expect(compiled.status, compiled.stderr).toBe(0);
-    expect(source).not.toContain("value.strip().split()[0]");
+  it.each([ENTRYPOINT_CHILD_PROBE, EXEC_CHILD_PROBE])(
+    "keeps every embedded child probe syntactically executable [case %#]",
+    (source) => {
+      const compiled = spawnSync(
+        "python3",
+        ["-c", "import sys; compile(sys.argv[1], '<exact-main-child-proof>', 'exec')", source],
+        { encoding: "utf8" },
+      );
+      expect(compiled.status, compiled.stderr).toBe(0);
+      expect(source).not.toContain("value.strip().split()[0]");
 
-    const parsed = spawnSync("bash", ["-n"], {
-      encoding: "utf8",
-      input: CONNECT_CHILD_PROBE,
-    });
-    expect(parsed.status, parsed.stderr).toBe(0);
-  });
+      const parsed = spawnSync("bash", ["-n"], {
+        encoding: "utf8",
+        input: CONNECT_CHILD_PROBE,
+      });
+      expect(parsed.status, parsed.stderr).toBe(0);
+    },
+  );
 
   it("parses proc status entries with an empty value", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-proc-status-"));
@@ -114,7 +115,7 @@ describe("OpenShell exact-main child contracts", () => {
     }
   });
 
-  it("proves entrypoint, exec, and forced-TTY connect children independently", async () => {
+  it("proves entrypoint, exec, and NemoClaw connect children", async () => {
     const { command, host, nemoclaw } = fakeHost();
     command
       .mockResolvedValueOnce(containerDiscovery())
@@ -147,10 +148,10 @@ describe("OpenShell exact-main child contracts", () => {
     expect(command.mock.calls[2]?.[0]).toBe("bash");
     expect(command.mock.calls[2]?.[1]).toEqual([
       "-lc",
-      'printf \'%s\\n\' "$1" | "$2" sandbox connect "$3"',
+      'printf \'%s\\n\' "$1" | "$2" "$3" connect',
       "exact-main-connect-child",
       CONNECT_CHILD_PROBE,
-      "/reviewed/openshell",
+      "/reviewed/nemoclaw",
       SANDBOX_NAME,
     ]);
     expect(CONNECT_CHILD_PROBE).toContain('"/proc/$$/status"');

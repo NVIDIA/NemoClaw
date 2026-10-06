@@ -9,7 +9,8 @@ export default class SkillInstallCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:install";
   static strict = true;
   static summary = "Deploy a skill directory to the sandbox";
-  static description = "Validate a local SKILL.md directory and upload it to a running sandbox.";
+  static description =
+    "Validate and privately stage a local SKILL.md tree, then use the selected agent's native add command or canonical writable-root fallback.";
   static usage = ["<name> <path>"];
   static examples = [
     "<%= config.bin %> sandbox skill install alpha ./my-skill",

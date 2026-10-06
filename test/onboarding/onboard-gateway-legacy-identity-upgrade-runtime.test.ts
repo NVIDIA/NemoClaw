@@ -18,7 +18,10 @@ import {
 } from "../../src/lib/onboard/docker-driver-gateway-cutover";
 import { reapHostGatewayBeforeLaunchOrFail } from "../../src/lib/onboard/docker-driver-gateway-prelaunch";
 import { createDockerDriverGatewayRuntimeHelpers } from "../../src/lib/onboard/docker-driver-gateway-runtime";
-import { resolveGatewayName, resolveGatewayStateDirName } from "../../src/lib/onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveGatewayStateDirName,
+} from "../../src/lib/onboard/gateway-binding";
 import { buildOwnedHostGatewayArgv0 } from "../../src/lib/onboard/gateway-process-identity";
 import { stopHostGatewayProcesses } from "../../src/lib/onboard/host-gateway-process";
 
@@ -211,21 +214,23 @@ describe("legacy Docker-driver gateway identity upgrade", () => {
         portListenerScan: listenerScan,
         pidFileGatewayPid: legacyPid,
         initialHealth: {
-          status: "Gateway: active",
-          namedInfo: `Gateway: ${gatewayName}`,
-          activeInfo: `Gateway: ${gatewayName}`,
+          healthy: true,
+          namedMetadata: true,
+          gatewayReuseState: "healthy",
+          shouldSelect: false,
+          endpoints: [],
+          endpointBinding: "unknown",
         },
       };
       const deps: DockerDriverGatewayCutoverDeps = {
         isDockerDriverGatewayProcessAlive: () => isAlive(legacyPid),
-        isGatewayHealthy: () => true,
         getDockerDriverGatewayRuntimeDrift: (pid, env, binary) =>
           runtime.getDockerDriverGatewayRuntimeDrift(pid, env, binary, process.platform),
         logDockerDriverGatewayRestart: (reason) => restartReasons.push(reason),
-        registerDockerDriverGatewayEndpoint: () => true,
+        registerDockerDriverGatewayEndpoint: async () => true,
         isDockerDriverGatewayHttpReady: async () => true,
         verifySandboxBridgeGatewayReachableOrExit: verifyBridge,
-        readGatewayHealth: () => input.initialHealth,
+        readGatewayHealth: async () => input.initialHealth,
         rememberDockerDriverGatewayPid: runtime.rememberDockerDriverGatewayPid,
         reapDuplicateHostGatewaysExceptOrFail: () => undefined,
         reapHostGatewayBeforeLaunchOrFail: (options) => reapHostGatewayBeforeLaunchOrFail(options),

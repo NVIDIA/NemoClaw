@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type {
-  ManagedBootstrapRuntimeCreateLifecycle,
-  ManagedBootstrapRuntimeCreateLifecycleInput,
-  ManagedBootstrapRuntimeOnboardRouting,
-  ManagedBootstrapRuntimeOnboardRoutingInput,
-} from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
+import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
@@ -31,12 +26,11 @@ export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as 
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
+export type RuntimeProviderFinalSandboxLiveness = "openshell-and-docker" | "openshell-only";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
   | "registration"
-  | "start"
-  | "stop"
   | "inference-set"
   | "rebuild"
   | "clone"
@@ -45,10 +39,16 @@ export type RuntimeProviderMutationOperation =
   | "workload-cleanup";
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
+  | "external-image-preparation"
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
   | "workload-cleanup";
+
+export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
+  const normalized = driverName?.trim().toLowerCase();
+  return !normalized || normalized === "vm" ? "docker" : normalized;
+}
 
 export interface RuntimeProviderIdentity {
   readonly contractVersion: typeof RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION;
@@ -105,6 +105,33 @@ export interface RuntimeProviderGatewayImageCacheResult {
   readonly details?: string;
 }
 
+export type RuntimeProviderGatewayVersionCompatibility = "compatible" | "drift" | "unknown";
+
+export interface RuntimeProviderOwnedGatewayReadinessInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly expectedEndpoint: string;
+  readonly runtimeSocketPath: string | null;
+  readonly managedGatewayEndpoints: readonly (string | null)[];
+  readonly portAvailable: boolean;
+  readonly installedOpenShellVersion: string | null;
+  readonly trustedGatewayBin: string | null;
+}
+
+export interface RuntimeProviderOwnedGatewayReadinessObservation {
+  readonly endpointBinding: "match" | "mismatch" | "unknown";
+  readonly listenerScan: {
+    readonly pids: readonly number[];
+    readonly unverifiedPids: readonly number[];
+    readonly complete: boolean;
+  };
+  readonly targetBoundListenerPids: readonly number[];
+  readonly versionCompatibility: RuntimeProviderGatewayVersionCompatibility | null;
+}
+
 /**
  * Provider-owned gateway behavior projected into generic orchestration. None of
  * these values identify a provider; callers consume the behavior without
@@ -139,7 +166,14 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: {
+        maxOutputBytes: number;
+        environment?: Record<string, string>;
+      },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }
@@ -156,7 +190,6 @@ export type RuntimeProviderReadOnlyHostMountCapability =
 
 export interface RuntimeProviderNormalizedCapabilities {
   readonly hostLocalInference: boolean;
-  readonly directLifecycle: boolean;
   readonly legacyGatewayContainerInspection: boolean;
   readonly workloadImageCleanup: boolean;
   readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
@@ -286,6 +319,12 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderExternalImageSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  readonly agents: readonly ("openclaw" | "hermes")[];
+};
+
 export type RuntimeProviderNativeArtifactSupport = {
   readonly exactDigestReferences: boolean;
   readonly platforms: readonly "windows/x64"[];
@@ -296,7 +335,11 @@ export type RuntimeProviderNativeArtifactSupport = {
 
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  /** Missing or null until this provider supports user-supplied immutable images. */
+  readonly externalImageSupport?: RuntimeProviderExternalImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
+  /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
+  readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;
@@ -318,7 +361,11 @@ export type RuntimeProviderCommandCapture = {
 };
 
 export interface RuntimeProviderLifecycleInput {
+  /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
+  /** Canonical gateway name resolved by the action that owns the persisted row. */
+  readonly gatewayName?: string;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
@@ -393,12 +440,21 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly paths: readonly string[];
 }
 
+export interface RuntimeProviderStoppedNativeHomeCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly expectedResourceHandle?: string;
+  readonly root: string;
+  readonly protectedPaths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
       "registeredSandboxNames" | "sandbox" | "sandboxName"
-    >,
+    > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
@@ -406,14 +462,13 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
   ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  clearStoppedNativeHome?(
+    input: RuntimeProviderStoppedNativeHomeCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(
     input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
   ): string[];
-}
-
-export interface RuntimeProviderLifecycleStopHooks {
-  readonly beforeStop: () => void;
 }
 
 export type RuntimeProviderProviderDetachResult = {
@@ -466,7 +521,9 @@ export type RuntimeProviderWorkloadCleanupResult =
     };
 
 export interface RuntimeProviderCleanupOperations {
-  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
+  readonly detachProviders: () =>
+    | RuntimeProviderProviderDetachResult
+    | Promise<RuntimeProviderProviderDetachResult>;
 }
 
 /**
@@ -523,6 +580,22 @@ export interface RuntimeProviderSnapshotRestoreSource {
   readonly runtime: RuntimeProviderRuntimeReceipt;
 }
 
+export interface RuntimeProviderStoppedStateProjection {
+  /** Canonical complete native home/workspace root owned by the stopped runtime. */
+  readonly nativeRoot: string;
+  readonly managedStateRoots?: readonly {
+    readonly mountTarget: string;
+    readonly resourceIdentity: string;
+    readonly ownershipLabels: Readonly<Record<string, string>>;
+  }[];
+}
+
+export interface RuntimeProviderStoppedStateCapture {
+  /** The caller owns the private destination fd and archive validation. */
+  capture(archiveFd: number, maxBytes: number): Promise<void>;
+  assertCurrent(): void;
+}
+
 export interface RuntimeProviderSnapshotRestoreReceipt {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -544,15 +617,37 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
   ): RuntimeProviderLifecycleResult | null;
 }>;
 
-export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
+type RuntimeProviderGatewaySurfaceBase = {
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
-  /** Explicit authority to replace standard Docker host readiness during admission. */
-  readonly ownsHostReadiness: boolean;
+  /** Evidence source that authorizes final shared-gateway cleanup. */
+  readonly finalSandboxLiveness: RuntimeProviderFinalSandboxLiveness;
+  /** Project provider-owned gateway behavior without changing host state. */
+  observeHostRuntime(
+    input: RuntimeProviderGatewayHostRuntimeInput,
+  ): RuntimeProviderGatewayHostRuntime;
+  /** Prepare host state, then project the same provider-owned gateway behavior. */
   prepareHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,
   ): RuntimeProviderGatewayHostRuntime;
-}>;
+};
+
+export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<
+  RuntimeProviderGatewaySurfaceBase &
+    (
+      | {
+          /** Replace standard Docker readiness with provider-owned observation. */
+          readonly ownsHostReadiness: true;
+          observeOwnedGateway(
+            input: RuntimeProviderOwnedGatewayReadinessInput,
+          ): RuntimeProviderOwnedGatewayReadinessObservation;
+        }
+      | {
+          readonly ownsHostReadiness: false;
+          readonly observeOwnedGateway?: never;
+        }
+    )
+>;
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   readonly profile: RuntimeProviderWorkloadProfile;
@@ -571,18 +666,9 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
-      /** Provider-owned timeout for direct container lifecycle mutations. */
+      /** Provider-owned timeout for exact privileged container mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
-      verifyStarted(
-        input: RuntimeProviderLifecycleInput,
-        verifyGateway: (sandboxName: string) => Promise<void>,
-      ): Promise<void>;
-      stop(
-        input: RuntimeProviderLifecycleInput,
-        hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -591,19 +677,6 @@ export type RuntimeProviderMutationAuthoritySurface =
       readonly operations: readonly RuntimeProviderMutationOperation[];
     }>
   | RuntimeProviderUnsupportedSurface;
-
-export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupportedSurface<{
-  readonly bootstrapKind: "managed-image";
-  createAuthorityStore(input: {
-    readonly stateRoot: string;
-  }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
-  createLifecycle(
-    input: ManagedBootstrapRuntimeCreateLifecycleInput,
-  ): ManagedBootstrapRuntimeCreateLifecycle;
-  createOnboardRouting(
-    input: ManagedBootstrapRuntimeOnboardRoutingInput,
-  ): ManagedBootstrapRuntimeOnboardRouting;
-}>;
 
 export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
   readonly bootstrapKind: "native-artifact";
@@ -618,7 +691,6 @@ export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSuppo
 }>;
 
 export type RuntimeProviderBootstrapSurface =
-  | RuntimeProviderManagedImageBootstrapSurface
   | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 
@@ -638,11 +710,30 @@ export type RuntimeProviderSnapshotSurface =
       preflight(
         operation: RuntimeProviderSnapshotOperation,
         sandbox: SandboxEntry,
+        timeoutMs?: number,
       ): RuntimeProviderSnapshotPreflightReceipt;
       capture(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
+        timeoutMs?: number,
       ): RuntimeProviderRuntimeReceipt;
+      /** Optional read-only filesystem capture from an identified stopped runtime. */
+      prepareStoppedStateCapture?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotRestoreSource,
+        projection: RuntimeProviderStoppedStateProjection,
+      ): RuntimeProviderStoppedStateCapture | null;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
+      /** An explicit provider-owned transition for restoring captured filesystem state. */
+      canRestoreLifecycle?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotLifecycleState,
+        target: RuntimeProviderSnapshotLifecycleState,
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -675,7 +766,7 @@ export type RuntimeProviderCleanupSurface =
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
-      ): RuntimeProviderProviderDetachResult;
+      ): RuntimeProviderProviderDetachResult | Promise<RuntimeProviderProviderDetachResult>;
       /**
        * Produce a side-effect-free cleanup plan before any destructive
        * sandbox action. Providers must revalidate the same authority inside
@@ -687,6 +778,44 @@ export type RuntimeProviderCleanupSurface =
       removeOwnedWorkload(input: RuntimeProviderCleanupInput): RuntimeProviderWorkloadCleanupResult;
     }>
   | RuntimeProviderUnsupportedSurface;
+
+/** Provider-neutral request for a bounded NVIDIA container workload. */
+export interface RuntimeProviderNvidiaContainerInput {
+  readonly image: string;
+  readonly entrypoint: string;
+  readonly command: readonly string[];
+  readonly resource: RuntimeProviderOwnedContainerResource;
+}
+
+export interface RuntimeProviderOwnedContainerResource {
+  readonly name: string;
+  readonly ownership: {
+    readonly label: string;
+    readonly value: string;
+  };
+}
+
+export interface RuntimeProviderOwnedContainerCleanupResult {
+  readonly status: "absent" | "removed" | "failed";
+}
+
+export interface RuntimeProviderOwnedContainerCleanupOptions {
+  readonly timeoutMs?: number;
+  readonly observation: "immediate" | "until-deadline";
+}
+
+export interface RuntimeProviderNvidiaContainerSurface {
+  capture(
+    operation: RuntimeProviderContainerEngineOperation,
+    input: RuntimeProviderNvidiaContainerInput,
+    timeoutMs?: number,
+  ): RuntimeProviderCommandCapture;
+  cleanup(
+    operation: RuntimeProviderContainerEngineOperation,
+    resource: RuntimeProviderOwnedContainerResource,
+    options: RuntimeProviderOwnedContainerCleanupOptions,
+  ): RuntimeProviderOwnedContainerCleanupResult;
+}
 
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
@@ -700,6 +829,7 @@ export type RuntimeProviderContainerEngineSurface =
         args: readonly string[],
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
+      readonly nvidiaContainer?: RuntimeProviderNvidiaContainerSurface;
     }>
   | RuntimeProviderUnsupportedSurface;
 

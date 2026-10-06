@@ -125,6 +125,13 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
 ];
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",
+  // Pi and Deep Agents use this public, fixed route sentinel when talking to
+  // OpenShell's local managed-inference endpoint. It is not upstream
+  // authority and is safe to carry across a native-home rebuild.
+  "nemoclaw-managed-inference",
+  // Hermes requires an sk-prefixed value in its config, but OpenShell replaces
+  // this reserved non-secret sentinel at the proxy boundary before inference.
+  "sk-OPENSHELL-PROXY-REWRITE",
   CREDENTIAL_PLACEHOLDER,
 ]);
 
@@ -253,7 +260,30 @@ export function stripCredentials(obj: unknown): unknown {
   return result;
 }
 
-const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
+export const URL_TOKEN_PATTERN_SOURCE = String.raw`[a-z][a-z0-9+.-]*:\/\/(?:[^/?#\s'"]+['"][^/?#@\s]*@)?[^\s'"]+`;
+/** Replace URL tokens without retrying the scheme pattern at every character. */
+export function replaceUrlTokens(value: string, replace: (token: string) => string): string {
+  const pattern = new RegExp(URL_TOKEN_PATTERN_SOURCE, "iyu");
+  const parts: string[] = [];
+  let copiedThrough = 0;
+  let searchFrom = 0;
+  while (searchFrom < value.length) {
+    const separator = value.indexOf("://", searchFrom);
+    if (separator < 0) break;
+    let start = separator;
+    while (start > searchFrom && /[a-z0-9+.-]/iu.test(value[start - 1])) start -= 1;
+    while (start < separator && !/[a-z]/iu.test(value[start])) start += 1;
+    pattern.lastIndex = start;
+    const match = pattern.exec(value);
+    searchFrom = separator + 3;
+    if (!match) continue;
+    parts.push(value.slice(copiedThrough, start), replace(match[0]));
+    copiedThrough = pattern.lastIndex;
+    searchFrom = copiedThrough;
+  }
+  parts.push(value.slice(copiedThrough));
+  return parts.join("");
+}
 const DIAGNOSTIC_ASSIGNMENT_PATTERN =
   /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
 
@@ -286,7 +316,7 @@ function redactDiagnosticUrl(value: string): string {
 
 /** Fully redact credential-shaped assignments, bearer values, and URL credentials. */
 export function redactCredentialText(value: string): string {
-  let result = value.replace(DIAGNOSTIC_URL_PATTERN, redactDiagnosticUrl);
+  let result = replaceUrlTokens(value, redactDiagnosticUrl);
   for (const pattern of SECRET_PATTERNS) {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");

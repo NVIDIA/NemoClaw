@@ -19,13 +19,10 @@ describe("NVIDIA driver version detection", () => {
     );
   });
 
-  it.each([
-    "595",
-    "595.84.1.2",
-    "595.x",
-    "595.84\n580.65.06",
-    "595.84\nunsafe\u001b[31m",
-  ])("rejects a malformed or mixed NVIDIA driver inventory %# (#8144)", (output) => {
-    expect(detectNvidiaDriverVersion({ runCaptureImpl: () => output })).toBeUndefined();
-  });
+  it.each(["595", "595.84.1.2", "595.x", "595.84\n580.65.06", "595.84\nunsafe\u001b[31m"])(
+    "rejects a malformed or mixed NVIDIA driver inventory %# (#8144)",
+    (output) => {
+      expect(detectNvidiaDriverVersion({ runCaptureImpl: () => output })).toBeUndefined();
+    },
+  );
 });

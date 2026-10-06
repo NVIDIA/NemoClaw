@@ -118,11 +118,11 @@ describe("Docker startup-command sandbox creation", () => {
     expect(patch.selectedMode()?.kind).toBe("startup-command");
   });
 
-  it("rolls back startup-command recreation when the supervisor does not reconnect", () => {
+  it("rolls back startup-command recreation when the supervisor does not reconnect", async () => {
     const deps = makeDeps();
     const result = startupResult();
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
       route: "native",
@@ -134,7 +134,7 @@ describe("Docker startup-command sandbox creation", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreateStartupPatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => false),
+        waitForSupervisor: vi.fn(async () => false),
         capturePreRollbackDiagnostics,
         finalizeBackup,
         onPatchFailureExit,
@@ -142,8 +142,7 @@ describe("Docker startup-command sandbox creation", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
-
+    await patch.waitForSupervisorReconnectIfNeeded();
     expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
     expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
       finalizeBackup.mock.invocationCallOrder[0],
@@ -167,13 +166,14 @@ describe("Docker startup-command sandbox creation", () => {
     );
     const rollback = vi.fn(async () => {});
     const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
+      route: "compatibility",
       externalRecreation: true,
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "a".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",
@@ -186,7 +186,8 @@ describe("Docker startup-command sandbox creation", () => {
     });
     patch.maybeApplyDuringCreate();
     await patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
     expect(commit).not.toHaveBeenCalled();
     const firstCommit = patch.commitAfterReady();
     const duplicateCommit = patch.commitAfterReady();
@@ -194,6 +195,41 @@ describe("Docker startup-command sandbox creation", () => {
     expect(rollback).not.toHaveBeenCalled();
     releaseCommit();
     await Promise.all([firstCommit, duplicateCommit]);
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(true);
+  });
+
+  it("does not cross the managed cutover when its durable handoff fence fails (#10560)", async () => {
+    const commit = vi.fn(async () => {});
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: makeDeps(),
+    });
+    patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "b".repeat(64),
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: { sandboxName: "alpha" },
+      commit,
+      rollback: vi.fn(async () => {}),
+    });
+
+    await expect(
+      patch.commitAfterReady({
+        beforeFinalHandoff: () => {
+          throw new Error("checkpoint persistence failed");
+        },
+      }),
+    ).rejects.toThrow("checkpoint persistence failed");
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
   });
 
   it("rolls back a driver-owned cutover before reporting commit failure", async () => {
@@ -218,6 +254,7 @@ describe("Docker startup-command sandbox creation", () => {
       overrides: { onPatchFailureExit },
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "c".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",

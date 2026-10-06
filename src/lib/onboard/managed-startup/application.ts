@@ -71,8 +71,10 @@ export interface PreparedManagedStartupApplication {
   readonly profile: ManagedStartupProfile;
 }
 
-export interface CommittedManagedStartupApplication
-  extends Omit<PreparedManagedStartupApplication, "status"> {
+export interface CommittedManagedStartupApplication extends Omit<
+  PreparedManagedStartupApplication,
+  "status"
+> {
   readonly status: "committed";
 }
 

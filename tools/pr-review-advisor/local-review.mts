@@ -10,7 +10,14 @@ const IMPLEMENTATION = "tools/pr-review-advisor/local-review-implementation.mts"
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 function hostEnv(source: string): NodeJS.ProcessEnv {
   const homeBin = process.env.HOME && path.join(process.env.HOME, ".local", "bin");
-  const entries = [homeBin, path.dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"]
+  const entries = [
+    homeBin,
+    path.dirname(process.execPath),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ]
     .filter((value): value is string => typeof value === "string" && fs.existsSync(value))
     .map((value) => fs.realpathSync(value))
     .filter((value) => path.relative(source, value).startsWith(".."));
@@ -61,7 +68,11 @@ function groupExists(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    // Darwin can report EPERM while a signalled detached group is being reaped.
+    // Keep waiting for ESRCH; a persistently inaccessible group still fails closed.
+    if (code === "EPERM") return true;
     throw error;
   }
 }
@@ -85,7 +96,19 @@ async function stopGroup(pid: number): Promise<void> {
   if (!(await wait(5_000))) throw new Error(`process group ${pid} did not exit after SIGKILL`);
 }
 async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (process.argv.length !== 2) throw new Error("review:local does not accept options");
+  const forwardedArguments = process.argv.slice(2);
+  if (
+    forwardedArguments.length !== 0 &&
+    !(
+      (forwardedArguments.length === 2 || forwardedArguments.length === 4) &&
+      forwardedArguments[0] === "--pr" &&
+      /^\d+$/u.test(forwardedArguments[1] ?? "") &&
+      (forwardedArguments.length === 2 ||
+        (forwardedArguments[2] === "--repo" &&
+          /^[^/\s]+\/[^/\s]+$/u.test(forwardedArguments[3] ?? "")))
+    )
+  )
+    throw new Error("Usage: npm run review:local [-- --pr <number> [--repo OWNER/REPO]]");
   const source = fs.realpathSync(process.cwd());
   const env = hostEnv(source);
   const base = git(source, ["rev-parse", "--verify", "origin/main^{commit}"], env);
@@ -176,7 +199,12 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
       throw new Error("npm failed while preparing the trusted local review checkout");
     result = await run(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", path.join(checkout, IMPLEMENTATION), source],
+      [
+        "--no-warnings",
+        fs.realpathSync(path.join(checkout, IMPLEMENTATION)),
+        source,
+        ...forwardedArguments,
+      ],
       { cwd: checkout, env, inherit: true },
     );
     return { code: result.code, signal: received ?? result.signal };

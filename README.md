@@ -10,7 +10,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 
 NVIDIA NemoClaw is an open source reference stack for running supported AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-It provides guided onboarding, managed inference, network policy, managed integrations, snapshots, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
+It provides guided onboarding, managed inference, network policy, managed integrations, OpenShell-backed state persistence, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
 
 **Supported agents:**
 
@@ -63,6 +63,18 @@ Refer to the following pages on the official documentation website for more info
 | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/configure-sandboxes/review-sandbox-hardening) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
+
+## Telemetry
+
+When enabled, NemoClaw reports completed installations and updates, committed configuration, sandbox counts, agent categories and managed versions, and bounded model, provider, messaging, and configuration observations.
+It excludes prompts, credentials, private model and endpoint values, and user, account, device, and installation identifiers.
+No location resolver is currently configured; location fields report that status instead of guessed values.
+Production delivery remains disabled in this candidate pending collection-service and launch approval.
+
+To disable NemoClaw telemetry, set `NEMOCLAW_DISABLE_TELEMETRY=1` in the environment that runs the installer or CLI.
+Retain the setting in the shell, service, or scheduled-job configuration for later runs.
+This switch covers only NemoClaw telemetry; OpenShell, agents, model providers, and configured observability have separate controls.
+Refer to [Product Telemetry](docs/monitoring/telemetry.mdx) for the collected fields, measurement limits, and opt-out instructions.
 
 ## Community
 

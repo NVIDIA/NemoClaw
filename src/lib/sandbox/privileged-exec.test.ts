@@ -31,7 +31,7 @@ const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-gen
 const lifecycleGenerationCasPath = require.resolve("../state/registry/lifecycle-generation-cas");
 const { buildStoppedDockerSandboxChannelCleanupScript } = require(helperPath);
 const PINNED_CLEANUP_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 const EXPECTED_WECHAT_STATE_PATHS = [
   "/sandbox/.openclaw/wechat",
   "/sandbox/.openclaw/openclaw-weixin",
@@ -711,14 +711,16 @@ describe("privileged sandbox exec routing", () => {
     },
   );
 
-  it("rejects ambiguous labeled running containers", () => {
+  it("rejects ambiguous labeled containers", () => {
     expect(() =>
       selectDirectSandboxContainer(
         "demo",
         "abc123\topenshell-demo-one\ndef456\topenshell-demo-two\n",
         ["demo"],
       ),
-    ).toThrow(/Multiple running OpenShell containers.*refusing ambiguous/);
+    ).toThrow(
+      /Multiple OpenShell containers are labeled for sandbox 'demo'; refusing ambiguous lifecycle execution/,
+    );
   });
 
   it("rejects malformed Docker metadata", () => {
@@ -913,7 +915,7 @@ describe("privileged sandbox exec routing", () => {
     expect(resolvePortableDemoPrivilegedExecTarget).not.toHaveBeenCalled();
   });
 
-  it("keeps ordinary Docker discovery bounded and uses symbolic root (#9054)", () => {
+  it("keeps Docker discovery across lifecycle states bounded and uses symbolic root (#9054)", () => {
     const discoveryCalls: Array<{
       args: readonly string[];
       timeout: number | undefined;
@@ -943,6 +945,7 @@ describe("privileged sandbox exec routing", () => {
       {
         args: [
           "ps",
+          "--all",
           "--no-trunc",
           "--filter",
           "label=openshell.ai/managed-by=openshell",
@@ -954,6 +957,26 @@ describe("privileged sandbox exec routing", () => {
         timeout: 5000,
       },
     ]);
+  });
+
+  it("selects a stopped Docker container instead of classifying it as missing (#11107)", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: (args) =>
+          args.includes("--all") ? "stopped-alpha-id\topenshell-alpha\n" : "",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"])).toEqual([
+          "exec",
+          "--user",
+          "root",
+          "stopped-alpha-id",
+          "id",
+        ]);
+      },
+    );
   });
 
   it("clears interpreter and dynamic-loader injection variables for root control", () => {
@@ -1096,7 +1119,7 @@ describe("privileged sandbox exec routing", () => {
     expect(dockerPsCalls).toBe(0);
   });
 
-  it("surfaces docker discovery failures instead of reporting a missing container", () => {
+  it("keeps Docker discovery-command failures distinct from missing containers (#11107)", () => {
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
@@ -1105,15 +1128,25 @@ describe("privileged sandbox exec routing", () => {
           throw new Error("docker daemon unavailable");
         },
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
-          "docker daemon unavailable",
-        );
+      ({
+        isDirectSandboxContainerNotFoundError,
+        isDirectSandboxFallbackUnavailableError,
+        privilegedSandboxExecArgv,
+      }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(String(refusal)).toContain("docker daemon unavailable");
+        expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
+        expect(isDirectSandboxContainerNotFoundError(refusal)).toBe(false);
       },
     );
   });
 
-  it("fails clearly when no matching direct sandbox container is running", () => {
+  it("classifies a successful Docker discovery with no container as pending (#11107)", () => {
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
@@ -1123,7 +1156,11 @@ describe("privileged sandbox exec routing", () => {
         }),
         dockerCapture: () => "",
       },
-      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+      ({
+        isDirectSandboxContainerNotFoundError,
+        isDirectSandboxFallbackUnavailableError,
+        privilegedSandboxExecArgv,
+      }) => {
         let refusal: unknown;
         try {
           privilegedSandboxExecArgv("alpha", ["id"]);
@@ -1135,6 +1172,7 @@ describe("privileged sandbox exec routing", () => {
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
         expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
+        expect(isDirectSandboxContainerNotFoundError(refusal)).toBe(true);
       },
     );
   });

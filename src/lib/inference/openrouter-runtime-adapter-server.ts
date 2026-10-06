@@ -130,7 +130,7 @@ export function createOpenRouterRuntimeAdapterServer(
         status,
         durationMs: Date.now() - started,
       });
-    } catch (err) {
+    } catch {
       logAdapterEvent(logger, "request_failed", {
         method: req.method || "unknown",
         path: url.pathname,

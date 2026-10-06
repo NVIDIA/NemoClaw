@@ -1,13 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
+import {
+  MIN_PROBE_REPLY_TOKENS,
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "./max-tokens-field";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 
-export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
-  "nvidia.endpoint-validation.standard/v1";
-export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY =
-  "nvidia.endpoint-validation.extended/v1";
+export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY = "nvidia.endpoint-validation.standard/v1";
+export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY = "nvidia.endpoint-validation.extended/v1";
+
+const NVIDIA_ENDPOINT_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
+
+export function usesNvidiaEndpointProbePayload(provider: unknown): boolean {
+  return typeof provider === "string" && NVIDIA_ENDPOINT_PROVIDERS.has(provider);
+}
+
+/**
+ * Resolve an explicit onboarding budget without replacing model-owned defaults
+ * such as the DeepSeek V4 Pro 8192-token path.
+ */
+export function resolveOnboardingProbeReplyBudget(options: {
+  replyBudget?: number;
+  provider?: string | null;
+}): number | undefined {
+  if (options.replyBudget !== undefined) return options.replyBudget;
+  return options.provider === "gemini-api" ? resolveProbeReplyTokens(options.provider) : undefined;
+}
 
 export function vllmProbePolicyForModel(model: string): string {
   const normalized = model.trim().toLowerCase();
@@ -47,12 +67,16 @@ export function isKimiK26Model(model: unknown): boolean {
   return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
 }
 
-export function getChatCompletionsProbePayload(model: string): Record<string, unknown> {
+export function getChatCompletionsProbePayload(
+  model: string,
+  options: { useNvidiaEndpointProbePayload?: boolean; replyBudget?: number } = {},
+): Record<string, unknown> {
   const maxTokensField = resolveMaxTokensField(model);
+  const defaultReplyBudget = options.replyBudget ?? MIN_PROBE_REPLY_TOKENS;
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
+    [maxTokensField]: defaultReplyBudget,
   };
 
   if (isDeepSeekV4ProModel(model)) {
@@ -60,7 +84,7 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
       ...payload,
       temperature: 1,
       top_p: 0.95,
-      [maxTokensField]: 8192,
+      [maxTokensField]: options.replyBudget ?? 8192,
       chat_template_kwargs: { thinking: false },
       stream: true,
     };
@@ -69,8 +93,20 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   if (isKimiK26Model(model)) {
     return {
       ...payload,
-      [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
+      [maxTokensField]: defaultReplyBudget,
       chat_template_kwargs: { thinking: false },
+    };
+  }
+
+  if (
+    options.useNvidiaEndpointProbePayload === true &&
+    model.toLowerCase() === "nvidia/nemotron-3-super-120b-a12b"
+  ) {
+    return {
+      ...payload,
+      temperature: 1,
+      top_p: 0.95,
+      reasoning_effort: "none",
     };
   }
 

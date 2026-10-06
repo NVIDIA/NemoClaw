@@ -9,6 +9,7 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
+import { describeGatewayOwner } from "../onboard/gateway-ownership";
 import { isDecisionSelected, parseCheckpointDecision } from "./onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -39,6 +40,12 @@ const EFFECT_GROUP_NAMES: readonly CheckpointEffectGroupName[] = [
   "sandbox_create",
   "sandbox_register",
 ];
+
+export function describeCheckpointGatewayOwner(checkpoint: OnboardCheckpoint | null | undefined) {
+  return checkpoint?.gatewayAuthority.kind === "selected"
+    ? describeGatewayOwner(checkpoint.gatewayAuthority.value)
+    : null;
+}
 const SANDBOX_RECREATE_PHASES = new Set<CheckpointSandboxRecreatePhase>([
   "planned",
   "deleting",

@@ -7,6 +7,7 @@ import systemReadinessSchema from "../../../schemas/system-readiness.schema.json
 import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
+import { collectPlatformIdentity, type PlatformIdentity } from "./platform-qualification";
 
 const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
   detectGpu: vi.fn<(_deps?: unknown) => GpuDetection | null>(() => null),
@@ -26,7 +27,8 @@ const ajv = new Ajv2020({ allErrors: true, strict: true });
 ajv.addFormat("date-time", { type: "string", validate: () => true });
 const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
 
-function emptyPlatformIdentity() {
+/** Return the smallest neutral platform identity used by host-readiness tests. */
+function emptyPlatformIdentity(): PlatformIdentity {
   return {
     productName: null,
     nvidiaPlatform: null,
@@ -73,7 +75,8 @@ function report(
   collectionOptions: {
     detectHostGpuPlatform?: () => NvidiaPlatform;
     platformIdentity?: ReturnType<typeof emptyPlatformIdentity>;
-    wslDockerDesktopGpuProofPassed?: boolean;
+    containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
+    runtimeProvider?: Readonly<{ providerId: string; ownsHostReadiness: boolean }>;
   } = {},
 ) {
   return projectHostReadiness(
@@ -83,7 +86,8 @@ function report(
       now: () => NOW,
       collectPlatformIdentity: () => collectionOptions.platformIdentity ?? emptyPlatformIdentity(),
       detectHostGpuPlatform: collectionOptions.detectHostGpuPlatform,
-      wslDockerDesktopGpuProofPassed: collectionOptions.wslDockerDesktopGpuProofPassed,
+      containerGpuProof: collectionOptions.containerGpuProof,
+      runtimeProvider: collectionOptions.runtimeProvider,
     }),
     { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
   );
@@ -124,6 +128,127 @@ describe("host readiness projection (#7408)", () => {
         now: () => NOW,
       }).mutated,
     ).toBe(false);
+  });
+
+  it("reports the qualified Linux distribution and release (#11026)", () => {
+    const result = report(
+      {},
+      {
+        platformIdentity: {
+          ...emptyPlatformIdentity(),
+          osId: "ubuntu",
+          osVersionId: "24.04",
+          osPrettyName: "Ubuntu 24.04.4 LTS",
+        },
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
+    expect(findingIds(result)).not.toContain("host.os.release_inconclusive");
+  });
+
+  it("reports the qualified WSL distribution and release (#11026)", () => {
+    const result = report(
+      { isWsl: true },
+      {
+        platformIdentity: {
+          ...emptyPlatformIdentity(),
+          osId: "ubuntu",
+          osVersionId: "24.04",
+          osPrettyName: "Ubuntu 24.04.4 LTS",
+        },
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
+    expect(findingIds(result)).not.toContain("host.os.release_inconclusive");
+  });
+
+  it.each([
+    ["debian", "12"],
+    ["ubuntu", "22.04"],
+  ])(
+    "warns when Linux %s %s is outside the qualified release boundary (#11026)",
+    (osId, osVersionId) => {
+      const result = report(
+        {},
+        { platformIdentity: { ...emptyPlatformIdentity(), osId, osVersionId } },
+      );
+
+      expect(result.status).toBe("supported");
+      expect(result.exitCode).toBe(0);
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({ id: "host.os.release_unqualified", severity: "warning" }),
+      );
+    },
+  );
+
+  it("warns when Linux release evidence is unavailable (#11026)", () => {
+    const result = report();
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
+  });
+
+  it.each([
+    [
+      "a malformed selected field",
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS\n',
+    ],
+    ["a repeated selected field", "ID=ubuntu\nVERSION_ID=24.04\nID=debian\nVERSION_ID=12\n"],
+  ])("treats %s as inconclusive (#11026)", (_scenario, osRelease) => {
+    const platformIdentity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+      readBoundedOsRelease: () => osRelease,
+    });
+    const result = report({}, { platformIdentity });
+
+    expect(platformIdentity.osId).toBeUndefined();
+    expect(platformIdentity.osVersionId).toBeUndefined();
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
+  });
+
+  it("treats oversized OS release evidence as inconclusive (#11026)", () => {
+    const platformIdentity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? `ID=ubuntu\nVERSION_ID="24.04"\n${"#".repeat(4096)}`
+          : "",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+    });
+    const result = report({}, { platformIdentity });
+
+    expect(platformIdentity.osId).toBeUndefined();
+    expect(platformIdentity.osVersionId).toBeUndefined();
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
   });
 
   it.each([
@@ -178,6 +303,23 @@ describe("host readiness projection (#7408)", () => {
       expect(findingIds(result)).toContain(findingId);
     },
   );
+
+  it.each([
+    ["info_timeout", "unknown"],
+    ["version_timeout", "present"],
+  ] as const)("keeps a %s Docker probe inconclusive", (dockerProbeIssue, daemonState) => {
+    const result = report({
+      dockerReachable: dockerProbeIssue === "version_timeout",
+      dockerProbeIssue,
+    });
+
+    expect(result.status).toBe("inconclusive");
+    expect(result.exitCode).toBe(3);
+    expect(state(result, "host.docker.daemon_reachable")).toBe(daemonState);
+    expect(state(result, "host.docker.runtime_supported")).toBe("unknown");
+    expect(findingIds(result)).toContain("host.docker.probe_inconclusive");
+    expect(findingIds(result)).not.toContain("host.docker.daemon_unreachable");
+  });
 
   it("blocks a reachable but unsupported DOCKER_HOST before using daemon evidence (#7411)", () => {
     const result = report({ dockerHostInvalid: true, dockerReachable: true });
@@ -238,7 +380,7 @@ describe("host readiness projection (#7408)", () => {
         cdiNvidiaGpuSpecStale: true,
         nvidiaContainerToolkitInstalled: false,
       },
-      { wslDockerDesktopGpuProofPassed: true },
+      { containerGpuProof: { providerId: "docker", passed: true } },
     ],
   ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
     const result = report(overrides, collectionOptions);
@@ -348,17 +490,46 @@ describe("host readiness projection (#7408)", () => {
 
     expect(detectGpu).toHaveBeenCalledWith(
       expect.objectContaining({
-        proveArm64WslDockerDesktopGpu: null,
+        proveArm64ContainerGpu: null,
         runCaptureImpl: expect.any(Function),
       }),
     );
     expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("unknown");
   });
 
+  it("projects provider-owned Podman and its matching WSL GPU proof", () => {
+    const result = report(
+      {
+        isWsl: true,
+        runtime: "unknown",
+        dockerInstalled: false,
+        dockerReachable: false,
+      },
+      {
+        runtimeProvider: { providerId: "podman", ownsHostReadiness: true },
+        containerGpuProof: { providerId: "podman", passed: true },
+      },
+    );
+
+    expect(state(result, "host.platform.supported")).toBe("present");
+    expect(state(result, "host.platform.wsl_runtime_available")).toBe("present");
+    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
+    expect(result.observations).toContainEqual({
+      id: "host.runtime.provider",
+      state: "present",
+      value: "podman",
+    });
+    expect(result.observations).toContainEqual({
+      id: "host.gpu.container_proof_provider",
+      state: "present",
+      value: "podman",
+    });
+  });
+
   it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
     const detectGpuProbe = vi.fn(() => ({
       count: 1,
-      wslDockerDesktopGpuProofPassed: true,
+      containerGpuProof: { providerId: "docker", passed: true },
     }));
 
     createHostReadinessReport(

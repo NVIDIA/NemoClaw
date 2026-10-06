@@ -92,9 +92,10 @@ Refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quicks
 To change the reasoning effort on a running OpenClaw sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
 
 ```bash
-nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --endpoint-url <recorded-url> --reasoning-effort high
+nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --reasoning-effort high
 ```
 
+For this same-provider change, NemoClaw reuses the endpoint recorded for the sandbox.
 Pass `--reasoning-effort default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort.
 An ordinary sandbox restart preserves this runtime value or endpoint-default state; startup does not reapply the image's original onboarding value.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.

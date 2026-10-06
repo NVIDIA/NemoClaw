@@ -171,9 +171,7 @@ export interface PortableGatewayProviderHarness {
   readonly setLookupFailure: (value: boolean) => void;
   readonly setMalformed: (value: boolean) => void;
   readonly setPresent: (value: boolean) => void;
-  readonly setProfileState: (
-    value: "exact" | "missing" | "incompatible" | "import-failed",
-  ) => void;
+  readonly setProfileState: (value: "exact" | "missing" | "incompatible" | "import-failed") => void;
 }
 
 export function createPortableGatewayProviderHarness(

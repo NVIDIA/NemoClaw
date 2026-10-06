@@ -18,11 +18,11 @@ const { retryUntil } = require("../core/retry");
 const CURL_TIMEOUT_STATUS = 28;
 const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
-// 429 = Too Many Requests; 502/503/504 = upstream gateway/availability flakes
-// (NVIDIA Endpoints and other hosted providers periodically emit these for
-// minutes at a time). All four are transient — retry with backoff before
-// surfacing a hard failure to the wizard. See issues #2980 and #3033.
-const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429, 502, 503, 504]);
+// Which statuses are transient is shared policy, not a wizard-local decision:
+// the sandbox status probe classifies the same four (#10709). The definition
+// and its rationale live in ./probe/transient-http-policy; this module keeps
+// re-exporting the set so existing consumers are unaffected.
+const { RETRIABLE_HTTP_PROBE_STATUSES } = require("./probe/transient-http-policy");
 const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 function sleepSync(ms) {

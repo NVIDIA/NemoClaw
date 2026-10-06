@@ -30,12 +30,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-OLD_ENTRY_ALLOWLIST = '''        or any(t.rsplit("/", 1)[-1] in ("hermes", "hermes.exe") for t in tokens)
+OLD_ENTRY_ALLOWLIST = '''    if "hermes_cli.main" not in joined and "hermes_cli/main.py" not in joined and not any(
+        b in ("hermes", "hermes.exe") for b in basenames
+    ):
 '''
-NEW_ENTRY_ALLOWLIST = '''        or any(
-            t.rsplit("/", 1)[-1] in ("hermes", "hermes.exe", "hermes.real")
-            for t in tokens
-        )
+NEW_ENTRY_ALLOWLIST = '''    if "hermes_cli.main" not in joined and "hermes_cli/main.py" not in joined and not any(
+        b in ("hermes", "hermes.exe", "hermes.real") for b in basenames
+    ):
 '''
 
 

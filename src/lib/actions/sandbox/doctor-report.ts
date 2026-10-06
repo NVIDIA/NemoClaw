@@ -25,6 +25,21 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
+export type GlobalDoctorReport = {
+  schemaVersion: 1;
+  scope: "global";
+  status: DoctorReportStatus;
+  failed: number;
+  warnings: number;
+  checks: DoctorCheck[];
+};
+
+type RenderableDoctorReport = DoctorReport | GlobalDoctorReport;
+
+export function redactDoctorReport<T extends RenderableDoctorReport | undefined>(report: T): T {
+  return redactForLog(report) as T;
+}
+
 function summarizeChecks(checks: DoctorCheck[]): {
   status: DoctorReportStatus;
   failed: number;
@@ -49,6 +64,18 @@ export function buildDoctorReport(sandboxName: string, checks: DoctorCheck[]): D
   };
 }
 
+export function buildGlobalDoctorReport(checks: DoctorCheck[]): GlobalDoctorReport {
+  const summary = summarizeChecks(checks);
+  return {
+    schemaVersion: 1,
+    scope: "global",
+    status: summary.status,
+    failed: summary.failed,
+    warnings: summary.warned,
+    checks,
+  };
+}
+
 function statusLabel(status: DoctorStatus): string {
   switch (status) {
     case "ok":
@@ -62,7 +89,7 @@ function statusLabel(status: DoctorStatus): string {
   }
 }
 
-function orderedGroups(report: DoctorReport): string[] {
+function orderedGroups(report: RenderableDoctorReport): string[] {
   const preferred = ["Host", "Gateway", "Sandbox", "Inference", "Messaging", "Local services"];
   const remaining = report.checks
     .map((check) => check.group)
@@ -70,7 +97,7 @@ function orderedGroups(report: DoctorReport): string[] {
   return [...preferred, ...remaining];
 }
 
-function renderCheckGroups(report: DoctorReport): void {
+function renderCheckGroups(report: RenderableDoctorReport): void {
   for (const group of orderedGroups(report)) {
     const checks = report.checks.filter((check) => check.group === group);
     if (checks.length === 0) continue;
@@ -83,7 +110,7 @@ function renderCheckGroups(report: DoctorReport): void {
   }
 }
 
-function renderSummary(report: DoctorReport): void {
+function renderSummary(report: RenderableDoctorReport): void {
   if (report.status === "ok") {
     console.log(`  Summary: ${G}healthy${R}`);
     return;
@@ -97,22 +124,24 @@ function renderSummary(report: DoctorReport): void {
   );
 }
 
-export function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
+export function renderDoctorReport(report: RenderableDoctorReport, asJson: boolean): number {
+  const displayReport = redactDoctorReport(report);
   if (asJson) {
     // Parity with `sandbox status --json` (#4310): this console.log egress
     // bypasses the oclif logJson redaction boundary (#3657), so route the
     // machine-readable report through the centralized redactForLog source of
     // truth before check details (subprocess stderr, probe errors) reach
     // stdout.
-    console.log(JSON.stringify(redactForLog(report), null, 2));
+    console.log(JSON.stringify(displayReport, null, 2));
     return report.failed > 0 ? 1 : 0;
   }
 
   console.log("");
-  console.log(`  ${B}${CLI_DISPLAY_NAME} doctor:${R} ${report.sandbox}`);
-  renderCheckGroups(report);
+  const target = "sandbox" in displayReport ? `: ${displayReport.sandbox}` : "";
+  console.log(`  ${B}${CLI_DISPLAY_NAME} doctor${target}${R}`);
+  renderCheckGroups(displayReport);
   console.log("");
-  renderSummary(report);
+  renderSummary(displayReport);
   console.log("");
   return report.failed > 0 ? 1 : 0;
 }

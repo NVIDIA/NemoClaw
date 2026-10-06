@@ -51,6 +51,18 @@ describe("sandbox registration route transaction", () => {
 
   it("stages credentials, then holds sandbox, host dashboard, and gateway locks through creation", async () => {
     const events: string[] = [];
+    let releaseProviderPlan!: () => void;
+    const providerPlanReleased = new Promise<void>((resolve) => {
+      releaseProviderPlan = resolve;
+    });
+    let reportProviderPlanEntered!: () => void;
+    const providerPlanEntered = new Promise<void>((resolve) => {
+      reportProviderPlanEntered = resolve;
+    });
+    const createSandbox = vi.fn(async () => {
+      events.push("create");
+      return "my-assistant";
+    });
     const { deps } = createDeps({
       configureWebSearch: vi.fn(async () => ({
         fetchEnabled: true as const,
@@ -72,14 +84,17 @@ describe("sandbox registration route transaction", () => {
         events.push("gateway-lock");
         return await operation();
       },
+      planRegisteredExtraProviders: async () => {
+        events.push("provider-plan");
+        reportProviderPlanEntered();
+        await providerPlanReleased;
+        return { extraProviders: [], staleExtraProviders: [] };
+      },
       stageSandboxCredentialProviders: async () => {
         events.push("stage");
         return [];
       },
-      createSandbox: async () => {
-        events.push("create");
-        return "my-assistant";
-      },
+      createSandbox,
       finalizeSandboxRouteReservation: () => {
         events.push("publish");
         return true;
@@ -89,7 +104,20 @@ describe("sandbox registration route transaction", () => {
       },
     });
 
-    await expect(handleSandboxState(baseOptions(deps))).resolves.toMatchObject({
+    const onboard = handleSandboxState(baseOptions(deps));
+    await providerPlanEntered;
+    expect(events).toEqual([
+      "gateway-lock",
+      "stage",
+      "sandbox-lock",
+      "dashboard-lock",
+      "gateway-lock",
+      "provider-plan",
+    ]);
+    expect(createSandbox).not.toHaveBeenCalled();
+    releaseProviderPlan();
+
+    await expect(onboard).resolves.toMatchObject({
       sandboxName: "my-assistant",
     });
     expect(events).toEqual([
@@ -98,6 +126,7 @@ describe("sandbox registration route transaction", () => {
       "sandbox-lock",
       "dashboard-lock",
       "gateway-lock",
+      "provider-plan",
       "guard",
       "create",
       "registry",

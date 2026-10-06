@@ -7,7 +7,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BASE_APT_SECURITY_FUNCTIONS } from "../../helpers/base-apt-security-functions";
 import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
-import { stageFixedParser, useRealPatchedParser } from "../../helpers/python-parser-security-fixture";
+import {
+  stageFixedParser,
+  useRealPatchedParser,
+} from "../../helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
@@ -113,41 +116,44 @@ afterEach(() => {
 });
 
 describe("sandbox base runtime tools", () => {
-  it.each(
-    MANAGED_BASE_DOCKERFILES,
-  )("%s declares the setpriv and gosu build contract (#8805)", (dockerfile) => {
-    const source = fs.readFileSync(dockerfile, "utf-8");
-    const runtimeContract = dockerRunCommandBetween(
-      source,
-      "# setpriv runtime contract",
-      "RUN groupadd",
-    );
+  it.each(MANAGED_BASE_DOCKERFILES)(
+    "%s declares the setpriv and gosu build contract (#8805)",
+    (dockerfile) => {
+      const source = fs.readFileSync(dockerfile, "utf-8");
+      const runtimeContract = dockerRunCommandBetween(
+        source,
+        "# setpriv runtime contract",
+        "RUN groupadd",
+      );
 
-    expect(source).toContain("util-linux=2.41-5");
-    expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
-    expect(runtimeContract).toContain("/usr/bin/setpriv --version");
-    expect(runtimeContract).toContain("! command -v gosu");
-  });
+      expect(source).toContain("util-linux=2.41-5");
+      expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
+      expect(runtimeContract).toContain("/usr/bin/setpriv --version");
+      expect(runtimeContract).toContain("! command -v gosu");
+    },
+  );
 
-  it.each(
-    MANAGED_BASE_DOCKERFILES,
-  )("%s accepts executable setpriv when gosu is absent (#8805)", (dockerfile) => {
-    const result = runRuntimeToolsContract(dockerfile, "valid");
+  it.each(MANAGED_BASE_DOCKERFILES)(
+    "%s accepts executable setpriv when gosu is absent (#8805)",
+    (dockerfile) => {
+      const result = runRuntimeToolsContract(dockerfile, "valid");
 
-    expect({ status: result.status, stderr: result.stderr }).toEqual({
-      status: 0,
-      stderr: "",
-    });
-    expect(result.stdout).toContain("setpriv fixture");
-  });
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(result.stdout).toContain("setpriv fixture");
+    },
+  );
 
-  it.each(
-    MANAGED_BASE_DOCKERFILES,
-  )("%s rejects a missing setpriv executable (#8805)", (dockerfile) => {
-    const result = runRuntimeToolsContract(dockerfile, "missing-setpriv");
+  it.each(MANAGED_BASE_DOCKERFILES)(
+    "%s rejects a missing setpriv executable (#8805)",
+    (dockerfile) => {
+      const result = runRuntimeToolsContract(dockerfile, "missing-setpriv");
 
-    expect(result.status).not.toBe(0);
-  });
+      expect(result.status).not.toBe(0);
+    },
+  );
 
   it.each(MANAGED_BASE_DOCKERFILES)("%s rejects gosu on PATH (#8805)", (dockerfile) => {
     const result = runRuntimeToolsContract(dockerfile, "gosu-present");
@@ -158,17 +164,24 @@ describe("sandbox base runtime tools", () => {
   it("installs the required process, filesystem, and SFTP tools", () => {
     const { calls, result } = runBaseAptLayer("nemoclaw-base-apt-");
 
-    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
     expect(calls).toContain("procps=2:4.0.4-9");
     expect(calls).toContain("util-linux=2.41-5");
-    expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
+    expect(calls).toContain("e2fsprogs=1.47.2-3+b12");
+    expect(calls).toContain("lsof=4.99.4+dfsg-2");
     expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
   });
 
   it("symlinks bare `python` to the tested python3 interpreter (#1452)", () => {
     const { fakePythonLink, pythonShim, result } = runBaseAptLayer("nemoclaw-base-pysymlink-");
 
-    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
     expect(fs.lstatSync(fakePythonLink).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(fakePythonLink)).toBe(pythonShim);
   });

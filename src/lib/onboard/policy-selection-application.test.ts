@@ -40,7 +40,13 @@ describe("onboarding policy application", () => {
         }
       },
     );
-    syncPresetSelection.mockImplementation(() => events.push("policies synchronized"));
+    let finishSync!: () => void;
+    syncPresetSelection.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        finishSync = resolve;
+      });
+      events.push("policies synchronized");
+    });
     seedInitialPolicyContext.mockImplementation(() => events.push("policy context seeded"));
     const application = createOnboardPolicyApplication({
       localInferenceProviders: [],
@@ -61,14 +67,16 @@ describe("onboarding policy application", () => {
         reason: "ready" as const,
         error: null,
       })),
-      waitForSandboxControlPlaneReady: vi.fn(() => true),
+      waitForSandboxControlPlaneReady: vi.fn(async () => true),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
 
-    await expect(
-      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
-    ).resolves.toEqual(["npm"]);
+    const pending = application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] });
+    await vi.waitFor(() => expect(syncPresetSelection).toHaveBeenCalled());
+    expect(events).toEqual(["lock entered"]);
+    finishSync();
+    await expect(pending).resolves.toEqual(["npm"]);
     expect(withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);
@@ -82,12 +90,12 @@ describe("onboarding policy application", () => {
 
   describe("non-interactive selection with a previously-applied channel preset", () => {
     function createApplication(env: Record<string, string>) {
-      vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
         { name: "npm" },
         { name: "pypi" },
         { name: "discord" },
-      ] as ReturnType<typeof policies.listSetupPolicyPresets>);
-      vi.mocked(policies.getAppliedPresets).mockReturnValue(["npm", "pypi", "discord"]);
+      ] as Awaited<ReturnType<typeof policies.listSetupPolicyPresets>>);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue(["npm", "pypi", "discord"]);
       syncPresetSelection.mockImplementation(() => undefined);
       seedInitialPolicyContext.mockImplementation(() => undefined);
       return createOnboardPolicyApplication({
@@ -109,7 +117,7 @@ describe("onboarding policy application", () => {
           reason: "ready" as const,
           error: null,
         })),
-        waitForSandboxControlPlaneReady: vi.fn(() => true),
+        waitForSandboxControlPlaneReady: vi.fn(async () => true),
         parsePolicyPresetEnv: vi.fn((value: string) =>
           value
             .split(",")
@@ -119,6 +127,37 @@ describe("onboarding policy application", () => {
         env,
       });
     }
+
+    it("reports a selected tier only after policy application and context seeding", async () => {
+      const application = createApplication({});
+      const onAppliedTier = vi.fn();
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["npm"],
+          tierName: "balanced",
+          onAppliedTier,
+        }),
+      ).resolves.toEqual(["npm"]);
+      expect(onAppliedTier).toHaveBeenCalledExactlyOnceWith("balanced");
+      expect(seedInitialPolicyContext.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        onAppliedTier.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("preserves successful policy application if metadata reporting fails", async () => {
+      const application = createApplication({});
+      const onAppliedTier = vi.fn(() => {
+        throw new Error("metadata callback failed");
+      });
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["npm"],
+          tierName: "balanced",
+          onAppliedTier,
+        }),
+      ).resolves.toEqual(["npm"]);
+      expect(onAppliedTier).toHaveBeenCalledOnce();
+    });
 
     it("drops the preset when the channel is no longer configured", async () => {
       const application = createApplication({ NEMOCLAW_POLICY_PRESETS: "npm,pypi" });
@@ -197,7 +236,7 @@ describe("onboarding policy application", () => {
 
     it("adds an enabled channel preset when policy selection is skipped (#10153)", async () => {
       const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
-      vi.mocked(policies.getAppliedPresets).mockReturnValue([]);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
 
       await expect(
         application.setupPoliciesWithSelection("alpha", {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -127,6 +127,22 @@ describe("releaseGatewayPortForStop", () => {
       { port: 8814 },
       expect.objectContaining({ env: { NEMOCLAW_GATEWAY_PORT: "8814" } }),
     );
+  });
+
+  it("does not treat a restored automatic port as authority for a no-name stop (#10824)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8990, stopped: [99] }));
+
+    const outcome = gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: {
+        NEMOCLAW_GATEWAY_PORT: "8990",
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT: "1",
+      },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+    });
+
+    expect(outcome).toBe("not-scoped");
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("does not release when NEMOCLAW_GATEWAY_PORT is set but not a usable port (#8952)", () => {
@@ -357,4 +373,43 @@ describe("stopAll gateway-stop wiring", () => {
     expect(logged).not.toContain("All services stopped");
     expect(logged).toContain("managed gateway release was not confirmed");
   });
+
+  it.each([
+    ["not-scoped", "managed gateway was not released"],
+    ["unconfirmed", "managed gateway release was not confirmed"],
+  ] as const)(
+    "preserves incomplete cloudflared cleanup when gateway release is %s",
+    (gatewayOutcome, gatewayMessage) => {
+      const pidDir = mkdtempSync(join(tmpdir(), `nemoclaw-${gatewayOutcome}-cloudflared-stop-`));
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+      vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => gatewayOutcome);
+      vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+      const signalCloudflared = vi.fn(() => "unavailable" as const);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      try {
+        expect(() =>
+          stopAll({
+            pidDir,
+            releaseGatewayPort: true,
+            unloadOllamaModels: neutralOllamaCleanup,
+            processControl: {
+              isAlive: () => true,
+              commandLine: () => null,
+              signalCloudflared,
+            },
+          }),
+        ).toThrow("Cloudflared cleanup is incomplete");
+      } finally {
+        rmSync(pidDir, { recursive: true, force: true });
+      }
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      expect(signalCloudflared).not.toHaveBeenCalled();
+      expect(logged).toContain("Host service cleanup remains incomplete");
+      expect(logged).toContain("cloudflared was not stopped");
+      expect(logged).toContain(gatewayMessage);
+      expect(logged).not.toContain("Host services stopped");
+    },
+  );
 });

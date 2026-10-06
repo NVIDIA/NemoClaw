@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  canonicalEndpoint,
-  normalizeProviderBaseUrl,
-  unsafeEndpointUrlViolation,
-} from "../core/url-utils";
+import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
+import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
+import { usesNvidiaEndpointProbePayload } from "../inference/openai-probe-models";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 import { exitOnboardFromPrompt, getNavigationChoice } from "./prompt-helpers";
+import { classifyDefaultModelSelection } from "./provider-selection";
 import type { ReasoningEffort } from "./reasoning-mode";
 
 export {
@@ -34,6 +33,10 @@ export type OllamaModelSelectionDefaults = {
 };
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
+  modelSource?: import("../domain/telemetry/provenance").ModelSelectionProvenance["modelSource"];
+  onModelSelected?: (
+    source: import("../domain/telemetry/provenance").ModelSelectionProvenance["modelSource"],
+  ) => void;
   model: string | SetupNimSelectionBackNavigation | null;
   provider: string;
   endpointUrl: string | null;
@@ -95,6 +98,24 @@ export type CloudFallbackConfig = {
   defaultModel: string;
 };
 
+export function applyModelSelection(
+  state: SetupNimSelectionState,
+  model: string,
+  source: import("../domain/telemetry/provenance").ModelSelectionProvenance["modelSource"],
+): void {
+  state.model = model;
+  state.onModelSelected?.(source);
+}
+
+export function applyDefaultModelSelection(
+  state: SetupNimSelectionState,
+  model: string,
+  flags: Parameters<typeof classifyDefaultModelSelection>[0],
+): void {
+  const source = classifyDefaultModelSelection(flags);
+  applyModelSelection(state, model, source);
+}
+
 export function applyCloudFallbackSelection(
   state: SetupNimSelectionState,
   cloudConfig: CloudFallbackConfig,
@@ -106,6 +127,8 @@ export function applyCloudFallbackSelection(
   state.endpointUrl = cloudConfig.endpointUrl;
   state.credentialEnv = cloudConfig.credentialEnv;
   state.model = cloudConfig.defaultModel;
+  state.modelSource = "product_catalog";
+  state.onModelSelected?.("product_catalog");
   state.preferredInferenceApi = null;
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
@@ -230,6 +253,7 @@ type RemoteProviderConfig = {
   label: string;
   endpointUrl: string;
   helpUrl: string | null;
+  defaultModel?: string;
 };
 
 type ProbeAuthMode = "bearer" | "query-param" | undefined;
@@ -237,10 +261,12 @@ type ProbeAuthMode = "bearer" | "query-param" | undefined;
 type ProbeOptions = {
   requireResponsesToolCalling?: boolean;
   skipResponsesProbe?: boolean;
+  useNvidiaEndpointProbePayload?: boolean;
   authMode?: ProbeAuthMode;
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
   provider?: string;
+  providerDefaultModel?: string;
   revalidateSandboxIdentity?: (operation: string) => void;
 };
 
@@ -473,6 +499,8 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         remoteConfig.helpUrl,
         withCredentialMutationGuard(state, {
           provider: state.provider,
+          ...(remoteConfig.defaultModel ? { providerDefaultModel: remoteConfig.defaultModel } : {}),
+          useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(state.provider),
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),

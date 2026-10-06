@@ -19,26 +19,26 @@ function fakeAgent(format: string | null) {
 
 describe("buildChannelRuntimeProbe", () => {
   it("returns null when no agent is selected", () => {
-    expect(buildChannelRuntimeProbe(null, { executeSandboxCommand: () => null })).toBeNull();
+    expect(buildChannelRuntimeProbe(null, { executeSandboxCommand: async () => null })).toBeNull();
   });
 
   it("returns null for non-JSON agents (e.g. Hermes uses yaml)", () => {
     expect(
-      buildChannelRuntimeProbe(fakeAgent("yaml"), { executeSandboxCommand: () => null }),
+      buildChannelRuntimeProbe(fakeAgent("yaml"), { executeSandboxCommand: async () => null }),
     ).toBeNull();
   });
 
-  it("returns a probe function for JSON agents (OpenClaw) that targets <dir>/<configFile>", () => {
+  it("returns a probe function for JSON agents (OpenClaw) that targets <dir>/<configFile>", async () => {
     const captured: string[] = [];
     const probe = buildChannelRuntimeProbe(fakeAgent("json"), {
-      executeSandboxCommand: (script: string) => {
+      executeSandboxCommand: async (script: string) => {
         captured.push(script);
         // First call reads the config; second call scans the gateway log.
         return { status: 0, stdout: script.startsWith("cat ") ? "{}" : "", stderr: "" };
       },
     });
     expect(probe).toBeTypeOf("function");
-    const result = probe!();
+    const result = await probe!();
     expect(result).not.toBeNull();
     // The first exec call must be against the agent's config path (the
     // `cat <path>` snippet from probeChannelRuntimeStatus).

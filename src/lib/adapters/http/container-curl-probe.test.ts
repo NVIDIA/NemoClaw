@@ -95,13 +95,11 @@ describe("container curl probe", () => {
   it.each(["20x", "200 extra"])(
     "rejects a malformed HTTP status write-out without creating the response file: %s (#9116)",
     (httpStatus) => {
-      const spawn = vi.fn(
-        (_command: string, args: readonly string[]) => {
-          const writeOutIndex = args.indexOf("-w");
-          const writeOut = args[writeOutIndex + 1];
-          return successfulSpawn(`{}${writeOut.replace("%{http_code}", httpStatus)}`);
-        },
-      );
+      const spawn = vi.fn((_command: string, args: readonly string[]) => {
+        const writeOutIndex = args.indexOf("-w");
+        const writeOut = args[writeOutIndex + 1];
+        return successfulSpawn(`{}${writeOut.replace("%{http_code}", httpStatus)}`);
+      });
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
       const outputPath = path.join(tempDir, "response.json");
 
@@ -144,13 +142,11 @@ describe("container curl probe", () => {
   });
 
   it("does not follow a replacement output symlink (#9116)", () => {
-    const spawn = vi.fn(
-      (_command: string, args: readonly string[]) => {
-        const writeOutIndex = args.indexOf("-w");
-        const writeOut = args[writeOutIndex + 1];
-        return successfulSpawn(`replacement${writeOut.replace("%{http_code}", "200")}`);
-      },
-    );
+    const spawn = vi.fn((_command: string, args: readonly string[]) => {
+      const writeOutIndex = args.indexOf("-w");
+      const writeOut = args[writeOutIndex + 1];
+      return successfulSpawn(`replacement${writeOut.replace("%{http_code}", "200")}`);
+    });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
     const targetPath = path.join(tempDir, "target.json");
     const outputPath = path.join(tempDir, "response.json");

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import errno
 import grp
+import json
 import os
 import pwd
 import re
@@ -26,34 +27,32 @@ import stat
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterable, TextIO
+from typing import BinaryIO, Iterable, TextIO
 
 SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 PLACEHOLDER_RE = re.compile(
-    r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}$"
+    r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-"
+    r"(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}$"
 )
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 HERMES_API_PORT_RANGE_START = 8642
 HERMES_API_PORT_RANGE_END = 8652
 MANAGED_HERMES_HOME = "/sandbox/.hermes"
-MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
+SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
 ENV_FILE_DENIED_CONTROL_KEYS = frozenset(
     {
         "BASH_ENV",
         "ENV",
-        "HERMES_BUNDLED_PLUGINS",
         "HERMES_CONFIG",
-        "HERMES_ENABLE_PROJECT_PLUGINS",
         "HERMES_ENV",
         "HERMES_HOME",
-        "HERMES_LAZY_INSTALL_TARGET",
         "HOME",
         "PATH",
         "VIRTUAL_ENV",
     }
 )
-ENV_FILE_DENIED_CONTROL_PREFIXES = ("DYLD_", "LD_", "PIP_", "PYTHON", "UV_")
+ENV_FILE_DENIED_CONTROL_PREFIXES = ("DYLD_", "LD_")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
 # API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
@@ -142,20 +141,6 @@ def _sandbox_identity() -> tuple[int, int] | None:
         return None
 
 
-def _expected_lazy_install_target() -> str:
-    effective_uid = os.geteuid()
-    if effective_uid == 0:
-        return "/run/nemoclaw/hermes-gateway-lazy-packages"
-    try:
-        if effective_uid == pwd.getpwnam("gateway").pw_uid:
-            return "/run/nemoclaw/hermes-gateway-lazy-packages"
-    except KeyError:
-        # Development hosts commonly have no gateway account; their current
-        # user exercises the same-identity sandbox contract.
-        pass
-    return "/sandbox/.hermes/lazy-packages"
-
-
 def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
     if not stat.S_ISREG(st.st_mode):
         raise UnsafeEnvInputError("Hermes env path is not a regular file")
@@ -222,6 +207,7 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
                 allowed.update(
                     {
                         (sandbox_uid, sandbox_gid, 0o700),
+                        (sandbox_uid, sandbox_gid, 0o750),
                         (sandbox_uid, sandbox_gid, 0o3770),
                     }
                 )
@@ -537,32 +523,22 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
-def validate_runtime_env(env: dict[str, str] | None = None) -> int:
-    source = os.environ if env is None else env
+def _validate_runtime_env(source: dict[str, str]) -> int:
     violations: list[str] = []
     violation_count = 0
-    expected_lazy_target = _expected_lazy_install_target()
-    if source.get("HERMES_LAZY_INSTALL_TARGET") != expected_lazy_target:
-        violation_count += 1
-        if len(violations) < MAX_VIOLATIONS:
-            violations.append("HERMES_LAZY_INSTALL_TARGET")
     if source.get("HERMES_HOME") != MANAGED_HERMES_HOME:
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:
             violations.append("HERMES_HOME")
-    if source.get("HERMES_BUNDLED_PLUGINS") != MANAGED_BUNDLED_PLUGINS:
-        violation_count += 1
-        if len(violations) < MAX_VIOLATIONS:
-            violations.append("HERMES_BUNDLED_PLUGINS")
     for key, value in sorted(source.items()):
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
             continue
-        if key in {"HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS"}:
+        if key in {"HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME"}:
             continue
-        if key in {"HERMES_CONFIG", "HERMES_ENABLE_PROJECT_PLUGINS", "HERMES_ENV"}:
+        if key in {"HERMES_CONFIG", "HERMES_ENV"}:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
@@ -601,6 +577,54 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         violation_count - len(violations),
     )
     return 1
+
+
+def validate_runtime_env(env: dict[str, str] | None = None) -> int:
+    source = os.environ if env is None else env
+    return _validate_runtime_env(source)
+
+
+def validate_runtime_env_json(stream: BinaryIO) -> int:
+    """Validate a bounded environment snapshot received on an anonymous pipe."""
+
+    payload = stream.read(MAX_ENV_BYTES + 1)
+    if len(payload) > MAX_ENV_BYTES:
+        print(
+            f"[SECURITY] Refusing Hermes startup because the process environment exceeds the {MAX_ENV_BYTES}-byte limit",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        source = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        print(
+            "[SECURITY] Refusing Hermes startup because the process environment snapshot is invalid",
+            file=sys.stderr,
+        )
+        return 1
+    if not isinstance(source, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in source.items()
+    ):
+        print(
+            "[SECURITY] Refusing Hermes startup because the process environment snapshot is invalid",
+            file=sys.stderr,
+        )
+        return 1
+    return validate_runtime_env(source)
+
+
+def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
+    """Validate the supervisor environment with managed launcher paths applied."""
+
+    gateway_env = dict(supervisor_env)
+    gateway_env.update(
+        {
+            "HERMES_LAZY_INSTALL_TARGET": SANDBOX_LAZY_INSTALL_TARGET,
+            "HERMES_HOME": MANAGED_HERMES_HOME,
+        }
+    )
+    return _validate_runtime_env(gateway_env)
 
 
 # Config-output masking layer for the wrapper-installed `hermes config show`
@@ -775,6 +799,10 @@ def main(argv: list[str]) -> int:
         help="Validate the current process environment",
     )
     sub.add_parser(
+        "runtime-env-json",
+        help=argparse.SUPPRESS,
+    )
+    sub.add_parser(
         "mask-config-output",
         help="Mask secret-shaped fields on stdin; print to stdout",
     )
@@ -783,6 +811,8 @@ def main(argv: list[str]) -> int:
         return validate_env_file(args.path)
     if args.mode == "mask-config-output":
         return mask_config_output(sys.stdin, sys.stdout)
+    if args.mode == "runtime-env-json":
+        return validate_runtime_env_json(sys.stdin.buffer)
     assert args.mode == "runtime-env", (
         f"unreachable: argparse subparsers are required ({args.mode!r})"
     )

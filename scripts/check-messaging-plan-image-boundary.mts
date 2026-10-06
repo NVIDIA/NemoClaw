@@ -26,7 +26,7 @@ export const TEAMS_APP_ID = "nemoclaw-ci-teams-app-id";
 export const TEAMS_TENANT_ID = "00000000-0000-0000-0000-000000000042";
 export const TEAMS_SECRET_PLACEHOLDER = "openshell:resolve:env:MSTEAMS_APP_PASSWORD";
 export const OPENCLAW_TEAMS_PACKAGE_SPEC = "npm:@openclaw/msteams@{{openclaw.version}}";
-export const OPENCLAW_TEAMS_PACKAGE_VERSION = "2026.7.1";
+export const OPENCLAW_TEAMS_PACKAGE_VERSION = "2026.9.1";
 export const HERMES_TEAMS_PACKAGE_SPEC = "microsoft-teams-apps==2.0.13.4";
 export const HERMES_AIOHTTP_PACKAGE_SPEC = "aiohttp==3.14.3";
 
@@ -173,7 +173,7 @@ export function createMessagingBoundaryPlan(agent: unknown) {
           channelId: "teams",
           envKey: "MSTEAMS_APP_PASSWORD",
           targetEnvKey: "TEAMS_CLIENT_SECRET",
-          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
           value: TEAMS_SECRET_PLACEHOLDER,
         },
       ],
@@ -380,7 +380,8 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
       alias.channelId !== "teams" ||
       alias.envKey !== "MSTEAMS_APP_PASSWORD" ||
       alias.targetEnvKey !== "TEAMS_CLIENT_SECRET" ||
-      alias.match !== "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$" ||
+      alias.match !==
+        "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$" ||
       alias.value !== TEAMS_SECRET_PLACEHOLDER
     ) {
       throw new Error("Hermes reduced runtime plan is missing the Teams credential alias");
@@ -700,8 +701,8 @@ function formatError(error: unknown): string {
 function usage(): string {
   return [
     "Usage:",
-    "  node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan <openclaw|hermes>",
-    "  node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify <image> <openclaw|hermes>",
+    "  node scripts/check-messaging-plan-image-boundary.mts plan <openclaw|hermes>",
+    "  node scripts/check-messaging-plan-image-boundary.mts verify <image> <openclaw|hermes>",
   ].join("\n");
 }
 

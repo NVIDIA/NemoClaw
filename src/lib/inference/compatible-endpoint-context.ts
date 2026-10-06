@@ -136,6 +136,38 @@ export function fetchCompatibleEndpointModels(
 // shared trackAutoDetectedContextWindow helper instead of duplicating it again.
 let autoDetectedCompatibleContextWindow: string | null = null;
 
+/** Adopt already-authenticated endpoint metadata without repeating a network probe. */
+export function applyDetectedEndpointContextWindow(
+  contextWindow: number | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  logger: Pick<Console, "warn"> = console,
+): void {
+  const current = env.NEMOCLAW_CONTEXT_WINDOW;
+  const previousAuto = !!current && current === autoDetectedCompatibleContextWindow;
+  const configured = parsePositiveInteger(current);
+  if (!previousAuto && configured && configured <= MAX_COMPATIBLE_CONTEXT_WINDOW) return;
+  const validDetectedContextWindow =
+    contextWindow !== undefined &&
+    Number.isSafeInteger(contextWindow) &&
+    contextWindow > 0 &&
+    contextWindow <= MAX_COMPATIBLE_CONTEXT_WINDOW;
+  if (!previousAuto && hasExplicitContextWindow(current)) {
+    const replacement = validDetectedContextWindow
+      ? `Using the server's served context window: ${contextWindow} tokens.`
+      : "The server did not report a valid served context window, so leaving it unset.";
+    logger.warn(
+      `  ⚠ Ignoring invalid NEMOCLAW_CONTEXT_WINDOW="${current}"; it must be a positive ` +
+        `integer ≤ ${MAX_COMPATIBLE_CONTEXT_WINDOW}. ${replacement}`,
+    );
+  }
+  if (previousAuto || hasExplicitContextWindow(current)) delete env.NEMOCLAW_CONTEXT_WINDOW;
+  autoDetectedCompatibleContextWindow = null;
+  if (!validDetectedContextWindow) return;
+  const value = String(contextWindow);
+  env.NEMOCLAW_CONTEXT_WINDOW = value;
+  autoDetectedCompatibleContextWindow = value;
+}
+
 /** Test-only: forget any tracked auto value without touching the environment. */
 export function resetCompatibleEndpointContextWindowAutoState(): void {
   autoDetectedCompatibleContextWindow = null;

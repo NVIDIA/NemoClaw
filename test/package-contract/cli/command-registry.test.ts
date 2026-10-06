@@ -44,6 +44,7 @@ describe("command-registry", () => {
       expect(usages).toContain("nemoclaw tunnel stop");
       expect(usages).toContain("nemoclaw tunnel status");
       expect(usages).toContain("nemoclaw status");
+      expect(usages).toContain("nemoclaw doctor");
     });
 
     it.each(globalCommands())("$usage has global scope", (cmd) => {
@@ -54,12 +55,12 @@ describe("command-registry", () => {
   describe("sandboxCommands()", () => {
     it("returns exactly 59 entries", () => {
       // 54 visible + 5 hidden (config get/set/rotate-token + inference get/set).
-      // 54 visible includes the sessions group (root + list + reset + delete +
+      // 54 visible includes the skill list command, the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the
       // download + upload host-side openshell wrappers, the stop + start
       // container lifecycle pair (#6026), the policy baseline exclude + restore
-      // pair, plus five MCP bridge display entries under the `mcp` parent and
+      // pair, plus seven MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
       expect(sandboxCommands()).toHaveLength(59);
     });
@@ -169,11 +170,12 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 29 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 30 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
         "completion",
+        "config",
         "host",
         "onboard",
         "profiles",
@@ -187,6 +189,7 @@ describe("command-registry", () => {
         "stop",
         "tunnel",
         "status",
+        "doctor",
         "debug",
         "uninstall",
         "credentials",
@@ -207,9 +210,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 30 unique action tokens including empty string", () => {
+    it("returns exactly 29 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(30);
+      expect(tokens).toHaveLength(29);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -233,7 +236,6 @@ describe("command-registry", () => {
         "skill",
         "rebuild",
         "recover",
-        "snapshot",
         "share",
         "config",
         "channels",

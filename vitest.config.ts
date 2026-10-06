@@ -39,13 +39,11 @@ const canonicalOpenShellObservationBoundary = path.resolve(
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPortBoundary = path.resolve("nemoclaw/src/shared/port-boundary.cts");
 const canonicalPrivateNetworksBoundary = path.resolve(
   "nemoclaw/src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
-const canonicalSnapshotSanitizerBoundary = path.resolve(
-  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
-);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -71,16 +69,16 @@ const canonicalSourceAliases = [
     replacement: canonicalOpenShellPolicyBoundary,
   },
   {
+    find: /^.*port-boundary\.cjs$/,
+    replacement: canonicalPortBoundary,
+  },
+  {
     find: /^.*private-networks-boundary\.cjs$/,
     replacement: canonicalPrivateNetworksBoundary,
   },
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
-  },
-  {
-    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -188,11 +186,6 @@ export default defineConfig({
           env: {
             ...controlledNonLiveEnv,
             NODE_OPTIONS: sourceNodeOptions,
-            // Integration fixtures exercise onboarding against controlled fake
-            // Docker state. Keep a base-image Dockerfile change in the PR from
-            // redirecting those fixtures into the real local-build guard.
-            NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
-              "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [

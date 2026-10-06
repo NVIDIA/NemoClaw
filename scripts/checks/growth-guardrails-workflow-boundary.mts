@@ -12,6 +12,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW_PATH = join(ROOT, ".github", "workflows", "codebase-growth-guardrails.yaml");
 const STATIC_ACTION_PATH = join(ROOT, ".github", "actions", "ci-static-checks", "action.yaml");
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const TEST_COMMAND =
   "set -euo pipefail\nnpx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts";
 const STATIC_COMMAND =
@@ -47,12 +48,15 @@ export function validateGrowthGuardrailsWorkflowBoundary(
   const expectedWorkflow = {
     name: "Governance / Enforce Codebase Growth Limits",
     on: {
-      pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
+      pull_request_target: {
+        types: ["opened", "reopened", "synchronize", "ready_for_review", "edited"],
+      },
     },
     permissions: { contents: "read" },
     jobs: {
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
+        if: "${{ github.event.pull_request.base.ref == github.event.repository.default_branch }}",
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 5,
         steps: [
@@ -63,6 +67,15 @@ export function validateGrowthGuardrailsWorkflowBoundary(
               ref: "${{ github.event.pull_request.base.sha }}",
               "persist-credentials": false,
             },
+          },
+          {
+            name: "Set up Node.js",
+            uses: SETUP_NODE,
+            with: { "node-version": "24.18.1" },
+          },
+          {
+            name: "Install reviewed npm",
+            uses: "./.github/actions/setup-reviewed-npm",
           },
           {
             name: "Install trusted dependencies",

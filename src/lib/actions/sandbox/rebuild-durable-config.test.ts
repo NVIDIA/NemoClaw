@@ -7,6 +7,78 @@ import { createSession, normalizeSession } from "../../state/onboard-session";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
+  const externalReference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+  const externalReceipt = {
+    schemaVersion: 1 as const,
+    kind: "external-image" as const,
+    reference: externalReference,
+    platform: "linux/arm64" as const,
+    runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+    shared: true as const,
+  };
+
+  it("rebuilds only the exact external image recorded by the durable receipt", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", workload: externalReceipt },
+      createSession({
+        sandboxName: "alpha",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, fromImage: externalReference },
+      }),
+    );
+
+    expect(config.fromImage).toBe(externalReference);
+    expect(config.fromImageError).toBeNull();
+    expect(config.fromDockerfile).toBeNull();
+  });
+
+  it("fails closed when the matching session requests a changed external digest", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0", workload: externalReceipt },
+      createSession({
+        sandboxName: "alpha",
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: null,
+          fromImage: `ghcr.io/example/openclaw@sha256:${"c".repeat(64)}`,
+        },
+      }),
+    );
+
+    expect(config.fromImage).toBe(externalReference);
+    expect(config.fromImageError).toContain("different external image digest");
+  });
+
+  it("fails closed when external-image session state has no durable receipt", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      createSession({
+        sandboxName: "alpha",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, fromImage: externalReference },
+      }),
+    );
+
+    expect(config.fromImage).toBeNull();
+    expect(config.fromImageError).toContain("without a durable receipt");
+  });
+
+  it("rejects an external image that conflicts with a custom Dockerfile", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        nemoclawVersion: "0.1.0",
+        fromDockerfile: "/tmp/custom.Dockerfile",
+        workload: externalReceipt,
+      },
+      null,
+    );
+
+    expect(config.fromImageError).toContain("conflicts with a recorded custom Dockerfile");
+  });
+
   it("keeps the registry tool-disclosure selection authoritative", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
@@ -21,7 +93,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("lets an explicit transactional rebuild override the recorded selection", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "progressive", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "progressive",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
       undefined,
       "direct",
@@ -34,7 +110,12 @@ describe("resolveRebuildDurableConfig", () => {
   it("recovers tool disclosure from a matching legacy session", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({
         sandboxName: "alpha",
         provider: "ollama-local",
@@ -61,7 +142,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("fails closed for corrupt durable tool-disclosure state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "everything" as never,
+        nemoclawVersion: "0.1.0",
+      },
       null,
     );
 
@@ -72,7 +157,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not let an explicit override mask corrupt durable state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "everything" as never,
+        nemoclawVersion: "0.1.0",
+      },
       null,
       undefined,
       "direct",
@@ -100,7 +189,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("uses a matching direct session when a legacy registry stores null", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: null as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: null as never,
+        nemoclawVersion: "0.1.0",
+      },
       createSession({ sandboxName: "alpha", toolDisclosure: "direct" }),
     );
 
@@ -128,7 +221,10 @@ describe("resolveRebuildDurableConfig", () => {
         webSearchEnabled: false,
         fromDockerfile: null,
       },
-      createSession({ sandboxName: "alpha", webSearchConfig: { fetchEnabled: true } }),
+      createSession({
+        sandboxName: "alpha",
+        webSearchConfig: { fetchEnabled: true },
+      }),
     );
     expect(config.webSearchConfig).toBeNull();
   });
@@ -158,12 +254,20 @@ describe("resolveRebuildDurableConfig", () => {
   it("rejects matching-session custom-image evidence despite legacy confirmation (#6114)", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: null },
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: null,
+      },
       createSession({
         sandboxName: "alpha",
         provider: "ollama-local",
         model: "model",
-        metadata: { gatewayName: "nemoclaw", fromDockerfile: "/tmp/custom.Dockerfile" },
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: "/tmp/custom.Dockerfile",
+        },
       }),
       undefined,
       undefined,
@@ -190,8 +294,17 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not treat a same-name null image session as proof of a legacy managed image", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: null },
-      createSession({ sandboxName: "alpha", provider: "ollama-local", model: "model" }),
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: null,
+      },
+      createSession({
+        sandboxName: "alpha",
+        provider: "ollama-local",
+        model: "model",
+      }),
     );
     expect(config.fromDockerfileError).toContain("cannot distinguish");
   });
@@ -199,7 +312,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("fails closed for corrupt durable web-search state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", webSearchEnabled: "false" as never, fromDockerfile: null },
+      {
+        name: "alpha",
+        webSearchEnabled: "false" as never,
+        fromDockerfile: null,
+      },
       null,
     );
     expect(config.webSearchError).toContain("not boolean");
@@ -216,7 +333,10 @@ describe("resolveRebuildDurableConfig", () => {
       },
       createSession({ sandboxName: "other" }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
     expect(config.webSearchError).toBeNull();
   });
 
@@ -237,7 +357,10 @@ describe("resolveRebuildDurableConfig", () => {
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
   });
 
   it("does not infer managed Tavily from the DCode interpreter opt-in preset", () => {
@@ -276,7 +399,10 @@ describe("resolveRebuildDurableConfig", () => {
       },
       createSession({ sandboxName: "other", webSearchConfig: null }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
     expect(config.webSearchError).toBeNull();
   });
 
@@ -324,7 +450,12 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not borrow Hermes auth from a same-name conflicting selection", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "hermes-provider", model: "target", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        provider: "hermes-provider",
+        model: "target",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({
         sandboxName: "alpha",
         provider: "hermes-provider",

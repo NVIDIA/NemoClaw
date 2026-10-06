@@ -17,12 +17,18 @@ const firstRetryWarning =
 type Scenario =
   | "attempt-cap-exhausted"
   | "deadline-exhausted"
+  | "exhausted"
   | "late-success"
+  | "modern-transient-then-success"
+  | "near-match"
+  | "permanent-status-one"
+  | "reference-precedes-other-not-found"
   | "success"
   | "terminal"
   | "terminal-exit-one"
   | "terminal-layer-depth"
-  | "terminal-permission-denied";
+  | "terminal-permission-denied"
+  | "transient-then-success";
 
 function normalizeElapsed(output: string): string {
   return output.replace(/elapsed=[0-9]+s/gu, "elapsed=<seconds>");
@@ -60,6 +66,22 @@ if [ "$SCENARIO" = "terminal-layer-depth" ]; then
   echo "failed to register layer: max depth exceeded" >&2
   exit 1
 fi
+if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
+  echo "Error response from daemon: failed to resolve reference "$EXPECTED_REFERENCE": $EXPECTED_REFERENCE: not found" >&2
+  exit 44
+fi
+if [ "$SCENARIO" = "permanent-status-one" ]; then
+  echo "unexpected registry response" >&2
+  exit 1
+fi
+if [ "$SCENARIO" = "reference-precedes-other-not-found" ]; then
+  echo "$EXPECTED_REFERENCE: access denied: not found" >&2
+  exit 1
+fi
+if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
+  echo "ERROR: $EXPECTED_REFERENCE: not found" >&2
+  exit 42
+fi
 if [ "$SCENARIO" = "terminal-exit-one" ]; then
   echo "write /var/lib/docker: no space left on device" >&2
   exit 1
@@ -90,11 +112,12 @@ echo "pulled $EXPECTED_REFERENCE"
       [
         "-c",
         `set -euo pipefail
-SECONDS=0
+# Use a nonzero origin so deadline simulation must measure elapsed time.
+SECONDS=5
 sleep() {
   printf '%s\\n' "$1" >>"$SLEEP_LOG"
   if [ "$SCENARIO" = "deadline-exhausted" ]; then
-    SECONDS=1800
+    SECONDS=$((started_at + 1800))
   elif [ "$SCENARIO" = "late-success" ]; then
     SECONDS=$((SECONDS + $1))
   else
@@ -159,6 +182,45 @@ describe("pull-public-exact-digest", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.count).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
+  });
+
+  it("retries Docker's exact-reference transient GHCR not-found result", () => {
+    const result = runPuller("modern-transient-then-success");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.count).toBe(2);
+    expect(result.sleeps).toEqual(["2"]);
+    expect(new Set(result.configs).size).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(normalizeElapsed(result.stderr.trim())).toBe(firstRetryWarning);
+    expect(normalizeElapsed(result.stdout.trim())).toContain(
+      "outcome=passed-after-retry attempt=2/65 elapsed=<seconds> deadline=1800s",
+    );
+    expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
+  });
+
+  it("reports an unrecognized Docker status 1 failure without retrying", () => {
+    const result = runPuller("permanent-status-one");
+
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual([]);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr.trim()).toBe(
+      "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=1/65 docker-exit=1 failure=terminal-docker-exit-1",
+    );
+  });
+
+  it("does not treat a later not-found token as the exact reference missing", () => {
+    const result = runPuller("reference-precedes-other-not-found");
+
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual([]);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr.trim()).toBe(
+      "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=1/65 docker-exit=1 failure=terminal-docker-exit-1",
+    );
   });
 
   it("accepts delayed anonymous visibility with bounded propagation headroom", () => {
@@ -254,7 +316,7 @@ describe("pull-public-exact-digest", () => {
     expect(result.stderr).not.toContain("permission_denied");
     expect(result.stderr).not.toContain("manifest unknown");
     expect(result.stderr).not.toContain("anonymous HEAD request");
-  });
+  }, 30_000);
 
   it("stops at the elapsed deadline before another anonymous pull", () => {
     const result = runPuller("deadline-exhausted");

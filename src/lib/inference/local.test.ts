@@ -4,9 +4,10 @@
 import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
+import { VLLM_PORT } from "../core/ports";
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
 
 // Derive the "large enough to fit every registry entry" memory threshold
@@ -55,13 +56,11 @@ import {
   isLocalProviderProbeOutputHealthy,
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-  OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
   parseOllamaList,
   probeLocalProviderHealth,
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
-  resetOllamaContainerPortCache,
   resetOllamaHostCache,
   setResolvedOllamaHost,
   validateLocalProvider,
@@ -72,6 +71,11 @@ describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
   const originalPath = process.env.PATH;
   let fakeDockerDir: string | null = null;
+
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+  });
 
   beforeAll(() => {
     fakeDockerDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-docker-"));
@@ -90,7 +94,6 @@ describe("local inference helpers", () => {
     );
     chmodSync(fakeDockerPath, 0o755);
     process.env.PATH = `${fakeDockerDir}${path.delimiter}${originalPath ?? ""}`;
-    resetOllamaContainerPortCache();
   });
 
   afterAll(() => {
@@ -102,7 +105,6 @@ describe("local inference helpers", () => {
     if (fakeDockerDir) {
       rmSync(fakeDockerDir, { recursive: true, force: true });
     }
-    resetOllamaContainerPortCache();
   });
 
   afterEach(() => {
@@ -129,6 +131,23 @@ describe("local inference helpers", () => {
     });
   });
 
+  it("bounds an unavailable WSL networking-mode probe and keeps the conservative route", () => {
+    const stateRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-wsl-mode-"));
+    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>((command) =>
+      command.includes("http://127.0.0.1:11434/api/tags") ? JSON.stringify({ models: [] }) : "",
+    );
+
+    try {
+      expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe(OLLAMA_LOCALHOST);
+      expect(capture).toHaveBeenCalledWith(["wslinfo", "--networking-mode"], {
+        ignoreError: true,
+        timeout: 5_000,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("enables retries for missing structured tool calls only when Ollama tool calls are required (#8714)", () => {
     expect(buildOllamaProbeOptions(false)).toMatchObject({
       requireChatCompletionsToolCalling: true,
@@ -152,35 +171,6 @@ describe("local inference helpers", () => {
       "5",
       "http://host.docker.internal:11434/api/tags",
     ]);
-  });
-
-  it("probes WSL loopback before Windows-host Ollama", () => {
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
-    const commands: string[][] = [];
-    const endpoints: string[] = [];
-
-    const host = findReachableOllamaHost(
-      (command) => {
-        commands.push([...command]);
-        const endpoint = command.at(-1) ?? "";
-        endpoints.push(endpoint);
-        return endpoint.includes("host.docker.internal") ? "ollama" : "";
-      },
-      // Pin the WSL decision: isWsl answers false off Linux before it reads
-      // WSL_DISTRO_NAME, so the stub above cannot reach the WSL candidate order.
-      { isWsl: true },
-    );
-
-    expect(host).toBe("host.docker.internal");
-    expect(endpoints).toEqual([
-      "http://127.0.0.1:11434/api/tags",
-      "http://host.docker.internal:11434/api/tags",
-    ]);
-    expect(commands.map((command) => command[0])).toEqual(["curl", "docker"]);
-    expect(commands[0]).toEqual(expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]));
-    expect(commands[1]).toEqual(
-      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE, "--connect-timeout", "3", "--max-time", "5"]),
-    );
   });
 
   it("returns the expected base URL for vllm-local", () => {
@@ -619,6 +609,60 @@ describe("local inference helpers", () => {
     expect(result?.ok).toBe(expected);
   });
 
+  it("probes the host port recorded in the sandbox route for a bearerless local vLLM server", () => {
+    const probedEndpoints: string[] = [];
+
+    const result = probeLocalProviderHealth("vllm-local", {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      runCurlProbeImpl: (argv) => {
+        probedEndpoints.push(argv.at(-1) ?? "");
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: '{"data":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.endpoint).toBe("http://127.0.0.1:46145/v1/models");
+    expect(probedEndpoints).toEqual(["http://127.0.0.1:46145/v1/models"]);
+  });
+
+  it.each([
+    { endpoint: null, reason: "no recorded route" },
+    { endpoint: "https://inference.local/v1", reason: "an in-sandbox route" },
+    { endpoint: "http://host.openshell.internal/v1", reason: "no port" },
+    { endpoint: "http://host.openshell.internal:80/v1", reason: "a privileged port" },
+    { endpoint: "http://example.com:46145/v1", reason: "a foreign host" },
+    { endpoint: "http://user:secret@host.openshell.internal:46145/v1", reason: "userinfo" },
+    { endpoint: "http://host.openshell.internal:46145/v1?probe=1", reason: "a query string" },
+    { endpoint: "http://host.openshell.internal:46145/v1#probe", reason: "a fragment" },
+    { endpoint: "http://host.openshell.internal:46145/v1/chat", reason: "a non-route path" },
+    { endpoint: "http://host.openshell.internal:46145/v1/", reason: "a non-canonical path" },
+    { endpoint: "not a url", reason: "a malformed URL" },
+  ])(
+    "keeps the configured local vLLM port when the recorded route has $reason",
+    ({ endpoint: recordedEndpointUrl }) => {
+      const result = probeLocalProviderHealth("vllm-local", {
+        recordedEndpointUrl,
+        runCurlProbeImpl: () => ({
+          ok: false,
+          httpStatus: 0,
+          curlStatus: 7,
+          body: "",
+          stderr: "Failed to connect",
+          message: "curl failed (exit 7)",
+        }),
+      });
+
+      expect(result?.endpoint).toBe(`http://127.0.0.1:${VLLM_PORT}/v1/models`);
+    },
+  );
+
   it("reports a clear local provider outage when the host probe cannot connect", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       runCurlProbeImpl: () => ({
@@ -944,16 +988,6 @@ describe("local inference helpers", () => {
     expect(parseOllamaList("NAME ID SIZE MODIFIED\n\n")).toEqual([]);
   });
 
-  it("returns no models when the Windows host reports an empty inventory", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      { match: /\/api\/tags/, output: JSON.stringify({ models: [] }) },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].join(" ")).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`);
-  });
-
   it("falls back to `ollama list` on loopback when /api/tags is empty", () => {
     setResolvedOllamaHost(OLLAMA_LOCALHOST);
     const { capture, calls } = makeOllamaCapture([
@@ -966,44 +1000,6 @@ describe("local inference helpers", () => {
     ]);
     expect(getOllamaModelOptions(capture)).toEqual(["llama3.2:3b"]);
     expect(calls.some((argv) => argv.includes("list"))).toBe(true);
-  });
-
-  it("returns parsed tags without calling the loopback CLI", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      {
-        match: /\/api\/tags/,
-        output: JSON.stringify({ models: [{ name: "qwen3.5:9b" }, { name: "gemma2:9b" }] }),
-      },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual(["qwen3.5:9b", "gemma2:9b"]);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const outputs = [
-      "",
-      "<html>proxy response</html>",
-      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
-    ];
-    const capture = vi.fn(() => outputs.shift() ?? "");
-    const sleeps: number[] = [];
-    const models = getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds));
-    expect(models).toEqual(["qwen3.5:9b"]);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
-  });
-
-  it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = vi.fn(() => "");
-    const sleeps: number[] = [];
-    expect(() =>
-      getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds)),
-    ).toThrow(/Could not read Ollama models from host\.docker\.internal:11434 after 3 attempts/);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
   });
 
   it("prefers the default ollama model when present", () => {
@@ -1252,7 +1248,7 @@ describe("local inference helpers", () => {
     const captureEx = () => ({ stdout: "", exitCode: 0, timedOut: false });
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", undefined, captureEx);
     expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/did not answer the local probe in time/);
+    expect(result.message).toMatch(/failed the local probe without a response/);
   });
 
   it("fails ollama model validation when Ollama returns an error payload", () => {
@@ -1422,7 +1418,7 @@ describe("local inference helpers", () => {
     );
     expect(result.ok).toBe(false);
     expect(callCount).toBe(1);
-    expect(result.message).toMatch(/did not answer the local probe in time/);
+    expect(result.message).toMatch(/failed the local probe without a response/);
   });
 
   it("fails when both probe attempts return empty (model truly unhealthy or too slow)", () => {

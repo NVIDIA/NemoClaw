@@ -44,7 +44,7 @@ describe("Hermes lifecycle planning", () => {
       value: {
         apiVersion: "v1alpha1",
         operation: "observe",
-        agent: { name: "hermes", version: "0.19.0" },
+        agent: { name: "hermes", version: HERMES_LIFECYCLE_DEFINITION.agentVersion },
         target: request.target,
         sandbox: request.sandbox,
         checks: [

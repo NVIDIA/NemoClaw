@@ -17,7 +17,11 @@ type PriorManagedInstall = "none" | "recognized" | "malformed";
 function runInstallerBody(body: string, extraEnv: Record<string, string> = {}) {
   const run = runInstallerSourcedBody(body, {
     homePrefix: "nemoclaw-install-telemetry-",
-    extraEnv,
+    extraEnv: {
+      NEMOCLAW_TELEMETRY_ENV: "uat",
+      NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-campaign:case:attempt-1",
+      ...extraEnv,
+    },
     includeNodeOnPath: true,
     timeoutMs: 15_000,
   });
@@ -44,6 +48,7 @@ cat >"$TELEMETRY_ENTRY" <<'STUB'
 const fs = require("node:fs");
 fs.appendFileSync(process.env.TELEMETRY_CALLS, process.argv.slice(2).join(" ") + "\\n");
 fs.appendFileSync(process.env.ORDER_TRACE, "telemetry\\n");
+fs.writeFileSync(process.env.TELEMETRY_CALLS + ".label", process.env.NEMOCLAW_TELEMETRY_TEST_LABEL ?? "");
 process.exit(Number(process.env.TELEMETRY_EXIT_STATUS));
 STUB
 _CLI_PATH="$HOME/nemoclaw"
@@ -126,6 +131,128 @@ describe("installer telemetry boundary", () => {
   });
 
   it.each([
+    ["NEMOCLAW_DISABLE_TELEMETRY", "1"],
+    ["CI", "true"],
+    ["CI", "1"],
+    ["GITHUB_ACTIONS", "true"],
+    ["VITEST", "true"],
+    ["NEMOCLAW_RUN_LIVE_E2E", "1"],
+    ["NEMOCLAW_E2E_EXPECTED_SHA", " \t0123456789abcdef0123456789abcdef01234567 \t"],
+    ["NODE_ENV", "test"],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", ""],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", "private@example.com"],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-a:b:attempt-1\n"],
+  ] as const)("skips telemetry state and command checks for %s=%s (#10440)", (name, value) => {
+    const run = runInstallerBody(
+      `
+TELEMETRY_WORK="$HOME/telemetry-work.calls"
+_NEMOCLAW_PRIOR_MANAGED_INSTALL=true
+nemoclaw_state_root() {
+  printf 'state-root\\n' >>"$TELEMETRY_WORK"
+  printf '%s\\n' "$HOME/.nemoclaw"
+}
+is_recognized_managed_nemoclaw_install() {
+  printf 'prior-install\\n' >>"$TELEMETRY_WORK"
+  return 0
+}
+command_exists() {
+  printf 'command-check\\n' >>"$TELEMETRY_WORK"
+  return 1
+}
+_CLI_PATH="$BASH"
+NEMOCLAW_SOURCE_ROOT="$HOME/source"
+capture_prior_managed_install_for_telemetry
+send_install_telemetry
+printf '%s\\n' "$_NEMOCLAW_PRIOR_MANAGED_INSTALL"
+`,
+      { [name]: value },
+    );
+
+    expect(run.result.status, run.output).toBe(0);
+    expect(run.result.stdout.trim()).toBe("false");
+    expect(fs.existsSync(path.join(run.home, "telemetry-work.calls"))).toBe(false);
+  });
+
+  it.each([
+    ["NEMOCLAW_DISABLE_TELEMETRY", "true"],
+    ["CI", "false"],
+    ["GITHUB_ACTIONS", "1"],
+    ["VITEST", "1"],
+    ["NEMOCLAW_RUN_LIVE_E2E", "true"],
+    ["NEMOCLAW_E2E_EXPECTED_SHA", " \t "],
+    ["NEMOCLAW_E2E_EXPECTED_SHA", ""],
+    ["NODE_ENV", "testing"],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-campaign:case:attempt-1"],
+  ] as const)("does not suppress telemetry for %s=%s (#10440)", (name, value) => {
+    const run = runMainHarness(0, { [name]: value });
+
+    expect(run.result.status, run.output).toBe(0);
+    expect(run.calls).toBe("install\n");
+  });
+
+  it.each(["absent", "", "production", "UAT", "unknown"])(
+    "does not probe prior installer state or tools for inactive mode %j",
+    (mode) => {
+      const run = runInstallerBody(
+        `
+${mode === "absent" ? "unset NEMOCLAW_TELEMETRY_ENV" : ""}
+nemoclaw_state_root() { printf 'unexpected-state-probe' >"$HOME/unexpected"; return 1; }
+is_recognized_managed_nemoclaw_install() { printf 'unexpected-install-probe' >"$HOME/unexpected"; return 1; }
+command_exists() { printf 'unexpected-command-probe' >"$HOME/unexpected"; return 1; }
+capture_prior_managed_install_for_telemetry
+send_install_telemetry
+`,
+        { NEMOCLAW_TELEMETRY_ENV: mode },
+      );
+      expect(run.result.status, run.output).toBe(0);
+      expect(fs.existsSync(path.join(run.home, "unexpected"))).toBe(false);
+    },
+  );
+
+  it("does not probe state or tools for UAT without a label", () => {
+    const run = runInstallerBody(`
+unset NEMOCLAW_TELEMETRY_TEST_LABEL
+nemoclaw_state_root() { printf 'unexpected-state-probe' >"$HOME/unexpected"; return 1; }
+command_exists() { printf 'unexpected-command-probe' >"$HOME/unexpected"; return 1; }
+capture_prior_managed_install_for_telemetry
+send_install_telemetry
+`);
+    expect(run.result.status, run.output).toBe(0);
+    expect(fs.existsSync(path.join(run.home, "unexpected"))).toBe(false);
+  });
+
+  it.each([
+    "qa-café:case:attempt-1",
+    "qa-campaign:cåse:attempt-1",
+    "qa-campaign:用例:attempt-1",
+    "qa-campaign:case:attempt-١",
+  ])("does not probe state or tools for a non-ASCII QA label %j", (testLabel) => {
+    const run = runInstallerBody(
+      `
+nemoclaw_state_root() { printf 'unexpected-state-probe' >"$HOME/unexpected"; return 1; }
+command_exists() { printf 'unexpected-command-probe' >"$HOME/unexpected"; return 1; }
+capture_prior_managed_install_for_telemetry
+send_install_telemetry
+`,
+      { NEMOCLAW_TELEMETRY_TEST_LABEL: testLabel, LC_ALL: "C.utf8" },
+    );
+    expect(run.result.status, run.output).toBe(0);
+    expect(fs.existsSync(path.join(run.home, "unexpected"))).toBe(false);
+  });
+
+  it("preserves the caller's UTF-8 locale after checking an ASCII QA label", () => {
+    const run = runInstallerBody(
+      `
+if should_suppress_install_telemetry; then exit 97; fi
+printf '%s' "$LC_ALL"
+`,
+      { LC_ALL: "C.utf8" },
+    );
+    expect(run.result.status, run.output).toBe(0);
+    expect(run.result.stdout).toBe("C.utf8");
+  });
+
+  it.each([
     ["a direct install", {}, "none", "install"],
     ["an update invocation", { NEMOCLAW_UPDATE_INVOKED: "1" }, "none", "update"],
     ["a manual rerun over an older managed install", {}, "recognized", "update"],
@@ -147,6 +274,17 @@ describe("installer telemetry boundary", () => {
       expect(run.calls).toBe(`${operation}\n`);
     },
   );
+
+  it("inherits the approved QA label into the normal installer child", () => {
+    const testLabel = "qa-campaign:case:attempt-1";
+    const run = runMainHarness(0, {
+      NEMOCLAW_TELEMETRY_ENV: "uat",
+      NEMOCLAW_TELEMETRY_TEST_LABEL: testLabel,
+    });
+    expect(run.result.status, run.output).toBe(0);
+    expect(run.calls).toBe("install\n");
+    expect(fs.readFileSync(path.join(run.home, "telemetry.calls.label"), "utf8")).toBe(testLabel);
+  });
 
   it("preserves installer success when the single telemetry call fails (#10440)", () => {
     const run = runMainHarness(0, { NEMOCLAW_UPDATE_INVOKED: "1" }, 73);

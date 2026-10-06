@@ -43,6 +43,13 @@ export function createRebuildRouteHandoff(
     endpointSource: route.endpointSource ?? null,
     preferredInferenceApi: route.preferredInferenceApi,
     source: "registry",
+    ...(route.modelSelectionProvenance
+      ? {
+          modelSelectionProvenance: route.modelSelectionProvenance,
+          credentialEnv: route.credentialEnv ?? null,
+          nimContainer: route.nimContainer ?? null,
+        }
+      : {}),
   });
   return Object.freeze({ sandboxName, route: frozenRoute });
 }
@@ -174,18 +181,18 @@ function receiptIsWellFormed(
 ): receipt is ProviderRecoveryReceipt {
   return Boolean(
     receipt &&
-      typeof receipt.sandboxName === "string" &&
-      receipt.sandboxName &&
-      typeof receipt.gatewayName === "string" &&
-      receipt.gatewayName &&
-      typeof receipt.provider === "string" &&
-      receipt.provider &&
-      typeof receipt.model === "string" &&
-      receipt.model &&
-      typeof receipt.nonce === "string" &&
-      receipt.nonce &&
-      Number.isFinite(receipt.expiresAtMs) &&
-      receipt.route?.source === "registry",
+    typeof receipt.sandboxName === "string" &&
+    receipt.sandboxName &&
+    typeof receipt.gatewayName === "string" &&
+    receipt.gatewayName &&
+    typeof receipt.provider === "string" &&
+    receipt.provider &&
+    typeof receipt.model === "string" &&
+    receipt.model &&
+    typeof receipt.nonce === "string" &&
+    receipt.nonce &&
+    Number.isFinite(receipt.expiresAtMs) &&
+    receipt.route?.source === "registry",
   );
 }
 

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-day
-description: Run one NemoClaw daytime maintainer pass. Prioritize items for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow and report progress. Use during the workday to land PRs and close issues. Designed for /loop, for example /loop 10m /nemoclaw-maintainer-day. Trigger keywords - maintainer day, work on PRs, land PRs, make progress, what's next, keep going, maintainer loop.
+description: "Run a NemoClaw daytime maintainer pass over release-targeted work. Use for the maintainer queue or a requested recurring pass."
 user_invocable: true
 ---
 
@@ -29,8 +29,8 @@ first.
 ## Step 1: Check Version Progress
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
 The first script selects the target version. The second lists shipped and open items.
@@ -70,7 +70,7 @@ Follow the selected workflow. Complete one outcome in each pass:
 Re-run the progress script and show the update:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
 If all items for the release version are done, suggest `/nemoclaw-maintainer-evening`.
@@ -78,7 +78,7 @@ If all items for the release version are done, suggest `/nemoclaw-maintainer-eve
 Update `.nemoclaw-maintainer/state.json` via the state script:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history <action> <item> "<note>"
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history <action> <item> "<note>"
 ```
 
 ## Commit Hygiene

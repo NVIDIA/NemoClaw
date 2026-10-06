@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import type { AgentDefinition } from "./defs";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
@@ -14,7 +15,11 @@ import {
   recordUnverifiedDeepAgentsRuntimeCall,
 } from "./onboard-terminal-fixtures";
 
-type RunCaptureOpenshell = OnboardContext["runCaptureOpenshell"];
+type RunCaptureOpenshell = (
+  args: string[],
+  options?: { ignoreError?: boolean; includeStderr?: boolean; timeout?: number },
+) => string | null;
+type StructuredCapture = (args: string[]) => { status: number | null; output: string };
 
 function makeDeepAgentsCodeAgent(): AgentDefinition {
   return loadAgent("langchain-deepagents-code");
@@ -24,20 +29,48 @@ function makeNemoCuaAgent(): AgentDefinition {
   return loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
 }
 
+function requestAsLegacyArgs(request: OpenShellSandboxBufferedCommandRequest): string[] {
+  const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+  const ttyArgs = request.tty === false ? ["--no-tty"] : [];
+  const args = ["sandbox", "exec", "-n", request.sandboxName, ...targetArgs, ...ttyArgs];
+  for (const [key, value] of Object.entries(request.sandboxEnvironment ?? {})) {
+    args.push("--env", `${key}=${value}`);
+  }
+  return [...args, "--", ...request.command];
+}
+
 function createAgentSetupContext(
   runCaptureOpenshell: RunCaptureOpenshell = vi.fn((_args: string[]) => ""),
-  captureOpenshell: NonNullable<OnboardContext["captureOpenshell"]> = vi.fn((args, opts) => ({
-    status: 0,
-    output: runCaptureOpenshell(args, opts) ?? "",
-  })),
+  captureOpenshell?: StructuredCapture,
   timing: Pick<OnboardContext, "sleepSeconds"> = {},
 ) {
+  const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    const isScript = request.command[0] === "/bin/bash" && request.command[1] === "-s";
+    const args = requestAsLegacyArgs(request);
+    const captured = captureOpenshell?.(args);
+    const output = captured ? captured.output : runCaptureOpenshell(args, { ignoreError: true });
+    const capturedCompletion =
+      output === null
+        ? {
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "invocation" as const, message: "unobservable" },
+            },
+            stdout: "",
+            stderr: "",
+          }
+        : {
+            outcome: { kind: "completed" as const, exitCode: captured?.status ?? 0 },
+            stdout: output,
+            stderr: "",
+          };
+    return isScript
+      ? { outcome: { kind: "completed" as const, exitCode: 0 }, stdout: "", stderr: "" }
+      : capturedCompletion;
+  });
   return {
     step: vi.fn((_current: number, _total: number, _message: string) => undefined),
-    runCaptureOpenshell,
-    captureOpenshell,
-    openshellShellCommand: vi.fn(() => "openshell sandbox connect deepagents-code"),
-    openshellBinary: "/usr/bin/openshell",
+    sandboxCommandExecutor: { runBuffered },
     startRecordedStep: vi.fn(async (_stepName: string, _updates: Record<string, unknown>) => {
       return undefined;
     }),

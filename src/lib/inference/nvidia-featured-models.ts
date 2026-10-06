@@ -10,9 +10,11 @@ export const NVIDIA_FEATURED_MODELS_URL =
   "https://assets.ngc.nvidia.com/products/api-catalog/featured-models.json";
 // NVIDIA Endpoints retirement contract: the public featured feed and
 // authenticated /models catalog can lag a runtime retirement. The repository
-// authority is CLOUD_MODEL_OPTIONS. nvidia-featured-models.test.ts verifies
-// the featured-feed filter, and config.test.ts verifies that retired model IDs
-// remain absent from NVIDIA Endpoints choices. Keep entries
+// authority for live-catalog filtering is RETIRED_NVIDIA_FEATURED_MODEL_IDS.
+// CLOUD_MODEL_OPTIONS owns the bundled fallback list.
+// nvidia-featured-models.test.ts verifies the featured-feed filter, and
+// config.test.ts verifies that retired model IDs remain absent from NVIDIA
+// Endpoints choices. Keep entries
 // in this policy deny-list until a deliberate product change confirms that the
 // NVIDIA chat-completions route is available again or names a live successor.
 const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([
@@ -20,6 +22,7 @@ const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([
   "z-ai/glm-5.2", // Featured feed still lists it; authenticated /v1/models does not (#10222).
   "moonshotai/kimi-k2.6", // Catalogs still list it after its backing route was removed.
   "deepseek-ai/deepseek-v4-pro", // Retired from NVIDIA Endpoints on 2026-08-07; its route returns HTTP 410.
+  "minimaxai/minimax-m3", // Featured feed still lists it; authenticated /v1/models does not (#11364).
 ]);
 const MAX_NVIDIA_FEATURED_CATALOG_BYTES = 1024 * 1024;
 const MAX_NVIDIA_FEATURED_MODELS = 100;
@@ -29,8 +32,10 @@ const ANSI_ESCAPE_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-
 const UNSAFE_TERMINAL_TEXT_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
 
 export interface NvidiaFeaturedModelOptions {
+  onCatalogSource?: (source: "product_catalog" | "provider_catalog") => void;
   catalogLabel?: string;
   catalogUrl?: string;
+  fallbackModelOptions?: readonly FeaturedModelOption[];
   retiredModelIds?: RetiredFeaturedModelIds;
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   warn?: (message: string) => void;
@@ -50,7 +55,7 @@ export type FeaturedModelOption = {
   label: string;
 };
 
-type RetiredFeaturedModelIds = ReadonlySet<string> | readonly string[];
+export type RetiredFeaturedModelIds = ReadonlySet<string> | readonly string[];
 
 export type FeaturedModelFetchResult =
   | {
@@ -88,10 +93,12 @@ function sanitizeFeaturedCatalogText(value: string, maxLength: number): string {
     .slice(0, maxLength);
 }
 
-function isRetiredFeaturedModelId(
-  idKey: string,
-  retiredModelIds: RetiredFeaturedModelIds,
+/** Returns whether an NVIDIA Endpoints model is blocked by the retirement policy. */
+export function isRetiredNvidiaFeaturedModelId(
+  id: string,
+  retiredModelIds: RetiredFeaturedModelIds = RETIRED_NVIDIA_FEATURED_MODEL_IDS,
 ): boolean {
+  const idKey = id.trim().toLowerCase();
   if ("has" in retiredModelIds) {
     return retiredModelIds.has(idKey);
   }
@@ -127,7 +134,7 @@ export function parseNvidiaFeaturedModels(
       id.length > MAX_NVIDIA_FEATURED_MODEL_ID_LENGTH ||
       !label ||
       !isSafeModelId(id) ||
-      isRetiredFeaturedModelId(idKey, retiredModelIds) ||
+      isRetiredNvidiaFeaturedModelId(idKey, retiredModelIds) ||
       seenIds.has(idKey)
     ) {
       continue;
@@ -188,6 +195,7 @@ export function getNvidiaFeaturedModelOptions(
 ): FeaturedModelOption[] {
   const result = fetchNvidiaFeaturedModels(options);
   if (result.ok && result.models.length > 0) {
+    options.onCatalogSource?.("provider_catalog");
     return result.models;
   }
   const catalogLabel = options.catalogLabel?.trim() || "NVIDIA's featured model catalog";
@@ -197,21 +205,24 @@ export function getNvidiaFeaturedModelOptions(
   (options.warn ?? console.warn)(
     `  Warning: failed to load ${catalogLabel}; falling back to the bundled list (${detail}).`,
   );
-  return CLOUD_MODEL_OPTIONS;
+  options.onCatalogSource?.("product_catalog");
+  return [...(options.fallbackModelOptions ?? CLOUD_MODEL_OPTIONS)];
 }
 
 function buildNvidiaFeaturedModelPromptOptions(
   defaultModelId: string | null | undefined,
   cloudModelOptions: FeaturedModelOption[],
+  catalogSelectionSource: "product_catalog" | "provider_catalog" = "product_catalog",
 ): {
   defaultModelId: string;
   cloudModelOptions: FeaturedModelOption[];
+  catalogSelectionSource: "product_catalog" | "provider_catalog";
 } {
   const preferredDefault = defaultModelId || DEFAULT_CLOUD_MODEL;
   const effectiveDefault = cloudModelOptions.some((option) => option.id === preferredDefault)
     ? preferredDefault
     : (cloudModelOptions[0]?.id ?? preferredDefault);
-  return { defaultModelId: effectiveDefault, cloudModelOptions };
+  return { defaultModelId: effectiveDefault, cloudModelOptions, catalogSelectionSource };
 }
 
 /** Builds NVIDIA Endpoints prompt options from the featured-models catalog. */
@@ -221,11 +232,17 @@ export function getNvidiaFeaturedModelPromptOptions(
 ): {
   defaultModelId: string;
   cloudModelOptions: FeaturedModelOption[];
+  catalogSelectionSource: "product_catalog" | "provider_catalog";
 } {
-  return buildNvidiaFeaturedModelPromptOptions(
-    defaultModelId,
-    getNvidiaFeaturedModelOptions(options),
-  );
+  let source: "product_catalog" | "provider_catalog" = "product_catalog";
+  const models = getNvidiaFeaturedModelOptions({
+    ...options,
+    onCatalogSource: (value) => {
+      source = value;
+      options.onCatalogSource?.(value);
+    },
+  });
+  return buildNvidiaFeaturedModelPromptOptions(defaultModelId, models, source);
 }
 
 /** Caches one featured-model catalog lookup for a single onboarding session. */
@@ -233,8 +250,15 @@ export function createNvidiaFeaturedModelPromptOptionsLoader(
   options: NvidiaFeaturedModelOptions = {},
 ): (defaultModelId?: string | null) => ReturnType<typeof getNvidiaFeaturedModelPromptOptions> {
   let cachedModels: FeaturedModelOption[] | null = null;
+  let source: "product_catalog" | "provider_catalog" = "product_catalog";
   return (defaultModelId?: string | null) => {
-    cachedModels ??= getNvidiaFeaturedModelOptions(options);
-    return buildNvidiaFeaturedModelPromptOptions(defaultModelId, cachedModels);
+    cachedModels ??= getNvidiaFeaturedModelOptions({
+      ...options,
+      onCatalogSource: (value) => {
+        source = value;
+        options.onCatalogSource?.(value);
+      },
+    });
+    return buildNvidiaFeaturedModelPromptOptions(defaultModelId, cachedModels, source);
   };
 }

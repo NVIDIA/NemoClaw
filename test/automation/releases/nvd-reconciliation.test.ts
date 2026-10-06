@@ -507,7 +507,7 @@ describe("advisory early-warning CLI --nvd-records", () => {
   };
 
   function runScanCli(args: readonly string[]): string {
-    return execFileSync(process.execPath, ["--experimental-strip-types", SCAN_CLI, ...args], {
+    return execFileSync(process.execPath, [SCAN_CLI, ...args], {
       encoding: "utf-8",
     });
   }

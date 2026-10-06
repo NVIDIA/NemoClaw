@@ -17,6 +17,7 @@ describe("operational audit", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("node:fs");
     vi.unstubAllEnvs();
     vi.resetModules();
     fs.rmSync(homeDir, { force: true, recursive: true });
@@ -64,5 +65,63 @@ describe("operational audit", () => {
     expect(JSON.stringify(rows)).not.toContain(secret);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual(["action", "reason", "sandbox", "timestamp"]);
     expect(fs.statSync(OPERATIONAL_AUDIT_FILE).mode & 0o777).toBe(0o600);
+  });
+
+  it("reads a stable regular audit file without following a symbolic link", async () => {
+    const { visitStableOperationalAuditLines } = await import("./operational");
+    const auditFile = path.join(homeDir, "audit.jsonl");
+    const linkedFile = path.join(homeDir, "audit-link.jsonl");
+    fs.writeFileSync(auditFile, '{"action":"config_set"}\n', { mode: 0o600 });
+    fs.symlinkSync(auditFile, linkedFile);
+
+    const lines: string[] = [];
+    visitStableOperationalAuditLines((line) => lines.push(line), auditFile);
+    expect(lines).toEqual(['{"action":"config_set"}']);
+    expect(() => visitStableOperationalAuditLines(() => {}, linkedFile)).toThrow();
+    expect(() =>
+      visitStableOperationalAuditLines(() => {}, path.join(homeDir, "missing.jsonl")),
+    ).not.toThrow();
+  });
+
+  it("bounds a descriptor read to the size validated before the file grows", async () => {
+    const auditFile = path.join(homeDir, "growing-audit.jsonl");
+    fs.writeFileSync(auditFile, "x", { mode: 0o600 });
+
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let requestedReadLength: number | undefined;
+    const readSync = vi.fn(
+      (descriptor: number, buffer: Buffer, offset: number, length: number, position: number) => {
+        requestedReadLength = length;
+        return actualFs.readSync(descriptor, buffer, offset, length, position);
+      },
+    );
+    const afterFstat = [() => actualFs.appendFileSync(auditFile, Buffer.alloc(8 * 1024 * 1024))];
+    let fstatCalls = 0;
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      fstatSync: (descriptor: number, options: { bigint: true }) => {
+        const stat = actualFs.fstatSync(descriptor, options);
+        afterFstat[fstatCalls++]?.();
+        return stat;
+      },
+      readSync,
+    }));
+    const { visitStableOperationalAuditLines } = await import("./operational");
+
+    expect(() => visitStableOperationalAuditLines(() => {}, auditFile)).toThrow(
+      "config audit changed during rebuild capture",
+    );
+    expect(readSync).toHaveBeenCalledTimes(1);
+    expect(requestedReadLength).toBe(1);
+  });
+
+  it("refuses an oversized audit row while scanning a large file incrementally", async () => {
+    const auditFile = path.join(homeDir, "oversized-row-audit.jsonl");
+    fs.writeFileSync(auditFile, Buffer.alloc(1024 * 1024 + 1, 0x20), { mode: 0o600 });
+    const { visitStableOperationalAuditLines } = await import("./operational");
+
+    expect(() => visitStableOperationalAuditLines(() => {}, auditFile)).toThrow(
+      "config audit line exceeds the bounded 1 MiB limit",
+    );
   });
 });

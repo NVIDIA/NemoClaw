@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   checkpointGatewayAuthority,
   gatewayOwnerFromCheckpoint,
@@ -24,6 +25,8 @@ import {
 } from "../../onboard/sandbox-recreate-probe";
 import {
   advanceSandboxRecreateTransaction,
+  assertSandboxRecreateSourceProof,
+  sandboxRecreateSourceProof,
   beginSandboxRecreateDelete,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -36,10 +39,12 @@ import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import type {
   CheckpointGatewayAuthority,
   CheckpointSandboxRecreatePhase,
+  CheckpointSandboxRecreateTransaction,
 } from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
@@ -93,6 +98,7 @@ interface RebuildRecoveryBackupDeps {
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
   readonly observePresence?: typeof observeSandboxPresenceOnGateway;
   readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
+  readonly clearMcpHandoff?: typeof clearRebuildMcpHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
@@ -158,15 +164,15 @@ function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
             "transactionId",
           ]
         : value?.schemaVersion === 2
-        ? [
-            "backupTimestamp",
-            "gatewayName",
-            "gatewayPort",
-            "sandboxName",
-            "schemaVersion",
-            "transactionId",
-          ]
-        : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
+          ? [
+              "backupTimestamp",
+              "gatewayName",
+              "gatewayPort",
+              "sandboxName",
+              "schemaVersion",
+              "transactionId",
+            ]
+          : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
     if (
       !value ||
       typeof value !== "object" ||
@@ -258,10 +264,7 @@ function recoveryRecordMatches(
   );
 }
 
-function replaceRecoveryRecord(
-  backupPath: string,
-  record: RebuildRecoveryBackupRecordV3,
-): void {
+function replaceRecoveryRecord(backupPath: string, record: RebuildRecoveryBackupRecordV3): void {
   const filePath = recoveryPath(backupPath);
   const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
   let descriptor: number | null = null;
@@ -414,6 +417,37 @@ export type RetiredRebuildRecovery = Readonly<{
   transactionId: string;
 }>;
 
+export type RebuildRecoveryRoute = Readonly<{
+  gatewayName: string;
+  gatewayPort: number;
+}>;
+
+/** Read the routing authority for one exact retained recovery marker. */
+export function readRebuildRecoveryRoute(
+  input: Readonly<{ sandboxName: string; transactionId: string }>,
+  backupPath: string,
+): RebuildRecoveryRoute | null {
+  validateRecoveryIdentity({ ...input, agentName: null });
+  const record = readRecoveryRecord(backupPath);
+  if (record?.transactionId !== input.transactionId) return null;
+  if (record.sandboxName !== input.sandboxName) {
+    throw new Error(
+      `Rebuild recovery identity does not match sandbox '${input.sandboxName}'. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  if (record.backupTimestamp !== path.basename(backupPath)) {
+    throw new Error(
+      `Rebuild recovery identity changed before routing. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  if (record.schemaVersion === 1) {
+    throw new Error(
+      `Rebuild recovery '${input.transactionId}' does not contain recorded gateway authority. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  return { gatewayName: record.gatewayName, gatewayPort: record.gatewayPort };
+}
+
 /**
  * Retire one credential-bearing rebuild handoff only after its recorded
  * gateway proves the old sandbox absent and the operator attests that required
@@ -497,6 +531,11 @@ export function retireRebuildRecoveryBackup(
       `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
     );
   }
+  if (!(deps.clearMcpHandoff ?? clearRebuildMcpHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild MCP recovery handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
   try {
     clearRebuildRecoveryBackup(
       {
@@ -533,6 +572,7 @@ export interface RebuildRecreateJournal {
   readonly gatewayAuthority: CheckpointGatewayAuthority;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
   beginDelete(): RebuildRecreateSourcePresence;
   confirmDeleted(): void;
   completeAcceptedTarget(): void;
@@ -547,6 +587,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "recreateModel"
     | "recreatePreferredInferenceApi"
     | "fromDockerfile"
+    | "fromImage"
     | "sandboxGpu"
     | "sandboxGpuDevice"
     | "controlUiPort"
@@ -556,6 +597,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "toolDisclosure"
     | "dcodeAutoApprovalMode"
     | "observabilityEnabled"
+    | "reinstallDeferredN1xManagedVllm"
   >,
 ): string {
   const hostMounts = (options.hostMounts ?? []).map(
@@ -576,6 +618,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     model: options.recreateModel,
     preferredInferenceApi: options.recreatePreferredInferenceApi,
     fromDockerfile: options.fromDockerfile,
+    ...(options.fromImage ? { fromImage: options.fromImage } : {}),
     sandboxGpu: options.sandboxGpu,
     sandboxGpuDevice: options.sandboxGpuDevice,
     controlUiPort: options.controlUiPort,
@@ -588,10 +631,26 @@ export function fingerprintRebuildRecreateTargetIntent(
     toolDisclosure: options.toolDisclosure,
     dcodeAutoApprovalMode: options.dcodeAutoApprovalMode,
     observabilityEnabled: options.observabilityEnabled,
+    ...(options.reinstallDeferredN1xManagedVllm === true
+      ? { reinstallDeferredN1xManagedVllm: true }
+      : {}),
   });
 }
 
 export const observeRebuildSandbox = observeSandboxOnGateway;
+
+export function assertRebuildRecoverySource(
+  transaction: CheckpointSandboxRecreateTransaction,
+  target: SandboxRecreateTarget,
+  reservationSessionId: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction, reservationSessionId), {
+    ...target,
+    registryEntry: registry.getSandbox(target.sandboxName),
+    observation: observeRebuildSandbox(target, undefined, runtimeSelection),
+  });
+}
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;
@@ -600,6 +659,8 @@ export interface OpenRebuildRecreateJournalInput {
   readonly targetIntentFingerprint: string;
   readonly log: (message: string) => void;
   readonly observe?: RebuildSandboxObserver;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+  readonly resolveRuntimeSelection?: () => OpenShellRuntimeSelection;
   /**
    * Invoked with ready-to-print lines when gateway authority cannot be
    * revalidated, so the command layer can fail cleanly (#8103).
@@ -611,7 +672,12 @@ export function openRebuildRecreateJournal(
   input: OpenRebuildRecreateJournalInput,
 ): RebuildRecreateJournal {
   const { target, agentName, targetIntentFingerprint, log } = input;
-  const observe = input.observe ?? observeRebuildSandbox;
+  const observeTarget = (
+    runtimeSelection = input.runtimeSelection,
+  ): ReturnType<RebuildSandboxObserver> =>
+    input.observe
+      ? input.observe(target)
+      : observeRebuildSandbox(target, undefined, runtimeSelection);
   // Authority revalidation runs before the destroy phase. Handing the refusal
   // to the caller lets rebuild report the migration and its remedy instead of
   // crashing with a Node stack trace (#8103). The dedicated rebuild resolver
@@ -639,6 +705,9 @@ export function openRebuildRecreateJournal(
     throw error;
   }
   const gatewayAuthority = checkpointGatewayAuthority(authority);
+  const runtimeSelection = input.resolveRuntimeSelection
+    ? input.resolveRuntimeSelection()
+    : input.runtimeSelection;
   const owned = ownSandboxRecreateTransaction({
     sessionStore: {
       loadSession: onboardSession.loadSession,
@@ -650,7 +719,7 @@ export function openRebuildRecreateJournal(
     gatewayPort: target.gatewayPort,
     targetIntentFingerprint,
     readRegistryEntry: () => registry.getSandbox(target.sandboxName),
-    observe: () => observe(target),
+    observe: () => observeTarget(runtimeSelection),
     decorateCheckpoint: (current, checkpoint, now) => ({
       ...checkpoint,
       machineState: current.machine.state,
@@ -704,6 +773,7 @@ export function openRebuildRecreateJournal(
     gatewayAuthority,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
     beginDelete: () => {
       const begun = beginSandboxRecreateDelete({
         sessionStore: {
@@ -716,14 +786,14 @@ export function openRebuildRecreateJournal(
         targetIntentFingerprint,
         revalidateGatewayAuthority,
         readRegistryEntry: () => registry.getSandbox(target.sandboxName),
-        observe: () => observe(target),
+        observe: () => observeTarget(runtimeSelection),
       });
       currentTransaction = begun.transaction;
       phase = currentTransaction.phase;
       return begun.sourcePresence;
     },
     confirmDeleted: () => {
-      if (observe(target).state !== "missing") {
+      if (observeTarget(runtimeSelection).state !== "missing") {
         throw new Error(
           `Cannot continue sandbox '${target.sandboxName}' replacement: OpenShell still reports the journaled source after delete.`,
         );

@@ -122,8 +122,8 @@ OTLP_BIND_IP="$(
   printf '%s\n' "$bind_output" | tr -d '\r' | sed -n 's/^NEMOCLAW_OTLP_BIND_IP=//p' | tail -n 1
 )"
 case "$OTLP_BIND_IP" in
-  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) ;;
-  *) fail "sandbox resolved $COLLECTOR_HOST to non-private address '$OTLP_BIND_IP'" ;;
+  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 169.254.2.2) ;;
+  *) fail "sandbox resolved $COLLECTOR_HOST to an unsupported host address '$OTLP_BIND_IP'" ;;
 esac
 if ! ip -o -4 address show \
   | awk '{ sub(/\/.*/, "", $4); print $4 }' \

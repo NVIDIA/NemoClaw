@@ -158,6 +158,27 @@ export function readDockerDriverGatewayRuntimeMarker(
   }
 }
 
+/** Read a current-user runtime authority file without following links. */
+export function readOwnedDockerDriverGatewayRuntimeFile(
+  filePath: string,
+  uid: number,
+): string | null {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024) {
+      return null;
+    }
+    return fs.readFileSync(descriptor, "utf8");
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 export function writeDockerDriverGatewayRuntimeMarker(
   markerPath: string,
   marker: DockerDriverGatewayRuntimeMarker,

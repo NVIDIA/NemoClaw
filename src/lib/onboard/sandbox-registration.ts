@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type {
   InferenceEndpointSource,
   InferenceSelection,
@@ -12,26 +14,34 @@ import {
   normalizeInferenceSelection,
 } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { parseModelSelectionProvenance } from "../domain/telemetry/provenance";
 import * as onboardSession from "../state/onboard-session";
-import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
-import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
+import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 } from "../state/registry/host-local-inference";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import {
+  matchingModelSelectionSnapshot,
+  type ModelSelectionSnapshot,
+} from "../state/registry/model-selection";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
-import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "./experimental/portable-runtime-receipt-readiness";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
-import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   RuntimeProviderBundleRegistry,
@@ -40,10 +50,6 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
-import {
-  classifyPortableLifecycleReceipt,
-  portableLifecycleReceiptMatchesGeneration,
-} from "./experimental/portable-runtime-receipt-readiness";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -60,6 +66,7 @@ export type CreatedSandboxRuntimeFields = Pick<
 export interface CreatedSandboxRegistryEntryInput {
   sandboxName: string;
   inferenceSelection: InferenceSelection;
+  modelSelectionSnapshot?: ModelSelectionSnapshot;
   runtimeFields: CreatedSandboxRuntimeFields;
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
@@ -67,7 +74,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
-  openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -76,11 +83,6 @@ export interface CreatedSandboxRegistryEntryInput {
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
-  /**
-   * Durable MCP rebuild manifest carried across an already-absent sandbox.
-   * The caller must only supply state captured from the same sandbox name.
-   */
-  preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
@@ -88,11 +90,18 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL`, or null
+   * when the dashboard is a plain loopback address. Persisted so post-onboard
+   * commands can report the external origin (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  openshellGatewayStateDir?: string | null;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -175,6 +184,21 @@ export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
   const session = onboardSession.loadSession();
+  const route = input.inferenceSelection;
+  const sessionRouteMatches =
+    session?.sandboxName === input.sandboxName &&
+    session.provider === route.provider &&
+    session.model === route.model &&
+    (session.endpointUrl ?? null) === (route.endpointUrl ?? null) &&
+    (session.credentialEnv ?? null) === (route.credentialEnv ?? null) &&
+    (session.preferredInferenceApi ?? null) === (route.preferredInferenceApi ?? null) &&
+    (session.nimContainer ?? null) === (route.nimContainer ?? null);
+  const modelSelectionProvenance = input.modelSelectionSnapshot
+    ? matchingModelSelectionSnapshot(input.modelSelectionSnapshot, route)
+    : (parseModelSelectionProvenance(
+        route.modelSelectionProvenance ??
+          (sessionRouteMatches ? session?.modelSelectionProvenance : undefined),
+      ) ?? undefined);
   const servingProfileProvenance =
     session?.sandboxName === input.sandboxName
       ? (session.servingProfileProvenance ?? undefined)
@@ -217,6 +241,17 @@ export function buildCreatedSandboxRegistryEntry(
       hostLocalInferenceReceipt,
     );
   }
+  const deferredN1xManagedVllmAccepted =
+    input.deferredN1xManagedVllmPreviewIntent === true &&
+    isDeferredN1xManagedVllmAcceptanceRoute({
+      ...input.inferenceSelection,
+      openshellDriver: input.runtimeFields.openshellDriver,
+    });
+  if (input.deferredN1xManagedVllmPreviewIntent !== undefined && !deferredN1xManagedVllmAccepted) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox Deferred N1x preview acceptance failed closed validation.",
+    );
+  }
   const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
   if (workload?.kind === "managed-image") {
     const requestedAgent = getRequestedSandboxAgentName(input.agent);
@@ -235,20 +270,16 @@ export function buildCreatedSandboxRegistryEntry(
     name: input.sandboxName,
     servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
+    ...(input.modelSelectionSnapshot || modelSelectionProvenance
+      ? { modelSelectionProvenance }
+      : {}),
     ...input.runtimeFields,
     ...agentFields,
     imageTag: input.imageTag,
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-    ...(input.openclawImagePluginInstalls !== undefined
-      ? {
-          openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          })),
-        }
-      : {}),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
@@ -260,7 +291,6 @@ export function buildCreatedSandboxRegistryEntry(
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
-    mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
@@ -275,11 +305,18 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    ...(input.dashboardExternalUrl != null
+      ? { dashboardExternalUrl: input.dashboardExternalUrl }
+      : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+    ...(input.hermesPortableLifecycle === true
+      ? { portableLifecycleProfile: "hermes" as const }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    openshellGatewayStateDir: input.openshellGatewayStateDir ?? undefined,
     ...(input.hostMounts && input.hostMounts.length > 0
       ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
       : {}),
@@ -300,7 +337,10 @@ export function loadOnboardCommandResumeSession(): {
     : null;
 }
 
-export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+/** Build and validate the exact registry row without publishing it. */
+export function prepareCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
   const pendingRoute =
     input.reservationSessionId && pending
@@ -342,6 +382,7 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       );
     }
     entry.agent = "openclaw";
+    entry.portableLifecycleProfile = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
@@ -353,6 +394,27 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       `Runtime provider '${provider.identity.id}' does not accept the registered workload receipt.`,
     );
   }
+  return structuredClone(entry);
+}
+
+/** Prove that a prepared row still matches every source used to derive it. */
+export function revalidatePreparedCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  const current = prepareCreatedSandboxRegistration(input);
+  if (!isDeepStrictEqual(current, prepared)) {
+    throw new RuntimeProviderSelectionError(
+      `Sandbox registration authority for '${input.sandboxName}' changed before publication.`,
+    );
+  }
+  return prepared;
+}
+
+function publishCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  entry: SandboxEntry,
+): SandboxEntry {
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
   const pendingOptions =
     input.reservationSessionId && !input.verifiedCreate
@@ -369,4 +431,17 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
       : writeRegistry(entry);
   return registered ?? entry;
+}
+
+/** Publish one previously prepared row after revalidating its source authority. */
+export function registerPreparedCreatedSandbox(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  revalidatePreparedCreatedSandboxRegistration(input, prepared);
+  return publishCreatedSandboxRegistration(input, prepared);
+}
+
+export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+  return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }

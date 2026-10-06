@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => {
     runSandboxDoctor: vi.fn().mockResolvedValue(undefined),
     showSandboxLogs: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
+    getSandboxStatusReport: vi.fn(),
+    isInferenceHealthFailing: vi.fn().mockReturnValue(false),
     addSandboxHostAlias: vi.fn(),
     listSandboxHostAliases: vi.fn(),
     removeSandboxHostAlias: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock("../../lib/actions/sandbox/process-recovery", () => ({
 
 vi.mock("../../lib/actions/sandbox/status", () => ({
   showSandboxStatus: mocks.showSandboxStatus,
+  getSandboxStatusReport: mocks.getSandboxStatusReport,
+  isInferenceHealthFailing: mocks.isInferenceHealthFailing,
 }));
 
 vi.mock("../../lib/actions/sandbox/logs", () => ({
@@ -90,7 +94,8 @@ vi.mock("../../lib/sandbox/config", () => ({
   SandboxConfigError: mocks.SandboxConfigError,
 }));
 
-vi.mock("../../lib/actions/sandbox/doctor", () => ({
+vi.mock("../../lib/actions/sandbox/doctor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/actions/sandbox/doctor")>()),
   runSandboxDoctor: mocks.runSandboxDoctor,
 }));
 
@@ -246,6 +251,46 @@ describe("sandbox oclif command adapters", () => {
     }
   });
 
+  it("sets a nonzero JSON status exit when llama.cpp ownership is unavailable (#10256)", async () => {
+    mocks.getSandboxStatusReport.mockResolvedValue({
+      found: true,
+      gatewayState: "present",
+      rpcIssue: null,
+      failureLayer: null,
+      inferenceHealth: null,
+      terminalRuntimeHealth: null,
+      llamaCpp: {
+        kind: "unavailable",
+        diagnostic: "Managed llama.cpp ownership state is unavailable.",
+        recovery:
+          "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+      },
+    });
+
+    await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("keeps policy list pending until the asynchronous action completes", async () => {
+    let finish!: () => void;
+    mocks.listSandboxPolicies.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let completed = false;
+    const pending = SandboxPolicyListCommand.run(["alpha"], rootDir).then(() => {
+      completed = true;
+    });
+    await vi.waitFor(() => expect(mocks.listSandboxPolicies).toHaveBeenCalledWith("alpha"));
+    expect(completed).toBe(false);
+    finish();
+    await pending;
+    expect(completed).toBe(true);
+  });
+
   it("maps inspection commands to their action helpers", async () => {
     await SandboxStatusCommand.run(["alpha"], rootDir);
     await SandboxPolicyListCommand.run(["alpha"], rootDir);
@@ -265,7 +310,7 @@ describe("sandbox oclif command adapters", () => {
   });
 
   it("rejects real schema-5 logs and dashboard-token routes before their actions (#9203)", async () => {
-    const fetchToken = vi.fn(() => "test-token");
+    const fetchToken = vi.fn(async () => "test-token");
     const getSandbox = vi.fn(() => ({ agent: "openclaw", dashboardPort: 18789 }));
     const getAccessUrl = vi.fn(() => "http://127.0.0.1:18789");
     setDashboardUrlRuntimeBridgeFactoryForTest(() => ({

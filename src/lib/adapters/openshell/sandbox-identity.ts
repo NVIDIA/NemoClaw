@@ -1,28 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
+
+export {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
-const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
-const SANDBOX_ID_MAX_LENGTH = 512;
-
-export function isOpenShellSandboxId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= SANDBOX_ID_MAX_LENGTH &&
-    SANDBOX_ID_RE.test(value)
-  );
-}
-
-export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {
-  return isOpenShellSandboxId(sandboxId)
-    ? createHash("sha256").update(sandboxId).digest("hex")
-    : null;
-}
-
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
 const CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS = 30_000;
@@ -78,13 +68,26 @@ function parseOpenShellSandboxListJson(output: string): readonly unknown[] | nul
   return Array.isArray(rows) ? rows : null;
 }
 
-export function parseOpenShellSandboxId(output: string): string | null {
-  const matches = [
+export type OpenShellSandboxIdObservation =
+  | { readonly kind: "present"; readonly id: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid" };
+
+export function observeOpenShellSandboxId(output: string): OpenShellSandboxIdObservation {
+  const fields = [
     ...String(output)
       .replace(ANSI_RE, "")
-      .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
-  ].map((match) => match[1] ?? "");
-  return matches.length === 1 && isOpenShellSandboxId(matches[0]) ? (matches[0] as string) : null;
+      .matchAll(/^[\t ]*(?:Id|ID):[\t ]*(.*)$/gmu),
+  ].map((match) => (match[1] ?? "").trim());
+  if (fields.length === 0) return { kind: "absent" };
+  return fields.length === 1 && isOpenShellSandboxId(fields[0])
+    ? { kind: "present", id: fields[0] as string }
+    : { kind: "invalid" };
+}
+
+export function parseOpenShellSandboxId(output: string): string | null {
+  const observed = observeOpenShellSandboxId(output);
+  return observed.kind === "present" ? observed.id : null;
 }
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
@@ -152,10 +155,15 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
   }
 }
 
-function createdIdentityError(sandboxName: string, diagnostic = "settlement-incomplete"): Error {
-  return new Error(
-    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
-  );
+export class CreatedSandboxIdentityError extends Error {
+  readonly diagnostic: string;
+
+  constructor(sandboxName: string, diagnostic = "settlement-incomplete") {
+    super(
+      `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
+    );
+    this.diagnostic = diagnostic;
+  }
 }
 
 function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boolean {
@@ -282,7 +290,7 @@ export function resolveCreatedOpenShellSandboxId(
     CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
   );
   if (observation.state !== "matched") {
-    throw createdIdentityError(
+    throw new CreatedSandboxIdentityError(
       input.sandboxName,
       observation.state === "invalid" ? observation.diagnostic : "settlement-pending",
     );
@@ -310,7 +318,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   assertCreateAttemptNonce(input.createAttemptNonce);
   if (input.priorSandboxId !== undefined && input.priorSandboxId !== null) {
     if (!isOpenShellSandboxId(input.priorSandboxId)) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
   }
   const now = input.now ?? (() => performance.now());
@@ -318,7 +326,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
 
   if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
-    throw createdIdentityError(input.sandboxName);
+    throw new CreatedSandboxIdentityError(input.sandboxName);
   }
 
   let previousNowMs = startedAt;
@@ -327,7 +335,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
     previousNowMs = currentNowMs;
     return currentNowMs;
@@ -359,7 +367,7 @@ export function settleCreatedOpenShellSandboxId(input: {
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }
 
-  throw createdIdentityError(input.sandboxName, diagnostic);
+  throw new CreatedSandboxIdentityError(input.sandboxName, diagnostic);
 }
 
 /**

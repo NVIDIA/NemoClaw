@@ -29,20 +29,16 @@ def _gateway_command_subcommand(command):
     if not tokens:
         return None
 
-    for token in tokens:
-        if token == "gateway/run.py" or token.endswith("/gateway/run.py"):
-            return "run"
-        basename = token.rsplit("/", 1)[-1]
-        if basename in ("hermes-gateway", "hermes-gateway.exe"):
-            return "run"
+    basenames = [t.rsplit("/", 1)[-1] for t in tokens]
+    if any(t == "gateway/run.py" or t.endswith("/gateway/run.py") for t in tokens):
+        return "run"
+    if any(b in ("hermes-gateway", "hermes-gateway.exe") for b in basenames):
+        return "run"
 
     joined = " ".join(tokens)
-    has_gateway_entry = (
-        "hermes_cli.main" in joined
-        or "hermes_cli/main.py" in joined
-        or any(t.rsplit("/", 1)[-1] in ("hermes", "hermes.exe") for t in tokens)
-    )
-    if not has_gateway_entry:
+    if "hermes_cli.main" not in joined and "hermes_cli/main.py" not in joined and not any(
+        b in ("hermes", "hermes.exe") for b in basenames
+    ):
         return None
 
     filtered = []
@@ -122,37 +118,37 @@ function classify(statusPath: string, commandLine: string) {
 
 describe("Hermes gateway process identity", () => {
   it("recognises the renamed entrypoint on both detection paths and stays idempotent", () => {
-      const { statusPath, tmp } = writeFixture();
-      try {
-        // The unpatched matcher is what makes `hermes status` report a running
-        // foreground gateway as stopped (#7804): it gates the PID-file liveness
-        // re-check and the process-table fallback alike.
-        expect(classify(statusPath, RENAMED)).toEqual({
-          subcommand: null,
-          run: false,
-          runtime: false,
-        });
+    const { statusPath, tmp } = writeFixture();
+    try {
+      // The unpatched matcher is what makes `hermes status` report a running
+      // foreground gateway as stopped (#7804): it gates the PID-file liveness
+      // re-check and the process-table fallback alike.
+      expect(classify(statusPath, RENAMED)).toEqual({
+        subcommand: null,
+        run: false,
+        runtime: false,
+      });
 
-        const firstPatch = runPatcher(statusPath);
-        const secondPatch = runPatcher(statusPath);
-        expect(firstPatch.status, firstPatch.stderr).toBe(0);
-        expect(secondPatch.status, secondPatch.stderr).toBe(0);
+      const firstPatch = runPatcher(statusPath);
+      const secondPatch = runPatcher(statusPath);
+      expect(firstPatch.status, firstPatch.stderr).toBe(0);
+      expect(secondPatch.status, secondPatch.stderr).toBe(0);
 
-        expect(classify(statusPath, RENAMED)).toEqual({
-          subcommand: "run",
-          run: true,
-          runtime: true,
-        });
-        expect(
-          classify(
-            statusPath,
-            "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart",
-          ),
-        ).toEqual({ subcommand: "restart", run: false, runtime: true });
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    });
+      expect(classify(statusPath, RENAMED)).toEqual({
+        subcommand: "run",
+        run: true,
+        runtime: true,
+      });
+      expect(
+        classify(
+          statusPath,
+          "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart",
+        ),
+      ).toEqual({ subcommand: "restart", run: false, runtime: true });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   it("keeps the upstream name and the subcommand grammar intact", () => {
     const { statusPath, tmp } = writeFixture();
@@ -179,7 +175,7 @@ describe("Hermes gateway process identity", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-identity-drift-"));
     try {
       const drifted = path.join(tmp, "status.py");
-      fs.writeFileSync(drifted, 'or any(t.rsplit("/", 1)[-1] in ("hermes",) for t in tokens)\n');
+      fs.writeFileSync(drifted, 'b in ("hermes",) for b in basenames\n');
       const result = runPatcher(drifted);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("entry-token allowlist source shape changed");

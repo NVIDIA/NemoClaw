@@ -87,39 +87,39 @@ describe.skipIf(process.platform === "win32")("port-scoped host-state writers", 
     expect(dockerDiagnostics?.dir.startsWith(selectedRoot)).toBe(true);
   });
 
-  it.each([
-    "gateways",
-    "port",
-  ] as const)("rejects a symlinked %s state ancestor without writing through it", async (symlinkLevel) => {
-    const home = makeTempDir("nemoclaw-port-writers-home-");
-    const controlled = makeTempDir("nemoclaw-port-writers-target-");
-    const sharedRoot = path.join(home, ".nemoclaw");
-    const gatewaysRoot = path.join(sharedRoot, "gateways");
-    fs.mkdirSync(symlinkLevel === "gateways" ? sharedRoot : gatewaysRoot, { recursive: true });
-    fs.symlinkSync(
-      controlled,
-      symlinkLevel === "gateways" ? gatewaysRoot : path.join(gatewaysRoot, String(GATEWAY_PORT)),
-      "dir",
-    );
-    const writers = await loadPortStateWriters(home);
-    const now = new Date("2026-07-13T12:00:00.000Z");
+  it.each(["gateways", "port"] as const)(
+    "rejects a symlinked %s state ancestor without writing through it",
+    async (symlinkLevel) => {
+      const home = makeTempDir("nemoclaw-port-writers-home-");
+      const controlled = makeTempDir("nemoclaw-port-writers-target-");
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const gatewaysRoot = path.join(sharedRoot, "gateways");
+      fs.mkdirSync(symlinkLevel === "gateways" ? sharedRoot : gatewaysRoot, { recursive: true });
+      fs.symlinkSync(
+        controlled,
+        symlinkLevel === "gateways" ? gatewaysRoot : path.join(gatewaysRoot, String(GATEWAY_PORT)),
+        "dir",
+      );
+      const writers = await loadPortStateWriters(home);
+      const now = new Date("2026-07-13T12:00:00.000Z");
 
-    expect(() => writers.saveUsageNoticeAcceptance("test-version")).toThrow(/symbolic link/i);
-    expect(
-      writers.collectSandboxCreateFailureDiagnostics("sandbox", { homeDir: home, now }),
-    ).toBeNull();
-    expect(
-      writers.collectDockerGpuPatchDiagnostics(
-        "sandbox",
-        {},
-        {
-          dockerCapture: () => "",
-          dockerLogs: () => "",
-          homedir: () => home,
-          now: () => now,
-        },
-      ),
-    ).toBeNull();
-    expect(fs.readdirSync(controlled)).toEqual([]);
-  });
+      expect(() => writers.saveUsageNoticeAcceptance("test-version")).toThrow(/symbolic link/i);
+      expect(
+        writers.collectSandboxCreateFailureDiagnostics("sandbox", { homeDir: home, now }),
+      ).toBeNull();
+      expect(
+        writers.collectDockerGpuPatchDiagnostics(
+          "sandbox",
+          {},
+          {
+            dockerCapture: () => "",
+            dockerLogs: () => "",
+            homedir: () => home,
+            now: () => now,
+          },
+        ),
+      ).toBeNull();
+      expect(fs.readdirSync(controlled)).toEqual([]);
+    },
+  );
 });

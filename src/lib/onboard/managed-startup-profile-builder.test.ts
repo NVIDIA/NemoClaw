@@ -182,6 +182,24 @@ function piInput(
 }
 
 describe("buildManagedStartupProfile", () => {
+  it.each([dcodeInput(), piInput()])("rejects absent inference for $agent", (input) => {
+    expect(() => buildManagedStartupProfile({ ...input, inference: null })).toThrow(
+      "requires inference configuration",
+    );
+  });
+  it.each([openClawInput(), hermesInput()])(
+    "rejects ambient model input when $agent inference is absent",
+    (input) => {
+      expect(() =>
+        buildManagedStartupProfile({
+          ...input,
+          inference: null,
+          environment: { NEMOCLAW_MODEL: "fixture/model" },
+        }),
+      ).toThrow("NEMOCLAW_MODEL");
+    },
+  );
+
   it("builds Pi model tuning from the environment and leaves the effort scale unset (#7930)", () => {
     const built = buildManagedStartupProfile(
       piInput({
@@ -394,8 +412,6 @@ describe("buildManagedStartupProfile", () => {
         NEMOCLAW_AGENT_TIMEOUT: "900",
         NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(extraAgents),
-        NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-        NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
         NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
         NEMOCLAW_OPENCLAW_OTEL: "yes",
@@ -443,9 +459,9 @@ describe("buildManagedStartupProfile", () => {
       agentTimeoutSeconds: 900,
       heartbeatEvery: "30m",
       extraAgents,
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: true,
     });
+    expect(built.profile.agentConfig).not.toHaveProperty("deviceAuth");
     expect(built.profile.proxy).toMatchObject({
       managedHost: "host.containers.internal",
       managedPort: 3129,
@@ -673,9 +689,9 @@ describe("buildManagedStartupProfile", () => {
         defaults: { subagents: {} },
         main: {},
       },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: false,
     });
+    expect(built.profile.agentConfig).not.toHaveProperty("deviceAuth");
     expect(built.profile.tuning).toEqual({
       contextWindow: 131_072,
       maxTokens: 4096,
@@ -717,14 +733,14 @@ describe("buildManagedStartupProfile", () => {
     [
       "Hermes inference compatibility",
       hermesInput({
-        inference: { ...hermesInput().inference, compatibility: { strict: true } },
+        inference: { ...hermesInput().inference!, compatibility: { strict: true } },
       }),
       /does not support inference compatibility/,
     ],
     [
       "DCode inference compatibility",
       dcodeInput({
-        inference: { ...dcodeInput().inference, compatibility: { strict: true } },
+        inference: { ...dcodeInput().inference!, compatibility: { strict: true } },
       }),
       /does not support inference compatibility/,
     ],
@@ -800,7 +816,7 @@ describe("buildManagedStartupProfile", () => {
       "secret-shaped model",
       openClawInput({
         inference: {
-          ...openClawInput().inference,
+          ...openClawInput().inference!,
           model: "sk-proj-secret-material-1234567890",
         },
       }),
@@ -858,6 +874,56 @@ describe("buildManagedStartupProfile", () => {
       ),
     ).toThrow(message);
   });
+
+  it.each([
+    [
+      "secondary-agent",
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "reviewer", subagents: { maxSpawnDepth: 2 } },
+        ]),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "secondary-agent",
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [{ id: "reviewer", subagents: { maxSpawnDepth: 2 } }],
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "main-agent",
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "main-agent",
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+  ])(
+    "rejects %s maxSpawnDepth from %s profile input",
+    (_agent, _encoding, environment, message) => {
+      expect(() => buildManagedStartupProfile(openClawInput({ environment }))).toThrow(message);
+    },
+  );
 
   it("rejects malformed or non-CA certificate material", () => {
     expect(() =>

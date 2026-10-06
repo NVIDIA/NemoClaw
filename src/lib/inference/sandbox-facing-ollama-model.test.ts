@@ -2,28 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OLLAMA_PORT } from "../core/ports";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
 import {
+  describeModelInventory,
+  getOllamaContainerPort,
   getLocalProviderContainerReachabilityCheck,
   ollamaInventoryContainsModel,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   probeOllamaEndpointInventory,
-  resetOllamaContainerPortCache,
   resetOllamaHostCache,
   setResolvedOllamaHost,
+  shouldFrontOllamaWithProxy,
   validateSandboxFacingOllamaModel,
 } from "./local";
-
-const containerCanReachHostLoopback = vi.fn((..._args: unknown[]) => true);
-
-vi.mock("../platform", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../platform")>()),
-  containerCanReachHostLoopback: (...args: unknown[]) => containerCanReachHostLoopback(...args),
-}));
-
-vi.mock("../adapters/docker/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../adapters/docker/runtime")>()),
-  detectContainerRuntimeFromDockerInfo: () => "docker-desktop",
-}));
 
 function tagsBody(...models: string[]): string {
   return JSON.stringify({ models: models.map((name) => ({ name })) });
@@ -35,20 +26,19 @@ function commandUrl(command: readonly string[]): string {
 
 describe("sandbox-facing Ollama model validation", () => {
   beforeEach(() => {
-    containerCanReachHostLoopback.mockReturnValue(true);
-    resetOllamaContainerPortCache();
     resetOllamaHostCache();
-    setResolvedOllamaHost("127.0.0.1");
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
   });
 
   afterEach(() => {
-    resetOllamaContainerPortCache();
     resetOllamaHostCache();
   });
 
-  it("asks the sandbox host bridge for its inventory", () => {
+  it("uses the raw bridge for the selected Windows-host route", () => {
     const command = getLocalProviderContainerReachabilityCheck("ollama-local", "body");
 
+    expect(getOllamaContainerPort()).toBe(OLLAMA_PORT);
+    expect(shouldFrontOllamaWithProxy()).toBe(false);
     expect(command).not.toBeNull();
     expect(commandUrl(command ?? [])).toBe(
       `http://host.openshell.internal:${OLLAMA_PORT}/api/tags`,
@@ -57,12 +47,15 @@ describe("sandbox-facing Ollama model validation", () => {
     expect(command).toContain("host.openshell.internal:host-gateway");
   });
 
-  it("does not probe when the auth proxy fronts Ollama", () => {
-    containerCanReachHostLoopback.mockReturnValue(false);
-    resetOllamaContainerPortCache();
+  it("uses the auth proxy for a WSL-local route", () => {
+    const capture = vi.fn(() => "");
+    setResolvedOllamaHost("127.0.0.1");
 
+    expect(getOllamaContainerPort()).toBe(OLLAMA_PROXY_PORT);
+    expect(shouldFrontOllamaWithProxy()).toBe(true);
     expect(getLocalProviderContainerReachabilityCheck("ollama-local", "body")).toBeNull();
-    expect(validateSandboxFacingOllamaModel("llama3.2:1b", () => "")).toEqual({ ok: true });
+    expect(validateSandboxFacingOllamaModel("llama3.2:1b", capture)).toEqual({ ok: true });
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("rejects a model the probed endpoint reports as unavailable (#9454)", () => {
@@ -72,7 +65,7 @@ describe("sandbox-facing Ollama model validation", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Selected Ollama model 'llama3.2:1b'");
-    expect(result.message).toContain(`http://127.0.0.1:${OLLAMA_PORT}`);
+    expect(result.message).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}`);
     expect(result.message).toContain(`http://host.openshell.internal:${OLLAMA_PORT}`);
     expect(result.message).toContain("reported models: qwen3.5:2b, gemma4:26b");
   });
@@ -108,13 +101,20 @@ describe("sandbox-facing Ollama model validation", () => {
 
 describe("Ollama model inventory", () => {
   it("queries the given daemon for its inventory", () => {
-    const capture = vi.fn((_command: readonly string[]) => tagsBody("llama3.2:1b"));
-
-    const inventory = probeOllamaEndpointInventory("host.docker.internal", capture);
-
-    expect(commandUrl(capture.mock.calls[0][0])).toBe(
-      `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
+    const capture = vi.fn(
+      (
+        _command: readonly string[],
+        _options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv; timeout?: number },
+      ) => tagsBody("llama3.2:1b"),
     );
+
+    const inventory = probeOllamaEndpointInventory("127.0.0.1", capture, 1_200);
+
+    expect(commandUrl(capture.mock.calls[0][0])).toBe(`http://127.0.0.1:${OLLAMA_PORT}/api/tags`);
+    expect(capture.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["--connect-timeout", "1.2", "--max-time", "1.2"]),
+    );
+    expect(capture.mock.calls[0][1]).toMatchObject({ ignoreError: true, timeout: 1_200 });
     expect(inventory).toEqual(["llama3.2:1b"]);
     expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(false);
   });
@@ -130,5 +130,19 @@ describe("Ollama model inventory", () => {
 
   it("keeps a valid empty inventory authoritative", () => {
     expect(probeOllamaEndpointInventory("127.0.0.1", () => tagsBody())).toEqual([]);
+  });
+
+  it("removes directional controls from inventory labels and validation messages", () => {
+    const controls =
+      "\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
+    const model = `qwen3.6${controls}:35b`;
+
+    expect(describeModelInventory([model])).toBe("qwen3.6:35b");
+
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const result = validateSandboxFacingOllamaModel("llama3.2:1b", () => tagsBody(model));
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("reported models: qwen3.6:35b");
+    expect(result.message).not.toMatch(/[\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u);
   });
 });

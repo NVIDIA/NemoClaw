@@ -9,9 +9,7 @@ import { createOnboardDashboardHelpers } from "./dashboard";
 // Minimal no-op deps; only runCaptureOpenshell matters for these tests.
 function makeHelpers(runCaptureOpenshell: (args: string[], opts?: unknown) => string | null) {
   return createOnboardDashboardHelpers({
-    runOpenshell: () => ({ status: 0 }),
     runCaptureOpenshell,
-    openshellArgv: (args: string[]) => ["openshell", ...args],
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoHermes",
     getProviderLabel: (p: string) => p,

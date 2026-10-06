@@ -3,9 +3,9 @@
 
 # Root-Cause and Sensitive-Workflow State Checks
 
-Apply these checks while planning, implementing, and reviewing a change. Record the results in the
-output that the current workflow already owns; do not produce a separate report. State why a check
-does not apply when the omission could hide risk.
+Use sibling-path checks for a defect that may share a cause across entry points. Use the state
+matrix when changing a sensitive workflow listed below. Record material results in the task evidence;
+ordinary changes do not require an empty matrix or a separate report.
 
 ## Authority
 
@@ -21,10 +21,11 @@ A change that repairs one path and leaves a sibling path unchanged keeps the sam
 
 ## Sensitive-Workflow State Matrix
 
-Build a sensitive-workflow state matrix as working analysis for a flow that handles credentials,
-remote execution, billable resources, destructive cleanup, security policy, or public writes. Use
-only the rows and columns required to cover the changed contract. Classify these outcomes when they
-apply:
+Build a sensitive-workflow state matrix as working analysis when changed runtime behavior handles
+credentials, remote execution, billable resources, destructive cleanup, security policy, or public
+writes. The matrix does not grant or revoke authority. Do not build it only because a workflow or
+E2E file changed, or because an authorized PR lifecycle writes its branch or PR. Use only the rows
+and columns required to cover the changed contract. Classify these outcomes when they apply:
 
 | Phase | Success | Command Failure | Transport Ambiguity | Verification Failure |
 |---|---|---|---|---|
@@ -36,7 +37,8 @@ apply:
 For each credential, name its location, access, lifetime, and removal. For each failure cell, record
 the result and required action separately. Classify the result as an infrastructure failure or
 inconclusive verification when applicable. Classify the action as rollback, retry, or stop. Ask the
-user before choosing a behavior that changes security, data safety, cost, or a supported contract.
+user only when the accepted scope does not select among materially different behaviors for security,
+data safety, cost, or a supported contract.
 
 The [Security Rubric](security-rubric.md) owns the authentication and authorization category and its
 evidence expectations. For a public or external write, record the positive and negative evidence that
