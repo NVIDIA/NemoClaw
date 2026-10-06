@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   CheckpointSandboxRecreatePhase,
@@ -795,68 +795,76 @@ describe("atomic recreate journal ownership", () => {
 });
 
 describe("source registry fingerprint across channel mutations", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
+  let registry: typeof import("../state/registry");
+  let persistManifestChannelDisabledPlan: typeof import("../actions/sandbox/policy-channel").persistManifestChannelDisabledPlan;
+  let cleanupHome = async () => {};
+
+  beforeEach(async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-void-journal-"));
+    cleanupHome = () => fs.rm(home, { recursive: true, force: true });
+    vi.stubEnv("HOME", home);
     vi.resetModules();
+    registry = await import("../state/registry");
+    // Load the real channel writer as fixture setup, outside the behavior timeout.
+    ({ persistManifestChannelDisabledPlan } = await import("../actions/sandbox/policy-channel"));
+  });
+
+  afterEach(async () => {
+    try {
+      await cleanupHome();
+    } finally {
+      cleanupHome = async () => {};
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   it("survives a channel the operator stops and starts between rebuilds (#10473)", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-void-journal-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("../state/registry");
-      // The writer `channels stop` and `channels start` actually use.
-      const { persistManifestChannelDisabledPlan } =
-        await import("../actions/sandbox/policy-channel");
-      registry.registerSandbox({
-        name: "alpha",
-        agent: "openclaw",
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        imageTag: "nemoclaw/openclaw:2026.3.11",
-        messaging: {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      imageTag: "nemoclaw/openclaw:2026.3.11",
+      messaging: {
+        schemaVersion: 1,
+        plan: {
           schemaVersion: 1,
-          plan: {
-            schemaVersion: 1,
-            sandboxName: "alpha",
-            agent: "openclaw",
-            workflow: "add-channel",
-            disabledChannels: [],
-            channels: [{ channelId: "teams", configured: true, disabled: false, active: true }],
-          },
+          sandboxName: "alpha",
+          agent: "openclaw",
+          workflow: "add-channel",
+          disabledChannels: [],
+          channels: [{ channelId: "teams", configured: true, disabled: false, active: true }],
         },
-      } as unknown as SandboxEntry);
-      const initialRow = registry.getSandbox("alpha") as SandboxEntry;
-      const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
-      beginSandboxRecreateTransaction(session, {
-        sandboxName: "alpha",
+      },
+    } as unknown as SandboxEntry);
+    const initialRow = registry.getSandbox("alpha") as SandboxEntry;
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    beginSandboxRecreateTransaction(session, {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sourceEntry: initialRow,
+      observation: LIVE_SOURCE,
+      targetIntentFingerprint: TARGET_INTENT,
+      id: TX_ID,
+      targetGeneration: TARGET_GENERATION,
+      now: ISO,
+    });
+    const transaction = structuredClone(session.checkpoint!.sandboxRecreate!);
+
+    expect(await persistManifestChannelDisabledPlan("alpha", "teams", true)).not.toBeNull();
+    expect(registry.getDisabledChannels("alpha")).toEqual(["teams"]);
+    expect(await persistManifestChannelDisabledPlan("alpha", "teams", false)).not.toBeNull();
+    expect(registry.getDisabledChannels("alpha")).toEqual([]);
+
+    const restarted = registry.getSandbox("alpha") as SandboxEntry;
+    expect(restarted.messaging?.plan.workflow).toBe("start-channel");
+    expect(
+      planSandboxRecreateRecovery(transaction, LIVE_SOURCE, restarted, {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        sourceEntry: initialRow,
-        observation: LIVE_SOURCE,
-        targetIntentFingerprint: TARGET_INTENT,
-        id: TX_ID,
-        targetGeneration: TARGET_GENERATION,
-        now: ISO,
-      });
-      const transaction = structuredClone(session.checkpoint!.sandboxRecreate!);
-
-      expect(await persistManifestChannelDisabledPlan("alpha", "teams", true)).not.toBeNull();
-      expect(registry.getDisabledChannels("alpha")).toEqual(["teams"]);
-      expect(await persistManifestChannelDisabledPlan("alpha", "teams", false)).not.toBeNull();
-      expect(registry.getDisabledChannels("alpha")).toEqual([]);
-
-      const restarted = registry.getSandbox("alpha") as SandboxEntry;
-      expect(restarted.messaging?.plan.workflow).toBe("start-channel");
-      expect(
-        planSandboxRecreateRecovery(transaction, LIVE_SOURCE, restarted, {
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        }),
-      ).toEqual({ action: "continue_delete" });
-    } finally {
-      await fs.rm(home, { recursive: true, force: true });
-    }
+      }),
+    ).toEqual({ action: "continue_delete" });
   });
 });
