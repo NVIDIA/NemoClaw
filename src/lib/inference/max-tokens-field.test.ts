@@ -5,13 +5,20 @@ import { describe, expect, it } from "vitest";
 import { requiresMaxCompletionTokensField, resolveMaxTokensField } from "./max-tokens-field";
 
 describe("resolveMaxTokensField", () => {
-  it.each(["gpt-5", "gpt-5.4", "gpt-5.4-turbo", "GPT-5.4"])(
-    "selects max_completion_tokens for GPT-5 family model %s (#6642)",
-    (model) => {
-      expect(resolveMaxTokensField(model)).toBe("max_completion_tokens");
-      expect(requiresMaxCompletionTokensField(model)).toBe(true);
-    },
-  );
+  it.each([
+    "gpt-5",
+    "gpt-5.4",
+    "gpt-5.4-turbo",
+    "GPT-5.4",
+    "gpt-6",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "GPT-6-ASTRA",
+    "azure/gpt-6-astra",
+  ])("selects max_completion_tokens for GPT-5 and GPT-6 family model %s", (model) => {
+    expect(resolveMaxTokensField(model)).toBe("max_completion_tokens");
+    expect(requiresMaxCompletionTokensField(model)).toBe(true);
+  });
 
   it.each(["o1", "o1-mini", "o3", "o3-mini", "o4-mini"])(
     "selects max_completion_tokens for OpenAI reasoning model %s",
@@ -28,6 +35,8 @@ describe("resolveMaxTokensField", () => {
   it.each([
     "gpt-4o",
     "gpt-4.1",
+    "gpt-60",
+    "gpt-6custom",
     "nvidia/nemotron-3-super-120b-a12b",
     "moonshotai/kimi-k2.6",
     "deepseek-ai/deepseek-v4-pro",
