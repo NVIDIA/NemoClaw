@@ -294,7 +294,11 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   }
   return {
     name: "nemoclaw-reviewed-production-graph",
-    overrides: { "proxy-addr": "2.0.8", tar: archiveTarVersion },
+    overrides: {
+      "@modelcontextprotocol/sdk": "1.31.0",
+      "proxy-addr": "2.0.8",
+      tar: archiveTarVersion,
+    },
     private: true,
     version: "1.0.0",
   } as const;
