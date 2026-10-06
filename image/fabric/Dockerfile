@@ -92,7 +92,8 @@ COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
 
 FROM interactive AS openclaw
-COPY --from=openclaw-upstream /app /app
+# Upstream owns /app as its own user; the sandbox only reads it.
+COPY --from=openclaw-upstream --chown=0:0 /app /app
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 ADD --chown=node:node --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
 ADD --chown=node:node --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
@@ -105,12 +106,17 @@ RUN --network=none OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tm
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/brave.tgz \
     && OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/tavily.tgz \
-    && mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
-    && rm -rf /tmp/plugin-build /tmp/brave.tgz /tmp/tavily.tgz
+    && rm -f /tmp/brave.tgz /tmp/tavily.tgz
+USER root
+RUN mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
+    && chown -R 0:0 /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && chmod -R u+rwX,go+rX,go-w /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && rm -rf /tmp/plugin-build
 COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
 COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
 COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
+USER node
 
 FROM base AS hermes-assets
 COPY --from=node /node/ /

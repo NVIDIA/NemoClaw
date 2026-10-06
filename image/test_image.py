@@ -203,6 +203,9 @@ class AgentImage(unittest.TestCase):
             self.assertFalse(list(Path("/app/dist/state").glob("*.sqlite*")))
             self.assertFalse(Path("/app/dist/config-journal-fingerprint.key").exists())
             self.assertFalse(Path("/tmp/plugin-build").exists())
+            # The agent reads OpenClaw but must not change it.
+            self.assertEqual(Path("/app").stat().st_uid, 0)
+            self.assertFalse(os.access("/app/dist/extensions", os.W_OK))
             for name in ("brave", "tavily"):
                 self.assertIn(name, set(plugins))
                 self.assertEqual(plugins[name]["origin"], "bundled")
