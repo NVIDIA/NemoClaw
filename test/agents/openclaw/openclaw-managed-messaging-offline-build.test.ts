@@ -198,7 +198,7 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("runs and verifies the real offline clean install in the managed-image build", () => {
     const cacheStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-cache-1",
-      "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}",
+      "FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache\n",
     );
 
     expect(dockerfile).toContain(
