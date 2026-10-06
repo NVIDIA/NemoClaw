@@ -18,6 +18,7 @@ import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebu
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
@@ -535,7 +536,7 @@ function waitForOpenShellSandboxAbsent(
         10_000,
       );
       try {
-        const sandboxes = JSON.parse(String(result.stdout)) as unknown;
+        const sandboxes = parseStrictOpenShellSandboxListJson(String(result.stdout));
         return {
           absent:
             result.status === 0 &&
@@ -811,6 +812,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
+      console.log("Historical Hermes public start:", JSON.stringify(upgradeResult));
       const firstStop = await withMcpLifecycleLock(
         sandboxName,
         () =>
@@ -964,6 +966,17 @@ async function main(progress: TestProgress): Promise<void> {
     const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
 
+    const legacyImageRef = "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e";
+    const registryConfig = path.join(
+      configHome,
+      "containers/registries.conf.d/99-nemoclaw-portable.conf",
+    );
+    fs.mkdirSync(path.dirname(registryConfig), { recursive: true });
+    fs.writeFileSync(
+      registryConfig,
+      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
+    );
+
     progress.phase("prepare the rootless container runtime");
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
@@ -973,14 +986,6 @@ async function main(progress: TestProgress): Promise<void> {
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
-    );
-    const registryConfig = path.join(
-      configHome,
-      "containers/registries.conf.d/99-nemoclaw-portable.conf",
-    );
-    assert.equal(
-      fs.readFileSync(registryConfig, "utf-8"),
-      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
     );
     assert.match(
       run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
@@ -1063,7 +1068,7 @@ async function main(progress: TestProgress): Promise<void> {
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
-    assert.equal(imageRef, "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
+    assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
 
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
@@ -1071,6 +1076,13 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
+
+    run("podman", ["pull", legacyImageRef]);
+    assert.equal(
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", legacyImageRef]),
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
+    );
+    run("podman", ["image", "rm", legacyImageRef]);
 
     progress.phase("prepare the staged Hermes build context");
     const hermesContextStateDir = path.join(root, "hermes-build-state");

@@ -540,7 +540,13 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     version: "0.0.106",
   },
   {
-    brevTemplateSha256: [...V00116_BREV_TEMPLATE_BASELINE_SHA256],
+    brevTemplateSha256: [
+      ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
+      // Exact #12239 control-normalized npm diagnostics for #12192; release pins stay unchanged.
+      "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
+      // Exact #12376 npm replacement; base trust must precede runtime adoption.
+      "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c",
+    ],
     formula: {
       asset: "openshell.rb",
       sha256: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
@@ -581,6 +587,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         // Preserve the reviewed 0.0.116 supervisor templates.
         ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
+        // Exact #12376 thread-group template from #12614; base trust precedes runtime adoption.
+        "2fb91b00c15aad1e5780a9e4199ca8ad944e849e3a32ad2b9bbb54c0255c0318",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
@@ -589,6 +597,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
     brevTemplateSha256: [
       ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
+      // Exact 0.1.2 pin selection with the merged main bootstrap diagnostics.
+      "bef651219365f79cfd3543fb7506bc941265e7580be164d916ff1efff9026fc5",
       "7e9c35c5610f151345bb996a5e475af95e25c83ab9d95497f502002f74a1497b",
     ],
     formula: {

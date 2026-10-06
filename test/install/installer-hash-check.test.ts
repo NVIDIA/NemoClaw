@@ -35,6 +35,7 @@ import {
   v012Pins,
 } from "../helpers/openshell-release-fixtures";
 import {
+  type FixtureMode,
   addV00106OperationalTrust,
   extractPreparedRelease,
   prepareReleaseFixtureRuntime,
@@ -53,6 +54,13 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+// Retain the reviewed 0.0.116 cleanup fixture across the 0.1.2 migration.
+const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
+  "utf8",
+);
+const NPM_CLEANUP_TEMPLATE_DIGEST =
+  "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
@@ -78,74 +86,6 @@ const STABLE_GNU_SANDBOX_SELECTOR = `    SANDBOX_LIBC="gnu"
       SANDBOX_LIBC="musl"
     fi`;
 const STABLE_MUSL_SANDBOX_SELECTOR = '    SANDBOX_LIBC="musl"';
-type FixtureMode =
-  | "allowlisted-alternate-version"
-  | "brev-bypassed-comparison"
-  | "brev-changed-asset"
-  | "brev-changed-extraction-target"
-  | "brev-changed-url"
-  | "brev-comment-decoy"
-  | "brev-dead-code-decoy"
-  | "brev-decoy-table"
-  | "brev-bypassed-verifier-call"
-  | "brev-extra-download"
-  | "brev-indirect-selector-override"
-  | "brev-later-selector-override"
-  | "brev-literalized-pin-selector"
-  | "brev-mismatch"
-  | "brev-sha-command-bypass"
-  | "complete"
-  | "duplicate-brev-pin"
-  | "duplicate-installer-pin"
-  | "failure"
-  | "formula-mismatch"
-  | "formula-pin-mismatch"
-  | "formula-self-authorized"
-  | "incomplete-trusted-allowlist"
-  | "installer-max-version-drift"
-  | "installer-bypassed-comparison"
-  | "installer-changed-asset"
-  | "installer-changed-checksum"
-  | "installer-changed-extraction-target"
-  | "installer-changed-url"
-  | "installer-comment-decoy"
-  | "installer-dead-code-decoy"
-  | "installer-decoy-table"
-  | "installer-dev-min-version-drift"
-  | "installer-extra-download"
-  | "installer-indirect-selector-override"
-  | "installer-later-min-selector-override"
-  | "installer-later-selector-override"
-  | "installer-literalized-pin-input"
-  | "installer-min-version-drift"
-  | "installer-homebrew-untrust-cleanup-drift"
-  | "installer-homebrew-trust-transition-drift"
-  | "installer-homebrew-trust-transition-stable-leak"
-  | "installer-homebrew-trust-transition-complete-current"
-  | "installer-pin-selector-drift"
-  | "installer-sha-command-bypass"
-  | "mismatched-table-versions"
-  | "missing-brev-pin"
-  | "missing-trusted-formula"
-  | "malformed-trusted-formula"
-  | "mismatched-trusted-formula-url"
-  | "multiple-installer-versions"
-  | "non-regular-brev-input"
-  | "official-but-unexpected-brev-asset"
-  | "official-but-unexpected-installer-asset"
-  | "oversized-installer-input"
-  | "partial"
-  | "partial-asset-missing"
-  | "partial-manifest-missing"
-  | "pr-checker-bypass"
-  | "pr-parser-bypass"
-  | "brev-stable-version-drift"
-  | "runtime-consumers-newer-than-tables"
-  | "stable-gnu-v00116"
-  | "symlink-installer-input"
-  | "symlink-scripts-parent"
-  | "duplicate-trusted-release"
-  | "trusted-formula-mismatch";
 type PinFormatting =
   | "canonical"
   | "comments"
@@ -429,6 +369,11 @@ const trustAlternateRelease = (source: string): string => {
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+      "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+      "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+      "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+      "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
     ],
     formula: {
       asset: "openshell.rb",
@@ -637,8 +582,10 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
-  const template =
-    openshellVersion === "0.1.2" ? BREV_TEMPLATE : BREV_TEMPLATE.replaceAll("0.1.2", "0.0.116");
+  const template = BREV_TEMPLATE.replaceAll(
+    /0\.0\.116|0\.1\.2/g,
+    openshellVersion === "0.1.2" ? "0.1.2" : "0.0.116",
+  );
   const selected = template.replace(
     /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,
     `$1v${openshellVersion}$2`,
@@ -932,7 +879,62 @@ function expectTrustedRelease(
   expect(result.stdout).toContain("All installer hashes are current");
 }
 
+function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
+  const root = createFixture();
+  const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
+  const parserSource = fs.readFileSync(parser, "utf8");
+  fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
+  fs.writeFileSync(brev, source);
+  return spawnSync(
+    process.execPath,
+    [
+      parser,
+      "--blueprint",
+      path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer",
+      path.join(root, "scripts/install-openshell.sh"),
+      "--brev-installer",
+      brev,
+      "--supervisor-runtime",
+      path.join(root, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+    ],
+    { encoding: "utf8" },
+  );
+}
+
 describe("installer hash verification", () => {
+  describe("bootstrap npm cleanup trust", () => {
+    it("admits the bootstrap npm cleanup only when its template is trusted", () => {
+      const before = parseNpmReplacement(
+        NPM_CLEANUP_TEMPLATE,
+        NPM_CLEANUP_TEMPLATE_DIGEST,
+        "0".repeat(64),
+      );
+      expect(before.status, before.stderr).toBe(1);
+      expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
+      const after = parseNpmReplacement(NPM_CLEANUP_TEMPLATE, NPM_CLEANUP_TEMPLATE_DIGEST);
+      expect(after.status, after.stderr).toBe(0);
+      expect(after.stdout).toContain(
+        `"operationalTemplateSha256":"${NPM_CLEANUP_TEMPLATE_DIGEST}"`,
+      );
+    });
+
+    it.each([
+      [
+        "broader package deletion",
+        "/usr/local/lib/node_modules/npm",
+        "/usr/local/lib/node_modules",
+      ],
+      ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
+    ])("rejects %s in the bootstrap npm cleanup", (_name, original, replacement) => {
+      const mutated = NPM_CLEANUP_TEMPLATE.replace(original, replacement);
+      const result = parseNpmReplacement(mutated, NPM_CLEANUP_TEMPLATE_DIGEST);
+      expect(result.status, `${_name} mutation must be rejected: ${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    });
+  });
+
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
@@ -1008,13 +1010,7 @@ describe("installer hash verification", () => {
     prepareReleaseFixtureRuntime(REPO_ROOT, root);
     const result = extractPreparedRelease(REPO_ROOT, root);
     expect(result.status, result.stderr).toBe(0);
-    const pins = JSON.parse(result.stdout) as {
-      asset: string;
-      operationalTemplateSha256: string;
-      releaseVersion: string;
-      sha256: string;
-      source: string;
-    }[];
+    const pins: unknown = JSON.parse(result.stdout);
     const expected = [...v012Pins("installer"), ...v012Pins("Brev launchable")].filter(
       ({ asset }) => !V012_CHECKSUM_MANIFESTS.has(asset),
     );

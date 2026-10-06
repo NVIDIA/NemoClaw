@@ -524,6 +524,7 @@ export const V012_TEMPLATE_DIGESTS = new Map<string, readonly string[]>([
     [
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
       "7e9c35c5610f151345bb996a5e475af95e25c83ab9d95497f502002f74a1497b",
+      "bef651219365f79cfd3543fb7506bc941265e7580be164d916ff1efff9026fc5",
     ],
   ],
 ]);
