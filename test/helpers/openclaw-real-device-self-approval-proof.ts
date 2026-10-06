@@ -1215,8 +1215,10 @@ if (
 }
 
 function runSqliteDeviceSelfApprovalProof(options: ProofOptions): void {
-  const stateDir = path.join(options.tmp, "device-approval-sqlite-state");
-  fs.mkdirSync(stateDir, { recursive: true });
+  const stateDir = path.join(fs.realpathSync(options.tmp), "device-approval-sqlite-state");
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  // macOS temporary directories can inherit a group other than the reader's effective group.
+  if (process.getegid) fs.chownSync(stateDir, fs.statSync(stateDir).uid, process.getegid());
   const proof = spawnSync(
     options.nodeExecutable,
     [

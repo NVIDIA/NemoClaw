@@ -401,6 +401,11 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
     `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,
   );
+  // Legacy image builds need the same selected preset as managed startup.
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_SERVING_PRESET=.*$/m,
+    () => `ARG NEMOCLAW_SERVING_PRESET=${sanitizeDockerArg(process.env.NEMOCLAW_SERVING_PRESET)}`,
+  );
   const upstreamEndpointUrl = normalizeOptionalEndpointUrlArg(
     options.upstreamEndpointUrl,
     "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
