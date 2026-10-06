@@ -1022,6 +1022,50 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
+For explicit Slice 2 qualification, reuse this live owner with
+`NEMOCLAW_SWITCH_PROVIDER` and a required `NEMOCLAW_SWITCH_MODEL` supported by that
+provider. Use the canonical model ID returned by that vendor (a versioned ID
+where supported): the existing raw/API checks require exact response-model
+equality, so a rolling alias that returns a different model ID is unsuitable.
+This manual selection does not change the scheduled catalogue's NVIDIA
+or compatible-Anthropic scenarios. On an approved, disposable E2E host with a disposable gateway, supply the
+selected credential through the existing environment/secret delivery boundary,
+then invoke the existing runner (shown here for OpenAI; set the model separately):
+
+```bash
+NEMOCLAW_SWITCH_PROVIDER=openai-api NEMOCLAW_RUN_LIVE_E2E=1 \
+  npx tsx tools/e2e/live-vitest-invocation.mts run \
+  --test-path test/e2e/live/hermes-inference-switch.test.ts
+```
+
+| Provider selection | Wire contract | Required environment credential |
+| --- | --- | --- |
+| `openai-api` | OpenAI chat completions, bearer key | `OPENAI_API_KEY` |
+| `anthropic-prod` | Anthropic Messages, key and version header | `ANTHROPIC_API_KEY` |
+| `gemini-api` | Existing OpenAI-compatible Gemini surface | `GEMINI_API_KEY` |
+| `openrouter-api` | OpenAI-compatible with required Referer/Title headers | `OPENROUTER_API_KEY` |
+| `hermes-provider` | OpenAI-compatible, manual Nous key registration | `NOUS_API_KEY` |
+
+These are application environment bindings, not approved GitHub repository secret
+mappings. Credential provisioning and a supported account model remain external
+prerequisites. Hermes Provider registers the manual Nous key once through
+`credentials add`; only that command maps it into the profile's physical
+`OPENAI_API_KEY` binding. The later switch consumes its owned registration. OAuth
+qualification remains separate and is not established by this manual-key scenario. Do not run this owner against a personal or shared gateway: it pre-cleans and
+tears down its sandbox and removes the named gateway registration. Sandbox
+destroy only deletes sandbox-owned messaging/search providers; native inference
+providers are shared gateway resources. Cleanup command success does not separately
+prove deletion of each provider. After a failed registration/attachment, retain
+and inspect the existing command artifacts and persisted ownership state before
+reclaiming the disposable gateway; do not delete a provider by name alone.
+
+Fixed non-NVIDIA selections install against an authenticated local baseline fixture,
+so an unrelated NVIDIA credential is unnecessary. The subsequent raw request,
+Hermes API request, and Hermes CLI request still reach the selected real vendor;
+a mock baseline is not evidence of vendor success. Select one scenario at a time
+for each required protocol/credential shape; no provider-by-platform matrix or new
+scheduled jobs are introduced.
+
 ## Native plugin and package lifecycle
 
 Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job

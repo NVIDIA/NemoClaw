@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMaintainer-approved exception for the exact PR #10341 budget transition. Adds only deferred-onboarding.test.ts with [12,14,12,14,0]; existing per-file budgets remain unchanged. Approval: https://github.com/NVIDIA/NemoClaw/pull/10341#issuecomment-5799263232. Local hooks and candidate CI may use this branch policy. The independent PR check reads only trusted base policy, so its expected growth failure is explicitly waived for #10341. A changed base or candidate budget invalidates this exception. Remove after #10341 merges.\n\nPR #12305 adds 19 live assertion points for the approved stopped-container recovery proof while retaining healthy-rebuild coverage. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5803852010. No other budget transition is accepted by this entry.\n\nThe same 19-assertion helper is also exercised by rebuild-openclaw, independently of the inherited private-MCP failure. Unique assertion counts are unchanged; one helper file is extracted. Revised exact-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5807159038.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMaintainer-approved exception for the exact PR #10341 budget transition. Adds only deferred-onboarding.test.ts with [12,14,12,14,0]; existing per-file budgets remain unchanged. Approval: https://github.com/NVIDIA/NemoClaw/pull/10341#issuecomment-5799263232. Local hooks and candidate CI may use this branch policy. The independent PR check reads only trusted base policy, so its expected growth failure is explicitly waived for #10341. A changed base or candidate budget invalidates this exception. Remove after #10341 merges.\n\nPR #12305 adds 19 live assertion points for the approved stopped-container recovery proof while retaining healthy-rebuild coverage. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5803852010. No other budget transition is accepted by this entry.\n\nThe same 19-assertion helper is also exercised by rebuild-openclaw, independently of the inherited private-MCP failure. Unique assertion counts are unchanged; one helper file is extracted. Revised exact-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5807159038.\n\nPR #12593 preserves two necessary fail-closed guards: an explicit vendor model before fixed hosted qualification and a manual Nous credential before external registration. Two incidental success/error wording assertions are removed; unique total assertion points and Hermes transitive assertion points remain unchanged, while unique throwGuards increase by two. Budget increase approved by Aaron Erickson (@ericksoa): https://nvidia.slack.com/archives/C0B1FQ51FP0/p1791301358361059. Entries bind the current local comparison and stacked PR base budget bytes to this exact candidate budget. Approval does not waive the independent trusted-base check; the exception must reach its trusted policy or that specific failure needs separate explicit maintainer disposition. Changed budget bytes invalidate the corresponding entry. Remove after #12593 merges.",
   "schemaVersion": 1,
   "exceptions": [
     {
@@ -11,6 +11,16 @@
       "pullRequest": 12305,
       "baseBudgetSha256": "375c8f76724ccade48d8bbaafddc582984270350f95efde51211b0ff973a9dbe",
       "headBudgetSha256": "a2950bb3b5be2ba76071f3956b8a9a30fb4f3877308542c3947cea3821bfdf28"
+    },
+    {
+      "pullRequest": 12593,
+      "baseBudgetSha256": "d0a41e5514e5cc2f7bb34d7604c82106d9e36239f1abf5859e343c7733501289",
+      "headBudgetSha256": "bda0267c094710272fd2a02ed05c26a2e93e5a78c81fcdb9d4d9a338e342914a"
+    },
+    {
+      "pullRequest": 12593,
+      "baseBudgetSha256": "fdc4a78b5588629e26b00778d1bc82d69101077b9e372f2b58670510184579c2",
+      "headBudgetSha256": "bda0267c094710272fd2a02ed05c26a2e93e5a78c81fcdb9d4d9a338e342914a"
     }
   ]
 }

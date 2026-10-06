@@ -281,7 +281,11 @@ describe("Hermes inference switch command shape", () => {
         stderr: "",
         stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
       })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "route synced",
+      });
 
     await prepareProxyResolutionRoute({
       apiKey: "hosted-key",
@@ -392,7 +396,10 @@ describe("Hermes inference switch command shape", () => {
       }),
     ).toBe(false);
     expect(
-      mockAnthropicSwitchEnabled({ ...mockAnthropic, NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "0" }),
+      mockAnthropicSwitchEnabled({
+        ...mockAnthropic,
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "0",
+      }),
     ).toBe(false);
     expect(mockAnthropicSwitchEnabled({})).toBe(false);
   });
@@ -497,7 +504,11 @@ describe("Hermes inference switch command shape", () => {
       path: string;
     }> = [];
     const baseline = { requests: () => requests };
-    const result = { exitCode: 0, stderr: "", stdout: "PONG\n" } as ShellProbeResult;
+    const result = {
+      exitCode: 0,
+      stderr: "",
+      stdout: "PONG\n",
+    } as ShellProbeResult;
     const authenticatedRequest = (model: string) => ({
       auth: "ok",
       authorizationSent: true,
@@ -544,7 +555,11 @@ describe("Hermes inference switch command shape", () => {
             failureClass: "transient-external",
             retryScheduled: true,
           }),
-          expect.objectContaining({ attempt: 2, outcome: "passed", retryScheduled: false }),
+          expect.objectContaining({
+            attempt: 2,
+            outcome: "passed",
+            retryScheduled: false,
+          }),
         ],
       }),
     );
@@ -567,13 +582,22 @@ describe("Hermes inference switch command shape", () => {
   )(
     "does not accept or retry a CLI PONG with %s and %s",
     async (_routeState, message, accepted, failureClass) => {
-      const result = { exitCode: 0, stderr: message, stdout: "PONG\n" } as ShellProbeResult;
+      const result = {
+        exitCode: 0,
+        stderr: message,
+        stdout: "PONG\n",
+      } as ShellProbeResult;
       const run = vi.fn().mockResolvedValue(result);
       const delay = vi.fn().mockResolvedValue(undefined);
       const onEvidence = vi.fn().mockResolvedValue(undefined);
 
       await expect(
-        runHermesCliPongWithRetry({ accept: () => accepted, delay, onEvidence, run }),
+        runHermesCliPongWithRetry({
+          accept: () => accepted,
+          delay,
+          onEvidence,
+          run,
+        }),
       ).resolves.toBe(result);
       expect(run).toHaveBeenCalledOnce();
       expect(delay).not.toHaveBeenCalled();
@@ -726,7 +750,11 @@ describe("Hermes inference switch command shape", () => {
         stderr: "failed to verify inference endpoint: timeout",
         stdout: "",
       })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "route synced",
+      });
     const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
 
     await expect(
@@ -779,7 +807,6 @@ describe("native provider switch credential isolation", () => {
     ["anthropic-prod", "ANTHROPIC_API_KEY"],
     ["gemini-api", "GEMINI_API_KEY"],
     ["openrouter-api", "OPENROUTER_API_KEY"],
-    ["hermes-provider", "OPENAI_API_KEY"],
   ])("passes only the selected credential binding for %s", async (provider, credentialEnv) => {
     vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", provider);
     vi.resetModules();
@@ -799,6 +826,8 @@ describe("native provider switch credential isolation", () => {
       [credentialEnv, credential],
     ]);
     expect(options.redactionValues).toContain(credential);
+    expect(command).toHaveBeenCalledOnce();
+
     const proxyCommand = vi
       .fn()
       .mockResolvedValueOnce({ exitCode: 0, stdout: "created", stderr: "" })
@@ -807,7 +836,11 @@ describe("native provider switch credential isolation", () => {
         stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
         stderr: "",
       })
-      .mockResolvedValueOnce({ exitCode: 0, stdout: "route synced", stderr: "" });
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "route synced",
+        stderr: "",
+      });
     const proxy = await helpers.prepareProxyResolutionRoute({
       apiKey: "fixture-baseline-key",
       host: { command: proxyCommand } as unknown as HostCliClient,
@@ -819,4 +852,128 @@ describe("native provider switch credential isolation", () => {
       expect.arrayContaining(["--model", DEFAULT_HOSTED_INFERENCE_MODEL]),
     );
   });
+});
+
+describe("fixed hosted qualification selection", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([
+    ["openai-api", "OPENAI_API_KEY", "openai-completions"],
+    ["anthropic-prod", "ANTHROPIC_API_KEY", "anthropic-messages"],
+    ["gemini-api", "GEMINI_API_KEY", "openai-completions"],
+    ["openrouter-api", "OPENROUTER_API_KEY", "openai-completions"],
+    ["hermes-provider", "NOUS_API_KEY", "openai-completions"],
+  ])(
+    "selects %s with an explicit vendor model and its logical credential",
+    async (provider, credentialEnv, protocol) => {
+      const { fixedHostedSwitchScenario } =
+        await import("../live/hermes-inference-switch-helpers.ts");
+      expect(() => fixedHostedSwitchScenario({ NEMOCLAW_SWITCH_PROVIDER: provider })).toThrow(
+        "NEMOCLAW_SWITCH_MODEL",
+      );
+      expect(
+        fixedHostedSwitchScenario({
+          NEMOCLAW_SWITCH_PROVIDER: provider,
+          NEMOCLAW_SWITCH_MODEL: "vendor-model",
+        }),
+      ).toEqual({
+        provider,
+        model: "vendor-model",
+        credentialEnv,
+        protocol,
+        manualRegistration: provider === "hermes-provider",
+      });
+      expect(fixedHostedSwitchScenario({ NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod" })).toBeNull();
+      expect(
+        fixedHostedSwitchScenario({
+          NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("registers the manual Hermes credential once before switching without a new key", async () => {
+    vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", "hermes-provider");
+    vi.resetModules();
+    const helpers = await import("../live/hermes-inference-switch-helpers.ts");
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    const credential = "manual-nous-fixture";
+    await helpers.runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, [], [], {
+      attempts: 1,
+      nativeProviderApiKey: credential,
+    });
+    expect(command).toHaveBeenCalledTimes(2);
+    const [executable, args, options] = command.mock.calls[0]!;
+    expect(executable).toBe("node");
+    expect(args).toEqual([
+      helpers.CLI,
+      "credentials",
+      "add",
+      "hermes-provider",
+      "--type",
+      "openai",
+      "--credential",
+      "OPENAI_API_KEY",
+    ]);
+    expect(args).not.toContain(credential);
+    expect(Object.entries(options.env).filter(([, value]) => value === credential)).toEqual([
+      ["OPENAI_API_KEY", credential],
+    ]);
+    expect(options.redactionValues).toContain(credential);
+    expect(command.mock.calls[1]?.[1]).toContain("set");
+    expect(command.mock.calls[1]?.[2].env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("does not switch or retry after failed manual Hermes registration", async () => {
+    vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", "hermes-provider");
+    vi.resetModules();
+    const helpers = await import("../live/hermes-inference-switch-helpers.ts");
+    const failure = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "registration unavailable",
+    };
+    const command = vi.fn().mockResolvedValue(failure);
+    expect(
+      await helpers.runHermesInferenceSetWithRetry(
+        { command } as unknown as HostCliClient,
+        [],
+        [],
+        {
+          attempts: 3,
+          nativeProviderApiKey: "manual-nous-fixture",
+        },
+      ),
+    ).toBe(failure);
+    expect(command).toHaveBeenCalledOnce();
+    expect(command.mock.calls[0]?.[2].redactionValues).toContain("manual-nous-fixture");
+    expect(command.mock.calls[0]?.[1]).not.toContain("manual-nous-fixture");
+  });
+});
+
+it.each(["gpt-5.4", "gpt-6", "openai/o3"])(
+  "uses the shared raw probe token field for %s",
+  async (model) => {
+    const { sandboxInferencePayload } = await import("../live/hermes-inference-switch-helpers.ts");
+    const payload = JSON.parse(sandboxInferencePayload(model, "openai-api", "openai-completions"));
+    expect(payload.model).toBe(model);
+    expect(payload.max_completion_tokens).toBe(100);
+    expect(payload).not.toHaveProperty("max_tokens");
+  },
+);
+
+it("preserves Anthropic Messages and Gemini raw probe budgets", async () => {
+  const { sandboxInferencePayload } = await import("../live/hermes-inference-switch-helpers.ts");
+  const anthropic = JSON.parse(
+    sandboxInferencePayload("vendor-model", "anthropic-prod", "anthropic-messages"),
+  );
+  expect(anthropic.max_tokens).toBe(32);
+  expect(anthropic).not.toHaveProperty("max_completion_tokens");
+  const gemini = JSON.parse(
+    sandboxInferencePayload("vendor-model", "gemini-api", "openai-completions"),
+  );
+  expect(gemini.max_tokens).toBe(256);
 });

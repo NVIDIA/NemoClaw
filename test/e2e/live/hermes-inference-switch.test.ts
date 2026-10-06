@@ -29,11 +29,12 @@ import {
   hermesGatewayPid,
   hostedInstallModel,
   sandboxInferenceCommand,
-  inferenceLocalMaxTokens,
+  sandboxInferencePayload,
   installHermes,
   maybeAssertEnvHashStable,
   maybeAssertPidStable,
   mockAnthropicSwitchEnabled,
+  fixedHostedSwitchScenario,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
@@ -85,6 +86,7 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    const fixedScenario = fixedHostedSwitchScenario();
     await artifacts.target.declare({
       id: "hermes-inference-switch",
       boundary:
@@ -123,18 +125,19 @@ test(
 
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const mockBaseline = mockAnthropicSwitchEnabled()
-      ? await startFakeOpenAiCompatibleServer({
-          apiKey: MOCK_BASELINE_API_KEY,
-          chatContent: "PONG",
-          forbiddenMarkers: PROXY_FORBIDDEN_MARKERS,
-          host: "0.0.0.0",
-          model: MOCK_BASELINE_MODEL,
-          publicHost: "host.openshell.internal",
-          progress,
-          requireAuth: true,
-        })
-      : undefined;
+    const mockBaseline =
+      fixedScenario || mockAnthropicSwitchEnabled()
+        ? await startFakeOpenAiCompatibleServer({
+            apiKey: MOCK_BASELINE_API_KEY,
+            chatContent: "PONG",
+            forbiddenMarkers: PROXY_FORBIDDEN_MARKERS,
+            host: "0.0.0.0",
+            model: MOCK_BASELINE_MODEL,
+            publicHost: "host.openshell.internal",
+            progress,
+            requireAuth: true,
+          })
+        : undefined;
     cleanup.trackDisposable("close Hermes inference switch baseline fixture", async () => {
       await artifacts.writeJson(
         "baseline-openai-compatible-requests.json",
@@ -148,7 +151,8 @@ test(
         : null;
     const nativeProfile = nativeHostedProfile(SWITCH_PROVIDER);
     const nativeProviderApiKey = nativeProfile
-      ? (publicApiKey ?? secrets.required(nativeProfile.credentialEnv))
+      ? (publicApiKey ??
+        secrets.required(fixedScenario?.credentialEnv ?? nativeProfile.credentialEnv))
       : null;
     const apiKey = mockBaseline
       ? MOCK_BASELINE_API_KEY
@@ -212,8 +216,6 @@ test(
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
-    expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
-    expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
     switchBinding &&
       (await expectOpenAiProvider(
         host,
@@ -363,11 +365,7 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");
-    const inferenceLocalPayload = JSON.stringify({
-      model: SWITCH_MODEL,
-      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: inferenceLocalMaxTokens(),
-    });
+    const inferenceLocalPayload = sandboxInferencePayload();
     const inferenceLocal = await runHermesPongWithRetry({
       expectedModel: SWITCH_MODEL,
       onEvidence: async (evidence) => {

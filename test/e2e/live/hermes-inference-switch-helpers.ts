@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "../../../src/lib/inference/max-tokens-field.ts";
 import { nativeInferenceProbeAuthScript } from "../../../src/lib/inference/probe/native-inference-probe-auth.ts";
 import fs from "node:fs";
 import http from "node:http";
@@ -70,6 +74,31 @@ const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === 
 export const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
 export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
+// Explicit manual qualification reuses this owner; it does not add scheduled targets.
+export function fixedHostedSwitchScenario(runtimeEnv: NodeJS.ProcessEnv = process.env) {
+  const provider = runtimeEnv.NEMOCLAW_SWITCH_PROVIDER;
+  if (
+    !provider ||
+    !["openai-api", "anthropic-prod", "gemini-api", "openrouter-api", "hermes-provider"].includes(
+      provider,
+    )
+  )
+    return null;
+  const model = runtimeEnv.NEMOCLAW_SWITCH_MODEL?.trim();
+  if (!model)
+    throw new Error(
+      "Fixed hosted qualification requires NEMOCLAW_SWITCH_MODEL for the selected provider",
+    );
+  const profile = nativeHostedProfile(provider)!;
+  return {
+    provider,
+    model,
+    credentialEnv: provider === "hermes-provider" ? "NOUS_API_KEY" : profile.credentialEnv,
+    protocol: provider === "anthropic-prod" ? "anthropic-messages" : "openai-completions",
+    manualRegistration: provider === "hermes-provider",
+  };
+}
+
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 export const RUNTIME_SWITCH_API =
   SWITCH_PROVIDER === "anthropic-prod"
@@ -313,7 +342,10 @@ export function parseHermesModelBlock(text: string): Record<string, string> {
   return model;
 }
 
-export function parseInferenceRoute(text: string): { provider: string; model: string } {
+export function parseInferenceRoute(text: string): {
+  provider: string;
+  model: string;
+} {
   const plain = stripAnsi(text);
   const provider = plain.match(/^\s*Provider:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
   const model = plain.match(/^\s*Model:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
@@ -407,7 +439,10 @@ export async function runHermesPongWithRetry(
         return { outcome: "failed", failureClass: "deterministic" };
       }
       if (value.passed) return { outcome: "passed" };
-      return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
+      return {
+        outcome: "failed",
+        failureClass: hermesProbeFailureClass(value.result),
+      };
     },
   });
   if (execution.value) return execution.value.result;
@@ -509,7 +544,10 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
       raw += chunk;
     });
     req.on("end", () => {
-      const payload = JSON.parse(raw || "{}") as { model?: unknown; stream?: unknown };
+      const payload = JSON.parse(raw || "{}") as {
+        model?: unknown;
+        stream?: unknown;
+      };
       const model = typeof payload.model === "string" ? payload.model : "mock-anthropic-model";
       if (isOpenAiChatCompletions) {
         if (payload.stream === true) {
@@ -543,7 +581,11 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
           created: 0,
           model,
           choices: [
-            { index: 0, message: { role: "assistant", content: "PONG" }, finish_reason: "stop" },
+            {
+              index: 0,
+              message: { role: "assistant", content: "PONG" },
+              finish_reason: "stop",
+            },
           ],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         });
@@ -568,11 +610,19 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
           ],
           [
             "content_block_start",
-            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "text", text: "" },
+            },
           ],
           [
             "content_block_delta",
-            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PONG" } },
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: "PONG" },
+            },
           ],
           ["content_block_stop", { type: "content_block_stop", index: 0 }],
           [
@@ -630,7 +680,10 @@ export async function prepareCompatibleAnthropicSwitchBinding(
     artifactName: "compatible-anthropic-provider-absent-before-switch",
     env: env(),
   });
-  return { ...binding, endpointUrl: openAiSurfaceEndpointUrl(binding.endpointUrl) };
+  return {
+    ...binding,
+    endpointUrl: openAiSurfaceEndpointUrl(binding.endpointUrl),
+  };
 }
 
 export async function installHermes(
@@ -691,6 +744,32 @@ export async function runHermesInferenceSetWithRetry(
   const switchRedactionValues = [
     ...new Set([...redactionValues, ...(nativeCredential ? [nativeCredential] : [])]),
   ];
+  // Hermes Provider switching consumes an owned registration. Its logical manual
+  // key is NOUS_API_KEY; only this command receives the profile's physical binding.
+  if (SWITCH_PROVIDER === "hermes-provider") {
+    if (!nativeCredential) throw new Error("Hermes Provider qualification requires NOUS_API_KEY");
+    const registered = await host.command(
+      "node",
+      [
+        CLI,
+        "credentials",
+        "add",
+        "hermes-provider",
+        "--type",
+        "openai",
+        "--credential",
+        "OPENAI_API_KEY",
+      ],
+      {
+        artifactName: "hermes-provider-manual-registration",
+        env: env(undefined, { OPENAI_API_KEY: nativeCredential }),
+        redactionValues: switchRedactionValues,
+        timeoutMs: 180_000,
+      },
+    );
+    // An ambiguous registration must not be blindly repeated by switch retries.
+    if (registered.exitCode !== 0) return registered;
+  }
   return runInferenceSetWithRetry({
     attempts:
       options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
@@ -703,7 +782,7 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: `hermes-inference-set-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
-          ...(nativeCredential && nativeProfile
+          ...(nativeCredential && nativeProfile && SWITCH_PROVIDER !== "hermes-provider"
             ? { [nativeProfile.credentialEnv]: nativeCredential }
             : {}),
         }),
@@ -755,6 +834,19 @@ export function expectedBaseUrl(provider = SWITCH_PROVIDER): string {
     : "https://inference.local/v1";
 }
 
+export function sandboxInferencePayload(
+  model = SWITCH_MODEL,
+  provider = SWITCH_PROVIDER,
+  api = RUNTIME_SWITCH_API,
+): string {
+  const field = api === "anthropic-messages" ? "max_tokens" : resolveMaxTokensField(model);
+  return JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    [field]: Math.max(inferenceLocalMaxTokens(api), resolveProbeReplyTokens(provider)),
+  });
+}
+
 export function inferenceLocalMaxTokens(api: string = RUNTIME_SWITCH_API): number {
   return api === "anthropic-messages" ? 32 : 100;
 }
@@ -795,7 +887,11 @@ export async function hashCheck(
   return await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`sha256sum -c ${file} --status && echo OK`),
-    { artifactName: `hermes-${artifact}-hash-check`, env: env(), timeoutMs: 30_000 },
+    {
+      artifactName: `hermes-${artifact}-hash-check`,
+      env: env(),
+      timeoutMs: 30_000,
+    },
   );
 }
 
@@ -817,7 +913,10 @@ export function maybeAssertEnvHashStable(
   beforeHash && assertStable(afterHash, beforeHash);
 }
 
-export function registryState(): { registry: Record<string, any>; session: Record<string, any> } {
+export function registryState(): {
+  registry: Record<string, any>;
+  session: Record<string, any>;
+} {
   return {
     registry: JSON.parse(
       fs.readFileSync(path.join(os.homedir(), ".nemoclaw", "sandboxes.json"), "utf8"),
