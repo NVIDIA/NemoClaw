@@ -19,11 +19,11 @@ jobs:
       - name: Record Windows virtualization and WSL capabilities
         shell: pwsh
         run: |
-          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture
-          Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, HypervisorPresent
-          Get-CimInstance Win32_Processor | Select-Object Name, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions
-          Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
-          Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Format-List
+          Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, HypervisorPresent | Format-List
+          Get-CimInstance Win32_Processor | Select-Object Name, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions | Format-List
+          Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform | Format-List
+          Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux | Format-List
           wsl.exe --status
           wsl.exe --version
           exit 0
@@ -31,6 +31,15 @@ jobs:
       - name: Install Ubuntu for WSL2
         shell: pwsh
         run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'wsl.arm64.msi'
+          Invoke-WebRequest 'https://github.com/microsoft/WSL/releases/download/3.0.1/wsl.3.0.1.0.arm64.msi' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '857ddbb335ec7d05ffa71d0fd2203750c0e8fc29bb164f8a95db92bd7bba4263') {
+            throw 'Microsoft WSL installer checksum mismatch'
+          }
+          $installation = Start-Process msiexec.exe -ArgumentList @('/i', $installer, '/quiet', '/norestart') -Wait -PassThru
+          if ($installation.ExitCode -ne 0) { throw "WSL package installation failed or requires reboot: $($installation.ExitCode)" }
+          Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart | Format-List
+          wsl.exe --version
           wsl.exe --install --distribution Ubuntu-24.04 --web-download --no-launch
           if ($LASTEXITCODE -ne 0) { throw "WSL installation failed with exit $LASTEXITCODE" }
           wsl.exe --set-version Ubuntu-24.04 2
