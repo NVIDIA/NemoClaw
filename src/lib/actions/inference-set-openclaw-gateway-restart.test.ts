@@ -248,7 +248,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         deps,
       ),
     ).rejects.toThrow(
-      "The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
+      "managed OpenClaw gateway restart/recovery did not complete successfully (health timeout). The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
     );
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
