@@ -25,6 +25,8 @@ pub struct Release {
     pub namespace: String,
     /// Release name and chart `fullnameOverride`.
     pub name: String,
+    /// `server.oidc` chart values for the development issuer, if any.
+    pub oidc: Option<Value>,
 }
 
 const FAILED: ObservationError = ObservationError::Backend(
@@ -39,7 +41,7 @@ pub fn values(release: &Release) -> Value {
         json!({"registry": "", "repository": repository, "digest": digest, "pullPolicy": policy})
     };
     let name = &release.name;
-    json!({
+    let mut values = json!({
         "fullnameOverride": name,
         "global": {"image": {"registry": ""}},
         "gateway": {"image": image(pins::DEFAULT_GATEWAY_IMAGE, "IfNotPresent")},
@@ -65,7 +67,11 @@ pub fn values(release: &Release) -> Value {
             "requests": {"cpu": "250m", "memory": "256Mi"},
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
-    })
+    });
+    if let Some(oidc) = &release.oidc {
+        values["server"]["oidc"] = oidc.clone();
+    }
+    values
 }
 
 /// Install or upgrade the gateway and wait for it to become ready.

@@ -8,8 +8,10 @@
 
 use super::{
     GATEWAY_KIND, STORAGE_KIND, Spec,
+    auth::{Development, Material},
     cluster::{Cluster, Owned},
     gateway::{self, Release},
+    issuer,
     receipt::Receipt,
     storage::{Storage, ensure_storage},
 };
@@ -65,9 +67,24 @@ impl Operations {
         })
     }
 
-    fn release(&self, spec: &Spec) -> Result<Release, ObservationError> {
+    fn development(&self, spec: &Spec) -> Result<Development, ObservationError> {
+        let target = self.target(spec)?;
+        Ok(Development::new(
+            self.state.join("auth"),
+            &spec.name,
+            &target.namespace,
+            &spec.owner,
+        ))
+    }
+
+    fn release(
+        &self,
+        spec: &Spec,
+        material: Option<&Material>,
+    ) -> Result<Release, ObservationError> {
         let target = self.target(spec)?;
         Ok(Release {
+            oidc: material.map(|material| issuer::oidc_values(material, &spec.name, &spec.owner)),
             helm: self.helm.clone(),
             state: self.state.clone(),
             kubeconfig: self.kubeconfig.clone(),
@@ -176,7 +193,27 @@ impl Operations {
                 if !receipt.storage_ready {
                     return Err(ObservationError::Incomplete);
                 }
-                gateway::install(&self.release(spec)?).await?;
+                let material = self.development(spec)?.ensure()?;
+                let namespace = self.target(spec)?.namespace.clone();
+                let cluster = self.cluster(spec);
+                for object in issuer::objects(&material, &spec.name, &namespace) {
+                    let address = Owned::new(&object, "");
+                    let recorded = receipt
+                        .issuer
+                        .iter()
+                        .find(|owned| owned.kind == address.kind && owned.name == address.name)
+                        .cloned();
+                    match recorded {
+                        Some(owned) => {
+                            cluster.verify(&owned).await?;
+                        }
+                        None => {
+                            receipt.issuer.push(cluster.create(object).await?);
+                            receipt.save(&self.state)?;
+                        }
+                    }
+                }
+                gateway::install(&self.release(spec, Some(&material))?).await?;
                 let statefulset = self
                     .cluster(spec)
                     .get(&self.statefulset(spec)?)
@@ -210,17 +247,20 @@ impl Operations {
         if current.id.is_none() {
             return Ok(());
         }
-        gateway::uninstall(&self.release(spec)?).await?;
-        if self
-            .cluster(spec)
-            .get(&self.statefulset(spec)?)
-            .await?
-            .is_some()
-        {
+        gateway::uninstall(&self.release(spec, None)?).await?;
+        let cluster = self.cluster(spec);
+        if cluster.get(&self.statefulset(spec)?).await?.is_some() {
             return Err(ObservationError::Incomplete);
         }
         let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
         receipt.gateway = None;
-        receipt.save(&self.state)
+        receipt.save(&self.state)?;
+        // The issuer goes with the release; its key material stays local.
+        while let Some(owned) = receipt.issuer.last().cloned() {
+            cluster.delete(&owned).await?;
+            receipt.issuer.pop();
+            receipt.save(&self.state)?;
+        }
+        Ok(())
     }
 }

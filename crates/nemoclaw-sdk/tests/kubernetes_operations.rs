@@ -114,6 +114,30 @@ async fn ensuring_storage_then_gateway_reports_both_running() {
         std::fs::read_to_string(directory.path().join("helm.log")).unwrap(),
         "upgrade\n"
     );
+    // The development issuer runs beside the gateway, serving public documents only.
+    let issuer = format!("{NAME}-oidc");
+    let documents = objects.get("v1", "ConfigMap", "agents", &issuer).unwrap();
+    let jwks: serde_json::Value =
+        serde_json::from_str(documents["data"]["jwks"].as_str().unwrap()).unwrap();
+    assert_eq!(jwks["keys"][0]["crv"], "Ed25519");
+    assert!(
+        jwks["keys"][0].get("d").is_none(),
+        "the private key must stay local"
+    );
+    for (api_version, kind) in [
+        ("apps/v1", "Deployment"),
+        ("v1", "Service"),
+        ("networking.k8s.io/v1", "NetworkPolicy"),
+    ] {
+        assert!(
+            objects.get(api_version, kind, "agents", &issuer).is_some(),
+            "{kind}"
+        );
+    }
+    let policy = objects
+        .get("networking.k8s.io/v1", "NetworkPolicy", "agents", &issuer)
+        .unwrap();
+    assert_eq!(policy["spec"]["egress"], json!([]));
     // A later read sees the same identities.
     let read = operations
         .read(&spec(STORAGE_KIND), Some(&storage_id))
@@ -187,4 +211,16 @@ async fn removing_the_gateway_uninstalls_it_and_keeps_storage() {
         .unwrap();
     assert_eq!(kept.id, storage.id);
     assert!(objects.get("v1", "Namespace", "", "agents").is_some());
+    // The issuer is removed with the release.
+    let issuer = format!("{NAME}-oidc");
+    assert!(
+        objects
+            .get("apps/v1", "Deployment", "agents", &issuer)
+            .is_none()
+    );
+    assert!(
+        objects
+            .get("v1", "ConfigMap", "agents", &format!("{issuer}-ca"))
+            .is_none()
+    );
 }

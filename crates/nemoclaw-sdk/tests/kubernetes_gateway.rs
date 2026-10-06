@@ -33,6 +33,10 @@ fn release(directory: &Path, helm: PathBuf) -> Release {
         context: "selected".into(),
         namespace: "agents".into(),
         name: "nc-0123456789abcdef-gateway".into(),
+        oidc: Some(serde_json::json!({
+            "issuer": "https://nc-0123456789abcdef-gateway-oidc.agents.svc.cluster.local:8443",
+            "caConfigMapName": "nc-0123456789abcdef-gateway-oidc-ca",
+        })),
     }
 }
 
@@ -100,6 +104,10 @@ async fn the_chart_values_pin_every_image_by_digest_and_require_authentication()
     assert_eq!(
         values["server"]["credentialStorage"]["existingSecret"],
         "nc-0123456789abcdef-gateway-kek"
+    );
+    assert_eq!(
+        values["server"]["oidc"]["caConfigMapName"],
+        "nc-0123456789abcdef-gateway-oidc-ca"
     );
 }
 

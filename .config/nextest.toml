@@ -43,7 +43,10 @@ default-filter = '''
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
 ))
-| (package(nemoclaw-sdk) & test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu))
+| (package(nemoclaw-sdk) & (
+    test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu)
+    | test(the_issuer_image_serves_both_documents_over_https)
+))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''
 
