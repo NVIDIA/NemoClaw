@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Qualification / Issue 12285 WSL transport
+
+on:
+  push:
+    branches: [fix/issue-12285-wsl-transport]
+    paths: [.github/workflows/issue-12285-wsl-proof.yaml, tools/wsl/llama-bridge-proof.mts]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-arm:
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Record Windows virtualization and WSL capabilities
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture
+          Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, HypervisorPresent
+          Get-CimInstance Win32_Processor | Select-Object Name, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions
+          Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+          Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+          wsl.exe --status
+          wsl.exe --version
+          exit 0
+
+      - name: Install Ubuntu for WSL2
+        shell: pwsh
+        run: |
+          wsl.exe --install --distribution Ubuntu-24.04 --web-download --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "WSL installation failed with exit $LASTEXITCODE" }
+          wsl.exe --set-version Ubuntu-24.04 2
+          if ($LASTEXITCODE -ne 0) { throw "WSL2 initialization failed with exit $LASTEXITCODE" }
+          wsl.exe --distribution Ubuntu-24.04 --user root -- uname -a
+          if ($LASTEXITCODE -ne 0) { throw "WSL2 execution failed with exit $LASTEXITCODE" }
+          wsl.exe --list --verbose
