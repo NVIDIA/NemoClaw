@@ -922,6 +922,7 @@ describe("runInferenceSet compatible providers", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
       sandboxName: "alpha",
       provider: "compatible-anthropic-endpoint",
       model: "mock-anthropic-model",
