@@ -20,7 +20,7 @@ export function readGatewayProcEntry(pid: number, entry: GatewayProcEntry): stri
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   const root = `/proc/${String(pid)}`;
   const value = readEntry(root, entry);
-  if (value !== null && (entry !== "cmdline" || value.trim() !== "")) return value;
+  if (value !== null && (entry === "exe" || value.trim() !== "")) return value;
   try {
     if (
       process.platform !== "linux" ||
@@ -33,7 +33,7 @@ export function readGatewayProcEntry(pid: number, entry: GatewayProcEntry): stri
     for (const tid of fs.readdirSync(`${root}/task`)) {
       if (!/^[1-9]\d*$/.test(tid) || tid === String(pid)) continue;
       const threadValue = readEntry(`${root}/task/${tid}`, entry);
-      if (threadValue !== null && (entry !== "cmdline" || threadValue.trim() !== "")) {
+      if (threadValue !== null && (entry === "exe" || threadValue.trim() !== "")) {
         return threadValue;
       }
     }

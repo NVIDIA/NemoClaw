@@ -153,6 +153,38 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
   });
 
+  it("recovers scoped identity from an empty leader environment", () => {
+    const f = fixture();
+    f.files.set(`${proc}/environ`, "");
+    expect(stopScoped(f).stopped).toEqual([pid]);
+    expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+  });
+
+  it("skips an empty sibling environment before reading the owned live thread", () => {
+    const f = fixture();
+    f.files.set(`${proc}/environ`, "");
+    f.files.set(`${proc}/task/${tid + 1}/environ`, "");
+    vi.mocked(fs.readdirSync).mockReturnValue([
+      String(pid),
+      String(tid + 1),
+      String(tid),
+    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    expect(stopScoped(f).stopped).toEqual([pid]);
+    expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+  });
+
+  it("keeps an empty environment for a non-zombie leader", () => {
+    const f = fixture();
+    f.files.set(`${proc}/status`, "State:\tS (sleeping)\n");
+    f.files.set(`${proc}/cmdline`, args);
+    f.files.set(`${proc}/environ`, "");
+    expect(
+      readDockerDriverGatewayProcessEnvironment(pid)?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV],
+    ).toBeUndefined();
+    expect(stopScoped(f).ownershipFailures).toHaveLength(1);
+    expect(f.kill).not.toHaveBeenCalled();
+  });
+
   it("uses the same identity for runtime discovery and environment drift", () => {
     fixture();
     expect(readDockerDriverGatewayProcessIdentity(pid, () => "[openshell-gatew] <defunct>")).toBe(
@@ -174,6 +206,12 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     ],
     ["namespace", `${task}/environ`, `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=another-state\0`],
     ["non-zombie leader", `${proc}/status`, "State:\tS (sleeping)\n"],
+    ["empty sibling environment", `${task}/environ`, ""],
+    [
+      "existing leader environment",
+      `${proc}/environ`,
+      `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=another-state\0`,
+    ],
     ["existing leader identity", `${proc}/cmdline`, "/opt/unrelated\0"],
   ])("refuses %s instead of inferring ownership from the PID", (_name, file, value) => {
     const f = fixture();
