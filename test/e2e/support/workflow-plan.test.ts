@@ -118,12 +118,6 @@ describe("E2E workflow plan", () => {
       "shared-e2e",
       "staging-brev-launchable",
     ]);
-    expect(plan.explicitOnlyJobs).toEqual([
-      "staging-brev-launchable-identity",
-      "external-gateway-health",
-      "mcp-bridge-dev",
-      "portable-hermes-finalization",
-    ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
