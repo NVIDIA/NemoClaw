@@ -354,6 +354,9 @@ describe("fixed catalog vLLM installs", () => {
       expect(command).toContain("--max-num-seqs 1");
       expect(command).toContain("--max-num-batched-tokens 4096");
       expect(command).toContain("--gpu-memory-utilization 0.5");
+      expect(command).toContain("--load-format safetensors");
+      expect(command).toContain("--safetensors-load-strategy lazy");
+      expect(command).not.toContain("--load-format fastsafetensors");
     },
   );
 

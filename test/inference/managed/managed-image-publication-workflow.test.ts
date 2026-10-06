@@ -32,7 +32,7 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
-const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
+const reviewedAuditSha = "e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -214,6 +214,8 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);

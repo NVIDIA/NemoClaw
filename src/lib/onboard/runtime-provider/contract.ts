@@ -454,7 +454,7 @@ export interface RuntimeProviderPrivilegedSandboxControl {
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
       "registeredSandboxNames" | "sandbox" | "sandboxName"
-    >,
+    > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
