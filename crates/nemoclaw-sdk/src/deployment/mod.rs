@@ -192,7 +192,7 @@ impl Deployment {
         } else {
             command_environment(document, self.secrets.as_ref(), directory)?
         };
-        if document.spec.gateway.as_kubernetes().is_some() {
+        if let Some(target) = document.spec.gateway.as_kubernetes() {
             let state = std::path::absolute(&self.state_directory)
                 .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
                 .join("kubernetes");
@@ -201,6 +201,16 @@ impl Deployment {
                 state.to_string_lossy().into_owned(),
             );
             environment.extend(self.operation_environment.clone());
+            if document.spec.gateway.as_managed().is_some() {
+                let kubeconfig = environment
+                    .get(&target.kubeconfig.env)
+                    .ok_or(Error::State("explicit Kubernetes credential is missing"))?
+                    .clone();
+                environment.insert(
+                    crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
+                    kubeconfig,
+                );
+            }
         }
         Ok(environment)
     }
@@ -648,6 +658,8 @@ fn credential_environment<'a>(
             "TF_",
             "TOFU_",
             "PLUGIN_",
+            "HELM_",
+            "KUBE_",
             "NEMOCLAW_INTERNAL_",
             "NEMOCLAW_MANAGED_K8S_",
         ]

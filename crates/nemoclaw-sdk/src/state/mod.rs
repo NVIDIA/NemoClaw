@@ -283,6 +283,10 @@ pub(crate) struct StateBinding {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub chart: String,
+    #[serde(default)]
     pub workspace: String,
     #[serde(default)]
     pub owner: String,
@@ -464,6 +468,8 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.id = attributes.id;
                 binding.spec = attributes.spec;
                 binding.name = attributes.name;
+                binding.namespace = attributes.namespace;
+                binding.chart = attributes.chart;
                 binding.workspace = attributes.workspace;
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;

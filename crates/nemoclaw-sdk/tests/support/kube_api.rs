@@ -7,7 +7,7 @@
 //! code; anything else answers 500.
 
 #![allow(dead_code)]
-use crate::transport::Fixture;
+use super::transport::Fixture;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -89,8 +89,10 @@ impl Objects {
         self.0.lock().unwrap().len()
     }
 
-    fn answer(&self, method: &str, path: &str, body: &[u8]) -> Option<(u16, Vec<u8>)> {
-        let path = path.split('?').next().unwrap();
+    pub fn answer(&self, method: &str, path: &str, body: &[u8]) -> Option<(u16, Vec<u8>)> {
+        let (path, query) = path.split_once('?').unwrap_or((path, ""));
+        let selector = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "labelSelector").then(|| value.into_owned()));
         let mut objects = self.0.lock().unwrap();
         match method {
             "GET" => {
@@ -102,6 +104,15 @@ impl Objects {
                     .iter()
                     .filter(|(key, _)| {
                         key.starts_with(&prefix) && !key[prefix.len()..].contains('/')
+                    })
+                    .filter(|(_, object)| {
+                        selector.as_ref().is_none_or(|selector| {
+                            selector.split(',').all(|requirement| {
+                                requirement.split_once('=').is_some_and(|(key, value)| {
+                                    object["metadata"]["labels"][key].as_str() == Some(value)
+                                })
+                            })
+                        })
                     })
                     .map(|(_, object)| object.clone())
                     .collect();
@@ -168,5 +179,6 @@ impl Objects {
 
 /// A client for a fixture started by `Objects::serve`.
 pub fn client(fixture: &Fixture) -> kube::Client {
-    nemoclaw_sdk::kubernetes::client(kube::Config::new(fixture.endpoint.parse().unwrap())).unwrap()
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    kube::Client::try_from(kube::Config::new(fixture.endpoint.parse().unwrap())).unwrap()
 }

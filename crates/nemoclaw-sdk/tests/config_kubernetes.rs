@@ -207,6 +207,14 @@ fn managed_kubernetes_accepts_explicit_port_boundaries() {
 fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for name in [
+        "HELM_DRIVER",
+        "HELM_REGISTRY_CONFIG",
+        "HELM_PLUGINS",
+        "KUBE_HOST",
+        "KUBE_TOKEN",
+        "KUBE_CONFIG_PATH",
+        "KUBE_CONFIG_PATHS",
+        "KUBE_INSECURE",
         "NEMOCLAW_KUBERNETES_STATE",
         "NEMOCLAW_MANAGED_K8S_TOKEN",
         "NEMOCLAW_MANAGED_K8S_CA",

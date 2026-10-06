@@ -3,12 +3,12 @@
 //! Run the Kubernetes live tests on a temporary kind cluster, and delete
 //! the cluster whatever the outcome.
 //!
-//! The pinned kind and helm are downloaded by checksum. The cluster gets
+//! The pinned kind executable is downloaded by checksum. The cluster gets
 //! the pinned Agent Sandbox release, as a platform would provide it; the
-//! SDK under test installs nothing cluster-wide.
+//! SDK under test installs nothing cluster-wide. The tests verify the native
+//! bundle and run its OpenTofu and providers without a Helm executable.
 
 use super::*;
-use std::io::Read as _;
 
 /// Agent Sandbox release the tests run against, as a platform would.
 const AGENT_SANDBOX_URL: &str =
@@ -29,36 +29,6 @@ async fn kind(pins: &Pins, platform: &str) -> Result<PathBuf> {
         let bytes = download(artifact).await?;
         fs::create_dir_all(&directory)?;
         fs::write(&path, bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
-        }
-    }
-    Ok(std::path::absolute(path)?)
-}
-
-/// Install the verified helm executable from its release archive.
-async fn helm(pins: &Pins, platform: &str) -> Result<PathBuf> {
-    let artifact = artifact(pins, platform, "helm")?;
-    let directory = tool_directory(&format!("helm-{}", &artifact.sha256[..12]));
-    let path = directory.join("helm");
-    if !path.is_file() {
-        let bytes = download(artifact).await?;
-        let entry = format!("{}/helm", platform.replace('_', "-"));
-        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice()));
-        let mut found = None;
-        for item in archive.entries()? {
-            let mut item = item?;
-            if item.path()?.as_os_str() == entry.as_str() {
-                let mut contents = Vec::new();
-                item.read_to_end(&mut contents)?;
-                found = Some(contents);
-            }
-        }
-        let contents = found.ok_or("helm archive lacks its executable")?;
-        fs::create_dir_all(&directory)?;
-        fs::write(&path, contents)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -99,12 +69,15 @@ pub(super) async fn run_live_kind(
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
     }
+    let bundle = std::path::absolute(Path::new("dist").join(platform))?;
+    if !bundle.join("manifest.json").is_file() {
+        return Err("build the bundle first: cargo ci bundle".into());
+    }
     let node = pins
         .images
         .get("kindNode")
         .ok_or("versions.json has no kindNode image")?;
     let kind = kind(pins, platform).await?;
-    let helm = helm(pins, platform).await?;
     let inputs = tempfile::Builder::new()
         .prefix("nemoclaw-live-kind-")
         .tempdir()?;
@@ -208,32 +181,15 @@ pub(super) async fn run_live_kind(
         &image,
     ]))?;
 
-    let bundle = std::path::absolute(Path::new("dist").join(platform))?;
-    if !bundle.join("manifest.json").is_file() {
-        return Err("build the bundle first: cargo ci bundle".into());
-    }
     let [args] = Step::LiveKind.cargo_args() else {
         unreachable!("live-kind is one nextest command")
     };
     let mut command = cargo();
     configure(&mut command);
-    // The SDK runs helm from PATH; put the pinned one ahead of the PATH the
-    // step already set up, which holds the pinned nextest.
-    let configured = command
-        .get_envs()
-        .find(|(key, _)| *key == "PATH")
-        .and_then(|(_, value)| value.map(std::ffi::OsStr::to_os_string))
-        .unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(helm.parent().ok_or("helm has no directory")?.to_path_buf())
-            .chain(std::env::split_paths(&configured)),
-    )?;
     command
         .args(*args)
-        .env("PATH", &path)
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_HELM", &helm)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
         .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)

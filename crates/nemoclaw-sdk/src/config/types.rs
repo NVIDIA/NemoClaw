@@ -79,7 +79,7 @@ pub struct Spec {
 /// A reference to a caller-provided environment variable; the configuration contains no credential value.
 pub struct Credential {
     #[serde(rename = "env")]
-    /// Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_ prefix are reserved for SDK runtime controls.
+    /// Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 

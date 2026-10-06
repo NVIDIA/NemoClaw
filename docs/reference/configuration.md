@@ -185,7 +185,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `env` | string | Yes | — | Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_ prefix are reserved for SDK runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `env` | string | Yes | — | Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## DedicatedHardware
 

@@ -5,7 +5,7 @@ use super::*;
 
 // Teardown uses gateway authentication but never invokes inference. Keep the
 // retained document and resource graph intact; narrow only subprocess secrets.
-fn destroy_environment(document: &Document) -> Document {
+pub(super) fn destroy_environment(document: &Document) -> Document {
     let mut environment = document.clone();
     for provider in environment.provider_definitions_mut() {
         provider.credential = None;
@@ -46,6 +46,10 @@ impl Deployment {
         } else {
             None
         };
+        if let Some(stage) = &runtime {
+            self.recover_helm_binding(&bundle, stage, &record, preview, cancel)
+                .await?;
+        }
         let runtime_bindings = if let Some(stage) = &runtime {
             self.state_bindings(
                 &bundle,
@@ -124,7 +128,12 @@ impl Deployment {
         (self.progress)(Progress::Destroying);
         for (stage, is_runtime, planned) in stages {
             if planned {
-                operation
+                if is_runtime {
+                    operation
+                        .checkpoint_helm_binding(&bundle, stage, &record, cancel)
+                        .await?;
+                }
+                let applied = operation
                     .tofu(
                         &bundle,
                         stage,
@@ -132,7 +141,24 @@ impl Deployment {
                         &["apply", "-input=false", "-no-color", "destroy.plan"],
                         cancel,
                     )
-                    .await?;
+                    .await;
+                // Cancellation keeps the durable checkpoint for the next
+                // destroy. Otherwise repair lost state before returning the
+                // original error, without retrying any remote mutation.
+                if is_runtime {
+                    if cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let restored = operation
+                        .recover_helm_binding(&bundle, stage, &record, false, cancel)
+                        .await?;
+                    if restored && applied.is_ok() {
+                        return Err(Error::Conflict(
+                            "Helm release deletion was not confirmed; its binding was restored, rerun destroy",
+                        ));
+                    }
+                }
+                applied?;
             }
             if !is_runtime {
                 record.finish_root_destroy();
@@ -223,7 +249,11 @@ fn teardown_expected(
         let want = expected.get(address).ok_or(Error::Conflict(
             "destroy encountered an undeclared resource binding",
         ))?;
-        if runtime && !plan::disposable(address) && want["spec"] != binding.spec {
+        if runtime
+            && address != crate::kubernetes::gateway::ADDRESS
+            && !plan::disposable(address)
+            && want["spec"] != binding.spec
+        {
             return Err(Error::Conflict(
                 "destroy storage configuration disagrees with retained intent",
             ));
@@ -243,13 +273,14 @@ fn bind_teardown_processes(
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     for target in targets {
-        if target.kind == crate::kubernetes::GATEWAY_KIND {
-            if bindings.contains_key(&target.address) && !bindings.contains_key(KUBERNETES_STORAGE)
-            {
-                return Err(Error::Conflict(
-                    "destroy requires the Kubernetes storage binding before removing its gateway",
-                ));
-            }
+        kubernetes_binding(target, bindings)?;
+        if target.address == crate::kubernetes::gateway::ADDRESS {
+            continue;
+        }
+        if matches!(
+            target.kind.as_str(),
+            crate::kubernetes::GATEWAY_KIND | crate::kubernetes::AUTH_KIND
+        ) {
             if let Some(binding) = bindings.get(&target.address)
                 && binding.spec != target.values["spec"]
             {
@@ -399,13 +430,15 @@ mod tests {
         let bindings: BTreeMap<String, StateBinding> = targets
             .iter()
             .map(|target| {
+                let mut values = serde_json::to_value(&target.values).unwrap();
+                values["id"] = json!(if target.kind == "helm_release" {
+                    target.values["name"].clone()
+                } else {
+                    format!("physical-{}", target.kind)
+                });
                 (
                     target.address.clone(),
-                    StateBinding {
-                        id: format!("physical-{}", target.kind),
-                        spec: target.values["spec"].clone(),
-                        ..Default::default()
-                    },
+                    serde_json::from_value(values).unwrap(),
                 )
             })
             .collect();

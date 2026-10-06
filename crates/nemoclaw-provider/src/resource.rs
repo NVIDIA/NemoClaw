@@ -111,6 +111,9 @@ impl ResourceAdapter {
     fn observed_data_path(&self) -> bool {
         self.definition.kind == "gateway_storage"
     }
+    fn observed_authentication(&self) -> bool {
+        self.definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND
+    }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
@@ -194,7 +197,9 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
-                        || (k == "data_path" && self.observed_data_path()) =>
+                        || (k == "data_path" && self.observed_data_path())
+                        || (matches!(k.as_str(), "release_present" | "gateway_values")
+                            && self.observed_authentication()) =>
                 {
                     Ok((k.clone(), String::new()))
                 }
@@ -314,6 +319,8 @@ impl Resource for ResourceAdapter {
                         constraint: if name == "id"
                             || (name == "running" && self.observed_running())
                             || (name == "data_path" && self.observed_data_path())
+                            || (matches!(name, "release_present" | "gateway_values")
+                                && self.observed_authentication())
                         {
                             AttributeConstraint::Computed
                         } else if self.optional(name) {
@@ -394,6 +401,10 @@ impl Resource for ResourceAdapter {
         }
         if self.observed_running() {
             proposed.insert("running".into(), Value::Unknown);
+        }
+        if self.observed_authentication() {
+            proposed.insert("release_present".into(), Value::Unknown);
+            proposed.insert("gateway_values".into(), Value::Unknown);
         }
         for field in &self.definition.fields {
             // Core may propose unknown for an omitted OptionalComputed value.

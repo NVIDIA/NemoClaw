@@ -20,6 +20,59 @@ fn live_docker_is_an_explicit_step_outside_the_default_run() {
     assert!(!Step::ALL.contains(&Step::LiveKind));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for (name, script) in [
+        ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.1\\n'\n"),
+        (
+            "cargo",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'nextest --version' ]; then printf 'cargo-nextest 0.9.144\\n'; exit 0; fi\nexit 71\n",
+        ),
+        (
+            "docker",
+            "#!/bin/sh\nprintf accessed > cluster-accessed\nexit 72\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(
+        root.path().join("versions.json"),
+        serde_json::json!({
+            "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
+            "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
+            "platforms":{}, "images":{"kindNode":"kindest/node@sha256:fixture"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "live-kind"])
+        .current_dir(root.path())
+        .env("CARGO", bin.join("cargo"))
+        .env("PROTOC", bin.join("protoc"))
+        .env("PATH", &bin)
+        .env("TEST_PLATFORM", "linux_amd64")
+        .env_remove("GITHUB_ENV")
+        .env_remove("GITHUB_PATH")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("build the bundle first: cargo ci bundle"),
+        "{error}"
+    );
+    assert!(!root.path().join(".build/downloads").exists());
+    assert!(!root.path().join("cluster-accessed").exists());
+}
+
 #[test]
 fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     use ci::live::{GatewayInputs, free_subnet, gateway_document, uuid};

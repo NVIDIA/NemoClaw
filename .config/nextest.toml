@@ -15,6 +15,7 @@ test-threads = 4
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
 default-filter = '''
 test(native_state_json_preserves_module_and_instance_identity_without_refresh)
+| (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
     | test(/^sandbox_readiness::/) | test(/^opentofu_openshell::/) | test(/^deployment::/)

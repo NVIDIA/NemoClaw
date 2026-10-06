@@ -24,6 +24,118 @@ fn document() -> Document {
 }
 
 #[test]
+fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let graph = compile_runtime(&document(), &generations, "0.1.0").unwrap();
+    assert_eq!(
+        graph["terraform"]["required_providers"]["helm"]["source"],
+        "registry.opentofu.org/hashicorp/helm"
+    );
+    assert_eq!(
+        graph["terraform"]["required_providers"]["helm"]["version"],
+        "= 3.3.0"
+    );
+    assert_eq!(
+        graph["provider"]["helm"]["kubernetes"]["config_path"],
+        "${var.nemoclaw_kubeconfig}"
+    );
+    assert_eq!(
+        graph["provider"]["helm"]["kubernetes"]["config_context"],
+        "test-cluster"
+    );
+    assert!(
+        graph["variable"]["nemoclaw_kubeconfig"]
+            .get("default")
+            .is_none()
+    );
+    let release = &graph["resource"]["helm_release"]["gateway"];
+    assert_eq!(release["chart"], nemoclaw_sdk::kubernetes::gateway::CHART);
+    assert_eq!(release["namespace"], "test-agents");
+    assert_eq!(release["create_namespace"], false);
+    assert_eq!(release["take_ownership"], false);
+    assert_eq!(release["upgrade_install"], false);
+    assert_eq!(release["wait"], true);
+    assert_eq!(release["wait_for_jobs"], true);
+    assert_eq!(
+        graph["resource"]["nemoclaw_kubernetes_auth"]["runtime"]["depends_on"],
+        json!(["nemoclaw_kubernetes_storage.runtime"])
+    );
+    assert_eq!(
+        release["depends_on"],
+        json!(["nemoclaw_kubernetes_auth.runtime"])
+    );
+    assert_eq!(
+        graph["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
+        json!(["helm_release.gateway"])
+    );
+    assert_eq!(
+        graph["resource"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "helm_release",
+            "nemoclaw_kubernetes_auth",
+            "nemoclaw_kubernetes_gateway",
+            "nemoclaw_kubernetes_storage",
+        ],
+        "one native release owns chart resources; prerequisites and readiness stay separate"
+    );
+    let targets = runtime_targets(&document(), &generations).unwrap();
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.address == "helm_release.gateway")
+    );
+}
+
+#[test]
+fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let kubernetes = compile_runtime(&document(), &generations, "0.1.0").unwrap();
+    assert_eq!(
+        kubernetes["resource"]["helm_release"]["gateway"]["values"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let openshift = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values = &openshift["resource"]["helm_release"]["gateway"]["values"];
+    assert_eq!(values.as_array().unwrap().len(), 2);
+    assert_eq!(
+        values[1],
+        "${nemoclaw_kubernetes_auth.runtime.gateway_values}"
+    );
+    assert_eq!(
+        values[0],
+        kubernetes["resource"]["helm_release"]["gateway"]["values"][0]
+    );
+}
+
+#[test]
 fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     let document = document();
     let generations = [
@@ -38,11 +150,11 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(document.has_runtime());
     let targets = runtime_targets(&document, &generations).unwrap();
-    assert_eq!(targets.len(), 2);
+    assert_eq!(targets.len(), 4);
     assert!(
         targets
             .iter()
-            .all(|target| target.kind.starts_with("kubernetes_"))
+            .all(|target| target.kind.starts_with("kubernetes_") || target.kind == "helm_release")
     );
     assert_eq!(platform["provider"]["nemoclaw"]["platform_only"], true);
     assert!(platform.get("data").is_none());
@@ -57,9 +169,13 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     );
     assert_eq!(
         platform["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
-        json!(["nemoclaw_kubernetes_storage.runtime"])
+        json!(["helm_release.gateway"])
     );
-    for kind in ["nemoclaw_kubernetes_storage", "nemoclaw_kubernetes_gateway"] {
+    for kind in [
+        "nemoclaw_kubernetes_storage",
+        "nemoclaw_kubernetes_auth",
+        "nemoclaw_kubernetes_gateway",
+    ] {
         assert_eq!(
             platform["resource"][kind]["runtime"]["lifecycle"]["postcondition"][0]["condition"],
             "${self.running == \"true\"}"

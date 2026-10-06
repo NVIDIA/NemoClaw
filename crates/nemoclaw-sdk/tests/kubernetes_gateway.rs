@@ -1,237 +1,321 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The gateway release: Helm runs only against the authored cluster, with
-//! the pinned chart and images, and none of the caller's Helm settings.
-#![cfg(unix)]
+//! Non-secret gateway chart values and rendering through the bundled Helm
+//! provider. Neither test setup nor rendering needs a Helm executable.
 
-use nemoclaw_sdk::kubernetes::gateway::{Identity, Release, install, uninstall};
-use serde_json::Value;
-use std::path::{Path, PathBuf};
+use nemoclaw_sdk::{
+    bundle::Bundle,
+    config::ComputeDriver,
+    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, gateway::Identity, issuer},
+};
+use serde_json::{Value, json};
+use std::{fs, path::Path, time::Duration};
 
-/// A fake helm that records its arguments, environment and values file.
-fn fake_helm(directory: &Path, exit: i32) -> PathBuf {
-    let helm = directory.join("helm");
-    std::fs::write(
-        &helm,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}/argv\nenv > {log}/env\n\
-             while [ $# -gt 0 ]; do [ \"$1\" = -f ] && cp \"$2\" {log}/values.json; shift; done\nexit {exit}\n",
-            log = directory.display()
-        ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&helm, std::fs::Permissions::from_mode(0o700)).unwrap();
-    helm
+fn spec() -> Spec {
+    serde_json::from_value(json!({
+        "layout": 1, "kind": GATEWAY_KIND, "name": "nc-0123456789abcdef-gateway",
+        "owner": "11111111-1111-4111-8111-111111111111",
+        "generation": "0123456789abcdef0123456789abcdef",
+        "settings": {
+            "runtime": {"provider": "kubernetes"},
+            "endpoint": "https://127.0.0.1:17671",
+            "kubernetes": {
+                "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "selected", "namespace": "agents",
+                "authentication": {"profile": "development"}
+            }
+        }
+    }))
+    .unwrap()
 }
 
-fn release(directory: &Path, helm: PathBuf) -> Release {
-    Release {
-        helm,
-        state: directory.join("state"),
-        kubeconfig: directory.join("kubeconfig"),
-        context: "selected".into(),
-        namespace: "agents".into(),
-        name: "nc-0123456789abcdef-gateway".into(),
-        oidc: Some(serde_json::json!({
-            "issuer": "https://nc-0123456789abcdef-gateway-oidc.agents.svc.cluster.local:8443",
-            "caConfigMapName": "nc-0123456789abcdef-gateway-oidc-ca",
-        })),
-        identity: None,
-    }
-}
-
-fn argv(directory: &Path) -> Vec<String> {
-    std::fs::read_to_string(directory.join("argv"))
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
-#[tokio::test]
-async fn install_upgrades_the_pinned_chart_on_the_authored_context_and_waits() {
-    let directory = tempfile::tempdir().unwrap();
-    let helm = fake_helm(directory.path(), 0);
-    install(&release(directory.path(), helm)).await.unwrap();
-    let argv = argv(directory.path());
-    assert_eq!(
-        argv[..3],
-        ["upgrade", "--install", "nc-0123456789abcdef-gateway"]
-    );
-    assert!(
-        argv[3].starts_with("oci://ghcr.io/nvidia/openshell/helm-chart@sha256:"),
-        "{}",
-        argv[3]
-    );
-    for (flag, value) in [
-        (
-            "--kubeconfig",
-            directory.path().join("kubeconfig").display().to_string(),
-        ),
-        ("--kube-context", "selected".into()),
-        ("--namespace", "agents".into()),
-    ] {
-        let at = argv
-            .iter()
-            .position(|argument| argument == flag)
-            .unwrap_or_else(|| panic!("{flag}"));
-        assert_eq!(argv[at + 1], value);
-    }
-    assert!(argv.contains(&"--wait".to_owned()));
-}
-
-#[tokio::test]
-async fn the_chart_values_pin_every_image_by_digest_and_require_authentication() {
-    let directory = tempfile::tempdir().unwrap();
-    let helm = fake_helm(directory.path(), 0);
-    install(&release(directory.path(), helm)).await.unwrap();
-    let values: Value =
-        serde_json::from_slice(&std::fs::read(directory.path().join("values.json")).unwrap())
-            .unwrap();
+#[test]
+fn the_chart_values_pin_every_image_by_digest_and_require_authentication() {
+    let values = gateway::values(&spec()).unwrap();
     assert_eq!(values["fullnameOverride"], "nc-0123456789abcdef-gateway");
     for image in ["gateway", "sandboxRuntime", "supervisor", "sandbox"] {
-        let digest = values[image]["image"]["digest"]
-            .as_str()
-            .unwrap_or_else(|| panic!("{image}"));
-        assert!(
-            digest.starts_with("sha256:") && digest.len() == 71,
-            "{image}: {digest}"
-        );
+        let image = &values[image]["image"];
+        let digest = image["digest"].as_str().unwrap();
+        assert!(digest.starts_with("sha256:") && digest.len() == 71);
+        assert!(digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(image["pullPolicy"], "IfNotPresent");
+        assert!(image.get("tag").is_none(), "mutable image tags are absent");
     }
     assert_eq!(values["server"]["auth"]["allowUnauthenticatedUsers"], false);
     assert_eq!(values["server"]["disableTls"], false);
+    assert_eq!(values["server"]["tls"]["enableMtls"], true);
     assert_eq!(values["server"]["telemetryEnabled"], false);
+}
+
+#[test]
+fn chart_authentication_values_contain_only_references_and_public_policy() {
+    let spec = spec();
+    let server = gateway::values(&spec).unwrap()["server"].clone();
+    // Exact shapes reject additional inline keys, certificates, tokens, or
+    // credential-storage data before they can enter native Helm state.
     assert_eq!(
-        values["server"]["credentialStorage"]["existingSecret"],
-        "nc-0123456789abcdef-gateway-kek"
+        server["tls"],
+        json!({
+            "enableMtls": true,
+            "certSecretName": format!("{}-server-tls", spec.name),
+            "clientTlsSecretName": format!("{}-client-tls", spec.name),
+        })
     );
     assert_eq!(
-        values["server"]["oidc"]["caConfigMapName"],
-        "nc-0123456789abcdef-gateway-oidc-ca"
+        server["sandboxJwt"],
+        json!({"signingSecretName": format!("{}-jwt-keys", spec.name)})
+    );
+    assert_eq!(
+        server["credentialStorage"],
+        json!({"existingSecret": format!("{}-kek", spec.name)})
+    );
+    assert_eq!(
+        server["oidc"],
+        json!({
+            "issuer": format!("https://{}-oidc.agents.svc.cluster.local:8443", spec.name),
+            "audience": spec.owner,
+            "jwksTtl": 60,
+            "rolesClaim": "roles",
+            "adminRole": "nemoclaw-development-admin",
+            "userRole": "nemoclaw-development-user",
+            "scopesClaim": "scope",
+            "caConfigMapName": format!("{}-oidc-ca", spec.name),
+            "dangerouslyAllowInsecureHttp": false,
+        })
+    );
+}
+
+#[test]
+fn invalid_managed_identity_cannot_produce_chart_values() {
+    let valid = spec();
+    for broken in [
+        Spec {
+            name: "unowned-release".into(),
+            ..valid.clone()
+        },
+        Spec {
+            owner: "missing-owner".into(),
+            ..valid.clone()
+        },
+        Spec {
+            generation: String::new(),
+            ..valid.clone()
+        },
+    ] {
+        assert!(gateway::values(&broken).is_err());
+    }
+    let mut missing_target = valid;
+    missing_target.settings.kubernetes = None;
+    assert!(gateway::values(&missing_target).is_err());
+}
+
+async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::process::Output {
+    let mut command = tokio::process::Command::new(bundle.tofu());
+    command
+        .args(arguments)
+        .current_dir(directory)
+        .env_clear()
+        .env("PATH", directory.join("empty-path"))
+        .env("HOME", directory.join("home"))
+        .env("TF_IN_AUTOMATION", "1")
+        .env("TF_INPUT", "0")
+        .env("CHECKPOINT_DISABLE", "1")
+        .env("TF_CLI_CONFIG_FILE", directory.join("providers.tfrc"))
+        .kill_on_drop(true);
+    tokio::time::timeout(Duration::from_secs(180), command.output())
+        .await
+        .expect("chart rendering timed out")
+        .expect("cannot execute the verified bundle's OpenTofu")
+}
+
+/// Pull and render the exact OCI digest with the actual bundled provider.
+/// A data source performs no installation and needs no cluster access.
+async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<String> {
+    let input = std::env::var_os("NEMOCLAW_TEST_BUNDLE")
+        .expect("NEMOCLAW_TEST_BUNDLE names a verified bundle");
+    let bundle = Bundle::open(Path::new(&input)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    for name in ["empty-path", "home"] {
+        fs::create_dir(directory.path().join(name)).unwrap();
+    }
+    let mirror = serde_json::to_string(
+        &bundle
+            .directory
+            .join("providers")
+            .to_string_lossy()
+            .replace('\\', "/"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("providers.tfrc"),
+        format!("provider_installation {{ filesystem_mirror {{ path = {mirror} }} }}\n"),
+    )
+    .unwrap();
+    let mut values = gateway::values(spec).unwrap();
+    // Rendering has no cluster from which to observe this existing prerequisite.
+    values["agentSandbox"]["preflight"]["enabled"] = json!(false);
+    let mut chart_values = vec![values.to_string()];
+    if let Some(identity) = identity {
+        // Apply the observed namespace identity as a second values document,
+        // just as the native release receives the authentication resource's output.
+        chart_values.push(identity.values().to_string());
+    }
+    let graph = json!({
+        "terraform": {"required_providers": {"helm": {
+            "source": gateway::PROVIDER_ADDRESS,
+            "version": format!("= {}", gateway::PROVIDER_VERSION)
+        }}},
+        "provider": {"helm": {}},
+        "data": {"helm_template": {"gateway": {
+            "name": spec.name, "namespace": "agents", "chart": chart,
+            "validate": false, "values": chart_values
+        }}},
+        "output": {"manifest": {"value": "${data.helm_template.gateway.manifest}"}}
+    });
+    let config = directory.path().join("main.tf.json");
+    fs::write(&config, serde_json::to_vec(&graph).unwrap()).unwrap();
+    let initialized = tofu(
+        &bundle,
+        directory.path(),
+        &["init", "-input=false", "-no-color"],
+    )
+    .await;
+    assert!(
+        initialized.status.success(),
+        "cannot initialize the chart renderer"
+    );
+    let planned = tofu(
+        &bundle,
+        directory.path(),
+        &["plan", "-input=false", "-no-color", "-out=render.tfplan"],
+    )
+    .await;
+    if !planned.status.success() {
+        return None;
+    }
+    let output = tofu(
+        &bundle,
+        directory.path(),
+        &["show", "-json", "render.tfplan"],
+    )
+    .await;
+    assert!(
+        output.status.success(),
+        "cannot inspect the chart-render plan"
+    );
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+    Some(
+        plan["planned_values"]["outputs"]["manifest"]["value"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    )
+}
+
+/// Check actual chart objects against the objects NemoClaw prepares. Helm must
+/// never include those objects in its release and remove them during uninstall.
+fn assert_release_ownership(rendered: &str, spec: &Spec) {
+    let directory = tempfile::tempdir().unwrap();
+    let namespace = &spec.settings.kubernetes.as_ref().unwrap().namespace;
+    let material = Development::new(
+        directory.path().join("auth"),
+        &spec.name,
+        namespace,
+        &spec.owner,
+    )
+    .ensure()
+    .unwrap();
+    let mut prepared = issuer::objects(&material, &spec.name, namespace);
+    prepared.extend([
+        json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}}),
+        json!({"apiVersion": "v1", "kind": "Secret", "metadata": {
+            "name": format!("{}-kek", spec.name), "namespace": namespace,
+        }}),
+    ]);
+    let objects: Vec<Value> = serde_saphyr::from_multiple(rendered).unwrap();
+    let identity = |object: &Value| {
+        (
+            object["apiVersion"].clone(),
+            object["kind"].clone(),
+            object["metadata"]["name"].clone(),
+        )
+    };
+    for object in &objects {
+        assert!(
+            !prepared
+                .iter()
+                .any(|owned| identity(owned) == identity(object)),
+            "Helm must not own NemoClaw's {} {}",
+            object["kind"],
+            object["metadata"]["name"],
+        );
+        assert_ne!(object["kind"], "Namespace");
+    }
+    assert_eq!(
+        objects
+            .iter()
+            .filter(
+                |object| object["kind"] == "StatefulSet" && object["metadata"]["name"] == spec.name
+            )
+            .count(),
+        1,
+        "the release owns the gateway StatefulSet"
     );
 }
 
 #[tokio::test]
-async fn helm_sees_none_of_the_callers_helm_or_cluster_settings() {
-    // Rerun in a child process whose environment selects another cluster
-    // and Helm configuration; the fake records what Helm actually received.
-    const CHILD: &str = "NEMOCLAW_HELM_TEST_DIRECTORY";
-    if let Some(directory) = std::env::var_os(CHILD) {
-        let directory = PathBuf::from(directory);
-        let helm = fake_helm(&directory, 0);
-        install(&release(&directory, helm)).await.unwrap();
-        return;
-    }
-    let directory = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "kubernetes_gateway::helm_sees_none_of_the_callers_helm_or_cluster_settings",
-        ])
-        .env(CHILD, directory.path())
-        .env("KUBECONFIG", "/elsewhere/kubeconfig")
-        .env("HELM_KUBECONTEXT", "elsewhere")
-        .env("HELM_NAMESPACE", "elsewhere")
-        .env("HELM_REGISTRY_CONFIG", "/elsewhere/registry.json")
-        .output()
-        .unwrap();
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
+async fn the_pinned_chart_renders_with_the_sdk_values() {
+    let spec = spec();
+    let values = gateway::values(&spec).unwrap();
+    let rendered = render(&spec, gateway::CHART, None)
+        .await
+        .expect("the pinned chart renders");
+    assert_release_ownership(&rendered, &spec);
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let environment = std::fs::read_to_string(directory.path().join("env")).unwrap();
-    for name in [
-        "KUBECONFIG=",
-        "HELM_KUBECONTEXT=",
-        "HELM_NAMESPACE=",
-        "HELM_REGISTRY_CONFIG=/elsewhere",
-    ] {
-        assert!(
-            !environment.lines().any(|line| line.starts_with(name)),
-            "{name} reached helm"
-        );
-    }
-}
-
-/// The pinned chart rendered by a real helm with the SDK's values.
-fn render(release: &Release, directory: &Path) -> String {
-    let helm = release.helm.clone();
-    let values = directory.join("values.json");
-    std::fs::write(
-        &values,
-        nemoclaw_sdk::kubernetes::gateway::values(release).to_string(),
-    )
-    .unwrap();
-    let output = std::process::Command::new(helm)
-        .args([
-            "template",
-            &release.name,
-            nemoclaw_sdk::kubernetes::gateway::CHART,
-            "--namespace",
-            "agents",
-        ])
-        .args(["--set", "agentSandbox.preflight.enabled=false", "-f"])
-        .arg(&values)
-        .env("HELM_CACHE_HOME", directory.join("cache"))
-        .env("HELM_CONFIG_HOME", directory.join("config"))
-        .env("HELM_DATA_HOME", directory.join("data"))
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap()
-}
-
-fn test_helm() -> PathBuf {
-    std::env::var_os("NEMOCLAW_TEST_HELM")
-        .expect("NEMOCLAW_TEST_HELM names a helm executable")
-        .into()
-}
-
-#[test]
-#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
-fn the_pinned_chart_renders_with_the_sdk_values() {
-    let directory = tempfile::tempdir().unwrap();
-    let release = release(directory.path(), test_helm());
-    let rendered = render(&release, directory.path());
-    assert!(
-        rendered.contains("runAsUser: 1000"),
+        rendered.contains("runAsUser: 1000\n"),
         "Kubernetes keeps the chart's gateway UID"
     );
-    let gateway = nemoclaw_sdk::kubernetes::gateway::values(&release)["gateway"]["image"].clone();
     let pinned = format!(
         "{}@{}",
-        gateway["repository"].as_str().unwrap(),
-        gateway["digest"].as_str().unwrap()
+        values["gateway"]["image"]["repository"].as_str().unwrap(),
+        values["gateway"]["image"]["digest"].as_str().unwrap()
     );
     assert!(
         rendered.contains(&pinned),
-        "gateway image {pinned} not rendered"
+        "the pinned gateway image is rendered"
     );
     assert!(rendered.contains("name: nc-0123456789abcdef-gateway"));
+    assert!(rendered.contains("nc-0123456789abcdef-gateway-kek"));
+
+    // A wrong digest must fail; the provider cannot silently select a tag.
+    let unavailable = format!(
+        "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:{}",
+        "0".repeat(64)
+    );
+    assert!(
+        render(&spec, &unavailable, None).await.is_none(),
+        "the provider refuses an unavailable chart digest"
+    );
 }
 
-/// OpenShift admits only UIDs from the range it assigns each namespace, so
-/// the gateway runs as that range's first UID and group instead of the
-/// chart's fixed 1000.
-#[test]
-#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
-fn on_openshift_the_gateway_takes_the_namespace_uid() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut release = release(directory.path(), test_helm());
-    release.identity = Some(Identity {
+/// OpenShift assigns the gateway a UID from its namespace's range.
+#[tokio::test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
+async fn on_openshift_the_gateway_takes_the_namespace_uid() {
+    let mut spec = spec();
+    spec.settings.runtime.provider = ComputeDriver::OpenShift;
+    let identity = Identity {
         user: 1_000_680_000,
         group: 1_000_690_000,
-    });
-    let rendered = render(&release, directory.path());
+    };
+    let rendered = render(&spec, gateway::CHART, Some(identity))
+        .await
+        .expect("the pinned chart renders");
+    assert_release_ownership(&rendered, &spec);
     assert!(rendered.contains("runAsUser: 1000680000"), "{rendered}");
     assert!(rendered.contains("fsGroup: 1000690000"), "{rendered}");
     assert!(!rendered.contains("runAsUser: 1000\n"));
+    assert!(rendered.contains("runAsNonRoot: true"));
 }
 
 #[test]
@@ -253,14 +337,14 @@ fn the_namespace_identity_is_the_first_uid_and_group_of_its_ranges() {
         Identity::from_annotations(&annotations("1000680000/10000", Some("1000690000/10000"))),
         Some(Identity {
             user: 1_000_680_000,
-            group: 1_000_690_000
+            group: 1_000_690_000,
         })
     );
     assert_eq!(
         Identity::from_annotations(&annotations("1000680000/10000", None)),
         Some(Identity {
             user: 1_000_680_000,
-            group: 1_000_680_000
+            group: 1_000_680_000,
         }),
         "without supplemental groups, the group is the user's"
     );
@@ -269,41 +353,21 @@ fn the_namespace_identity_is_the_first_uid_and_group_of_its_ranges() {
         "0/10000",
         "1000680000",
         "x/1",
+        "-1/10000",
         "1000680000/0",
         "4294967295/2",
+        "1000680000/10000/1",
     ] {
         assert_eq!(
             Identity::from_annotations(&annotations(bad, None)),
             None,
-            "{bad:?}"
+            "invalid UID range {bad:?}"
+        );
+        assert_eq!(
+            Identity::from_annotations(&annotations("1000680000/10000", Some(bad))),
+            None,
+            "invalid supplemental group range {bad:?} must not fall back to the UID"
         );
     }
     assert_eq!(Identity::from_annotations(&Default::default()), None);
-}
-
-#[tokio::test]
-async fn a_failed_helm_command_is_reported_without_its_output() {
-    let directory = tempfile::tempdir().unwrap();
-    let helm = fake_helm(directory.path(), 1);
-    assert!(
-        install(&release(directory.path(), helm.clone()))
-            .await
-            .is_err()
-    );
-    assert!(uninstall(&release(directory.path(), helm)).await.is_err());
-}
-
-#[tokio::test]
-async fn uninstall_removes_the_release_from_the_authored_context_and_waits() {
-    let directory = tempfile::tempdir().unwrap();
-    let helm = fake_helm(directory.path(), 0);
-    uninstall(&release(directory.path(), helm)).await.unwrap();
-    let argv = argv(directory.path());
-    assert_eq!(argv[..2], ["uninstall", "nc-0123456789abcdef-gateway"]);
-    assert!(argv.contains(&"--wait".to_owned()));
-    let at = argv
-        .iter()
-        .position(|argument| argument == "--kube-context")
-        .unwrap();
-    assert_eq!(argv[at + 1], "selected");
 }

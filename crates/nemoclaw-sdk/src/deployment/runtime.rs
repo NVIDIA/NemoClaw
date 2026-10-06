@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod helm_recovery;
 mod teardown;
 #[cfg(all(test, unix))]
 pub(super) mod tests;
@@ -9,6 +10,44 @@ use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
+const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
+
+fn kubernetes_binding(
+    target: &Target,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    let Some(binding) = bindings.get(&target.address) else {
+        return Ok(());
+    };
+    let helm = crate::kubernetes::gateway::ADDRESS;
+    let prerequisites: &[&str] = match target.kind.as_str() {
+        crate::kubernetes::AUTH_KIND => &[KUBERNETES_STORAGE],
+        "helm_release" => &[KUBERNETES_STORAGE, KUBERNETES_AUTH],
+        crate::kubernetes::GATEWAY_KIND => &[KUBERNETES_STORAGE, KUBERNETES_AUTH, helm],
+        _ => &[],
+    };
+    if prerequisites
+        .iter()
+        .any(|address| !bindings.contains_key(*address))
+    {
+        return Err(Error::Conflict(
+            "Kubernetes runtime requires its independent prerequisite bindings; retain the original bundle and state for recovery",
+        ));
+    }
+    if target.address == helm
+        && (binding.id != target.values["name"]
+            || binding.name != target.values["name"]
+            || binding.namespace != target.values["namespace"]
+            || binding.chart != target.values["chart"]
+            || !binding.spec.is_empty()
+            || !binding.deposed.is_empty())
+    {
+        return Err(Error::Conflict(
+            "bound Helm release differs from retained intent",
+        ));
+    }
+    Ok(())
+}
 fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error> {
     let Some(binding) = binding else {
         return Ok(want.clone());
@@ -47,13 +86,9 @@ fn runtime_bindings(
         ));
     }
     for target in targets {
-        if target.kind == crate::kubernetes::GATEWAY_KIND
-            && bindings.contains_key(&target.address)
-            && !bindings.contains_key(KUBERNETES_STORAGE)
-        {
-            return Err(Error::Conflict(
-                "Kubernetes gateway requires its retained storage binding",
-            ));
+        kubernetes_binding(target, bindings)?;
+        if target.address == crate::kubernetes::gateway::ADDRESS {
+            continue;
         }
         if target.kind == GATEWAY_KIND
             && bindings.contains_key(&target.address)

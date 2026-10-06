@@ -55,6 +55,12 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
             .unwrap();
         assert_eq!(environment[crate::kubernetes::STATE_ENV], expected);
         assert_eq!(environment["TEST_KUBECONFIG"], "/private/kubeconfig");
+        assert_eq!(
+            environment
+                .get(crate::kubernetes::gateway::KUBECONFIG_ENV)
+                .map(String::as_str),
+            Some("/private/kubeconfig")
+        );
         assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
         assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
     }
@@ -345,6 +351,34 @@ fn credential_references_cannot_override_opentofu_control_variables() {
         env: "TF_CLI_CONFIG_FILE".into(),
     });
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
+}
+
+#[test]
+fn credential_references_cannot_override_helm_or_kubernetes_controls() {
+    struct Unresolved;
+    impl Secrets for Unresolved {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            panic!("reject a reserved credential reference before resolving its value")
+        }
+    }
+    for name in [
+        "HELM_DRIVER",
+        "HELM_NAMESPACE",
+        "HELM_REGISTRY_CONFIG",
+        "KUBE_HOST",
+        "KUBE_TOKEN",
+        "KUBE_CONFIG_PATH",
+        "KUBE_CONFIG_PATHS",
+        "KUBE_INSECURE",
+    ] {
+        assert!(
+            matches!(
+                credential_environment([name], &Unresolved, Path::new("state")),
+                Err(Error::Conflict(_))
+            ),
+            "reserved Helm/Kubernetes reference {name} was accepted",
+        );
+    }
 }
 
 #[cfg(unix)]

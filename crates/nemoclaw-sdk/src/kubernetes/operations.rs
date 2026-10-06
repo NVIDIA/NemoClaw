@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The operations the provider performs for the two Kubernetes resources.
+//! Kubernetes preparation and observation around the native Helm release.
 //!
-//! `kubernetes_storage` is the retained namespace and credential key;
-//! `kubernetes_gateway` is the Helm release that uses them. Each operation
-//! reports the resource's identity and whether it is running.
+//! Storage and authentication are prepared before Helm installs the release.
+//! Gateway observation records its StatefulSet identity after installation.
+//! The Helm provider owns release creation and removal.
 
 use super::connection::{self, Connection};
 use super::{
-    GATEWAY_KIND, STORAGE_KIND, Spec,
-    auth::{Development, Material},
+    AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
+    auth::Development,
     cluster::{Cluster, Owned},
-    gateway::{self, Release},
+    gateway::Identity,
     issuer,
     receipt::Receipt,
     storage::{Storage, ensure_storage},
@@ -30,6 +30,11 @@ pub struct Response {
     /// The resource's identity, or `None` when it does not exist.
     pub id: Option<String>,
     pub running: Option<bool>,
+    /// Whether Kubernetes still holds a Helm release record. Only the
+    /// authentication resource supplies this independent observation.
+    pub release_present: Option<bool>,
+    /// Non-secret chart overrides observed before Helm installs the gateway.
+    pub gateway_values: Option<String>,
 }
 
 /// Cluster access and local paths for one deployment's operations.
@@ -37,8 +42,6 @@ pub struct Operations {
     pub client: kube::Client,
     /// API server URL from the kubeconfig context.
     pub server: String,
-    pub helm: PathBuf,
-    pub kubeconfig: PathBuf,
     /// Private state directory holding the receipt.
     pub state: PathBuf,
     /// How long to wait for OpenShift to assign a new namespace its UID range.
@@ -84,26 +87,26 @@ impl Operations {
         ))
     }
 
-    fn release(
-        &self,
-        spec: &Spec,
-        material: Option<&Material>,
-    ) -> Result<Release, ObservationError> {
-        let target = self.target(spec)?;
-        Ok(Release {
-            oidc: material.map(|material| issuer::oidc_values(material, &spec.name, &spec.owner)),
-            identity: None,
-            helm: self.helm.clone(),
-            state: self.state.clone(),
-            kubeconfig: self.kubeconfig.clone(),
-            context: target.context.clone(),
-            namespace: target.namespace.clone(),
-            name: spec.name.clone(),
-        })
-    }
-
     fn receipt(&self, spec: &Spec) -> Result<Option<Receipt>, ObservationError> {
         Receipt::load(&self.state, &spec.owner, &spec.name)
+    }
+
+    fn namespace<'a>(
+        &self,
+        spec: &Spec,
+        receipt: &'a Receipt,
+    ) -> Result<&'a Owned, ObservationError> {
+        let target = self.target(spec)?;
+        receipt
+            .objects
+            .iter()
+            .find(|owned| {
+                owned.api_version == "v1"
+                    && owned.kind == "Namespace"
+                    && owned.name == target.namespace
+                    && owned.namespace.is_empty()
+            })
+            .ok_or(ObservationError::Incomplete)
     }
 
     /// The gateway StatefulSet the chart creates, named after the release.
@@ -123,9 +126,29 @@ impl Operations {
         spec: &Spec,
         prior: Option<&str>,
     ) -> Result<Response, ObservationError> {
+        self.observe(spec, prior, false).await
+    }
+
+    /// Observe teardown progress. A recorded gateway may already be absent
+    /// after Helm removal; every remaining identity must still match.
+    pub async fn read_for_removal(
+        &self,
+        spec: &Spec,
+        prior: Option<&str>,
+    ) -> Result<Response, ObservationError> {
+        self.observe(spec, prior, true).await
+    }
+
+    async fn observe(
+        &self,
+        spec: &Spec,
+        prior: Option<&str>,
+        removing: bool,
+    ) -> Result<Response, ObservationError> {
         let response = match spec.kind.as_str() {
             STORAGE_KIND => self.read_storage(spec).await?,
-            GATEWAY_KIND => self.read_gateway(spec).await?,
+            AUTH_KIND => self.read_auth(spec, removing).await?,
+            GATEWAY_KIND => self.read_gateway(spec, true).await?,
             _ => return Err(ObservationError::Query),
         };
         if let (Some(prior), Some(id)) = (prior, &response.id)
@@ -151,10 +174,105 @@ impl Operations {
         Ok(Response {
             id: namespace.map(|owned| owned.uid.clone()),
             running: namespace.map(|_| receipt.storage_ready),
+            ..Response::default()
         })
     }
 
-    async fn read_gateway(&self, spec: &Spec) -> Result<Response, ObservationError> {
+    async fn read_auth(&self, spec: &Spec, removing: bool) -> Result<Response, ObservationError> {
+        let Some(receipt) = self.receipt(spec)? else {
+            return Ok(Response::default());
+        };
+        if self.read_storage(spec).await?.running != Some(true) {
+            return Err(ObservationError::Incomplete);
+        }
+        let cluster = self.cluster(spec);
+        for owned in &receipt.issuer {
+            // A successful delete can precede an interrupted receipt write.
+            // Only teardown may accept confirmed absence; query failures and
+            // existing objects with another identity still stop cleanup.
+            if removing && cluster.get(owned).await?.is_none() {
+                continue;
+            }
+            cluster.verify(owned).await?;
+        }
+        // Ordinary refresh must stop before Helm can recreate a missing
+        // StatefulSet or change one with a substituted identity.
+        self.read_gateway(spec, removing).await?;
+        let openshift = spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift;
+        if openshift
+            && !removing
+            && !receipt.issuer.is_empty()
+            && let Some(recorded) = receipt.namespace_identity
+        {
+            let namespace = cluster.verify(self.namespace(spec, &receipt)?).await?;
+            let identity =
+                Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
+            if identity != Some(recorded) {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
+        // Receipts written before namespace identities were recorded need
+        // reconciliation before their values may reach Helm. Teardown only
+        // needs the stored identity, including after annotations disappear.
+        let identity_ready = !openshift || receipt.namespace_identity.is_some();
+        let values = if openshift {
+            receipt.namespace_identity.map(Identity::values)
+        } else {
+            None
+        };
+        Ok(Response {
+            id: receipt.issuer.first().map(|owned| owned.uid.clone()),
+            running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready && identity_ready),
+            release_present: Some(self.release_present(spec).await?),
+            gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
+        })
+    }
+
+    async fn release_present(&self, spec: &Spec) -> Result<bool, ObservationError> {
+        spec.validate().map_err(|_| ObservationError::Query)?;
+        let secrets: kube::Api<k8s_openapi::api::core::v1::Secret> =
+            kube::Api::namespaced(self.client.clone(), &self.target(spec)?.namespace);
+        let selector = format!("owner=helm,name={}", spec.name);
+        let records = secrets
+            .list_metadata(&kube::api::ListParams::default().labels(&selector))
+            .await
+            .map_err(|error| match error {
+                kube::Error::Api(status) => match status.code {
+                    401 => ObservationError::Authentication,
+                    403 => ObservationError::Permission,
+                    _ => ObservationError::Query,
+                },
+                _ => ObservationError::Transport,
+            })?;
+        if records
+            .metadata
+            .continue_
+            .as_ref()
+            .is_some_and(|token| !token.is_empty())
+        {
+            return Err(ObservationError::Incomplete);
+        }
+        // The API must honor the exact selector. An incomplete or unexpected
+        // response cannot establish release absence.
+        for record in &records.items {
+            let labels = record.metadata.labels.as_ref();
+            if labels
+                .and_then(|labels| labels.get("owner"))
+                .map(String::as_str)
+                != Some("helm")
+                || labels.and_then(|labels| labels.get("name")) != Some(&spec.name)
+            {
+                return Err(ObservationError::Incomplete);
+            }
+        }
+        Ok(!records.items.is_empty())
+    }
+
+    async fn read_gateway(
+        &self,
+        spec: &Spec,
+        allow_absent: bool,
+    ) -> Result<Response, ObservationError> {
         let Some(receipt) = self.receipt(spec)? else {
             return Ok(Response::default());
         };
@@ -163,10 +281,14 @@ impl Operations {
         };
         let statefulset = self.cluster(spec).get(&self.statefulset(spec)?).await?;
         let Some(statefulset) = statefulset else {
+            if !allow_absent {
+                return Err(ObservationError::BindingMismatch);
+            }
             // A recorded release whose StatefulSet is gone is not running.
             return Ok(Response {
                 id: Some(recorded.clone()),
                 running: Some(false),
+                ..Response::default()
             });
         };
         if statefulset.metadata.uid.as_deref() != Some(recorded.as_str()) {
@@ -183,6 +305,7 @@ impl Operations {
         Ok(Response {
             id: Some(recorded.clone()),
             running: Some(running),
+            ..Response::default()
         })
     }
 
@@ -196,14 +319,31 @@ impl Operations {
             STORAGE_KIND => {
                 ensure_storage(&self.cluster(spec), &self.storage(spec)?).await?;
             }
-            GATEWAY_KIND => {
+            AUTH_KIND => {
                 let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
-                if !receipt.storage_ready {
+                if self.read_storage(spec).await?.running != Some(true) {
                     return Err(ObservationError::Incomplete);
+                }
+                self.read(spec, prior).await?;
+                let cluster = self.cluster(spec);
+                if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+                    let identity = namespace_identity(
+                        &cluster,
+                        self.namespace(spec, &receipt)?,
+                        self.openshift_wait,
+                    )
+                    .await?;
+                    if receipt
+                        .namespace_identity
+                        .is_some_and(|recorded| recorded != identity)
+                    {
+                        return Err(ObservationError::BindingMismatch);
+                    }
+                    receipt.namespace_identity = Some(identity);
+                    receipt.save(&self.state)?;
                 }
                 let material = self.development(spec)?.ensure()?;
                 let namespace = self.target(spec)?.namespace.clone();
-                let cluster = self.cluster(spec);
                 for object in issuer::objects(&material, &spec.name, &namespace) {
                     let address = Owned::new(&object, "");
                     let recorded = receipt
@@ -221,17 +361,34 @@ impl Operations {
                         }
                     }
                 }
-                let mut release = self.release(spec, Some(&material))?;
-                if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    release.identity =
-                        Some(namespace_identity(&cluster, &namespace, self.openshift_wait).await?);
+                receipt.issuer_ready = true;
+                receipt.save(&self.state)?;
+            }
+            GATEWAY_KIND => {
+                let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
+                if self.read_auth(spec, false).await?.running != Some(true) {
+                    return Err(ObservationError::Incomplete);
                 }
-                gateway::install(&release).await?;
+                self.read(spec, prior).await?;
                 let statefulset = self
                     .cluster(spec)
                     .get(&self.statefulset(spec)?)
                     .await?
                     .ok_or(ObservationError::Incomplete)?;
+                let annotations = statefulset.metadata.annotations.as_ref();
+                let annotation = |key: &str| annotations.and_then(|values| values.get(key));
+                if annotation("meta.helm.sh/release-name") != Some(&spec.name)
+                    || annotation("meta.helm.sh/release-namespace")
+                        != Some(&self.target(spec)?.namespace)
+                    || statefulset
+                        .metadata
+                        .labels
+                        .as_ref()
+                        .and_then(|labels| labels.get("app.kubernetes.io/instance"))
+                        != Some(&spec.name)
+                {
+                    return Err(ObservationError::BindingMismatch);
+                }
                 let uid = statefulset
                     .metadata
                     .uid
@@ -328,22 +485,32 @@ impl Operations {
         ))
     }
 
-    /// Remove the gateway release. Storage is retained and never removed.
+    /// Validate the gateway before Helm removes it, or clean up its issuer
+    /// after Helm confirms the release is absent. Storage is always retained.
     pub async fn remove(&self, spec: &Spec, prior: Option<&str>) -> Result<(), ObservationError> {
-        if spec.kind != GATEWAY_KIND {
+        if !matches!(spec.kind.as_str(), AUTH_KIND | GATEWAY_KIND) {
             return Err(ObservationError::BindingMismatch);
         }
-        let current = self.read(spec, prior).await?;
+        let current = self.read_for_removal(spec, prior).await?;
         if current.id.is_none() {
+            if prior.is_some() {
+                return Err(ObservationError::Incomplete);
+            }
             return Ok(());
         }
-        gateway::uninstall(&self.release(spec, None)?).await?;
+        if spec.kind == GATEWAY_KIND {
+            return Ok(());
+        }
+        if current.release_present != Some(false) {
+            return Err(ObservationError::Incomplete);
+        }
         let cluster = self.cluster(spec);
         if cluster.get(&self.statefulset(spec)?).await?.is_some() {
             return Err(ObservationError::Incomplete);
         }
         let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
         receipt.gateway = None;
+        receipt.issuer_ready = false;
         receipt.save(&self.state)?;
         // The issuer goes with the release; its key material stays local.
         while let Some(owned) = receipt.issuer.last().cloned() {
@@ -355,29 +522,23 @@ impl Operations {
     }
 }
 
-/// OpenShift writes a namespace's UID and group ranges shortly after
-/// creating it. Wait a bounded time for them, so the gateway runs as an
-/// identity OpenShift admits; absent ranges mean this is not OpenShift.
+/// OpenShift assigns ranges shortly after creating a namespace. Only the
+/// recorded namespace may supply the identity, and no issuer is written
+/// until the annotation is valid.
 async fn namespace_identity(
     cluster: &Cluster,
-    namespace: &str,
+    namespace: &Owned,
     wait: std::time::Duration,
-) -> Result<gateway::Identity, ObservationError> {
-    let address = Owned {
-        api_version: "v1".into(),
-        kind: "Namespace".into(),
-        namespace: String::new(),
-        name: namespace.into(),
-        uid: String::new(),
-    };
+) -> Result<Identity, ObservationError> {
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         let annotations = cluster
-            .get(&address)
+            .verify(namespace)
             .await?
-            .and_then(|object| object.metadata.annotations)
+            .metadata
+            .annotations
             .unwrap_or_default();
-        if let Some(identity) = gateway::Identity::from_annotations(&annotations) {
+        if let Some(identity) = Identity::from_annotations(&annotations) {
             return Ok(identity);
         }
         if tokio::time::Instant::now() >= deadline {

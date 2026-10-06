@@ -21,9 +21,9 @@ use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Resource kinds a Kubernetes gateway compiles into: the retained storage
-/// and the gateway release that uses it.
+/// NemoClaw resources surrounding the native Helm release.
 pub const STORAGE_KIND: &str = "kubernetes_storage";
+pub const AUTH_KIND: &str = "kubernetes_auth";
 pub const GATEWAY_KIND: &str = "kubernetes_gateway";
 /// Environment names that carry the gateway's generated client credentials
 /// from the runtime stage to the OpenShell provider. Authored references may
@@ -55,7 +55,7 @@ impl Spec {
                 .is_match(value)
         };
         if self.layout != 1
-            || !matches!(self.kind.as_str(), STORAGE_KIND | GATEWAY_KIND)
+            || !matches!(self.kind.as_str(), STORAGE_KIND | AUTH_KIND | GATEWAY_KIND)
             || !identifier(r"^nc-[a-f0-9]{16}-gateway$", &self.name)
             || !identifier(r"^[a-f0-9-]{36}$", &self.owner)
             || !identifier(r"^[a-f0-9]{32}$", &self.generation)
@@ -154,8 +154,6 @@ pub async fn connection(
         let operations = operations::Operations {
             server: server(&cluster)?,
             client: connect(&cluster).await?,
-            helm: "helm".into(),
-            kubeconfig: cluster.kubeconfig.clone(),
             state,
             openshift_wait: operations::OPENSHIFT_WAIT,
         };

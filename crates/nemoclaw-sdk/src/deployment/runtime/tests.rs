@@ -10,22 +10,13 @@ const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {
     let (document, generations) = kubernetes_context();
     let targets = compile::runtime_targets(&document, &generations).unwrap();
-    let bindings: BTreeMap<String, StateBinding> = targets
-        .iter()
-        .map(|target| {
-            (
-                target.address.clone(),
-                StateBinding {
-                    id: format!("physical-{}", target.kind),
-                    spec: target.values["spec"].clone(),
-                    ..Default::default()
-                },
-            )
-        })
-        .collect();
-    let mut plan: Plan = serde_json::from_value(json!({"resource_changes": targets.iter().map(|target| json!({
-        "address":target.address, "change":{"actions":["no-op"], "before":{"id":bindings[&target.address].id, "spec":target.values["spec"], "running":"true"}}
-    })).collect::<Vec<_>>()})).unwrap();
+    let bindings = kubernetes_bindings(&targets);
+    let mut plan: Plan = serde_json::from_value(json!({"resource_changes": targets.iter().map(|target| {
+        let mut before = serde_json::to_value(&target.values).unwrap();
+        before["id"] = json!(bindings[&target.address].id);
+        before["running"] = json!("true");
+        json!({"address":target.address, "change":{"actions":["no-op"], "before":before, "after":before}})
+    }).collect::<Vec<_>>()})).unwrap();
     let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
     assert!(checked.gateway_running);
     assert!(
@@ -372,4 +363,50 @@ fn podman_gateway_replacement_depends_on_protected_storage_in_the_compiled_graph
         graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
         true
     );
+}
+
+fn kubernetes_bindings(targets: &[Target]) -> BTreeMap<String, StateBinding> {
+    targets
+        .iter()
+        .map(|target| {
+            let mut values = serde_json::to_value(&target.values).unwrap();
+            values["id"] = json!(if target.address == crate::kubernetes::gateway::ADDRESS {
+                target.values["name"].clone()
+            } else {
+                format!("physical-{}", target.kind)
+            });
+            (
+                target.address.clone(),
+                serde_json::from_value(values).unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
+    let (document, generations) = kubernetes_context();
+    let targets = compile::runtime_targets(&document, &generations).unwrap();
+    let bindings = kubernetes_bindings(&targets);
+    runtime_bindings(&targets, &bindings).unwrap();
+    for prerequisite in [
+        KUBERNETES_STORAGE,
+        "nemoclaw_kubernetes_auth.runtime",
+        crate::kubernetes::gateway::ADDRESS,
+    ] {
+        let mut missing = bindings.clone();
+        missing.remove(prerequisite);
+        assert!(runtime_bindings(&targets, &missing).is_err());
+    }
+    let mut changed = bindings.clone();
+    changed
+        .get_mut(crate::kubernetes::gateway::ADDRESS)
+        .unwrap()
+        .id = "foreign-release".into();
+    assert!(runtime_bindings(&targets, &changed).is_err());
+    // Interrupted initial installation can retain just storage and authentication.
+    let mut partial = bindings;
+    partial.remove("nemoclaw_kubernetes_gateway.runtime");
+    partial.remove(crate::kubernetes::gateway::ADDRESS);
+    runtime_bindings(&targets, &partial).unwrap();
 }

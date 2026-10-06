@@ -35,8 +35,9 @@ fn runtime_targets_with_plans(
         let settings = document.spec.gateway.as_managed().ok_or(Error::State(
             "managed Kubernetes gateway settings are missing",
         ))?;
-        return [
+        let mut targets = [
             crate::kubernetes::STORAGE_KIND,
+            crate::kubernetes::AUTH_KIND,
             crate::kubernetes::GATEWAY_KIND,
         ]
         .into_iter()
@@ -46,7 +47,15 @@ fn runtime_targets_with_plans(
                 kind: kind.into(),
                 name: format!("{}-gateway", document.workspace()),
                 owner: document.metadata.uid.clone(),
-                generation: generation(generations, kind)?.into(),
+                generation: generation(
+                    generations,
+                    if kind == crate::kubernetes::AUTH_KIND {
+                        crate::kubernetes::GATEWAY_KIND
+                    } else {
+                        kind
+                    },
+                )?
+                .into(),
                 settings: settings.clone(),
             };
             Ok(Target {
@@ -55,7 +64,22 @@ fn runtime_targets_with_plans(
                 values: Row::from([("spec".into(), spec.encode()?)]),
             })
         })
-        .collect();
+        .collect::<Result<Vec<_>, Error>>()?;
+        let namespace = &settings
+            .kubernetes
+            .as_ref()
+            .expect("Kubernetes settings")
+            .namespace;
+        targets.push(Target {
+            kind: "helm_release".into(),
+            address: crate::kubernetes::gateway::ADDRESS.into(),
+            values: Row::from([
+                ("name".into(), format!("{}-gateway", document.workspace())),
+                ("namespace".into(), namespace.clone()),
+                ("chart".into(), crate::kubernetes::gateway::CHART.into()),
+            ]),
+        });
+        return Ok(targets);
     }
     let Some(settings) = document.spec.gateway.as_managed() else {
         return Ok(service_plans.targets().cloned().collect());
@@ -120,7 +144,10 @@ pub(crate) fn runtime_graph(
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});
         let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
-        for target in &targets {
+        for target in targets
+            .iter()
+            .filter(|target| target.kind != "helm_release")
+        {
             let mut attributes =
                 json!({"spec": target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
             attributes["lifecycle"] = json!({"postcondition": [{
@@ -129,12 +156,20 @@ pub(crate) fn runtime_graph(
             }]});
             if target.kind == crate::kubernetes::STORAGE_KIND {
                 attributes["lifecycle"]["prevent_destroy"] = json!(true);
-            } else {
+            } else if target.kind == crate::kubernetes::AUTH_KIND {
                 attributes["depends_on"] = json!(["nemoclaw_kubernetes_storage.runtime"]);
+            } else {
+                attributes["depends_on"] = json!([crate::kubernetes::gateway::ADDRESS]);
             }
             let (kind, name) = target.address.split_once('.').unwrap();
             graph["resource"][kind][name] = attributes;
         }
+        let gateway = targets
+            .iter()
+            .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
+            .expect("Kubernetes gateway target");
+        let spec = crate::kubernetes::Spec::decode(&gateway.values["spec"])?;
+        crate::kubernetes::gateway::configure(&mut graph, &spec)?;
         return Ok((graph, targets));
     }
     // Readiness follows gateway reconciliation, including restart or replacement.

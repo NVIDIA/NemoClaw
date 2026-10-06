@@ -99,6 +99,38 @@ fn documented_state_json_preserves_full_instance_addresses() {
     );
     assert!(!observed.contains_key("docker_container.agent"));
 }
+
+#[test]
+fn native_helm_state_preserves_its_namespace_and_immutable_chart_binding() {
+    let address = "helm_release.gateway";
+    let chart = crate::kubernetes::gateway::CHART;
+    let resource = serde_json::json!({
+        "address": address, "mode": "managed",
+        "values": {"id":"nc-owned", "name":"nc-owned", "namespace":"owned-agents", "chart":chart}
+    });
+    let observed = read(&state(serde_json::json!([resource]))).unwrap();
+    let binding = &observed[address];
+    assert_eq!(binding.id, "nc-owned");
+    assert_eq!(binding.name, "nc-owned");
+    assert_eq!(binding.namespace, "owned-agents");
+    assert_eq!(binding.chart, chart);
+    assert!(
+        binding.spec.is_empty(),
+        "native Helm state has no NemoClaw spec"
+    );
+    for field in ["namespace", "chart"] {
+        let mut invalid = resource.clone();
+        invalid["values"][field] = serde_json::json!(7);
+        assert!(read(&state(serde_json::json!([invalid]))).is_err());
+    }
+    let other = read(&state(serde_json::json!([object(
+        "docker_container.runtime",
+        "container"
+    )])))
+    .unwrap();
+    assert!(other["docker_container.runtime"].namespace.is_empty());
+    assert!(other["docker_container.runtime"].chart.is_empty());
+}
 #[test]
 fn data_observations_do_not_become_managed_bindings() {
     let data = serde_json::json!({"address":"data.example.observed", "mode":"data", "values":{"id":"observation"}});
