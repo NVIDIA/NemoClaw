@@ -1090,7 +1090,7 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
   });
 
   it.for(["fresh", "resume"] as const)(
-    "passes current WSL GPU readiness into managed vLLM selection on %s onboard runs (#12218)",
+    "passes current WSL GPU readiness to the managed vLLM setup boundary on %s onboard runs (#12218)",
     async (run, context) => {
       const called = await runSliceProbe(
         {
