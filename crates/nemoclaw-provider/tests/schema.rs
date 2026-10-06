@@ -165,6 +165,18 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
                 AttributeConstraint::Computed
             ));
         }
+        let gateway_values = schema.block.attributes.get("gateway_values");
+        assert_eq!(
+            gateway_values.is_some(),
+            kind == "kubernetes_auth",
+            "{kind}"
+        );
+        if let Some(gateway_values) = gateway_values {
+            assert!(matches!(
+                gateway_values.constraint,
+                AttributeConstraint::Computed
+            ));
+        }
         let digest = schema.block.attributes.get("digest");
         assert_eq!(digest.is_some(), kind == "ollama_external_model", "{kind}");
         if let Some(digest) = digest {

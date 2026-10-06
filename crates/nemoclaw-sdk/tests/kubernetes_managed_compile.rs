@@ -80,6 +80,42 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
 }
 
 #[test]
+fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let kubernetes = compile_runtime(&document(), &generations, "0.1.0").unwrap();
+    assert_eq!(
+        kubernetes["resource"]["helm_release"]["gateway"]["values"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let openshift = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values = &openshift["resource"]["helm_release"]["gateway"]["values"];
+    assert_eq!(values.as_array().unwrap().len(), 2);
+    assert_eq!(
+        values[1],
+        "${nemoclaw_kubernetes_auth.runtime.gateway_values}"
+    );
+    assert_eq!(
+        values[0],
+        kubernetes["resource"]["helm_release"]["gateway"]["values"][0]
+    );
+}
+
+#[test]
 fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     let document = document();
     let generations = [

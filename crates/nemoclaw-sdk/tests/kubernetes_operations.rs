@@ -19,10 +19,15 @@ const OWNER: &str = "00000000-0000-4000-8000-000000000001";
 const NAME: &str = "nc-0123456789abcdef-gateway";
 
 fn spec(kind: &str) -> Spec {
+    spec_on(kind, "kubernetes")
+}
+
+fn spec_on(kind: &str, provider: &str) -> Spec {
     serde_json::from_value(json!({
         "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
+            "runtime": {"provider": provider},
             "endpoint": "https://127.0.0.1:17671",
             "kubernetes": {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
@@ -151,6 +156,224 @@ async fn storage_and_authentication_are_prepared_before_the_gateway_is_observed(
         .await
         .unwrap();
     assert_eq!(read.running, Some(true));
+}
+
+/// The namespace annotations OpenShift writes when it creates a project.
+fn assign_openshift_range(objects: &Objects) {
+    let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    namespace["metadata"]["annotations"] = json!({
+        "openshift.io/sa.scc.uid-range": "1000680000/10000",
+        "openshift.io/sa.scc.supplemental-groups": "1000690000/10000",
+    });
+    objects.insert(namespace);
+}
+
+#[tokio::test]
+async fn on_openshift_authentication_exports_the_retained_namespace_identity() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    assign_openshift_range(&objects);
+    let response = operations
+        .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let values: serde_json::Value =
+        serde_json::from_str(response.gateway_values.as_deref().unwrap()).unwrap();
+    assert_eq!(values["securityContext"]["runAsUser"], 1_000_680_000);
+    assert_eq!(values["podSecurityContext"]["fsGroup"], 1_000_690_000);
+    assert_eq!(response.running, Some(true));
+    let receipt = Receipt::load(&operations.state, OWNER, NAME)
+        .unwrap()
+        .unwrap();
+    let identity = receipt.namespace_identity.unwrap();
+    assert_eq!(identity.user, 1_000_680_000);
+    assert_eq!(identity.group, 1_000_690_000);
+    let read = operations
+        .read(&spec_on(AUTH_KIND, "openshift"), response.id.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(read.gateway_values, response.gateway_values);
+}
+
+#[tokio::test(start_paused = true)]
+async fn openshift_waits_for_namespace_annotations_before_writing_issuer_objects() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let before = objects.0.lock().unwrap().clone();
+    let spec = spec_on(AUTH_KIND, "openshift");
+    let (response, ()) = tokio::join!(operations.ensure(&spec, None), async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        assert_eq!(*objects.0.lock().unwrap(), before);
+        assign_openshift_range(&objects);
+    });
+    let response = response.unwrap();
+    assert_eq!(response.running, Some(true));
+    let values: serde_json::Value =
+        serde_json::from_str(response.gateway_values.as_deref().unwrap()).unwrap();
+    assert_eq!(values["securityContext"]["runAsUser"], 1_000_680_000);
+}
+
+#[tokio::test]
+async fn a_legacy_openshift_receipt_is_incomplete_until_its_identity_is_recorded() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    assign_openshift_range(&objects);
+    let initial = operations
+        .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let mut receipt = Receipt::load(&operations.state, OWNER, NAME)
+        .unwrap()
+        .unwrap();
+    receipt.namespace_identity = None;
+    receipt.save(&operations.state).unwrap();
+    let legacy = operations
+        .read(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(legacy.running, Some(false));
+    assert_eq!(legacy.gateway_values.as_deref(), Some("{}"));
+    let restored = operations
+        .ensure(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(restored.running, Some(true));
+    assert_eq!(restored.gateway_values, initial.gateway_values);
+    assert!(
+        Receipt::load(&operations.state, OWNER, NAME)
+            .unwrap()
+            .unwrap()
+            .namespace_identity
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn changed_openshift_ranges_block_refresh_but_do_not_block_issuer_removal() {
+    for annotations in [
+        json!({}),
+        json!({"openshift.io/sa.scc.uid-range": "1000700000/10000"}),
+        json!({"openshift.io/sa.scc.uid-range": "malformed"}),
+    ] {
+        let objects = cluster();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path()).await;
+        operations
+            .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+            .await
+            .unwrap();
+        assign_openshift_range(&objects);
+        let initial = operations
+            .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+            .await
+            .unwrap();
+        let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+        namespace["metadata"]["annotations"] = annotations;
+        objects.insert(namespace);
+        assert!(
+            operations
+                .read(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+                .await
+                .is_err()
+        );
+        let removing = operations
+            .read_for_removal(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+            .await
+            .unwrap();
+        assert_eq!(removing.gateway_values, initial.gateway_values);
+        operations
+            .remove(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+            .await
+            .unwrap();
+        assert_eq!(
+            operations
+                .read(&spec_on(STORAGE_KIND, "openshift"), None)
+                .await
+                .unwrap()
+                .running,
+            Some(true)
+        );
+        assert!(
+            Receipt::load(&operations.state, OWNER, NAME)
+                .unwrap()
+                .unwrap()
+                .namespace_identity
+                .is_some()
+        );
+    }
+}
+
+#[tokio::test]
+async fn openshift_identity_never_comes_from_a_replacement_namespace() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    assign_openshift_range(&objects);
+    let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    namespace["metadata"]["uid"] = json!("replacement-namespace");
+    objects.insert(namespace);
+    assert_eq!(
+        operations
+            .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+            .await,
+        Err(ObservationError::BindingMismatch)
+    );
+    assert!(
+        Receipt::load(&operations.state, OWNER, NAME)
+            .unwrap()
+            .unwrap()
+            .issuer
+            .is_empty()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn without_openshift_ranges_authentication_stops_before_writing_issuer_objects() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let before = objects.0.lock().unwrap().clone();
+    let error = operations
+        .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("UID range"), "{error}");
+    assert_eq!(
+        *objects.0.lock().unwrap(),
+        before,
+        "only retained storage exists"
+    );
+    assert_eq!(
+        operations
+            .read_for_removal(&spec_on(AUTH_KIND, "openshift"), None)
+            .await
+            .unwrap()
+            .id,
+        None
+    );
 }
 
 #[tokio::test]

@@ -470,18 +470,17 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 }
 
 /// A full deployment on a real cluster through the public SDK: the managed
-/// gateway, then an agent sandbox from the UID 10001 image. Apply stops at
-/// the agent's health check, which the pinned Fabric reports as unsupported
-/// (#12443); destroy then removes everything but the gateway's storage.
+/// gateway, then an agent sandbox from an image built from this checkout.
+/// Apply stops at the agent's health check, which the pinned Fabric reports
+/// as unsupported (#12443); destroy then removes everything but the
+/// gateway's storage.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the native bundle
 /// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_reaches_its_health_check_and_destroy_keeps_storage() {
+async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
     use nemoclaw_sdk::{CancellationToken, Deployment, Error, config::Document};
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
@@ -496,6 +495,7 @@ async fn an_agent_sandbox_reaches_its_health_check_and_destroy_keeps_storage() {
         &hex[16..20],
         &hex[20..]
     );
+    let namespace = format!("nc-live-{}", &hex[..12]);
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -511,12 +511,12 @@ spec:
   gateway:
     management: managed
     runtime:
-      provider: kubernetes
+      provider: {provider}
     endpoint: https://127.0.0.1:{port}
     kubernetes:
       kubeconfig: {{env: NEMOCLAW_TEST_KUBECONFIG}}
       context: {context}
-      namespace: nc-live-{namespace}
+      namespace: {namespace}
       authentication: {{profile: development}}
   inferenceProviders:
     - name: hosted
@@ -549,7 +549,6 @@ spec:
                     - text
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        namespace = &hex[..12],
         image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
         harness = required("NEMOCLAW_TEST_AGENT_HARNESS"),
     );
@@ -561,10 +560,11 @@ spec:
     );
     let cancel = CancellationToken::new();
 
-    let error = deployment
-        .apply(&document, &cancel)
-        .await
-        .expect_err("the agent's health is unsupported at this Fabric pin");
+    let (applied, ()) = tokio::join!(
+        deployment.apply(&document, &cancel),
+        while_applying(&namespace)
+    );
+    let error = applied.expect_err("the agent's health is unsupported at this Fabric pin");
     match &error {
         Error::Execution {
             postcondition_failures: Some(failures),
@@ -585,4 +585,117 @@ spec:
             change.resource
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
+async fn an_agent_sandbox_reaches_its_health_check_and_destroy_keeps_storage() {
+    deploy_to_the_health_check("kubernetes", async |_| {}).await;
+}
+
+/// The OpenShift profile on kind. kind does not enforce OpenShift's security
+/// policy, but the SDK and OpenShell both read the UID range OpenShift writes
+/// on each namespace, and that works on any cluster. The test writes the
+/// range itself once the namespace exists, as OpenShift would, then checks
+/// that the gateway and the sandbox both ran as its first UID.
+#[tokio::test]
+#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
+async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
+    use k8s_openapi::api::core::v1::{Namespace, Pod};
+    use kube::{
+        Api,
+        api::{ListParams, Patch, PatchParams},
+    };
+    const RANGE: &str = "1000680000/10000";
+    let kubeconfig =
+        kube::config::Kubeconfig::read_from(required("NEMOCLAW_TEST_KUBECONFIG")).unwrap();
+    let options = kube::config::KubeConfigOptions {
+        context: Some(required("NEMOCLAW_TEST_KUBE_CONTEXT")),
+        ..Default::default()
+    };
+    let client = nemoclaw_sdk::kubernetes::client(
+        kube::Config::from_custom_kubeconfig(kubeconfig, &options)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let observed = std::sync::Mutex::new(None::<(Option<i64>, Option<i64>)>);
+    deploy_to_the_health_check("openshift", async |namespace| {
+        // Annotate the namespace as soon as the SDK creates it, as OpenShift
+        // does when a project is created.
+        let namespaces: Api<Namespace> = Api::all(client.clone());
+        let annotation = json!({"metadata": {"annotations": {
+            "openshift.io/sa.scc.uid-range": RANGE,
+            "openshift.io/sa.scc.supplemental-groups": RANGE,
+        }}});
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while namespaces
+            .patch(
+                namespace,
+                &PatchParams::default(),
+                &Patch::Merge(&annotation),
+            )
+            .await
+            .is_err()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the namespace was never created"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        // Read the sandbox's and the gateway's users while they still run.
+        let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        loop {
+            let listed = pods.list(&ListParams::default()).await.unwrap().items;
+            let user = |suffix: &str, container: &str| {
+                listed
+                    .iter()
+                    .find(|pod| {
+                        pod.metadata
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.ends_with(suffix))
+                    })
+                    .and_then(|pod| pod.spec.as_ref())
+                    .map(|spec| {
+                        spec.containers
+                            .iter()
+                            .find(|candidate| candidate.name == container)
+                            .and_then(|found| found.security_context.as_ref())
+                            .and_then(|context| context.run_as_user)
+                            .or_else(|| {
+                                spec.security_context
+                                    .as_ref()
+                                    .and_then(|context| context.run_as_user)
+                            })
+                    })
+            };
+            if let (Some(sandbox), Some(gateway)) = (
+                user("--assistant", "agent"),
+                user("-gateway-0", "openshell-gateway"),
+            ) {
+                *observed.lock().unwrap() = Some((sandbox, gateway));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the sandbox and gateway pods never appeared"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    })
+    .await;
+    let (sandbox, gateway) = observed.into_inner().unwrap().expect("pods observed");
+    assert_eq!(
+        sandbox,
+        Some(1_000_680_000),
+        "the sandbox runs as the namespace's first UID"
+    );
+    assert_eq!(
+        gateway,
+        Some(1_000_680_000),
+        "the gateway runs as the namespace's first UID"
+    );
 }

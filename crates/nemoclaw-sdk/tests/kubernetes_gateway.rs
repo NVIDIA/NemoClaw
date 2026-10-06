@@ -6,7 +6,7 @@
 use nemoclaw_sdk::{
     bundle::Bundle,
     config::ComputeDriver,
-    kubernetes::{GATEWAY_KIND, Spec, gateway},
+    kubernetes::{GATEWAY_KIND, Spec, gateway, gateway::Identity},
 };
 use serde_json::{Value, json};
 use std::{fs, path::Path, time::Duration};
@@ -111,7 +111,7 @@ async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::pro
 
 /// Pull and render the exact OCI digest with the actual bundled provider.
 /// A data source performs no installation and needs no cluster access.
-async fn render(spec: &Spec, chart: &str) -> Option<String> {
+async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<String> {
     let input = std::env::var_os("NEMOCLAW_TEST_BUNDLE")
         .expect("NEMOCLAW_TEST_BUNDLE names a verified bundle");
     let bundle = Bundle::open(Path::new(&input)).unwrap();
@@ -135,6 +135,12 @@ async fn render(spec: &Spec, chart: &str) -> Option<String> {
     let mut values = gateway::values(spec).unwrap();
     // Rendering has no cluster from which to observe this existing prerequisite.
     values["agentSandbox"]["preflight"]["enabled"] = json!(false);
+    let mut chart_values = vec![values.to_string()];
+    if let Some(identity) = identity {
+        // Apply the observed namespace identity as a second values document,
+        // just as the native release receives the authentication resource's output.
+        chart_values.push(identity.values().to_string());
+    }
     let graph = json!({
         "terraform": {"required_providers": {"helm": {
             "source": gateway::PROVIDER_ADDRESS,
@@ -143,7 +149,7 @@ async fn render(spec: &Spec, chart: &str) -> Option<String> {
         "provider": {"helm": {}},
         "data": {"helm_template": {"gateway": {
             "name": spec.name, "namespace": "agents", "chart": chart,
-            "validate": false, "values": [values.to_string()]
+            "validate": false, "values": chart_values
         }}},
         "output": {"manifest": {"value": "${data.helm_template.gateway.manifest}"}}
     });
@@ -192,11 +198,11 @@ async fn render(spec: &Spec, chart: &str) -> Option<String> {
 async fn the_pinned_chart_renders_with_the_sdk_values() {
     let spec = spec();
     let values = gateway::values(&spec).unwrap();
-    let rendered = render(&spec, gateway::CHART)
+    let rendered = render(&spec, gateway::CHART, None)
         .await
         .expect("the pinned chart renders");
     assert!(
-        rendered.contains("runAsUser: 1000"),
+        rendered.contains("runAsUser: 1000\n"),
         "Kubernetes keeps the chart's gateway UID"
     );
     let pinned = format!(
@@ -217,7 +223,7 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
         "0".repeat(64)
     );
     assert!(
-        render(&spec, &unavailable).await.is_none(),
+        render(&spec, &unavailable, None).await.is_none(),
         "the provider refuses an unavailable chart digest"
     );
 }
@@ -228,10 +234,69 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
 async fn on_openshift_the_gateway_takes_the_namespace_uid() {
     let mut spec = spec();
     spec.settings.runtime.provider = ComputeDriver::OpenShift;
-    let rendered = render(&spec, gateway::CHART)
+    let identity = Identity {
+        user: 1_000_680_000,
+        group: 1_000_690_000,
+    };
+    let rendered = render(&spec, gateway::CHART, Some(identity))
         .await
         .expect("the pinned chart renders");
-    assert!(!rendered.contains("runAsUser:"), "{rendered}");
-    assert!(!rendered.contains("fsGroup:"), "{rendered}");
+    assert!(rendered.contains("runAsUser: 1000680000"), "{rendered}");
+    assert!(rendered.contains("fsGroup: 1000690000"), "{rendered}");
+    assert!(!rendered.contains("runAsUser: 1000\n"));
     assert!(rendered.contains("runAsNonRoot: true"));
+}
+
+#[test]
+fn the_namespace_identity_is_the_first_uid_and_group_of_its_ranges() {
+    let annotations = |uid: &str, groups: Option<&str>| {
+        let mut map = std::collections::BTreeMap::from([(
+            "openshift.io/sa.scc.uid-range".to_owned(),
+            uid.to_owned(),
+        )]);
+        if let Some(groups) = groups {
+            map.insert(
+                "openshift.io/sa.scc.supplemental-groups".into(),
+                groups.into(),
+            );
+        }
+        map
+    };
+    assert_eq!(
+        Identity::from_annotations(&annotations("1000680000/10000", Some("1000690000/10000"))),
+        Some(Identity {
+            user: 1_000_680_000,
+            group: 1_000_690_000,
+        })
+    );
+    assert_eq!(
+        Identity::from_annotations(&annotations("1000680000/10000", None)),
+        Some(Identity {
+            user: 1_000_680_000,
+            group: 1_000_680_000,
+        }),
+        "without supplemental groups, the group is the user's"
+    );
+    for bad in [
+        "",
+        "0/10000",
+        "1000680000",
+        "x/1",
+        "-1/10000",
+        "1000680000/0",
+        "4294967295/2",
+        "1000680000/10000/1",
+    ] {
+        assert_eq!(
+            Identity::from_annotations(&annotations(bad, None)),
+            None,
+            "invalid UID range {bad:?}"
+        );
+        assert_eq!(
+            Identity::from_annotations(&annotations("1000680000/10000", Some(bad))),
+            None,
+            "invalid supplemental group range {bad:?} must not fall back to the UID"
+        );
+    }
+    assert_eq!(Identity::from_annotations(&Default::default()), None);
 }

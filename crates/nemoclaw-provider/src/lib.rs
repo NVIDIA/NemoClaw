@@ -75,6 +75,15 @@ pub fn plan_update(
                 .cloned()
                 .unwrap_or(Value::Unknown),
         );
+        let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
+        proposed.insert(
+            "gateway_values".into(),
+            prior
+                .get("gateway_values")
+                .filter(|_| prepared)
+                .cloned()
+                .unwrap_or(Value::Unknown),
+        );
     }
     let authentication_changed = definition.kind == "provider"
         && authentication_mode(prior) != authentication_mode(&proposed);

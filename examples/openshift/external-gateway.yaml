@@ -3,6 +3,8 @@
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 # Supply a unique deployment UID, an accessible digest-selected image for every agent,
 # and an inference endpoint reachable from inside each OpenShift sandbox.
+# Write each image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -29,10 +31,9 @@ spec:
   sandboxes:
     - name: assistant
       # Use an immutable image with runtime files readable by namespace-assigned UIDs.
-      # The openclaw-openshift build target provides empty read-only workspace seeds.
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
@@ -43,7 +44,7 @@ spec:
     - name: researcher
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
@@ -54,7 +55,7 @@ spec:
     - name: reviewer
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:

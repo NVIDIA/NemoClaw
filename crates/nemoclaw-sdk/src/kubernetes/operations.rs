@@ -11,6 +11,7 @@ use super::{
     AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
     auth::Development,
     cluster::{Cluster, Owned},
+    gateway::Identity,
     issuer,
     receipt::Receipt,
     storage::{Storage, ensure_storage},
@@ -32,6 +33,8 @@ pub struct Response {
     /// Whether Kubernetes still holds a Helm release record. Only the
     /// authentication resource supplies this independent observation.
     pub release_present: Option<bool>,
+    /// Non-secret chart overrides observed before Helm installs the gateway.
+    pub gateway_values: Option<String>,
 }
 
 /// Cluster access and local paths for one deployment's operations.
@@ -81,6 +84,24 @@ impl Operations {
 
     fn receipt(&self, spec: &Spec) -> Result<Option<Receipt>, ObservationError> {
         Receipt::load(&self.state, &spec.owner, &spec.name)
+    }
+
+    fn namespace<'a>(
+        &self,
+        spec: &Spec,
+        receipt: &'a Receipt,
+    ) -> Result<&'a Owned, ObservationError> {
+        let target = self.target(spec)?;
+        receipt
+            .objects
+            .iter()
+            .find(|owned| {
+                owned.api_version == "v1"
+                    && owned.kind == "Namespace"
+                    && owned.name == target.namespace
+                    && owned.namespace.is_empty()
+            })
+            .ok_or(ObservationError::Incomplete)
     }
 
     /// The gateway StatefulSet the chart creates, named after the release.
@@ -172,10 +193,33 @@ impl Operations {
         // Ordinary refresh must stop before Helm can recreate a missing
         // StatefulSet or change one with a substituted identity.
         self.read_gateway(spec, removing).await?;
+        let openshift = spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift;
+        if openshift
+            && !removing
+            && !receipt.issuer.is_empty()
+            && let Some(recorded) = receipt.namespace_identity
+        {
+            let namespace = cluster.verify(self.namespace(spec, &receipt)?).await?;
+            let identity =
+                Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
+            if identity != Some(recorded) {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
+        // Receipts written before namespace identities were recorded need
+        // reconciliation before their values may reach Helm. Teardown only
+        // needs the stored identity, including after annotations disappear.
+        let identity_ready = !openshift || receipt.namespace_identity.is_some();
+        let values = if openshift {
+            receipt.namespace_identity.map(Identity::values)
+        } else {
+            None
+        };
         Ok(Response {
             id: receipt.issuer.first().map(|owned| owned.uid.clone()),
-            running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready),
+            running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready && identity_ready),
             release_present: Some(self.release_present(spec).await?),
+            gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
         })
     }
 
@@ -276,9 +320,21 @@ impl Operations {
                     return Err(ObservationError::Incomplete);
                 }
                 self.read(spec, prior).await?;
+                let cluster = self.cluster(spec);
+                if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+                    let identity =
+                        namespace_identity(&cluster, self.namespace(spec, &receipt)?).await?;
+                    if receipt
+                        .namespace_identity
+                        .is_some_and(|recorded| recorded != identity)
+                    {
+                        return Err(ObservationError::BindingMismatch);
+                    }
+                    receipt.namespace_identity = Some(identity);
+                    receipt.save(&self.state)?;
+                }
                 let material = self.development(spec)?.ensure()?;
                 let namespace = self.target(spec)?.namespace.clone();
-                let cluster = self.cluster(spec);
                 for object in issuer::objects(&material, &spec.name, &namespace) {
                     let address = Owned::new(&object, "");
                     let recorded = receipt
@@ -454,5 +510,32 @@ impl Operations {
             receipt.save(&self.state)?;
         }
         Ok(())
+    }
+}
+
+/// OpenShift assigns ranges shortly after creating a namespace. Only the
+/// recorded namespace may supply the identity, and no issuer is written
+/// until the annotation is valid.
+async fn namespace_identity(
+    cluster: &Cluster,
+    namespace: &Owned,
+) -> Result<Identity, ObservationError> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let annotations = cluster
+            .verify(namespace)
+            .await?
+            .metadata
+            .annotations
+            .unwrap_or_default();
+        if let Some(identity) = Identity::from_annotations(&annotations) {
+            return Ok(identity);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ObservationError::Backend(
+                "OpenShift did not assign the namespace a UID range; check that this is an OpenShift cluster; resources retained",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }

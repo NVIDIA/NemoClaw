@@ -55,6 +55,9 @@ pub struct Receipt {
     /// Set after every issuer object exists and its identity is recorded.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub issuer_ready: bool,
+    /// The OpenShift identity assigned to the retained namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_identity: Option<super::gateway::Identity>,
     /// Set while a Helm release exists for the gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,

@@ -69,8 +69,8 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         },
         ResourceSchema {
             kind: crate::kubernetes::AUTH_KIND,
-            fields: &["spec", "running", "release_present"],
-            mutable: &["running", "release_present"],
+            fields: &["spec", "running", "release_present", "gateway_values"],
+            mutable: &["running", "release_present", "gateway_values"],
         },
         ResourceSchema {
             kind: "ollama_proxy_storage",

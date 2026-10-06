@@ -5,6 +5,7 @@
 
 use super::Spec;
 use crate::{Error, artifact_pins as pins};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const CHART: &str = pins::GATEWAY_CHART;
@@ -13,6 +14,42 @@ pub use pins::HELM_PROVIDER_VERSION as PROVIDER_VERSION;
 pub const ADDRESS: &str = "helm_release.gateway";
 pub const KUBECONFIG_VARIABLE: &str = "nemoclaw_kubeconfig";
 pub const KUBECONFIG_ENV: &str = "TF_VAR_nemoclaw_kubeconfig";
+
+/// The user and group OpenShift assigns a namespace's pods.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Identity {
+    pub user: u32,
+    pub group: u32,
+}
+
+impl Identity {
+    /// Read the first UID and supplemental group from OpenShift's START/SIZE
+    /// ranges, using the UID when no supplemental-group range is present.
+    pub fn from_annotations(
+        annotations: &std::collections::BTreeMap<String, String>,
+    ) -> Option<Self> {
+        let first = |key: &str| {
+            let (start, size) = annotations.get(key)?.split_once('/')?;
+            let (start, size) = (start.parse::<u32>().ok()?, size.parse::<u32>().ok()?);
+            (start > 0 && size > 0 && start.checked_add(size).is_some()).then_some(start)
+        };
+        let user = first("openshift.io/sa.scc.uid-range")?;
+        let group = match annotations.get("openshift.io/sa.scc.supplemental-groups") {
+            Some(_) => first("openshift.io/sa.scc.supplemental-groups")?,
+            None => user,
+        };
+        Some(Self { user, group })
+    }
+
+    /// Non-secret values resolved before the Helm release can be installed.
+    pub fn values(self) -> Value {
+        json!({
+            "securityContext": {"runAsUser": self.user},
+            "podSecurityContext": {"fsGroup": self.group},
+        })
+    }
+}
 
 /// Non-secret chart values. The issuer's keys and certificates stay in its
 /// separately owned files and Kubernetes objects, never in Helm values/state.
@@ -26,7 +63,7 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         json!({"registry": "", "repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"})
     };
     let name = &spec.name;
-    let mut values = json!({
+    let values = json!({
         "fullnameOverride": name,
         "global": {"image": {"registry": ""}},
         "gateway": {"image": image(pins::DEFAULT_GATEWAY_IMAGE)},
@@ -54,12 +91,6 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
-    if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-        // OpenShift assigns a namespace UID. Null removes the chart's fixed
-        // user and group while retaining its other security settings.
-        values["securityContext"] = json!({"runAsUser": null});
-        values["podSecurityContext"] = json!({"fsGroup": null});
-    }
     Ok(values)
 }
 
@@ -88,11 +119,17 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
             "config_context": literal(&target.context),
         },
     });
+    let mut release_values = vec![literal(&values(spec)?.to_string())];
+    if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+        // This expression stays unknown until namespace identity preparation
+        // succeeds; it must not be escaped as authored literal chart values.
+        release_values.push("${nemoclaw_kubernetes_auth.runtime.gateway_values}".into());
+    }
     graph["resource"]["helm_release"]["gateway"] = json!({
         "name": literal(&spec.name),
         "namespace": literal(&target.namespace),
         "chart": CHART,
-        "values": [literal(&values(spec)?.to_string())],
+        "values": release_values,
         "create_namespace": false,
         "take_ownership": false,
         "upgrade_install": false,
