@@ -829,6 +829,10 @@ def main(argv: list[str]) -> int:
         if (
             native_guard is not None
             and argv not in (["-h"], ["--help"], ["--version"], ["-V"], ["chat", "-h"], ["chat", "--help"])
+            # The exact restart control command must reach the supervisor after
+            # rebuild restores the home but before startup reconciles its hashes.
+            # Replacement startup and direct gateway run still validate the route.
+            and argv != ["gateway", "restart"]
             and (argv[:1] == ["gateway"] or _parse_managed_invocation(argv, adapter) is not None)
         ):
             python3 = _resolve_trusted_python3()

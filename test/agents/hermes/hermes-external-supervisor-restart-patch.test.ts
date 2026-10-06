@@ -17,9 +17,14 @@ import types
 
 events = []
 scenario = sys.argv[1]
+import subprocess
+def native_guard_run(argv, *, check):
+    events.append(["native-guard", argv[2:]])
+    return types.SimpleNamespace(returncode={"invalid": 1, "unavailable": 2}.get(scenario, 0))
+subprocess.run = native_guard_run
 
 status = types.ModuleType("gateway.status")
-status.get_running_pid = lambda: None if scenario == "missing" else 4321
+status.get_running_pid = lambda: None if scenario in ("missing", "invalid", "unavailable") else 4321
 gateway = types.ModuleType("gateway")
 gateway.status = status
 sys.modules["gateway"] = gateway
@@ -188,6 +193,36 @@ describe("Hermes external-supervisor restart patch", () => {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["invalid", 1],
+    ["unavailable", 2],
+  ] as const)(
+    "refuses missing-supervisor fallback when native validation is %s",
+    (scenario, status) => {
+      const { gatewayPath, temporaryRoot } = writeFixture();
+      try {
+        expect(patch(gatewayPath).status).toBe(0);
+        const result = run(gatewayPath, scenario);
+        expect(result.status).toBe(status);
+        expect(lastJson(result.stdout).events).toContainEqual([
+          "native-guard",
+          [
+            "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+            "native-inference-credential",
+            "--hermes-dir",
+            "/sandbox/.hermes",
+            "--hash-file",
+            "/etc/nemoclaw/hermes.config-hash",
+          ],
+        ]);
+        expect(lastJson(result.stdout).events).not.toContainEqual(["manual-stop"]);
+        expect(lastJson(result.stdout).events).not.toContainEqual(["manual-start", 0, false]);
+      } finally {
+        fs.rmSync(temporaryRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails instead of falling through when the supervised gateway does not exit", () => {
     const { gatewayPath, temporaryRoot } = writeFixture();
