@@ -37,6 +37,95 @@ fn state(row: Row) -> State {
 }
 
 #[tokio::test]
+async fn kubernetes_storage_absence_and_destroy_preserve_its_binding() {
+    let resource = ResourceAdapter::new(
+        Definition::new("kubernetes_storage", &["spec", "running"], &["running"]),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let prior = state(Row::from([
+        ("id".into(), "namespace-and-storage-binding".into()),
+        ("spec".into(), "retained-spec".into()),
+        ("running".into(), "false".into()),
+    ]));
+    for destroying in [false, true] {
+        resource
+            .destroying
+            .store(destroying, std::sync::atomic::Ordering::Release);
+        let mut diagnostics = Diagnostics::default();
+        let observed = resource
+            .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(observed.0, prior);
+        assert!(!diagnostics.errors.is_empty());
+        let mut diagnostics = Diagnostics::default();
+        assert!(
+            resource
+                .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await
+                .is_none()
+        );
+        assert!(!diagnostics.errors.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
+    use nemoclaw_sdk::{compile, config::Document};
+    let document = Document::parse(
+        include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+    )
+    .unwrap();
+    let generations = ["kubernetes_storage", "kubernetes_gateway"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let spec = compile::runtime_targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.kind == "kubernetes_storage")
+        .unwrap()
+        .values["spec"]
+        .clone();
+    let resource = ResourceAdapter::new(
+        Definition::new("kubernetes_storage", &["spec", "running"], &["running"]),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let prior = state(Row::from([
+        ("id".into(), "retained-storage".into()),
+        ("spec".into(), spec),
+        ("running".into(), "false".into()),
+    ]));
+    for destroying in [false, true] {
+        resource
+            .destroying
+            .store(destroying, std::sync::atomic::Ordering::Release);
+        let mut diagnostics = Diagnostics::default();
+        let planned = resource
+            .plan_update(
+                &mut diagnostics,
+                prior.clone(),
+                prior.clone(),
+                prior.clone(),
+                Value::Null,
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+        assert!(planned.2.is_empty());
+        assert_eq!(planned.0["id"], prior["id"]);
+        assert_eq!(
+            planned.0["running"],
+            if destroying {
+                Value::Value("false".into())
+            } else {
+                Value::Unknown
+            }
+        );
+    }
+}
+
+#[tokio::test]
 async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_is_unknown() {
     let resource = ResourceAdapter::new(
         Definition::new(

@@ -73,6 +73,8 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
+        "kubernetes_storage",
+        "kubernetes_gateway",
     ] {
         assert!(resources.contains_key(name));
     }
@@ -101,6 +103,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "tls_certificate_env",
         "tls_key_env",
         "destroy",
+        "platform_only",
     ] {
         assert!(schema.block.attributes.contains_key(name));
     }

@@ -102,6 +102,7 @@ mod gateway;
 pub mod hardware;
 mod hardware_data;
 mod inference_discovery;
+pub mod kubernetes;
 mod provider;
 mod readiness;
 mod runtime_image;

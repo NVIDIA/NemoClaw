@@ -81,6 +81,9 @@ impl ResourceAdapter {
     }
 
     fn protected_binding(&self) -> bool {
+        if self.definition.kind == nemoclaw_sdk::kubernetes::STORAGE_KIND {
+            return true;
+        }
         match openshell_lifecycle(self.definition.kind) {
             Some(OpenShellLifecycle::Retained) => true,
             Some(OpenShellLifecycle::Stateful) => !self.destroying.load(Ordering::Acquire),
@@ -427,11 +430,22 @@ impl Resource for ResourceAdapter {
         }
         self.check_plan(diags, &proposed, &config, Some(&prior))
             .await?;
-        let (state, replacements) = plan_update(&self.definition, &prior, proposed);
-        if matches!(
+        let (mut state, replacements) = plan_update(&self.definition, &prior, proposed);
+        if self.destroying.load(Ordering::Acquire)
+            && self.definition.kind == nemoclaw_sdk::kubernetes::STORAGE_KIND
+            && let Some(running) = prior.get("running")
+        {
+            // Teardown retains incomplete platform storage without retrying its
+            // installation. Ordinary apply still reconciles running:false.
+            state.insert("running".into(), running.clone());
+        }
+        if (matches!(
             openshell_lifecycle(self.definition.kind),
             Some(OpenShellLifecycle::Retained | OpenShellLifecycle::Stateful)
-        ) && !replacements.is_empty()
+        ) || matches!(
+            self.definition.kind,
+            nemoclaw_sdk::kubernetes::STORAGE_KIND | nemoclaw_sdk::kubernetes::GATEWAY_KIND
+        )) && !replacements.is_empty()
         {
             let name = match prior.get("name") {
                 Some(Value::Value(name)) => name.as_str(),

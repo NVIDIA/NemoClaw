@@ -100,6 +100,25 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
     client(config)
 }
 
+/// The API server URL the target's context selects.
+pub fn server(target: &ClusterTarget) -> Result<String, ObservationError> {
+    let kubeconfig =
+        Kubeconfig::read_from(&target.kubeconfig).map_err(|_| ObservationError::Authentication)?;
+    let context = kubeconfig
+        .contexts
+        .iter()
+        .find(|context| context.name == target.context)
+        .and_then(|context| context.context.as_ref())
+        .ok_or(ObservationError::Authentication)?;
+    kubeconfig
+        .clusters
+        .iter()
+        .find(|cluster| cluster.name == context.cluster)
+        .and_then(|cluster| cluster.cluster.as_ref())
+        .and_then(|cluster| cluster.server.clone())
+        .ok_or(ObservationError::Authentication)
+}
+
 /// A client for `config`. The workspace links both rustls providers, so one
 /// must be chosen; the provider binary installs ring at startup, and this
 /// covers every other caller.
