@@ -294,6 +294,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                         rule["enum"] = json!([DEFAULT_GATEWAY_IMAGE]);
                     }
                 }
+                // A default only annotates; the Kubernetes branch still
+                // excludes these fields. Editors and onboarding read a field's
+                // default from its own schema, not from a conditional branch.
+                if let Some(default) = rule.get("default").cloned() {
+                    property(gateway, field, json!({"default": default}));
+                }
                 local["properties"][field] = rule;
                 property(
                     gateway,

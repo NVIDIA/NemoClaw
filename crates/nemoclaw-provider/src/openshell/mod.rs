@@ -32,21 +32,7 @@ pub const CREDENTIAL: &str = "nemoclaw.nvidia.com/credential-env";
 pub const AGENT: &str = "nemoclaw.nvidia.com/agent";
 pub const AGENT_RUNTIME: &str = "nemoclaw.nvidia.com/agent-runtime";
 
-fn remote_error(status: &tonic::Status) -> ObservationError {
-    match status.code() {
-        tonic::Code::Unauthenticated => ObservationError::Authentication,
-        tonic::Code::PermissionDenied => ObservationError::Permission,
-        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => {
-            ObservationError::Transport
-        }
-        // A lazy tonic Channel reports connector failures as Unknown with this
-        // fixed message before an RPC reaches the server.
-        tonic::Code::Unknown if status.message() == "transport error" => {
-            ObservationError::Transport
-        }
-        _ => ObservationError::Query,
-    }
-}
+use nemoclaw_discovery::gateway::remote_error;
 fn sdk_error(error: openshell_sdk::SdkError) -> ObservationError {
     if let Some(status) = error.grpc_status() {
         return remote_error(status);

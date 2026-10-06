@@ -191,8 +191,8 @@ pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
     Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
-    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, Progress, ResourceInventoryEntry,
-    ResourceSource, StepOutcome,
+    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, PlanObservation, Progress,
+    ReportedObservation, ResourceInventoryEntry, ResourceSource, StepOutcome,
 };
 
 pub mod managed;
@@ -208,9 +208,7 @@ pub use download::{ByteProgress, DownloadPhase, DownloadProgress};
 
 mod docker_compute;
 
-pub mod discovery_session;
-
-/// Read-only capability observations for authoring and planning.
+/// What a deployment needs to know about its target, and what each read reports.
 pub mod discovery;
 
 mod discovery_graph;

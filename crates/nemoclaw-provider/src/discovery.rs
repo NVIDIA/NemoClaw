@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::engine_observation::{observe_engine, observe_fabric};
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
+use nemoclaw_discovery::{judge_image, observe_engine, observe_fabric};
 use nemoclaw_sdk::{
     discovery::DiscoveryRequest, discovery::ObservationStatus,
     fabric_capabilities::FabricRequirements, fabric_capabilities::Support,
-    fabric_capabilities::assess_image,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -308,14 +307,13 @@ impl DataSource for DiscoveryDataSource {
                             Value::Value(serde_json::to_string(binding.binaries()).ok()?);
                     }
                 }
-                observation.compatibility = Some(assess_image(
-                    observation.catalog.as_ref(),
-                    &requirements,
-                    &observation.image,
+                judge_image(
+                    &mut observation,
                     image,
+                    &requirements,
                     known(&config.architecture),
                     known(&config.operating_system),
-                ));
+                );
             }
             config.compatibility_status = Value::Value(
                 match observation

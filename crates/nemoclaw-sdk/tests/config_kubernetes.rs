@@ -62,6 +62,29 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
     }
 }
 
+/// Editors and onboarding read a field's default from its own schema, so a
+/// managed local gateway's defaults stay there even though a Kubernetes
+/// target excludes those fields.
+#[test]
+fn a_managed_gateway_schema_still_states_its_local_defaults() {
+    let schema = schema::input_schema();
+    let managed = schema["$defs"]["Gateway"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["management"]["const"] == "managed")
+        .unwrap();
+    assert_eq!(
+        managed["properties"]["engine"]["default"],
+        "unix:///var/run/docker.sock"
+    );
+    assert_eq!(
+        managed["properties"]["endpoint"]["default"],
+        "http://127.0.0.1:17681"
+    );
+    assert!(managed["properties"]["image"]["default"].is_string());
+}
+
 #[test]
 fn kubernetes_sandboxes_must_name_their_image_metadata() {
     // No local engine can be inspected, so each image's metadata bundle is

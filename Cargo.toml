@@ -2,6 +2,7 @@
 members = [
     "crates/nemoclaw-sdk",
     "crates/nemoclaw-authoring",
+    "crates/nemoclaw-discovery",
     "crates/nemoclaw-provider",
     "crates/nemoclaw-e2e",
     "crates/nemoclaw-cli",

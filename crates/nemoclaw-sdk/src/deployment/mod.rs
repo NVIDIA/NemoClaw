@@ -9,8 +9,8 @@ mod export;
 mod plan;
 mod reporting;
 pub use reporting::{
-    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, ResourceInventoryEntry,
-    ResourceSource,
+    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, PlanObservation,
+    ReportedObservation, ResourceInventoryEntry, ResourceSource,
 };
 mod runtime;
 mod timing;
@@ -388,7 +388,7 @@ impl Deployment {
                 crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
             result.deferred = if discovery.observations.is_empty() {
                 let mut deferred = runtime_discovery;
-                deferred.extend(plan.discovery_deferred());
+                deferred.extend(plan.discovery_deferred(&discovery));
                 deferred
             } else {
                 discovery.deferred()

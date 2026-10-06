@@ -7,6 +7,7 @@ pub(crate) mod constraints;
 pub mod credential_metadata;
 mod engine_endpoint;
 mod execution;
+pub use constraints::GATEWAY_ENGINE;
 pub use engine_endpoint::validate_engine_endpoint;
 pub(crate) mod integration_policy;
 mod integrations;

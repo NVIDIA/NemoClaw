@@ -388,42 +388,23 @@ pub(super) fn check_destroy_plan(
 }
 
 impl Plan {
-    pub(super) fn discovery_deferred(&self) -> Vec<String> {
-        let observations = self.discovery_values();
-        if observations.is_empty()
+    /// Prerequisites `report`, this plan's discovery, leaves unresolved. A
+    /// discovery output OpenTofu cannot compute yet has no reads to classify.
+    pub(super) fn discovery_deferred(&self, report: &DiscoveryReport) -> Vec<String> {
+        let mut deferred = report.deferred();
+        if report.observations.is_empty()
             && self.planned_values.pointer("/outputs/discovery").is_some()
             && self
                 .planned_values
                 .pointer("/outputs/discovery/value")
                 .is_none()
         {
-            return vec![
+            deferred.push(
                 "Target discovery remains unknown until its provider inputs can be resolved."
                     .into(),
-            ];
+            );
         }
-        observations
-            .iter()
-            .filter_map(|(name, value)| {
-                // Catalogs and apply-time readiness do not gate resource planning.
-                if matches!(super::reporting::category(name), "inference" | "service") {
-                    return None;
-                }
-                let observation = value
-                    .as_str()
-                    .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok());
-                let resolved = observation.as_ref().is_some_and(|value| {
-                    value["status"] == "available"
-                        && (name != "gateway" || value["compatible"] == true)
-                        && (!name.starts_with("sandbox_")
-                            || value["compatibility"]["status"] == "supported")
-                });
-                if resolved {
-                    return None;
-                }
-                Some(super::reporting::unverified_message(name))
-            })
-            .collect()
+        deferred
     }
 }
 
@@ -610,8 +591,42 @@ mod native_helm_tests {
 }
 
 #[cfg(test)]
-mod discovery_tests {
+pub(super) mod discovery_tests {
     use super::*;
+    use crate::discovery::{
+        EngineObservation, FabricObservation, GatewayObservation, ObservationStatus,
+    };
+
+    /// The deferrals a plan reports, as `plan` and `apply` compute them.
+    pub(in crate::deployment) fn deferred(plan: &Plan) -> Vec<String> {
+        let report = plan
+            .discovery_report(
+                DiscoveryScope::Deployment,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+            )
+            .unwrap();
+        plan.discovery_deferred(&report)
+    }
+
+    pub(in crate::deployment) fn encoded(observation: impl serde::Serialize) -> String {
+        serde_json::to_string(&observation).unwrap()
+    }
+
+    pub(in crate::deployment) fn available_engine() -> EngineObservation {
+        EngineObservation {
+            status: ObservationStatus::Available,
+            ..EngineObservation::unknown("")
+        }
+    }
+
+    pub(in crate::deployment) fn gateway(compatible: bool) -> GatewayObservation {
+        GatewayObservation {
+            status: ObservationStatus::Available,
+            compatible: Some(compatible),
+            ..GatewayObservation::unknown("")
+        }
+    }
 
     #[test]
     fn an_unknown_discovery_output_cannot_make_the_plan_complete() {
@@ -619,20 +634,24 @@ mod discovery_tests {
             "planned_values": {"outputs": {"discovery": {"sensitive": false}}}
         }))
         .unwrap();
-        assert!(!plan.discovery_deferred().is_empty());
+        assert!(!deferred(&plan).is_empty());
     }
 
     #[test]
     fn unknown_and_absent_image_evidence_remain_unresolved_without_exposing_raw_diagnostics() {
+        let absent = FabricObservation {
+            status: ObservationStatus::Unavailable,
+            ..FabricObservation::unknown("")
+        };
         let plan: Plan = serde_json::from_value(json!({
             "planned_values": {"outputs": {"discovery": {"value": {
-                "engine": "{\"status\":\"available\"}",
-                "sandbox_0": "{\"status\":\"unknown\",\"reason\":\"secret-sentinel\"}",
-                "sandbox_1": "{\"status\":\"unavailable\"}"
+                "engine": encoded(available_engine()),
+                "sandbox_0": encoded(FabricObservation::unknown("secret-sentinel")),
+                "sandbox_1": encoded(absent)
             }}}}
         }))
         .unwrap();
-        let deferred = plan.discovery_deferred();
+        let deferred = deferred(&plan);
         assert_eq!(deferred.len(), 2);
         assert!(deferred.iter().all(|message| message.contains("Fabric")));
         assert!(!format!("{deferred:?}").contains("secret-sentinel"));
@@ -665,8 +684,11 @@ mod reporting_tests {
     }
     #[test]
     fn unknown_gateway_preserves_hardware_deferrals_without_blocking_on_catalogs() {
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
-        let messages = plan.discovery_deferred();
+        use super::discovery_tests::{deferred, encoded};
+        let catalog = encoded(crate::inference_discovery::EndpointObservation::unknown(""));
+        let hardware = encoded(crate::hardware_discovery::HardwareObservation::unknown());
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":catalog}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":hardware}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
+        let messages = deferred(&plan);
         assert!(!messages.iter().any(|message| message.contains("Inference")));
         assert!(messages.iter().any(|message| message.contains("hardware")));
         assert!(messages.iter().any(|message| message.contains("Gateway")));
@@ -678,8 +700,19 @@ mod nested_discovery_tests {
     use super::*;
     #[test]
     fn a_readable_image_is_not_a_verified_fabric_configuration() {
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"value":{"sandbox_0":"{\"status\":\"available\",\"compatibility\":{\"status\":\"unknown\"}}","gateway":"{\"status\":\"available\",\"compatible\":false}"}}}}})).unwrap();
-        let deferred = plan.discovery_deferred();
+        use super::discovery_tests::{deferred, encoded, gateway};
+        use crate::fabric_capabilities::{CompatibilityReport, Support};
+        let readable = crate::discovery::FabricObservation {
+            status: crate::discovery::ObservationStatus::Available,
+            compatibility: Some(CompatibilityReport {
+                status: Support::Unknown,
+                adapter_id: None,
+                checks: Vec::new(),
+            }),
+            ..crate::discovery::FabricObservation::unknown("")
+        };
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"value":{"sandbox_0":encoded(readable),"gateway":encoded(gateway(false))}}}}})).unwrap();
+        let deferred = deferred(&plan);
         assert_eq!(deferred.len(), 2);
         assert!(deferred.iter().any(|message| message.contains("Fabric")));
         assert!(deferred.iter().any(|message| message.contains("Gateway")));

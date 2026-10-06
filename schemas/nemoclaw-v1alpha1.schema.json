@@ -474,16 +474,19 @@
           },
           "properties": {
             "endpoint": {
+              "default": "http://127.0.0.1:17681",
               "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
             },
             "engine": {
+              "default": "unix:///var/run/docker.sock",
               "description": "Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
             },
             "image": {
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
               "description": "Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."

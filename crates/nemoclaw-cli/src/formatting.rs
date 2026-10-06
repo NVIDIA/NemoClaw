@@ -393,7 +393,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             .observations
             .values()
             .filter_map(|observation| {
-                if let nemoclaw_sdk::DiscoveryObservation::Inference(observation) = observation {
+                if let nemoclaw_sdk::ReportedObservation::Discovery(
+                    nemoclaw_sdk::DiscoveryObservation::Inference(observation),
+                ) = observation
+                {
                     Some(observation)
                 } else {
                     None
@@ -424,23 +427,20 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         if context.verbose {
             for (name, observation) in &result.discovery.observations {
                 use nemoclaw_sdk::{
-                    DiscoveryObservation as Observation, discovery::ObservationStatus,
+                    PlanObservation as Plan, ReportedObservation as Observation,
+                    discovery::ObservationStatus,
                 };
                 let status = match observation {
-                    Observation::Engine(value) => Some(value.status),
-                    Observation::Hardware(value) => Some(value.status),
-                    Observation::Fabric(value) => Some(value.status),
-                    Observation::Inference(value) => Some(value.status),
-                    Observation::RuntimeImage(value) => Some(value.status),
-                    Observation::Gateway(value) => Some(value.status),
-                    Observation::Service { ready, .. } => ready.map(|value| {
+                    Observation::Discovery(value) => Some(value.status()),
+                    Observation::Plan(Plan::RuntimeImage(value)) => Some(value.status),
+                    Observation::Plan(Plan::Service { ready, .. }) => ready.map(|value| {
                         if value {
                             ObservationStatus::Available
                         } else {
                             ObservationStatus::Unavailable
                         }
                     }),
-                    Observation::Unresolved { .. } => None,
+                    Observation::Plan(Plan::Unresolved { .. }) => None,
                 };
                 let label = match status {
                     Some(ObservationStatus::Available) => "observed",

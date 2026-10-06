@@ -132,13 +132,11 @@ pub use provider::NemoClawProvider;
 pub mod openshell;
 
 pub mod docker;
-pub mod engine_observation;
 pub mod hardware_observation;
 pub mod managed;
 pub mod services;
 pub(crate) use nemoclaw_sdk::{
-    CancellationToken, Error, ObservationError, Progress, backend, config, fabric_capabilities,
-    fabric_catalog,
+    CancellationToken, Error, ObservationError, Progress, backend, config,
 };
 
 mod download;

@@ -40,8 +40,8 @@ mod config_schema;
 mod config_validation;
 #[path = "deployment.rs"]
 mod deployment;
-#[path = "discovery.rs"]
-mod discovery;
+#[path = "discovery_graph.rs"]
+mod discovery_graph;
 #[path = "engine_endpoint.rs"]
 mod engine_endpoint;
 #[path = "error.rs"]

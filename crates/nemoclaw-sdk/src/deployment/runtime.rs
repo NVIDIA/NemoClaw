@@ -237,7 +237,7 @@ impl Deployment {
             return Ok((
                 changes,
                 !checked.gateway_running,
-                plan.discovery_deferred(),
+                plan.discovery_deferred(&discovery),
                 discovery,
             ));
         }
