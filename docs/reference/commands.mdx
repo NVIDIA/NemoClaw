@@ -221,6 +221,11 @@ It also revalidates the sandbox lifecycle generation, identity, and OpenShell ga
 It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
 A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
 
+The adapter preserves the remote `hermes-acp` exit status, including `255`.
+It reports an SSH transport failure separately when the remote session does not report an exit status.
+If NemoClaw cannot remove its temporary SSH configuration, it reports the retained directory and directs you to remove it before you run `nemoclaw-acp` again.
+That cleanup failure makes an otherwise successful session exit `1`; it does not replace a remote nonzero exit status.
+
 </AgentOnly>
 
 ### `$$nemoclaw completion`
@@ -2252,7 +2257,7 @@ Each active preset is annotated with display-time provenance:
 - `[user-added]` covers other live presets.
 - `[source unverified (gateway unreachable)]` appears only when OpenShell cannot be read; no local policy fallback is shown.
 
-Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label.
+Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label. For a LangChain Deep Agents Code sandbox, `observability-otlp-local` is labelled `[from dcode agent]`.
 
 ```bash
 $$nemoclaw my-assistant policy list
@@ -2731,7 +2736,7 @@ Add a local skill directory to a running sandbox. NemoClaw validates and private
 $$nemoclaw my-assistant skill install ./my-skill/
 ```
 
-The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
 
 <AgentOnly variant="openclaw">
 
@@ -3543,6 +3548,9 @@ If the in-sandbox config write or integrity hash update fails, the OpenShell rou
 
 Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
+Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
+For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
+NemoClaw preserves an unrecognized underscore spelling for normal provider validation.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
@@ -4385,7 +4393,7 @@ The following flags toggle optional behaviors during onboarding. Set them before
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.116's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. For an externally supervised gateway, use the `stateDir` declared by `NEMOCLAW_GATEWAY_MANAGEMENT`; if this variable is also set, it must resolve to that same directory. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
 | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences `[wechat]` poll diagnostics, including status updates and recoverable errors, during the host-side WeChat QR login. Host-side IDC redirect notices remain visible. |
