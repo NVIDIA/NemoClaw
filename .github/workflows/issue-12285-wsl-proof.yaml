@@ -5,7 +5,7 @@ name: Qualification / Issue 12285 WSL transport
 
 on:
   push:
-    branches: [fix/issue-12285-wsl-transport]
+    branches: [fix/issue-12285-wsl-transport, test/issue-12285-windows-runner]
     paths: [.github/workflows/issue-12285-wsl-proof.yaml, tools/wsl/llama-bridge-proof.mts]
 
 permissions:
@@ -65,15 +65,24 @@ jobs:
           $settings.enableIntegrationWithDefaultWslDistro = $true
           $settings.integratedWslDistros = @('Ubuntu-24.04')
           $settings | ConvertTo-Json -Depth 20 | Set-Content $settingsPath -Encoding utf8NoBOM
-          $desktop = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
           $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
-          Start-Process $desktop
+          $service = Get-Service 'com.docker.service' -ErrorAction SilentlyContinue
+          if ($service) { Start-Service $service }
+          & $docker desktop start --detach
+          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop CLI could not request startup' }
           $deadline = (Get-Date).AddMinutes(4)
           do {
             & $docker --context desktop-linux info --format '{{.OperatingSystem}}'
             if ($LASTEXITCODE -eq 0) { break }
             Start-Sleep -Seconds 2
           } while ((Get-Date) -lt $deadline)
-          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop did not start its Linux backend within four minutes' }
+          if ($LASTEXITCODE -ne 0) {
+            & $docker desktop status
+            wsl.exe --list --verbose
+            Get-Process | Where-Object ProcessName -Like '*docker*' | Select-Object ProcessName, Id, StartTime | Format-List
+            $diagnostics = 'C:\Program Files\Docker\Docker\resources\com.docker.diagnose.exe'
+            & $diagnostics check
+            throw 'Docker Desktop did not start its Linux backend within four minutes'
+          }
           wsl.exe --distribution Ubuntu-24.04 --user root -- docker info --format '{{.OperatingSystem}}'
           if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop WSL integration is unavailable' }
