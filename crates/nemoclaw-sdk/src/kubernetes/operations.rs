@@ -6,6 +6,7 @@
 //! `kubernetes_gateway` is the Helm release that uses them. Each operation
 //! reports the resource's identity and whether it is running.
 
+use super::connection::{self, Connection};
 use super::{
     GATEWAY_KIND, STORAGE_KIND, Spec,
     auth::{Development, Material},
@@ -15,9 +16,12 @@ use super::{
     receipt::Receipt,
     storage::{Storage, ensure_storage},
 };
-use crate::ObservationError;
+use crate::{Error, ObservationError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// The gateway container's gRPC port.
+const GATEWAY_PORT: u16 = 8080;
 
 /// What an operation observed.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +240,83 @@ impl Operations {
             _ => return Err(ObservationError::Query),
         }
         self.read(spec, prior).await
+    }
+
+    /// Open a connection to the running gateway for one command: forward
+    /// the authored loopback port to the gateway pod, and supply its client
+    /// certificate and a development token.
+    pub async fn connect(&self, spec: &Spec) -> Result<Connection, Error> {
+        let gateway = self.read(&spec.with_kind(GATEWAY_KIND), None).await?;
+        if gateway.running != Some(true) {
+            return Err(ObservationError::Backend(
+                "the Kubernetes gateway is not running; apply it first",
+            )
+            .into());
+        }
+        let target = self.target(spec)?;
+        let endpoint =
+            url::Url::parse(&spec.settings.endpoint).map_err(|_| ObservationError::Query)?;
+        let port = endpoint.port().ok_or(ObservationError::Query)?;
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .map_err(|_| {
+                Error::Conflict("the managed Kubernetes loopback port is already in use")
+            })?;
+        let directory = self.state.join("client");
+        super::receipt::private_directory(&directory)?;
+        let secret = self
+            .cluster(spec)
+            .get(&Owned {
+                api_version: "v1".into(),
+                kind: "Secret".into(),
+                namespace: target.namespace.clone(),
+                name: format!("{}-client-tls", spec.name),
+                uid: String::new(),
+            })
+            .await?
+            .ok_or(ObservationError::Incomplete)?;
+        let mut environment = std::collections::BTreeMap::new();
+        for (key, name) in [
+            ("ca.crt", super::CA_ENV),
+            ("tls.crt", super::CERT_ENV),
+            ("tls.key", super::KEY_ENV),
+        ] {
+            use base64::Engine;
+            // A DynamicObject keeps the Secret's `data` map among its fields.
+            let bytes = secret.data["data"]
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
+                .ok_or(ObservationError::Incomplete)?;
+            let path = directory.join(key);
+            crate::state::atomic_write(&path, &bytes).map_err(|_| ObservationError::Incomplete)?;
+            environment.insert(name.to_owned(), path.to_string_lossy().into_owned());
+        }
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let token = self.development(spec)?.ensure()?.token(now);
+        environment.insert(super::TOKEN_ENV.to_owned(), token);
+        let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
+            kube::Api::namespaced(self.client.clone(), &target.namespace);
+        // The chart runs one gateway replica, named after the release.
+        let pod = format!("{}-0", spec.name);
+        let forward = connection::forward(listener, move || {
+            let pods = pods.clone();
+            let pod = pod.clone();
+            async move {
+                let mut forwarder = pods
+                    .portforward(&pod, &[GATEWAY_PORT])
+                    .await
+                    .map_err(std::io::Error::other)?;
+                forwarder
+                    .take_stream(GATEWAY_PORT)
+                    .ok_or_else(|| std::io::Error::other("no forwarded stream"))
+            }
+        });
+        Ok(Connection::new(
+            endpoint.as_str().trim_end_matches('/').to_owned(),
+            environment,
+            forward,
+        ))
     }
 
     /// Remove the gateway release. Storage is retained and never removed.

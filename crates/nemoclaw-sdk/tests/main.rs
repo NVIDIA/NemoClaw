@@ -80,6 +80,8 @@ mod kubernetes_auth;
 mod kubernetes_cluster;
 #[path = "kubernetes_compile.rs"]
 mod kubernetes_compile;
+#[path = "kubernetes_connect.rs"]
+mod kubernetes_connect;
 #[path = "kubernetes_connection.rs"]
 mod kubernetes_connection;
 #[path = "kubernetes_gateway.rs"]

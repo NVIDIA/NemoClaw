@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod cluster;
+pub mod connection;
 pub mod gateway;
 pub mod issuer;
 pub mod operations;
@@ -66,6 +67,13 @@ impl Spec {
         }
         self.settings.validate_managed()?;
         Ok(())
+    }
+    /// The same deployment's specification for its other resource kind.
+    pub fn with_kind(&self, kind: &str) -> Self {
+        Self {
+            kind: kind.into(),
+            ..self.clone()
+        }
     }
     pub fn decode(value: &str) -> Result<Self, Error> {
         let spec: Self = serde_json::from_str(value)
