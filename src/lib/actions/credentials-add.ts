@@ -442,17 +442,28 @@ export async function runCredentialsAddAction(
           reuseExistingCredential: fromExisting,
           ...(expected ? { expected } : {}),
         });
-        const nvidiaReceipt = normalizeNativeNvidiaProviderAttachment(receipt);
-        if (nvidiaReceipt)
-          (deps.setNativeNvidiaProviderAuthority ?? setNativeNvidiaProviderAuthority)(
-            target.gatewayName,
-            nvidiaReceipt,
-          );
-        else
-          (deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority)(
-            target.gatewayName,
-            receipt,
-          );
+        if (!expected) {
+          try {
+            const nvidiaReceipt = normalizeNativeNvidiaProviderAttachment(receipt);
+            if (nvidiaReceipt)
+              (deps.setNativeNvidiaProviderAuthority ?? setNativeNvidiaProviderAuthority)(
+                target.gatewayName,
+                nvidiaReceipt,
+              );
+            else
+              (deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority)(
+                target.gatewayName,
+                receipt,
+              );
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            return fail([
+              `  OpenShell provider '${hostedProfile!.providerName}' was created, but NemoClaw could not record its ownership.`,
+              `  Run '${CLI_NAME} credentials reset ${hostedProfile!.logicalProvider} --yes' to remove the incomplete provider, then retry.`,
+              `  ${detail}`,
+            ]);
+          }
+        }
         return ok([
           `  Registered provider '${provider}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,

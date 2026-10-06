@@ -1,8 +1,9 @@
-import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import readline from "node:readline";
+import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
+import { providerAdapter } from "../../../test/helpers/credentials-provider-adapter";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
@@ -24,59 +25,38 @@ vi.mock("../gateway-start-guidance", () => ({
   gatewayStartGuidance: () => "Start the gateway again with `nemoclaw onboard`.",
 }));
 
-function providerAdapter(
-  overrides: Partial<OpenShellProviderAdapter> = {},
-): OpenShellProviderAdapter {
-  const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
-    ok: true,
-    value: { names: [] },
+function nativeNvidiaProviderAdapter(): OpenShellProviderAdapter {
+  let providerPresent = false;
+  return providerAdapter({
+    getProvider: vi.fn(async (request) =>
+      providerPresent
+        ? {
+            ok: true as const,
+            value: {
+              name: request.providerName,
+              type: "nemoclaw-nvidia-inference-v1",
+              credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+              configKeys: [],
+              revision: {
+                id: "11111111-2222-4333-8444-555555555555",
+                resourceVersion: 1,
+              },
+            },
+          }
+        : {
+            ok: false as const,
+            error: {
+              kind: "command" as const,
+              reason: "not_found" as const,
+              message: "provider not found",
+            },
+          },
+    ),
+    createProvider: vi.fn(async () => {
+      providerPresent = true;
+      return { ok: true as const };
+    }),
   });
-  const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
-    ok: true,
-  });
-  const getProvider: OpenShellProviderAdapter["getProvider"] = async (request) => ({
-    ok: true,
-    value: { name: request.providerName, type: "generic", credentialKeys: [], configKeys: [] },
-  });
-  const updateProvider: OpenShellProviderAdapter["updateProvider"] = async () => ({
-    ok: true,
-  });
-  const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
-    ok: true,
-  });
-  const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async () => ({
-    ok: true,
-    value: { credentialKeys: [] },
-  });
-  const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async () => ({
-    ok: true,
-  });
-  const detachProvider: OpenShellProviderAdapter["detachProvider"] = async () => ({
-    ok: true,
-    value: { changed: true },
-  });
-  const attachProvider: OpenShellProviderAdapter["attachProvider"] = async () => ({ ok: true });
-  const listProviderAttachments: OpenShellProviderAdapter["listProviderAttachments"] =
-    async () => ({ ok: true, value: { names: [] } });
-  const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] =
-    async () => ({ ok: true });
-  const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
-    async () => ({ ok: true, value: { status: "refreshed" } });
-  return {
-    listProviders: vi.fn(listProviders),
-    createProvider: vi.fn(createProvider),
-    getProvider: vi.fn(getProvider),
-    updateProvider: vi.fn(updateProvider),
-    importProviderProfile: vi.fn(importProviderProfile),
-    inspectProviderProfile: vi.fn(inspectProviderProfile),
-    deleteProvider: vi.fn(deleteProvider),
-    detachProvider: vi.fn(detachProvider),
-    attachProvider: vi.fn(attachProvider),
-    listProviderAttachments: vi.fn(listProviderAttachments),
-    configureProviderRefresh: vi.fn(configureProviderRefresh),
-    getProviderRefreshStatus: vi.fn(getProviderRefreshStatus),
-    ...overrides,
-  };
 }
 
 describe("credential actions use typed OpenShell provider results", () => {
@@ -92,68 +72,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     setGlobalCliActionRuntimeHooksForTest({});
     vi.unstubAllEnvs();
   });
-
-  it.each(NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"))(
-    "records standalone $label ownership after confirmed registration",
-    async (profile) => {
-      const recordExtraProvider = vi
-        .spyOn(await import("./global"), "recordExtraProvider")
-        .mockReturnValue(true);
-      vi.stubEnv(profile.credentialEnv, "host-only-test-value");
-      let present = false;
-      const adapter = providerAdapter({
-        getProvider: vi.fn(async () =>
-          present
-            ? {
-                ok: true as const,
-                value: {
-                  name: profile.providerName,
-                  type: profile.profileId,
-                  credentialKeys: [profile.credentialEnv],
-                  configKeys: [],
-                  revision: { id: "registered-id", resourceVersion: 1 },
-                },
-              }
-            : {
-                ok: false as const,
-                error: {
-                  kind: "command" as const,
-                  reason: "not_found" as const,
-                  message: "not found",
-                },
-              },
-        ),
-        createProvider: vi.fn(async () => {
-          present = true;
-          return { ok: true as const };
-        }),
-      });
-      const save = vi.fn();
-      const result = await runCredentialsAddAction(
-        {
-          provider: profile.logicalProvider,
-          type: profile.profileId,
-          credentials: [profile.credentialEnv],
-          configPairs: [],
-          fromExisting: false,
-        },
-        {
-          providerAdapter: adapter,
-          getNativeHostedProviderAuthority: () => undefined,
-          setNativeHostedProviderAuthority: save,
-        },
-      );
-      expect(result.exitCode).toBe(0);
-      expect(save).toHaveBeenCalledWith("nemoclaw", {
-        schemaVersion: 1,
-        profileId: profile.profileId,
-        providerName: profile.providerName,
-        providerId: "registered-id",
-      });
-      expect(recordExtraProvider).not.toHaveBeenCalled();
-      expect(JSON.stringify(result)).not.toContain("host-only-test-value");
-    },
-  );
 
   it("registers validated credential material without returning its value (#9806)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "credential-value");
@@ -192,35 +110,8 @@ describe("credential actions use typed OpenShell provider results", () => {
       recordExtraProvider,
       forgetExtraProvider: () => true,
     });
-    let providerPresent = false;
     const providerId = "11111111-2222-4333-8444-555555555555";
-    const adapter = providerAdapter({
-      getProvider: vi.fn(async (request) =>
-        providerPresent
-          ? {
-              ok: true as const,
-              value: {
-                name: request.providerName,
-                type: "nemoclaw-nvidia-inference-v1",
-                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-                configKeys: [],
-                revision: { id: providerId, resourceVersion: 1 },
-              },
-            }
-          : {
-              ok: false as const,
-              error: {
-                kind: "command" as const,
-                reason: "not_found" as const,
-                message: "provider not found",
-              },
-            },
-      ),
-      createProvider: vi.fn(async () => {
-        providerPresent = true;
-        return { ok: true as const };
-      }),
-    });
+    const adapter = nativeNvidiaProviderAdapter();
     const setNativeNvidiaProviderAuthority = vi.fn();
 
     const result = await runCredentialsAddAction(
@@ -258,6 +149,38 @@ describe("credential actions use typed OpenShell provider results", () => {
       providerId,
     });
     expect(recordExtraProvider).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
+  it("reports a reset action when native NVIDIA authority persistence fails", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const adapter = nativeNvidiaProviderAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority: () => {
+          throw new Error("state directory is read-only");
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  OpenShell provider 'nemoclaw-nvidia-prod-v1' was created, but NemoClaw could not record its ownership.",
+    );
+    expect(result.failureLines).toContain(
+      "  Run 'nemoclaw credentials reset nvidia-prod --yes' to remove the incomplete provider, then retry.",
+    );
+    expect(result.failureLines).toContain("  state directory is read-only");
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
   });
 
