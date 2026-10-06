@@ -479,7 +479,7 @@ ADD --chmod=0444 --checksum=sha256:e09206c60fccafb952c854af7629cbb031a98d6da2e14
 ADD --chmod=0444 --checksum=sha256:5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz /safe-buffer-5.2.1.tgz
 ADD --chmod=0444 --checksum=sha256:78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3 https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz /safer-buffer-2.1.2.tgz
 ADD --chmod=0444 --checksum=sha256:22fb96ba4ca943c41560f8dd21b405f388a8e4c010ebc8b88c5e3f8f8da73c6c https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.120.0.tgz /sdk-0.120.0.tgz
-ADD --chmod=0444 --checksum=sha256:2cac3f3e38fec2815ed9efafa2947faf8c6957310684f99703f3d180f3e9af1a https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz /sdk-1.30.0.tgz
+ADD --chmod=0444 --checksum=sha256:d2ff62b961316c4c4d7b03367ea8f70121839401adbd7a8aa4175f8e85c87af0 https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz /sdk-1.31.0.tgz
 ADD --chmod=0444 --checksum=sha256:57beb0f7705b09406e5bcc984d1f6a141940680b4c42755be026f77f64365a37 https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.4.0.tgz /sdk-1.4.0.tgz
 ADD --chmod=0444 --checksum=sha256:4465839df9cf25046eacb64e37a38e7a2d033546356335190234bad60bd85d42 https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.43.0.tgz /semantic-conventions-1.43.0.tgz
 ADD --chmod=0444 --checksum=sha256:d85045d4300d7d57c891336b95df532e73f34c22ffcd222452b6d08b9d127d5d https://registry.npmjs.org/semver/-/semver-7.8.5.tgz /semver-7.8.5.tgz

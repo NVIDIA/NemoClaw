@@ -78,6 +78,7 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
+      "@modelcontextprotocol/sdk": "1.31.0",
       "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
