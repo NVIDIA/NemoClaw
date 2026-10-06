@@ -153,7 +153,7 @@ Three exclusions are deliberate and tested: only the selected route's inference 
 `JourneyState::use_local_engines` keeps the candidate engines this machine has that answered; the caller supplies the candidates, so authoring holds no socket paths.
 A runtime they offer becomes the suggestion when it is the only one, and choosing a runtime targets the managed gateway at the engine that answered for it.
 A runtime no engine answered for gets no engine, and the target assessment's first reason says so unless an engine is authored.
-Recorded hosts in `tests/fixtures/observations` replay the candidates a machine named and what each answered, such as a host with only Podman.
+Hosts are built from the engines they named and what each answered, and one recorded host in `tests/fixtures/observations` pins the replay format.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
 An empty `DiscoveryObservations` leaves the resolution unchanged.

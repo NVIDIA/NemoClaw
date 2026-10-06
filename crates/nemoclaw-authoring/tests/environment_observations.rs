@@ -1,17 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Decisions that depend on the environment are tested by replaying recorded
-//! observations, with no engine or hardware present. Each host is tried against
-//! a template that names Docker and one that names Podman, so a suggestion that
-//! ignored the host could not pass by agreeing with the template.
+//! Decisions that depend on the environment are tested by replaying observations,
+//! with no engine or hardware present. Each host is tried against a template that
+//! names Docker and one that names Podman, so a suggestion that ignored the host
+//! could not pass by agreeing with the template.
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument};
 use nemoclaw_discovery::DiscoveryObservations;
-use nemoclaw_sdk::discovery::DiscoveryRequest;
+use nemoclaw_sdk::{
+    config::ComputeDriver,
+    discovery::{
+        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
+        ObservationStatus,
+    },
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// A host as onboarding found it: the engines its environment named, and what
-/// each said when asked.
+/// each said when asked. The recorded fixture replays this shape from JSON.
 #[derive(Deserialize)]
 struct RecordedHost {
     candidates: Vec<DiscoveryRequest>,
@@ -20,15 +26,48 @@ struct RecordedHost {
 
 const RUNTIME: &str = "/spec/sandboxes/0/runtime/provider";
 
-const DOCKER_ONLY: &str = include_str!("fixtures/observations/docker-only.json");
 const PODMAN_ONLY: &str = include_str!("fixtures/observations/podman-only.json");
-const BOTH_ENGINES: &str = include_str!("fixtures/observations/both-engines.json");
-const NOTHING_RECORDED: &str = r#"{"candidates": [], "observations": []}"#;
+
+/// A host whose Docker and Podman engines answered as given.
+fn host(docker: ObservationStatus, podman: ObservationStatus) -> RecordedHost {
+    let mut candidates = Vec::new();
+    let mut observations = DiscoveryObservations::new();
+    for (engine, compute_driver, status) in [
+        ("unix:///var/run/docker.sock", ComputeDriver::Docker, docker),
+        (
+            "unix:///run/user/1000/podman/podman.sock",
+            ComputeDriver::Podman,
+            podman,
+        ),
+    ] {
+        let request = DiscoveryRequest {
+            engine: engine.into(),
+            compute_driver,
+        };
+        observations.record(
+            DiscoveryQuery::Engine(request.clone()),
+            DiscoveryObservation::Engine(EngineObservation {
+                status,
+                reason: None,
+                source: "fixture".into(),
+                server_version: None,
+                architecture: None,
+                operating_system: None,
+                memory_bytes: None,
+                cpus: None,
+            }),
+        );
+        candidates.push(request);
+    }
+    RecordedHost {
+        candidates,
+        observations,
+    }
+}
 
 /// The runtime the journey suggests for a template that names `template`, once
-/// the environment queries have been answered as `recorded`.
-async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
-    let host = serde_json::from_str::<RecordedHost>(recorded).unwrap();
+/// the environment queries have been answered by `host`.
+fn suggested_runtime(host: &RecordedHost, template: &str) -> Option<Value> {
     let capabilities = Capabilities::available();
     let yaml =
         String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())
@@ -50,66 +89,49 @@ async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
         .cloned()
 }
 
-#[tokio::test]
-async fn a_host_with_only_podman_overrides_a_docker_template() {
+#[test]
+fn the_suggested_runtime_is_the_only_engine_that_answered_else_the_templates() {
+    use ObservationStatus::{Available, Unavailable};
+    // (host, docker's answer, podman's answer, template, expected suggestion)
+    let rows = [
+        ("docker only", Available, Unavailable, "docker", "docker"),
+        ("docker only", Available, Unavailable, "podman", "docker"),
+        ("podman only", Unavailable, Available, "docker", "podman"),
+        ("podman only", Unavailable, Available, "podman", "podman"),
+        ("both engines", Available, Available, "docker", "docker"),
+        ("both engines", Available, Available, "podman", "podman"),
+        ("no engine", Unavailable, Unavailable, "docker", "docker"),
+        ("no engine", Unavailable, Unavailable, "podman", "podman"),
+    ];
+    for (name, docker, podman, template, expected) in rows {
+        assert_eq!(
+            suggested_runtime(&host(docker, podman), template),
+            Some(json!(expected)),
+            "{name} with a {template} template"
+        );
+    }
+}
+
+#[test]
+fn a_recorded_host_with_only_podman_overrides_a_docker_template() {
+    let recorded = serde_json::from_str::<RecordedHost>(PODMAN_ONLY).unwrap();
     assert_eq!(
-        suggested_runtime(PODMAN_ONLY, "docker").await,
+        suggested_runtime(&recorded, "docker"),
         Some(json!("podman"))
     );
 }
 
-#[tokio::test]
-async fn a_host_with_only_docker_overrides_a_podman_template() {
-    assert_eq!(
-        suggested_runtime(DOCKER_ONLY, "podman").await,
-        Some(json!("docker"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_with_only_docker_confirms_a_docker_template() {
-    assert_eq!(
-        suggested_runtime(DOCKER_ONLY, "docker").await,
-        Some(json!("docker"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_with_only_podman_confirms_a_podman_template() {
-    assert_eq!(
-        suggested_runtime(PODMAN_ONLY, "podman").await,
-        Some(json!("podman"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_with_both_engines_keeps_a_docker_template() {
-    assert_eq!(
-        suggested_runtime(BOTH_ENGINES, "docker").await,
-        Some(json!("docker"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_with_both_engines_keeps_a_podman_template() {
-    assert_eq!(
-        suggested_runtime(BOTH_ENGINES, "podman").await,
-        Some(json!("podman"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_that_reported_nothing_keeps_a_docker_template() {
-    assert_eq!(
-        suggested_runtime(NOTHING_RECORDED, "docker").await,
-        Some(json!("docker"))
-    );
-}
-
-#[tokio::test]
-async fn a_host_that_reported_nothing_keeps_a_podman_template() {
-    assert_eq!(
-        suggested_runtime(NOTHING_RECORDED, "podman").await,
-        Some(json!("podman"))
-    );
+#[test]
+fn a_host_that_named_no_engines_keeps_the_templates_runtime() {
+    let nothing = RecordedHost {
+        candidates: Vec::new(),
+        observations: DiscoveryObservations::new(),
+    };
+    for template in ["docker", "podman"] {
+        assert_eq!(
+            suggested_runtime(&nothing, template),
+            Some(json!(template)),
+            "{template} template"
+        );
+    }
 }
