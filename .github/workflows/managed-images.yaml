@@ -513,7 +513,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f # reviewed proxy-addr 2.0.8 lock
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -536,7 +536,7 @@ jobs:
         id: mcporter-audit
         shell: bash
         env:
-          REVIEWED_AUDIT_SHA: ${{ github.event.pull_request.base.sha }}
+          REVIEWED_AUDIT_SHA: e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f
         run: |
           set -euo pipefail
           receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"

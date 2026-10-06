@@ -12,7 +12,8 @@
     "@hono/node-server": "2.0.11",
     "fast-uri": "3.1.7",
     "hono": "4.12.34",
-    "ip-address": "10.3.1"
+    "ip-address": "10.3.1",
+    "proxy-addr": "2.0.8"
   },
   "engines": {
     "node": ">=22.19.0"
