@@ -134,8 +134,8 @@ It selects installed-package records using Fabric's provenance, without editing 
 Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
 With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
 The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
-See [source notices and regeneration](../image/NOTICE.md).
-Older images and direct Bake builds without labels remain unverified.
+See the [image metadata contract](design/fabric-management.md#image-metadata) and [catalog regeneration](build.md#regenerate-the-bundled-catalog).
+Direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 

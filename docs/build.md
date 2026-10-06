@@ -98,7 +98,7 @@ The commands build and load local images; they do not publish images or launch a
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
-See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
+See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
@@ -132,6 +132,18 @@ The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
 Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
+
+### Regenerate the Bundled Catalog
+
+The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+
+```sh
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+```
+
+Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).
+The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
 ### Reference Contract Image
 
