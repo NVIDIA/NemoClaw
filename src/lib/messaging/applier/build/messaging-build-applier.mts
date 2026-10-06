@@ -19,7 +19,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  applyOpenClawSlackProxyAddrRemediation,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -775,7 +778,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
       : undefined;
-    const installEnv = {
+    const installEnv: Env = {
       ...env,
       NPM_CONFIG_IGNORE_SCRIPTS: "true",
       npm_config_ignore_scripts: "true",
@@ -797,7 +800,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       // The verified archive warms the cache before the exact npm install.
       // Third-party plugins retain their reviewed local archive installation.
       const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
-      const commandEnv = officialPluginId
+      const commandEnv: Env = officialPluginId
         ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
         : installEnv;
       runCommand(
@@ -821,6 +824,18 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           );
         }
         verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
+        if (install.npmPackageSpec === "@openclaw/slack@2026.9.2") {
+          applyOpenClawSlackProxyAddrRemediation({
+            env: installEnv as NodeJS.ProcessEnv,
+            packageDirectory: join(
+              installEnv.HOME ?? homedir(),
+              ".openclaw",
+              "extensions",
+              officialPluginId,
+            ),
+            workingDirectory: packed.rootDir,
+          });
+        }
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);

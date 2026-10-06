@@ -24,6 +24,7 @@ import {
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
+  patchOpenClawSlackProxyAddrPackageGraph,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -315,6 +316,61 @@ function writeDiscordFixture(undiciVersion = "8.5.0"): string {
   return directory;
 }
 
+function writeSlackProxyAddrFixture(
+  sourceVersion = "2.0.7",
+  replacementVersion = "2.0.8",
+): { packageDirectory: string; replacementDirectory: string } {
+  const packageDirectory = mkdtempSync(
+    path.join(tmpdir(), "nemoclaw-openclaw-slack-proxy-addr-remediation-"),
+  );
+  temporaryDirectories.push(packageDirectory);
+  const boltDirectory = path.join(packageDirectory, "node_modules", "@slack", "bolt");
+  const expressDirectory = path.join(boltDirectory, "node_modules", "express");
+  const proxyAddrDirectory = path.join(boltDirectory, "node_modules", "proxy-addr");
+  mkdirSync(expressDirectory, { recursive: true });
+  mkdirSync(proxyAddrDirectory, { recursive: true });
+  writeJson(path.join(packageDirectory, "package.json"), {
+    name: "@openclaw/slack",
+    version: "2026.9.2",
+    dependencies: { "@slack/bolt": "5.0.0" },
+    bundledDependencies: ["@slack/bolt"],
+  });
+  writeJson(path.join(boltDirectory, "package.json"), {
+    name: "@slack/bolt",
+    version: "5.0.0",
+    dependencies: { express: "^5.0.0" },
+    license: "MIT",
+    engines: { node: ">=20" },
+  });
+  writeJson(path.join(expressDirectory, "package.json"), {
+    name: "express",
+    version: "5.2.1",
+    dependencies: { "proxy-addr": "^2.0.7" },
+    license: "MIT",
+    engines: { node: ">= 18" },
+  });
+  writeJson(path.join(proxyAddrDirectory, "package.json"), {
+    name: "proxy-addr",
+    version: sourceVersion,
+    dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    license: "MIT",
+    engines: { node: ">= 0.10" },
+  });
+  writeFileSync(path.join(proxyAddrDirectory, "index.js"), "module.exports = 'vulnerable';\n");
+
+  const replacementDirectory = mkdtempSync(path.join(tmpdir(), "nemoclaw-proxy-addr-replacement-"));
+  temporaryDirectories.push(replacementDirectory);
+  writeJson(path.join(replacementDirectory, "package.json"), {
+    name: "proxy-addr",
+    version: replacementVersion,
+    dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    license: "MIT",
+    engines: { node: ">= 0.10" },
+  });
+  writeFileSync(path.join(replacementDirectory, "index.js"), "module.exports = 'patched';\n");
+  return { packageDirectory, replacementDirectory };
+}
+
 function readJson<T>(file: string): T {
   return JSON.parse(readFileSync(file, "utf-8")) as T;
 }
@@ -554,6 +610,48 @@ describe("OpenClaw npm remediation", () => {
     expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1")).toThrow(
       "must resolve node_modules/axios to 1.16.0 before remediation",
     );
+  });
+
+  // source-shape-contract: security -- Exact Slack, Bolt, Express, and proxy-addr identities constrain the archive rewrite to the reviewed vulnerable package
+  it("replaces only the reviewed Slack bundled proxy-addr package", () => {
+    const { packageDirectory, replacementDirectory } = writeSlackProxyAddrFixture();
+
+    patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacementDirectory);
+
+    const proxyAddrDirectory = path.join(
+      packageDirectory,
+      "node_modules",
+      "@slack",
+      "bolt",
+      "node_modules",
+      "proxy-addr",
+    );
+    expect(readPackageField<string>(proxyAddrDirectory, "version")).toBe("2.0.8");
+    expect(readFileSync(path.join(proxyAddrDirectory, "index.js"), "utf8")).toBe(
+      "module.exports = 'patched';\n",
+    );
+    expect(
+      readPackageField<string>(
+        path.join(packageDirectory, "node_modules", "@slack", "bolt", "node_modules", "express"),
+        "dependencies.proxy-addr",
+      ),
+    ).toBe("^2.0.7");
+  });
+
+  it("rejects a Slack bundled proxy-addr identity that changed after review", () => {
+    const { packageDirectory, replacementDirectory } = writeSlackProxyAddrFixture("2.0.6");
+
+    expect(() =>
+      patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacementDirectory),
+    ).toThrow("must be proxy-addr@2.0.7");
+  });
+
+  it("rejects a proxy-addr replacement identity that changed after review", () => {
+    const { packageDirectory, replacementDirectory } = writeSlackProxyAddrFixture("2.0.7", "2.0.9");
+
+    expect(() =>
+      patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacementDirectory),
+    ).toThrow("must be proxy-addr@2.0.8");
   });
 
   // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Jaeger remediation installs only the reviewed aligned graph
