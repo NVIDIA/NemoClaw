@@ -179,6 +179,16 @@ impl Document {
                 }
             }
         }
+        for service in self.spec.services.values() {
+            if let super::services::ServiceDefinition::Container(service) = service {
+                names.extend(
+                    service
+                        .secrets
+                        .values()
+                        .map(|secret| secret.credential.env.as_str()),
+                );
+            }
+        }
         names.sort_unstable();
         names.dedup();
         names

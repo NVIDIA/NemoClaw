@@ -59,6 +59,9 @@ pub struct Process {
     pub user: String,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub environment: std::collections::BTreeMap<String, String>,
+    /// Nonsecret input-reference revision. Changed delivery intent replaces disposable application data.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub input_revision: String,
     pub mount_target: String,
     pub bind_address: String,
     pub port: u16,
@@ -96,6 +99,7 @@ impl Process {
                     net.addr().is_private() && net.prefix_len() == 24 && net.addr() == net.network()
                 })
             && self.configuration.is_empty()
+            && (self.input_revision.is_empty() || matches(r"^[a-f0-9]{64}$", &self.input_revision))
             && self.entrypoint.is_empty()
             && self.command.is_empty()
             && !self.gpu
@@ -174,6 +178,7 @@ impl Spec {
                         && !process.entrypoint.is_empty()
                         && process.user.is_empty()
                         && process.environment.is_empty()
+                        && process.input_revision.is_empty()
                         && !process.bind_address.is_empty()
                         && process.port != 0
                 })
@@ -281,6 +286,18 @@ impl Spec {
         .into())
     }
     pub fn volume(&self) -> String {
+        if let Some(process) = &self.process
+            && !process.input_revision.is_empty()
+        {
+            return format!(
+                "{}-{}-data",
+                self.name,
+                process
+                    .input_revision
+                    .get(..16)
+                    .unwrap_or(&process.input_revision)
+            );
+        }
         format!("{}-data", self.name)
     }
     pub fn network(&self) -> String {

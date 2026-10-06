@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Complete parser fixture, not a deployable or qualified VoiceClaw recipe.
+# The endpoints, UUID, image digests, model, and network are test values.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: voiceclaw-manual-test
+  uid: c8fd820d-fbc6-48ac-b4c7-240b92313689
+spec:
+  gateway:
+    management: external
+    endpoint: https://openshell.example.invalid:8443
+    engine: unix:///var/run/docker.sock
+    credential: {env: OPENSHELL_OPERATOR_TOKEN}
+  inferenceProviders:
+    - name: agent-model
+      provider: openai
+      endpoint: https://inference.example.invalid/v1
+      credential: {env: AGENT_INFERENCE_API_KEY}
+  sandboxes:
+    - name: assistant
+      allowUnsupportedHealth: true
+      image:
+        ref: example.invalid/fabric-openclaw@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: agent-model
+              overrides:
+                model: qualification-model
+  services:
+    voice:
+      kind: container
+      image: example.invalid/voiceclaw@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      imagePullPolicy: Never
+      inputSetup:
+        image: example.invalid/container-inputs@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      architecture: arm64
+      user: "65532:65532"
+      placement:
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.29.230.0/24
+      publication:
+        bindAddress: 127.0.0.1
+        port: 18790
+      environment:
+        VOICECLAW_RUNTIME_PROFILE: nemoclaw-container-v1
+        VOICECLAW_INSTALL_CONTRACT: voiceclaw.nemoclaw.container.v1
+        VOICECLAW_AGENT_CONNECTION_FILE: /var/lib/voiceclaw/config/agent-connection.json
+        VOICECLAW_SPEECH_CREDENTIAL_FILE: /var/lib/voiceclaw/credentials/speech
+        VOICECLAW_STATE_PATH: /var/lib/voiceclaw/state/state.db
+      data:
+        mountPath: /var/lib/voiceclaw
+      secrets:
+        speech:
+          credential: {env: NVIDIA_API_KEY}
+          targetPath: /var/lib/voiceclaw/credentials/speech
+        openshell:
+          credential: {env: VOICECLAW_OPENSHELL_SERVICE_TOKEN}
+          targetPath: /var/lib/voiceclaw/credentials/openshell
+      agentConnections:
+        primary:
+          sandboxRef: assistant
+          agent: main
+          targetPath: /var/lib/voiceclaw/config/agent-connection.json
+          gatewayEndpoint: https://openshell.example.invalid:8443
+          authentication:
+            mode: oidcBearer
+            secretRef: openshell
+            refreshMode: none
+          tls:
+            trust: system
+          timeouts:
+            healthSeconds: 12
+            invokeSeconds: 120
+      readiness:
+        startupTimeoutSeconds: 300

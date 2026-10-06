@@ -60,6 +60,11 @@ pub struct ResourceSchema {
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
+            kind: installers::container::inputs::INPUTS_KIND,
+            fields: &["spec", "sandbox_id"],
+            mutable: &[],
+        },
+        ResourceSchema {
             kind: "ollama_proxy_storage",
             fields: &["name", "owner", "generation", "engine"],
             mutable: &[],
@@ -122,6 +127,7 @@ pub(crate) fn constrain_schema(
     installers::ollama::constrain_schema(defs, normalized);
     installers::vllm::schema::constrain(defs, normalized);
     installers::container::constrain_schema(defs);
+    installers::container::inputs::constrain_schema(defs);
     for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
         crate::config::schema::validation::property(
             service,
@@ -157,6 +163,9 @@ impl ServiceDefinition {
 
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         if let Self::Container(service) = self {
+            for connection in service.agent_connections.values() {
+                connection.validate_binding(document)?;
+            }
             return service.location(document).map(|_| ());
         }
         let gateway = &document.spec.gateway;

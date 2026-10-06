@@ -88,6 +88,52 @@
       ],
       "type": "object"
     },
+    "AgentConnection": {
+      "additionalProperties": false,
+      "description": "One explicitly selected sandbox agent and application-reachable OpenShell endpoint.",
+      "properties": {
+        "agent": {
+          "description": "Agent name declared by the selected sandbox.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "authentication": {
+          "$ref": "#/$defs/ApplicationAuthentication",
+          "description": "Declared application identity reference; issuance and authority remain external."
+        },
+        "gatewayEndpoint": {
+          "description": "Explicit application-reachable HTTPS OpenShell origin; reachability requires live qualification.",
+          "type": "string"
+        },
+        "sandboxRef": {
+          "description": "Declared sandbox whose ownership and physical identity bind the connection.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "targetPath": {
+          "description": "Canonical descriptor file path below the application data root.",
+          "type": "string"
+        },
+        "timeouts": {
+          "$ref": "#/$defs/ConnectionTimeouts",
+          "description": "Bounded application client deadlines."
+        },
+        "tls": {
+          "$ref": "#/$defs/ApplicationTrust",
+          "description": "Required peer-verifying TLS trust profile."
+        }
+      },
+      "required": [
+        "sandboxRef",
+        "agent",
+        "targetPath",
+        "gatewayEndpoint",
+        "authentication",
+        "tls",
+        "timeouts"
+      ],
+      "type": "object"
+    },
     "AgentExecution": {
       "additionalProperties": false,
       "description": "Execution timeout shared by the sandbox; Fabric owns native execution settings.",
@@ -123,6 +169,48 @@
       },
       "required": [
         "allow"
+      ],
+      "type": "object"
+    },
+    "ApplicationAuthentication": {
+      "additionalProperties": false,
+      "description": "Static bearer delivery does not issue, refresh, or narrow an identity's authority.",
+      "properties": {
+        "mode": {
+          "const": "oidcBearer",
+          "description": "Static bearer profile: oidcBearer. This does not establish a supported issuer flow.",
+          "type": "string"
+        },
+        "refreshMode": {
+          "const": "none",
+          "description": "none: the application fails closed on expiry; no installer-owned refresh.",
+          "type": "string"
+        },
+        "secretRef": {
+          "description": "Name of this service's explicitly declared protected credential.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "secretRef",
+        "refreshMode"
+      ],
+      "type": "object"
+    },
+    "ApplicationTrust": {
+      "additionalProperties": false,
+      "description": "The first delivery profile supports verified system trust only.",
+      "properties": {
+        "trust": {
+          "const": "system",
+          "description": "system: use the image's trusted CA roots. Private CA delivery and insecure modes are unsupported.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trust"
       ],
       "type": "object"
     },
@@ -229,6 +317,31 @@
         "mode",
         "cudagraphMode",
         "captureSizes"
+      ],
+      "type": "object"
+    },
+    "ConnectionTimeouts": {
+      "additionalProperties": false,
+      "description": "Bounded application-client health and invocation deadlines.",
+      "properties": {
+        "healthSeconds": {
+          "description": "Non-generative native agent check deadline, 1–12 seconds.",
+          "format": "uint64",
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "invokeSeconds": {
+          "description": "Explicit agent invocation deadline, 1–120 seconds.",
+          "format": "uint64",
+          "maximum": 120,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "healthSeconds",
+        "invokeSeconds"
       ],
       "type": "object"
     },
@@ -961,6 +1074,21 @@
         "serving",
         "licenses",
         "sourceNotices"
+      ],
+      "type": "object"
+    },
+    "InputSetup": {
+      "additionalProperties": false,
+      "description": "A preloaded, immutable NemoClaw setup image. It runs only to publish protected inputs.",
+      "properties": {
+        "image": {
+          "description": "Repository SHA-256 manifest digest. Build from image/container-inputs/Dockerfile and preload it in the selected engine; no implicit pull.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image"
       ],
       "type": "object"
     },
@@ -1860,6 +1988,25 @@
       ],
       "description": "A literal glob or a nonempty list of alternative globs."
     },
+    "ProtectedCredential": {
+      "additionalProperties": false,
+      "description": "A caller-supplied token reference delivered as a protected file, never Docker environment.",
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential",
+          "description": "Caller environment reference; no value appears in deployment configuration or state."
+        },
+        "targetPath": {
+          "description": "Canonical file path below this application's data root.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "targetPath"
+      ],
+      "type": "object"
+    },
     "Resources": {
       "additionalProperties": false,
       "description": "Resource declarations checked against host observations and produced data.",
@@ -2022,6 +2169,10 @@
         "agent": {
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
+        },
+        "allowUnsupportedHealth": {
+          "description": "Allow installation when native agent health is explicitly unsupported. Omission or false requires confirmed native health. Failed or unknown observations remain errors; this setting does not prove agent readiness or a successful response.",
+          "type": "boolean"
         },
         "harness": {
           "$ref": "#/$defs/Harness",
@@ -2586,6 +2737,17 @@
           "additionalProperties": false,
           "description": "Image-owned application with bounded Docker HEALTHCHECK observation.",
           "properties": {
+            "agentConnections": {
+              "additionalProperties": {
+                "$ref": "#/$defs/AgentConnection"
+              },
+              "description": "Explicit connection projection and selected-agent readiness ordering.",
+              "maxProperties": 1,
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9-]{0,39}$"
+              },
+              "type": "object"
+            },
             "architecture": {
               "description": "Linux image architecture: arm64 or amd64. This does not select a host architecture.",
               "enum": [
@@ -2635,6 +2797,17 @@
                 "Never"
               ]
             },
+            "inputSetup": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InputSetup"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit preloaded immutable setup image; required when protected inputs are declared. No caller-supplied setup commands are accepted."
+            },
             "kind": {
               "const": "container",
               "description": "Supported installer selected by this service definition.",
@@ -2651,6 +2824,17 @@
             "readiness": {
               "$ref": "#/$defs/ContainerReadiness",
               "description": "Apply-time observation of the image-owned Docker HEALTHCHECK; no mutation or task invocation."
+            },
+            "secrets": {
+              "additionalProperties": {
+                "$ref": "#/$defs/ProtectedCredential"
+              },
+              "description": "Protected token references. Setup publishes root-confined files before dependent application startup.",
+              "maxProperties": 16,
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9-]{0,39}$"
+              },
+              "type": "object"
             },
             "user": {
               "default": "65532:65532",

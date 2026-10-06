@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 pub mod authentication;
+pub(crate) mod inputs;
 mod registry;
 pub use registry::BackendRegistry;
 pub(crate) mod capacity;

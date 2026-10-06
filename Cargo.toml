@@ -8,6 +8,7 @@ members = [
     "crates/nemoclaw-runtime",
     "crates/nemoclaw-build",
     "crates/nemoclaw-ollama-proxy",
+    "crates/nemoclaw-container-inputs",
     "examples/onboarding-tui",
 ]
 resolver = "3"

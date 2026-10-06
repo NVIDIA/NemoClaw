@@ -10,6 +10,11 @@ use crate::{
 /// Validate a compiled resource without opening connections or reading secrets.
 /// Parse errors deliberately omit serialized source values.
 pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
+    if kind == super::installers::container::inputs::INPUTS_KIND {
+        let spec: super::installers::container::inputs::InputsSpec = serde_json::from_str(encoded)
+            .map_err(|_| Error::State("invalid application input specification"))?;
+        return spec.validate();
+    }
     if matches!(
         kind,
         vllm::STORAGE_KIND | ollama::STORAGE_KIND | super::installers::container::STORAGE_KIND

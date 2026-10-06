@@ -81,6 +81,26 @@ Paths:
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
 
+## AgentConnection
+
+One explicitly selected sandbox agent and application-reachable OpenShell endpoint.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.agentConnections.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `agent` | string | Yes | — | Agent name declared by the selected sandbox. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `authentication` | [ApplicationAuthentication](#applicationauthentication) | Yes | — | Declared application identity reference; issuance and authority remain external. |
+| `gatewayEndpoint` | string | Yes | — | Explicit application-reachable HTTPS OpenShell origin; reachability requires live qualification. |
+| `sandboxRef` | string | Yes | — | Declared sandbox whose ownership and physical identity bind the connection. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `targetPath` | string | Yes | — | Canonical descriptor file path below the application data root. |
+| `timeouts` | [ConnectionTimeouts](#connectiontimeouts) | Yes | — | Bounded application client deadlines. |
+| `tls` | [ApplicationTrust](#applicationtrust) | Yes | — | Required peer-verifying TLS trust profile. |
+
 ## AgentExecution
 
 Execution timeout shared by the sandbox; Fabric owns native execution settings.
@@ -110,6 +130,36 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
+
+## ApplicationAuthentication
+
+Static bearer delivery does not issue, refresh, or narrow an identity's authority.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.agentConnections.{key}.authentication`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `mode` | string | Yes | — | Static bearer profile: oidcBearer. This does not establish a supported issuer flow. Constraints: `"oidcBearer"`. |
+| `refreshMode` | string | Yes | — | none: the application fails closed on expiry; no installer-owned refresh. Constraints: `"none"`. |
+| `secretRef` | string | Yes | — | Name of this service's explicitly declared protected credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## ApplicationTrust
+
+The first delivery profile supports verified system trust only.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.agentConnections.{key}.tls`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `trust` | string | Yes | — | system: use the image's trusted CA roots. Private CA delivery and insecure modes are unsupported. Constraints: `"system"`. |
 
 ## AuthMethod
 
@@ -158,6 +208,21 @@ Paths:
 | `captureSizes` | array of integer | Yes | — | Nonempty list of CUDA graph capture sizes. Constraints: minimum items 1; maximum items 64; items: minimum 1; maximum 65536. |
 | `cudagraphMode` | string | Yes | — | CUDA graph execution mode. Constraints: `"NONE"` or `"FULL_DECODE_ONLY"`. |
 | `mode` | integer | Yes | — | Compilation mode understood by the pinned vLLM image. Constraints: minimum 0; maximum 3. |
+
+## ConnectionTimeouts
+
+Bounded application-client health and invocation deadlines.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.agentConnections.{key}.timeouts`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `healthSeconds` | integer | Yes | — | Non-generative native agent check deadline, 1–12 seconds. Constraints: minimum 1; maximum 12. |
+| `invokeSeconds` | integer | Yes | — | Explicit agent invocation deadline, 1–120 seconds. Constraints: minimum 1; maximum 120. |
 
 ## ContainerData
 
@@ -237,6 +302,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
+- `spec.services.{key}.secrets.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -519,6 +585,20 @@ Paths:
 | `snapshot` | [Manifest](#manifest) | No | — | Optional pinned file manifest. When omitted, the SDK resolves the model inventory. When present, its repository and revision must match service.model. |
 | `sourceNotices` | array of string | Yes | — | Nonempty list of absolute paths to retained source notices inside the image. Constraints: minimum items 1; items: pattern `^/`. |
 | `verification` | [Tool](#tool) | Yes | — | Executable that independently verifies prepared data before publication. |
+
+## InputSetup
+
+A preloaded, immutable NemoClaw setup image. It runs only to publish protected inputs.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.inputSetup`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `image` | string | Yes | — | Repository SHA-256 manifest digest. Build from image/container-inputs/Dockerfile and preload it in the selected engine; no implicit pull. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 
 ## Integration
 
@@ -898,6 +978,21 @@ Paths:
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
+## ProtectedCredential
+
+A caller-supplied token reference delivered as a protected file, never Docker environment.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.secrets.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `credential` | [Credential](#credential) | Yes | — | Caller environment reference; no value appears in deployment configuration or state. |
+| `targetPath` | string | Yes | — | Canonical file path below this application's data root. |
+
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -976,6 +1071,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
+| `allowUnsupportedHealth` | boolean | No | — | Allow installation when native agent health is explicitly unsupported. Omission or false requires confirmed native health. Failed or unknown observations remain errors; this setting does not prove agent readiness or a successful response. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -1103,16 +1199,19 @@ Image-owned application with bounded Docker HEALTHCHECK observation.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `agentConnections` | map of [AgentConnection](#agentconnection) | No | — | Explicit connection projection and selected-agent readiness ordering. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `architecture` | string | Yes | — | Linux image architecture: arm64 or amd64. This does not select a host architecture. Constraints: `"arm64"` or `"amd64"`. |
 | `data` | [ContainerData](#containerdata) | Yes | — | Disposable application data. Destroy removes this volume; external data is not mounted. |
 | `dependsOn` | array of string | No | — | Declared services that must be ready before this container starts. This injects no settings. Constraints: maximum items 128; items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `environment` | map of string | No | — | Literal non-secret application settings. Credentials must not be supplied here. Constraints: keys: pattern `^[A-Z_][A-Z0-9_]{0,127}$`; values: pattern `^[^\u0000]*$(?![\s\S])`; maximum characters 65536. |
 | `image` | string | Yes | — | Immutable application image. The image owns its entrypoint, CMD, and HEALTHCHECK. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Omission selects IfNotPresent. Never requires an image in the selected engine. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `inputSetup` | [InputSetup](#inputsetup) or null | No | — | Explicit preloaded immutable setup image; required when protected inputs are declared. No caller-supplied setup commands are accepted. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"container"`. |
 | `placement` | [ContainerPlacement](#containerplacement) | No | — | Local Docker placement. Omission inherits the managed Docker gateway's engine and network. |
 | `publication` | [ContainerPublication](#containerpublication) | No | — | Optional loopback or private IPv4 TCP publication. Omission publishes no port. |
 | `readiness` | [ContainerReadiness](#containerreadiness) | No | — | Apply-time observation of the image-owned Docker HEALTHCHECK; no mutation or task invocation. |
+| `secrets` | map of [ProtectedCredential](#protectedcredential) | No | — | Protected token references. Setup publishes root-confined files before dependent application startup. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `user` | string | No | `"65532:65532"` | Numeric non-root UID:GID. Omission selects 65532:65532. Constraints: pattern `^[1-9][0-9]{0,8}:[1-9][0-9]{0,8}$`. |
 
 ## ServiceHardware

@@ -413,6 +413,12 @@ fn compile_with_plans(
                 .expect("Fabric configuration JSON");
             attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
+        if target.kind == crate::services::installers::container::inputs::INPUTS_KIND {
+            let value = attributes["spec"]
+                .as_str()
+                .expect("application input specification");
+            attributes["spec"] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+        }
         if target.kind == "provider_profile" {
             attributes["binaries_json"] = json!(format!(
                 "${{{}.binaries_json}}",
@@ -499,6 +505,7 @@ fn compile_with_plans(
         }]});
         if crate::backend::openshell_lifecycle(&target.kind)
             != Some(crate::backend::OpenShellLifecycle::Reconstructible)
+            && target.kind != crate::services::installers::container::inputs::INPUTS_KIND
         {
             attributes["lifecycle"]["prevent_destroy"] = json!(true);
         }
@@ -525,13 +532,18 @@ fn compile_with_plans(
     let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
         let reference = format!("nemoclaw_sandbox.{}", sandbox.name);
         let binding = format!("${{merge({reference}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}", sandbox.name);
+        let condition = if sandbox.allow_unsupported_health {
+            "${self.ready || try(jsondecode(self.health_json).supported == false && jsondecode(self.health_json).report == null && jsondecode(self.health_json).reason_code == \"fabric_health_unsupported\", false)}"
+        } else {
+            "${self.ready}"
+        };
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
             // uuid() is unknown in a saved plan and records a unique observation
             // token, so failed applies cannot report stale health as a new result.
             "read_trigger":"${uuid()}",
             "lifecycle":{"postcondition":[{
-                "condition":"${self.ready}",
+                "condition":condition,
                 "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
             }]}
         })))

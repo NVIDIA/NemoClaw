@@ -130,6 +130,59 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .unwrap();
     assert_ne!(observation["values"]["read_trigger"], token);
     assert_eq!(observation["values"]["ready"], true);
+    // The real OpenTofu evaluator owns this postcondition boundary. SDK unit
+    // tests separately own policy decoding and final completion classification.
+    for (allow, health, success, native_ready) in [
+        (
+            false,
+            json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+            false,
+            false,
+        ),
+        (
+            true,
+            json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+            true,
+            false,
+        ),
+        (
+            true,
+            json!({"supported":true,"report":null,"reason_code":"fabric_health_failed"}),
+            false,
+            false,
+        ),
+        (
+            true,
+            json!({"supported":false,"report":{},"reason_code":"fabric_health_unsupported"}),
+            false,
+            false,
+        ),
+        (
+            true,
+            json!({"supported":true,"report":{"fixture":true},"reason_code":null}),
+            true,
+            true,
+        ),
+    ] {
+        document.spec.sandboxes[0].allow_unsupported_health = allow;
+        graph = compile::compile(&document, &generations, "0.1.0").unwrap();
+        fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
+        fixture.state.lock().unwrap().health_report = Some(health);
+        run(&["plan", "-input=false", "-out=policy.plan"], true);
+        run(&["apply", "-input=false", "policy.plan"], success);
+        let state: Value = serde_json::from_slice(&run(&["show", "-json"], true)).unwrap();
+        let observation = state["values"]["root_module"]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
+            .unwrap();
+        assert_eq!(observation["values"]["ready"], native_ready);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    }
+    // Even an explicitly unsupported result cannot bypass infrastructure admission.
+    fixture.state.lock().unwrap().health_report =
+        Some(json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}));
     // Recheck admission independently of previously successful configuration.
     // The gateway may reject a policy while the sandbox is still Starting.
     {

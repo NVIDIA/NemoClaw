@@ -209,6 +209,14 @@ pub struct InferenceProvider {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation and dependency placement.
 pub struct Sandbox {
+    #[serde(
+        rename = "allowUnsupportedHealth",
+        default,
+        skip_serializing_if = "is_false"
+    )]
+    #[schemars(default)]
+    /// Allow installation when native agent health is explicitly unsupported. Omission or false requires confirmed native health. Failed or unknown observations remain errors; this setting does not prove agent readiness or a successful response.
+    pub allow_unsupported_health: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Harness")]
     /// Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation.
@@ -259,6 +267,10 @@ pub struct Sandbox {
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

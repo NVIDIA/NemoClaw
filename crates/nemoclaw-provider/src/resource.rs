@@ -108,6 +108,9 @@ impl ResourceAdapter {
     fn observed_data_path(&self) -> bool {
         self.definition.kind == "gateway_storage"
     }
+    fn observed_complete(&self) -> bool {
+        self.definition.kind == "container_inputs"
+    }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
@@ -191,12 +194,15 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
+                        || (k == "complete" && self.observed_complete())
                         || (k == "data_path" && self.observed_data_path()) =>
                 {
                     Ok((k.clone(), String::new()))
                 }
                 Value::Null if self.optional(k) => Ok((k.clone(), String::new())),
-                Value::Unknown | Value::Null if creating && k == "id" => {
+                Value::Unknown | Value::Null
+                    if (creating || self.observed_complete()) && k == "id" =>
+                {
                     Ok((k.clone(), String::new()))
                 }
                 _ => Err(ObservationError::Incomplete),
@@ -211,6 +217,7 @@ impl ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.observed_data_path().then_some("data_path"))
+            .chain(self.observed_complete().then_some("complete"))
         {
             if observed
                 .get(field)
@@ -303,12 +310,14 @@ impl Resource for ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.observed_data_path().then_some("data_path"))
+            .chain(self.observed_complete().then_some("complete"))
             .map(|name| {
                 (
                     name.into(),
                     Attribute {
                         attr_type: AttributeType::String,
                         constraint: if name == "id"
+                            || (name == "complete" && self.observed_complete())
                             || (name == "running" && self.observed_running())
                             || (name == "data_path" && self.observed_data_path())
                         {
@@ -386,6 +395,9 @@ impl Resource for ResourceAdapter {
             return None;
         }
         proposed.insert("id".into(), Value::Unknown);
+        if self.observed_complete() {
+            proposed.insert("complete".into(), Value::Unknown);
+        }
         if self.observed_data_path() {
             proposed.insert("data_path".into(), Value::Unknown);
         }
@@ -504,13 +516,22 @@ impl Resource for ResourceAdapter {
             diags.root_error_short("Update forbidden during destroy");
             return Some((prior, private));
         }
-        let row = match self.row(&planned, false) {
+        let mut row = match self.row(&planned, false) {
             Ok(row) => row,
             Err(error) => {
                 diags.root_error_short(error.to_string());
                 return Some((prior, private));
             }
         };
+        if self.observed_complete()
+            && row.get("id").is_none_or(String::is_empty)
+            && let Some(Value::Value(id)) = prior.get("id")
+        {
+            // The helper's ID may change only while repairing recorded partial
+            // setup. Carry the old binding into the backend's ownership check;
+            // it is not a public state attribute.
+            row.insert("prior_id".into(), id.clone());
+        }
         let mutation = crate::download::with_provider_download_progress(
             download_resource(self.definition.kind, &row),
             self.backend.ensure(self.definition.kind, &row),
@@ -572,6 +593,55 @@ fn download_resource(kind: &str, row: &Row) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct RepairedInputs;
+    #[async_trait]
+    impl Backend for RepairedInputs {
+        async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+            unreachable!("update must not refresh through this fixture")
+        }
+        async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+            assert_eq!(kind, "container_inputs");
+            assert_eq!(desired["prior_id"], "old-helper");
+            assert!(desired["id"].is_empty());
+            let mut observed = desired.clone();
+            observed.remove("prior_id");
+            observed.insert("id".into(), "new-helper".into());
+            observed.insert("complete".into(), "true".into());
+            Mutation::complete(observed)
+        }
+        async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+            unreachable!("update must not destroy through this fixture")
+        }
+    }
+    #[tokio::test]
+    async fn partial_input_update_preserves_old_binding_and_accepts_only_the_new_computed_id() {
+        let definition = Definition::new("container_inputs", &["spec", "sandbox_id"], &[]);
+        let prior: State = [
+            ("spec".into(), Value::Value("{}".into())),
+            ("sandbox_id".into(), Value::Value("none".into())),
+            ("id".into(), Value::Value("old-helper".into())),
+            ("complete".into(), Value::Value("false".into())),
+        ]
+        .into();
+        let (planned, _) = plan_update(&definition, &prior, prior.clone());
+        let adapter = ResourceAdapter::new(definition, Arc::new(RepairedInputs));
+        let mut diags = Diagnostics::default();
+        let (state, _) = adapter
+            .update(
+                &mut diags,
+                prior,
+                planned,
+                State::default(),
+                ValueEmpty::default(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state["id"], Value::Value("new-helper".into()));
+        assert_eq!(state["complete"], Value::Value("true".into()));
+        assert!(!state.contains_key("prior_id"));
+        assert!(diags.errors.is_empty(), "{diags:?}");
+    }
     #[test]
     fn download_labels_distinguish_named_specs_and_models() {
         for name in ["first", "second"] {

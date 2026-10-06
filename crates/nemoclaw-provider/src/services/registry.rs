@@ -20,6 +20,17 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
+        if kind == nemoclaw_sdk::services::installers::container::inputs::INPUTS_KIND {
+            let spec: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+                serde_json::from_str(row.get("spec").ok_or(ObservationError::Incomplete)?)
+                    .map_err(|_| ObservationError::Incomplete)?;
+            spec.validate().map_err(|_| ObservationError::Incomplete)?;
+            let engine = self
+                .connections
+                .resolve(spec.process.engine())
+                .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
+            return Ok(Some(Box::new(super::inputs::InputsBackend::new(engine))));
+        }
         if matches!(
             kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND

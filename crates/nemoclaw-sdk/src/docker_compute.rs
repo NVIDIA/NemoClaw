@@ -47,6 +47,7 @@ pub(crate) fn is_disposable(address: &str) -> bool {
         "docker_image.",
         "docker_network.",
         "docker_volume.",
+        "nemoclaw_container_inputs.",
     ]
     .iter()
     .any(|prefix| address.starts_with(prefix))
@@ -391,6 +392,13 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         {
             attrs["lifecycle"] = json!({"precondition":preconditions});
         }
+        if target.kind == crate::services::installers::container::SERVICE_KIND {
+            let name = target.address.split_once('.').unwrap().1;
+            let inputs = format!("nemoclaw_container_inputs.{name}");
+            if raw.iter().any(|t| t.address == inputs) {
+                attrs["lifecycle"]["replace_triggered_by"] = json!([inputs]);
+            }
+        }
         let physical = address(&target.address);
         graph["resource"]["docker_container"][physical.split_once('.').unwrap().1] = attrs;
         rewrite(graph, &target.address, &physical);
@@ -420,6 +428,20 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
 
 fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> {
     let mut gates = Vec::new();
+    for target in raw
+        .iter()
+        .filter(|t| t.kind == crate::services::installers::container::inputs::INPUTS_KIND)
+    {
+        let spec: crate::services::installers::container::inputs::InputsSpec =
+            serde_json::from_str(&target.values["spec"])
+                .map_err(|_| Error::State("invalid application inputs"))?;
+        spec.validate()?;
+        let name = format!("runtime_input_image_{}", spec.service);
+        let mut config = json!({"spec":spec.image_requirements().json()?,"allow_missing":false});
+        literal(&mut config);
+        graph["data"]["nemoclaw_runtime_image"][&name] = config;
+        gates.push(json!(format!("data.nemoclaw_runtime_image.{name}")));
+    }
     for target in raw.iter().filter(|target| {
         matches!(
             target.kind.as_str(),

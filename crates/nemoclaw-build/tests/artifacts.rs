@@ -104,6 +104,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",
         "image/fabric/FABRIC-LICENSE",
+        "image/container-inputs/Dockerfile",
         "image/NOTICE.md",
     ] {
         let file = root.path().join(name);
@@ -111,7 +112,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 13);
+    assert_eq!(first.len(), 14);
     for name in [
         "target/output",
         ".local/secret",

@@ -84,6 +84,18 @@ async fn observe(
         .config
         .as_ref()
         .and_then(|config| config.labels.as_ref());
+    if spec.kind == nemoclaw_sdk::services::installers::container::SERVICE_KIND
+        && process
+            .image_labels
+            .get(nemoclaw_container_inputs::CONTRACT_LABEL)
+            .map(String::as_str)
+            == Some(nemoclaw_container_inputs::CONTRACT_VERSION)
+    {
+        super::services::inputs::validate_image(&image, spec)?;
+        observation.status = ObservationStatus::Available;
+        observation.required_version = "container-inputs-v1".into();
+        return Ok(observation);
+    }
     if spec.kind == nemoclaw_sdk::services::installers::container::SERVICE_KIND {
         let config = image
             .config

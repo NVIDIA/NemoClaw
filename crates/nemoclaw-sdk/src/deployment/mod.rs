@@ -189,6 +189,18 @@ impl Deployment {
         let mut document = document.clone();
         document.defaults();
         document.validate()?;
+        // Resolve/validate protected tokens before state access or managed-runtime mutation.
+        // Values remain in memory and never enter configuration or fingerprints.
+        for service in document.spec.services.values() {
+            if let crate::services::ServiceDefinition::Container(service) = service {
+                for secret in service.secrets.values() {
+                    let value = self.secrets.resolve(&secret.credential.env)?;
+                    if !nemoclaw_container_inputs::credential(&value) {
+                        return Err(crate::ObservationError::Authentication.into());
+                    }
+                }
+            }
+        }
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }

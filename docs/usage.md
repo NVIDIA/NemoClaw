@@ -85,9 +85,17 @@ Destroy does not run readiness checks.
 The provider requests `check --ready` through OpenShell.
 The pinned Fabric has no health API, so the bridge returns unsupported with its host snapshot and no health report.
 The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
-**Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
+By default, apply fails its health check at this pin, including on unchanged applies, while preserving completed resource changes, state, and agent files.
 A reachable bridge or remembered runtime handle does not establish agent health.
 Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
+
+To install without waiting for an unsupported native health API, explicitly set `allowUnsupportedHealth: true` on the selected entry in `spec.sandboxes`.
+Omission or `false` keeps the strict default.
+This exception accepts only a fresh `fabric_health_unsupported` result with `supported: false` and no report, after infrastructure and agent configuration checks complete.
+Apply still reports native health as unsupported; it does not establish native readiness or a working agent response.
+Dependent containers still require their own image-owned health check and completed input delivery.
+Failed, missing, stale, malformed, authentication, and transport observations remain errors.
+Verify a real agent response separately after installation.
 
 Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata or stdin input support leaves compatibility unknown.
 Such an image rejects configuration from this provider before changing its runtime.

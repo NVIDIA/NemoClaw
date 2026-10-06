@@ -2125,6 +2125,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-container-inputs"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
@@ -2197,6 +2208,7 @@ dependencies = [
  "interprocess",
  "ipnet",
  "nemo-fabric-core",
+ "nemoclaw-container-inputs",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
  "openshell-core",
@@ -2260,6 +2272,7 @@ dependencies = [
  "ipnet",
  "jsonschema 0.56.0",
  "nemo-fabric-core",
+ "nemoclaw-container-inputs",
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "openshell-core",

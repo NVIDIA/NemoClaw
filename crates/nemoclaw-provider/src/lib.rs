@@ -36,10 +36,24 @@ pub fn plan_update(
     prior: &State,
     mut proposed: State,
 ) -> (State, Vec<&'static str>) {
+    if definition.kind == "container_inputs" {
+        match prior.get("complete") {
+            Some(Value::Value(value)) if value == "false" => {
+                proposed.insert("complete".into(), Value::Unknown);
+                proposed.insert("id".into(), Value::Unknown);
+            }
+            Some(value) => {
+                proposed.insert("complete".into(), value.clone());
+            }
+            None => {}
+        }
+    }
     if matches!(
         proposed.get("id"),
         Some(Value::Unknown | Value::Null) | None
-    ) && let Some(id) = prior.get("id")
+    ) && !(definition.kind == "container_inputs"
+        && prior.get("complete") == Some(&Value::Value("false".into())))
+        && let Some(id) = prior.get("id")
     {
         proposed.insert("id".into(), id.clone());
     }
@@ -120,3 +134,69 @@ pub(crate) use nemoclaw_sdk::{ByteProgress, DownloadPhase};
 
 #[cfg(all(test, unix))]
 use nemoclaw_sdk::compile;
+
+#[cfg(test)]
+mod application_input_contract_tests {
+    use super::*;
+    #[test]
+    fn incomplete_input_delivery_requires_an_explicit_apply_update() {
+        let definition = Definition::new("container_inputs", &["spec", "sandbox_id"], &[]);
+        let prior: State = [
+            ("id".into(), Value::Value("bound".into())),
+            ("complete".into(), Value::Value("false".into())),
+        ]
+        .into();
+        let (planned, replacements) = plan_update(&definition, &prior, prior.clone());
+        assert_eq!(planned["complete"], Value::Unknown);
+        assert_eq!(planned["id"], Value::Unknown);
+        assert!(replacements.is_empty());
+    }
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn application_inputs_register_an_engine_backend_without_a_gateway_client() {
+        let mut document = nemoclaw_sdk::config::Document::parse(
+            include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml")
+                .as_slice(),
+        )
+        .unwrap();
+        let mut service = serde_json::json!({
+            "kind":"container","image":format!("voice@sha256:{}", "a".repeat(64)),
+            "architecture":"arm64","data":{"mountPath":"/var/lib/voiceclaw"},
+            "inputSetup":{"image":format!("inputs@sha256:{}", "b".repeat(64))},
+            "secrets":{"speech":{"credential":{"env":"SPEECH_KEY"},"targetPath":"/var/lib/voiceclaw/credentials/speech"}}
+        });
+        document.spec.services.insert(
+            "voice".into(),
+            serde_json::from_value(service.take()).unwrap(),
+        );
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "ollama_service",
+            "managed_gateway",
+            "container_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let target = nemoclaw_sdk::compile::targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.kind == "container_inputs")
+            .unwrap();
+        let fixture = docker::fixture::Fixture::start(|_| {
+            panic!("backend registration must not query Docker")
+        })
+        .await;
+        let spec: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+            serde_json::from_str(&target.values["spec"]).unwrap();
+        let connections =
+            docker::Connections::fixed([fixture.engine_for(spec.process.engine())]).unwrap();
+        assert!(
+            services::BackendRegistry::new(&connections)
+                .resolve(&target.kind, &target.values)
+                .unwrap()
+                .is_some()
+        );
+    }
+}

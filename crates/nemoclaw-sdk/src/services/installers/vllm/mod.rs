@@ -110,6 +110,7 @@ fn targets(
         command: Vec::new(),
         user: String::new(),
         environment: BTreeMap::new(),
+        input_revision: String::new(),
         mount_target: "/data".into(),
         bind_address,
         port: service.serving.port as u16,

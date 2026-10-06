@@ -11,6 +11,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
+pub mod inputs;
 
 pub const SERVICE_KIND: &str = "container_service";
 pub const STORAGE_KIND: &str = "container_storage";
@@ -33,6 +34,15 @@ pub struct Service {
     /// Literal non-secret application settings. Credentials must not be supplied here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub environment: BTreeMap<String, String>,
+    /// Explicit preloaded immutable setup image; required when protected inputs are declared. No caller-supplied setup commands are accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_setup: Option<inputs::InputSetup>,
+    /// Protected token references. Setup publishes root-confined files before dependent application startup.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secrets: BTreeMap<String, inputs::ProtectedCredential>,
+    /// Explicit connection projection and selected-agent readiness ordering.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_connections: BTreeMap<String, inputs::AgentConnection>,
     /// Local Docker placement. Omission inherits the managed Docker gateway's engine and network.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ContainerPlacement")]
@@ -155,6 +165,19 @@ impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         crate::config::schema::validate_service("container", self)?;
         require(
+            self.input_setup.is_some()
+                == (!self.secrets.is_empty() || !self.agent_connections.is_empty()),
+            "inputSetup is required exactly when protected inputs are declared",
+        )?;
+        if let Some(setup) = &self.input_setup {
+            setup.validate()?;
+        }
+        inputs::validate_inputs(
+            &self.data.mount_path,
+            &self.secrets,
+            &self.agent_connections,
+        )?;
+        require(
             self.environment.values().map(String::len).sum::<usize>() <= 128 << 10,
             "container environment exceeds its size limit",
         )?;
@@ -244,6 +267,12 @@ impl Installer for Service {
             command: Vec::new(),
             user: self.user.clone(),
             environment: self.environment.clone(),
+            input_revision: inputs::input_revision(
+                &self.user,
+                &self.data.mount_path,
+                &self.secrets,
+                &self.agent_connections,
+            ),
             mount_target: self.data.mount_path.clone(),
             bind_address: self
                 .publication
@@ -296,20 +325,67 @@ impl Installer for Service {
                 | super::super::ServiceDefinition::Vllm(_) => {}
             }
         }
+        let mut targets = vec![
+            Target {
+                kind: STORAGE_KIND.into(),
+                address: address(STORAGE_KIND, name),
+                values: crate::backend::Row::from([("spec".into(), storage.json()?)]),
+            },
+            Target {
+                kind: SERVICE_KIND.into(),
+                address: address(SERVICE_KIND, name),
+                values,
+            },
+        ];
+        let mut edges = BTreeMap::new();
+        for connection in self.agent_connections.values() {
+            connection.validate_binding(document)?;
+            dependencies.push(format!(
+                "data.nemoclaw_sandbox_readiness.{}",
+                connection.sandbox_ref
+            ));
+        }
+        if !self.secrets.is_empty() || !self.agent_connections.is_empty() {
+            let input_address = address(inputs::INPUTS_KIND, name);
+            let inputs = inputs::InputsSpec {
+                process: spec.clone(),
+                setup: self
+                    .input_setup
+                    .clone()
+                    .ok_or(Error::State("missing protected input setup image"))?,
+                service: name.into(),
+                workspace: document.workspace(),
+                secrets: self.secrets.clone(),
+                connections: self.agent_connections.clone(),
+            };
+            inputs.validate()?;
+            targets.push(Target {
+                kind: inputs::INPUTS_KIND.into(),
+                address: input_address.clone(),
+                values: crate::backend::Row::from([
+                    (
+                        "spec".into(),
+                        serde_json::to_string(&inputs)
+                            .map_err(|_| Error::State("invalid application inputs"))?,
+                    ),
+                    (
+                        "sandbox_id".into(),
+                        self.agent_connections.values().next().map_or_else(
+                            || "none".into(),
+                            |connection| {
+                                format!("${{nemoclaw_sandbox.{}.id}}", connection.sandbox_ref)
+                            },
+                        ),
+                    ),
+                ]),
+            });
+            edges.insert(input_address.clone(), vec![address(STORAGE_KIND, name)]);
+            dependencies.push(input_address);
+        }
+        edges.insert(address(SERVICE_KIND, name), dependencies);
         Ok(InstallPlan {
-            targets: vec![
-                Target {
-                    kind: STORAGE_KIND.into(),
-                    address: address(STORAGE_KIND, name),
-                    values: crate::backend::Row::from([("spec".into(), storage.json()?)]),
-                },
-                Target {
-                    kind: SERVICE_KIND.into(),
-                    address: address(SERVICE_KIND, name),
-                    values,
-                },
-            ],
-            dependencies: BTreeMap::from([(address(SERVICE_KIND, name), dependencies)]),
+            targets,
+            dependencies: edges,
         })
     }
     fn remove(&self, _: &Document, _: &str, _: &Generations) -> Result<RemovePlan, Error> {

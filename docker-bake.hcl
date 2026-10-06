@@ -67,7 +67,22 @@ target "ollama-proxy" {
 
 # Checks use disposable build stages and never start deployed resources.
 group "check" {
-  targets = ["lint", "unit-tests", "reference-tests", "proxy-tests"]
+  targets = ["lint", "unit-tests", "reference-tests", "proxy-tests", "container-input-tests"]
+}
+
+target "container-inputs" {
+  context = "."
+  dockerfile = "image/container-inputs/Dockerfile"
+  platforms = [AGENT_PLATFORM]
+  target = "runtime"
+  tags = ["${IMAGE_PREFIX}:container-inputs"]
+}
+
+target "container-input-tests" {
+  inherits = ["container-inputs"]
+  output = ["type=cacheonly"]
+  target = "test"
+  tags = []
 }
 
 target "lint" {

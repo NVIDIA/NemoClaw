@@ -52,6 +52,7 @@ pub(super) struct Readiness(Vec<SandboxObservation>);
 struct SandboxObservation {
     sandbox: String,
     agent: String,
+    allow_unsupported_health: bool,
     failed: bool,
     health_json: Option<String>,
 }
@@ -63,7 +64,8 @@ impl SandboxObservation {
                 .ok_or(Error::State("sandbox health observation is absent"))?
                 .as_bytes(),
         )?;
-        if self.failed || !health.allows_apply_completion() {
+        let allowed_unsupported = self.allow_unsupported_health && health.is_unsupported();
+        if !allowed_unsupported && (self.failed || !health.allows_apply_completion()) {
             return Err(Error::State("sandbox readiness was not confirmed"));
         }
         Ok(SandboxHealth {
@@ -113,6 +115,7 @@ impl Readiness {
                 Ok(SandboxObservation {
                     sandbox: sandbox.name.clone(),
                     agent: sandbox.agent.name.clone(),
+                    allow_unsupported_health: sandbox.allow_unsupported_health,
                     failed: !observed["ready"]
                         .as_bool()
                         .ok_or(Error::State("sandbox readiness observation is incomplete"))?,
@@ -217,6 +220,99 @@ mod tests {
             );
             assert!(matches!(outcome, ApplyOutcome::Settled(Err(_))));
         }
+    }
+
+    fn optional_health_fixture(ready: bool, health: Value) -> (Document, Plan, Vec<u8>) {
+        let (document, plan, bytes) = fixture("current", ready);
+        let mut desired = serde_json::to_value(document).unwrap();
+        desired["spec"]["sandboxes"][0]["allowUnsupportedHealth"] = json!(true);
+        let document = Document::parse(desired.to_string().as_bytes()).unwrap();
+        let mut state: Value = serde_json::from_slice(&bytes).unwrap();
+        state["values"]["root_module"]["resources"][0]["values"]["health_json"] =
+            json!(health.to_string());
+        (document, plan, serde_json::to_vec(&state).unwrap())
+    }
+
+    #[test]
+    fn explicit_unsupported_health_allows_installation_without_claiming_native_readiness() {
+        let (document, plan, state) = optional_health_fixture(
+            false,
+            json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+        );
+        let outcome =
+            ApplyOutcome::classify(Ok(Vec::new()), Readiness::decode(&document, &plan, &state));
+        let ApplyOutcome::Settled(Ok(health)) = outcome else {
+            panic!("explicitly unsupported health must not block completed installation")
+        };
+        assert!(!health[0].health.supported);
+        assert!(health[0].health.report.is_none());
+        assert_eq!(
+            health[0].health.reason_code.as_deref(),
+            Some("fabric_health_unsupported")
+        );
+        assert!(!health[0].health.allows_apply_completion());
+    }
+
+    #[test]
+    fn optional_health_never_accepts_failed_ambiguous_stale_or_missing_observations() {
+        for health in [
+            json!({"supported":false,"reason_code":"fabric_health_unsupported"}),
+            json!({"supported":true,"report":null,"reason_code":"fabric_health_failed"}),
+            json!({"supported":true,"report":null,"reason_code":"fabric_health_timeout"}),
+            json!({"supported":false,"report":null,"reason_code":"transport_failure"}),
+            json!({"supported":false,"report":{"passed":true},"reason_code":"fabric_health_unsupported"}),
+            json!({"supported":true,"report":null,"reason_code":"fabric_health_unsupported"}),
+            json!({"supported":true,"report":{"passed":true},"reason_code":null}),
+            Value::Null,
+        ] {
+            let (document, plan, state) = optional_health_fixture(false, health);
+            assert!(matches!(
+                ApplyOutcome::classify(Ok(Vec::new()), Readiness::decode(&document, &plan, &state)),
+                ApplyOutcome::Settled(Err(_))
+            ));
+        }
+        let (document, plan, bytes) = optional_health_fixture(
+            false,
+            json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+        );
+        for (key, value) in [
+            ("read_trigger", json!("previous")),
+            ("health_json", Value::Null),
+            ("ready", Value::Null),
+        ] {
+            let mut state: Value = serde_json::from_slice(&bytes).unwrap();
+            state["values"]["root_module"]["resources"][0]["values"][key] = value;
+            assert!(matches!(
+                ApplyOutcome::classify(
+                    Ok(Vec::new()),
+                    Readiness::decode(&document, &plan, &serde_json::to_vec(&state).unwrap())
+                ),
+                ApplyOutcome::Settled(Err(_))
+            ));
+        }
+        assert!(matches!(
+            ApplyOutcome::classify(
+                Err(execution(Some(vec![
+                    "data.nemoclaw_service_readiness.container_service_voice"
+                ]))),
+                Readiness::decode(&document, &plan, &bytes),
+            ),
+            ApplyOutcome::Unsettled(Error::Execution { .. })
+        ));
+    }
+
+    #[test]
+    fn optional_health_still_accepts_confirmed_native_health() {
+        let (document, plan, state) = optional_health_fixture(
+            true,
+            json!({"supported":true,"report":{"passed":true},"reason_code":null}),
+        );
+        let ApplyOutcome::Settled(Ok(health)) =
+            ApplyOutcome::classify(Ok(Vec::new()), Readiness::decode(&document, &plan, &state))
+        else {
+            panic!("confirmed native health must still pass")
+        };
+        assert!(health[0].health.allows_apply_completion());
     }
 
     #[test]
