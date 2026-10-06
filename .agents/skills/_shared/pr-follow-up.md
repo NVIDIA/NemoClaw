@@ -63,6 +63,7 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 | Valid but pre-existing, adjacent, or optional problem | Defer it and record the owner or follow-up route. Do not change the candidate. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
 | Required Advisor check remains blocked after a false-positive or out-of-scope disposition | Record the candidate SHA and affected check or workflow run identifiers. Report an automation defect to the workflow owner or a NemoClaw maintainer, who decides whether to repair the automation, authorize a policy-backed rerun, or defer the PR. Do not change product code only to make the check pass. |
+| Repair handoff lacks required causal, criterion, necessity, or boundary evidence | Preserve the candidate and missing evidence. Report the blocked repair to the lifecycle owner. Collect the missing evidence, obtain a maintainer or user decision, or defer the finding before rerouting it. Do not return the unchanged group to implementation. |
 | A finding requires new product scope or leaves materially different outcomes inside the accepted scope | Ask the user. Do not select or add the new behavior as a repair. |
 | Required review or check is still pending | Report it. Do not classify the collection as complete. |
 | Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Keep the candidate unchanged and ask a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for that commit or defer the PR. Do not rerun before that decision. |
@@ -83,7 +84,7 @@ Integrate the base branch only for one of these reasons:
 
 - resolve a current merge conflict;
 - consume a required dependency that has merged;
-- satisfy an active up-to-date rule after every other candidate-owned finding has settled.
+- satisfy an active up-to-date rule after every PR blocker is resolved and every other finding has a final disposition.
 
 Do not integrate the base branch only because it moved during candidate evaluation. Integrate it at
 most once in one evaluation cycle. A base integration creates a new candidate, invalidates approval

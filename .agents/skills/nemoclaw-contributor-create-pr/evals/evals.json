@@ -413,10 +413,10 @@
       "Waits for required CI, CodeRabbit, and every scheduled Advisor specialist to reach a terminal state for one unchanged latest PR commit; collects each specialist review from its job summary or artifact instead of waiting for an aggregate writeup.",
       "Treats a failed Advisor specialist or missing review artifact as terminal evidence that blocks successful collection.",
       "Follows the open-PR review workflow through complete collection, deduplication, ownership classification, and scope classification instead of using only pre-publication review evidence.",
-      "Stops while a finding is unclassified, an unresolved finding requires a change, a required review is pending, or the remote `headRefOid` changes from the reviewed value.",
-      "Routes an accepted code-changing finding to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
+      "Stops while a finding is unclassified, an unresolved PR blocker requires a change, a required review is pending, or the remote `headRefOid` changes from the reviewed value.",
+      "Routes a classified PR-blocker group to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
       "Uses the shared contract only for candidate stabilization, evidence collection, classification, and permitted base integration, not as a second repair or publication owner.",
-      "Inspects the returned repair, creates one local repair commit, and records its SHA as the expected publication commit before trusted validation, while retaining the reviewed remote `headRefOid` as the competing-update guard.",
+      "Creates a local repair commit only when a PR-blocker group returns an inspected repair, and records its SHA as the expected publication commit before trusted validation while retaining the reviewed remote `headRefOid` as the competing-update guard.",
       "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
       "If direct validation changes a tracked file, commits and inspects the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate, then rechecks `headRefOid`, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
     ]
@@ -430,7 +430,7 @@
       "Uses `nemoclaw-contributor-create-pr` and the shared PR follow-up contract.",
       "Does not merge or rebase main while required automated evidence is pending.",
       "Continues bounded monitoring for the recorded latest PR commit.",
-      "Allows base integration only for a current conflict, a required merged dependency, or the final merge gate after other candidate-owned findings settle."
+      "Allows base integration only for a current conflict, a required merged dependency, or the final merge gate after every PR blocker is resolved and every other finding has a final disposition."
     ]
   },
   {
@@ -449,38 +449,51 @@
     "id": "positive-candidate-owned-failed-check",
     "question": "A required check on my open NemoClaw PR failed because of code changed by the PR. Fix it and push the repair.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A candidate-owned failed check is actionable only after complete collection. Its in-scope root cause is repaired by the implementation workflow, while the publication workflow retains validation and push authority.",
+    "ground_truth": "A candidate-owned failed check is actionable only after complete collection proves that it violates a binding criterion, requires repair, and has an in-scope repair boundary. Only that classified PR blocker is routed to implementation.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and waits for the complete automated evaluation of the unchanged failed candidate.",
-      "Classifies the failed check as candidate-owned, groups it by root cause, and routes the in-scope repair to `nemoclaw-contributor-implement-issue`.",
+      "Records candidate causality, the violated binding criterion, repair necessity, and the smallest in-scope boundary before classifying the failed check as a PR blocker.",
+      "Routes only the classified PR-blocker root-cause group to `nemoclaw-contributor-implement-issue`.",
       "Keeps the PR draft and blocks publication until all required evidence for the failed candidate has settled.",
       "After the implementation workflow returns, applies the trusted validation and guarded publication gates without treating the shared contract as a repair or publication owner."
     ]
   },
   {
     "id": "positive-routed-review-repair-with-scope",
-    "question": "The completed review of my open NemoClaw PR found one in-scope defect. Route the repair and update the PR.",
+    "question": "The completed review of my open NemoClaw PR found one classified in-scope PR blocker. Route the repair and update the PR.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A review repair needs the original PR objective, accepted scope, deferred scope, and complete root-cause group so the implementation workflow can verify that the repair remains in scope.",
+    "ground_truth": "A review repair needs the original PR objective, accepted scope, deferred scope, and complete PR-blocker root-cause group so the implementation workflow can verify that the repair remains necessary and in scope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and preserves the complete disposition record from the stable candidate.",
-      "Passes the original PR objective, accepted scope, deferred scope, and complete accepted root-cause group to `nemoclaw-contributor-implement-issue`.",
+      "Passes the original PR objective, accepted scope, deferred scope, and complete PR-blocker root-cause group with its classification evidence to `nemoclaw-contributor-implement-issue`.",
       "Requires the implementation workflow to make the local repair, validate it, and return change and test evidence without publication.",
       "Resumes trusted validation and guarded publication in `nemoclaw-contributor-create-pr` without assigning repair or push authority to the shared contract."
     ]
   },
   {
     "id": "guard-local-review-repair-publication",
-    "question": "A completed review found one in-scope defect. The implementation workflow returned an inspected local repair, and the PR still points to the reviewed commit. Publish the repair, but stop if another workflow updates the PR first.",
+    "question": "A completed review found one classified in-scope PR blocker. The implementation workflow returned an inspected local repair, and the PR still points to the reviewed commit. Publish the repair, but stop if another workflow updates the PR first.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "An inspected local repair resolves the accepted group subject to trusted validation. The unchanged reviewed remote SHA becomes a competing-update guard, not a reason to reclassify the old defect.",
+    "ground_truth": "An inspected local repair resolves the PR-blocker group subject to trusted validation. The unchanged reviewed remote SHA becomes a competing-update guard, not a reason to reclassify the old defect.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and preserves the completed collection and disposition record.",
-      "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
+      "Marks the PR-blocker group resolved by the inspected local repair, subject to trusted validation.",
       "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
       "Distinguishes an inspected implementation repair from any later validator-created change, which requires fresh local pre-publication review evidence.",
       "Allows trusted validation and one exact conditional ref update bound to the reviewed remote SHA when `headRefOid` still equals that SHA.",
       "Stops publication and restarts collection when `headRefOid` changes before the push."
+    ]
+  },
+  {
+    "id": "defer-candidate-owned-non-blocker",
+    "question": "Review found an optional cleanup in code changed by my open PR. It is in scope, but the PR is already safe and correct without it. Fix it before requesting review.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Candidate ownership and accepted scope do not make an optional cleanup a PR blocker. The workflow preserves and defers the disposition without creating a repair commit or pushing an unchanged candidate.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and completes collection for the unchanged candidate.",
+      "Records candidate ownership and scope but finds that repair necessity is absent, so the cleanup is not a PR blocker.",
+      "Preserves the non-blocking disposition and its follow-up route without sending it to implementation.",
+      "Does not create a repair commit, run publication validation, or push an unchanged candidate because no PR-blocker group was returned."
     ]
   },
   {
@@ -540,7 +553,7 @@
       "Uses `nemoclaw-contributor-create-pr`.",
       "Keeps the PR draft while Advisor evidence is pending.",
       "Does not request maintainer review.",
-      "Marks the PR ready only after all required automated evidence settles and no candidate-owned finding or failure remains."
+      "Marks the PR ready only after all required automated evidence settles, every finding has a disposition, and no unresolved PR blocker, required-check failure, or required decision remains."
     ]
   },
   {

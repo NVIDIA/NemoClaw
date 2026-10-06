@@ -174,9 +174,11 @@ gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
-Keep it draft while automated evaluation or a candidate-owned repair is pending.
+Keep it draft while automated evaluation, a PR-blocker repair, or a required disposition decision is pending.
 Use `prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
-with no unresolved candidate-owned finding or failure.
+with no unresolved PR blocker, pending evidence, failed required check, or required automation-defect
+or scope decision. A candidate-owned finding with a completed non-blocking disposition does not by
+itself prevent readiness.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
