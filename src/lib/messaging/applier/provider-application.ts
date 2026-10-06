@@ -3,9 +3,9 @@
 
 import {
   WEB_SEARCH_PROVIDER_PROFILE_IDS,
-  webSearchProviderProfilePath,
   type WebSearchProviderProfileId,
-} from "./web-search-provider-profile";
+} from "../../inference/web-search/provider-profile";
+import { webSearchProviderProfilePath } from "./web-search-provider-profile";
 import {
   buildMessagingBridgeRefreshMaterial,
   listMessagingBridgeProfiles,

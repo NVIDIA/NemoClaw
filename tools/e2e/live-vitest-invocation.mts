@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as importedProcessExit from "../../src/lib/core/process-exit.ts";
@@ -22,6 +23,7 @@ export const LIVE_TEST_ROOT = "test/e2e/live/";
 export const RISK_SIGNAL_REPORTER = "test/e2e/risk-signal-reporter.ts";
 export const MCP_BRIDGE_TEST_PATH = "test/e2e/live/mcp-bridge.test.ts";
 export const INFERENCE_ROUTING_TEST_PATH = "test/e2e/live/inference-routing.test.ts";
+export const DGX_EXPRESS_TEST_PATH = "test/e2e/live/dgx-express.test.ts";
 
 const SHELL_METACHARACTER = /[^A-Za-z0-9_./^$=:@+-]/u;
 const TEST_PATH_PATTERN = /^[A-Za-z0-9_./-]+$/u;
@@ -115,7 +117,7 @@ export function validateLiveTestPath(testPath: string | undefined): string {
   if (!value.endsWith(".test.ts")) {
     throw new Error("test path must name a .test.ts file");
   }
-  return value;
+  return path.posix.normalize(value);
 }
 
 export function validateLiveSelector(selector: string | undefined): string | undefined {
@@ -133,6 +135,16 @@ export function resolveLiveSelector(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const validated = validateLiveSelector(selector);
+  if (testPath === DGX_EXPRESS_TEST_PATH) {
+    const target = env.E2E_TARGET_ID;
+    if (
+      (target !== "spark-express-vllm" && target !== "dgx-station-express") ||
+      validated !== `^${target}:`
+    ) {
+      throw new Error("DGX Express requires an explicit selector matching E2E_TARGET_ID");
+    }
+    return validated;
+  }
   if (testPath !== MCP_BRIDGE_TEST_PATH) return validated;
 
   // PR E2E executes trusted base-branch YAML with this helper from the

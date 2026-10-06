@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLiveVitestArgs,
+  DGX_EXPRESS_TEST_PATH,
   INFERENCE_ROUTING_TEST_PATH,
   LIVE_VITEST_PROJECT,
   MCP_BRIDGE_TEST_PATH,
@@ -309,3 +310,99 @@ describe("runLiveVitestCommand (#6961)", () => {
     expect(result.stderr).toContain('expected "run"');
   });
 });
+
+it.each([
+  ["spark-express-vllm", "^spark-express-vllm:"],
+  ["dgx-station-express", "^dgx-station-express:"],
+])("runs only the selected %s case from the shared DGX file", (target, selector) => {
+  let spawned: Parameters<LiveVitestSpawner> | undefined;
+  const spawn: LiveVitestSpawner = (...args) => {
+    spawned = args;
+    return { status: 0 };
+  };
+  expect(
+    runLiveVitestCommand(
+      ["run", "--test-path", DGX_EXPRESS_TEST_PATH, "--selector", selector],
+      spawn,
+      { E2E_TARGET_ID: target },
+    ),
+  ).toBe(0);
+  expect(spawned?.[1]).toEqual(buildLiveVitestArgs({ testPath: DGX_EXPRESS_TEST_PATH, selector }));
+  expect(spawned?.[1]).toContain(selector);
+});
+
+it.each([
+  ["dgx-station-express", []],
+  ["spark-express-vllm", []],
+  [undefined, ["--selector", "^dgx-station-express:"]],
+  ["unknown", ["--selector", "^dgx-station-express:"]],
+  ["spark-express-vllm", ["--selector", "^dgx-station-express:"]],
+  ["dgx-station-express", ["--selector", "^spark-express-vllm:"]],
+  ["dgx-station-express", ["--selector", "^dgx"]],
+] as const)("rejects a DGX selector mismatch before spawning: %s / %j", (target, selectorArgs) => {
+  let spawned = false;
+  const spawn: LiveVitestSpawner = () => {
+    spawned = true;
+    return { status: 0 };
+  };
+  expect(() =>
+    runLiveVitestCommand(["run", "--test-path", DGX_EXPRESS_TEST_PATH, ...selectorArgs], spawn, {
+      E2E_TARGET_ID: target,
+    }),
+  ).toThrow("DGX Express requires an explicit selector matching E2E_TARGET_ID");
+  expect(spawned).toBe(false);
+});
+
+it.each([
+  ["spark-express-vllm", "^spark-express-vllm:"],
+  ["dgx-station-express", "^dgx-station-express:"],
+])(
+  "collects exactly the %s live case without executing hardware operations",
+  (target, selector) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.resolve("node_modules/vitest/vitest.mjs"),
+        "list",
+        "--project",
+        "e2e-live",
+        DGX_EXPRESS_TEST_PATH,
+        "--json",
+        "-t",
+        selector,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+        env: {
+          ...process.env,
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_PHASE_COLLECTION: "1",
+          E2E_TARGET_ID: target,
+        },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const tests = JSON.parse(result.stdout);
+    expect(tests).toHaveLength(1);
+    expect(tests[0]).toMatchObject({ name: expect.stringMatching(new RegExp(selector)) });
+  },
+);
+
+it.each(["test/e2e/live/./dgx-express.test.ts", "test/e2e/live//dgx-express.test.ts"])(
+  "applies DGX selector checks to an equivalent test path: %s",
+  (testPath) => {
+    expect(validateLiveTestPath(testPath)).toBe(DGX_EXPRESS_TEST_PATH);
+    expect(() =>
+      runLiveVitestCommand(
+        ["run", "--test-path", testPath],
+        () => {
+          throw new Error("unexpected spawn");
+        },
+        { E2E_TARGET_ID: "dgx-station-express" },
+      ),
+    ).toThrow("DGX Express requires an explicit selector matching E2E_TARGET_ID");
+  },
+);

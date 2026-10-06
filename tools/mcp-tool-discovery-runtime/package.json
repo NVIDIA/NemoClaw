@@ -1,11 +1,17 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw-mcp-tool-discovery-runtime",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
   "description": "Locked shared runtime for names-only managed MCP tool discovery",
   "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "node build-runtime.ts",
+    "bundle:reviewed": "node build-reviewed-runtime.ts",
+    "bundle:reviewed:check": "node build-reviewed-runtime.ts --check",
+    "test": "node --test streamable-http-client.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"
   },
@@ -24,11 +30,5 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "scripts": {
-    "bundle": "node build-runtime.ts",
-    "bundle:reviewed": "node build-reviewed-runtime.ts",
-    "bundle:reviewed:check": "node build-reviewed-runtime.ts --check",
-    "test": "node --test streamable-http-client.test.ts",
-    "typecheck": "tsc -p tsconfig.json"
-  }
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0"
 }
