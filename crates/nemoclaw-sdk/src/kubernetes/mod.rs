@@ -7,6 +7,9 @@
 //! service variables is never consulted, so one deployment cannot reach
 //! another cluster by accident.
 
+pub mod cluster;
+pub mod receipt;
+
 use crate::{Error, ObservationError, config::ManagedGateway};
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::{Deserialize, Serialize};
@@ -82,9 +85,6 @@ pub struct ClusterTarget {
 /// Connect to the target's context. The kubeconfig's exec credential plugins
 /// run as written, with the caller's environment.
 pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, ObservationError> {
-    // The workspace links both rustls providers, so one must be chosen. The
-    // provider binary installs ring at startup; this covers other callers.
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let kubeconfig =
         Kubeconfig::read_from(&target.kubeconfig).map_err(|_| ObservationError::Authentication)?;
     let options = KubeConfigOptions {
@@ -94,5 +94,13 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
     let config = kube::Config::from_custom_kubeconfig(kubeconfig, &options)
         .await
         .map_err(|_| ObservationError::Authentication)?;
+    client(config)
+}
+
+/// A client for `config`. The workspace links both rustls providers, so one
+/// must be chosen; the provider binary installs ring at startup, and this
+/// covers every other caller.
+pub fn client(config: kube::Config) -> Result<kube::Client, ObservationError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     kube::Client::try_from(config).map_err(|_| ObservationError::Transport)
 }

@@ -72,12 +72,16 @@ mod inference_settings;
 mod inline_recipe;
 #[path = "interfaces.rs"]
 mod interfaces;
+#[path = "kubernetes_cluster.rs"]
+mod kubernetes_cluster;
 #[path = "kubernetes_compile.rs"]
 mod kubernetes_compile;
 #[path = "kubernetes_connection.rs"]
 mod kubernetes_connection;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
+#[path = "kubernetes_receipt.rs"]
+mod kubernetes_receipt;
 #[path = "managed_auth.rs"]
 mod managed_auth;
 #[path = "managed_hermes.rs"]
