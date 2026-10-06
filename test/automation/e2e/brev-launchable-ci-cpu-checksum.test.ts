@@ -146,9 +146,10 @@ exit 0
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then printf '${REVIEWED_NPM_VERSION}\\n'; exit 0; fi
-printf 'cwd=%s args=%s node_auth=%s npm_token=%s github_token=%s inference_key=%s umask=%s\\n' \\
+printf 'cwd=%s args=%s node_auth=%s npm_token=%s github_token=%s inference_key=%s umask=%s npm_config_logs_max=%s\\n' \\
   "$PWD" "$*" "\${NODE_AUTH_TOKEN:-unset}" "\${NPM_TOKEN:-unset}" \\
   "\${GITHUB_TOKEN:-unset}" "\${NVIDIA_INFERENCE_API_KEY:-unset}" "$(umask)" \\
+  "\${npm_config_logs_max:-unset}" \\
   >> ${JSON.stringify(npmInstallLog)}
 stage=""
 if [ "$PWD" = ${JSON.stringify(cloneDir)} ]; then stage="root"; fi
@@ -474,9 +475,6 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
             .readdirSync(path.dirname(fake.cloneDir))
             .filter((entry) => entry.startsWith("nemoclaw-npm-install.")),
         ).toEqual([]);
-        const helperSource = fs.readFileSync(SCRIPT, "utf8");
-        expect(helperSource).toContain("npm_config_logs_max=0");
-
         const npmCalls = fs.readFileSync(fake.npmInstallLog, "utf8").trim().split("\n");
         const failedStageDirectory =
           npmFailure === "plugin" ? path.join(fake.cloneDir, "nemoclaw") : fake.cloneDir;
@@ -484,6 +482,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
           npmCalls.filter(
             (call) =>
               call.includes(`cwd=${failedStageDirectory}`) &&
+              call.includes("npm_config_logs_max=0") &&
               call.includes(
                 npmFailure === "reviewed-npm"
                   ? "args=pack --reviewed-npm-fixture"
