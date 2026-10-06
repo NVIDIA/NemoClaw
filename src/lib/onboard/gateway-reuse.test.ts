@@ -261,7 +261,12 @@ describe("Docker-driver gateway reuse application", () => {
   it("reuses the trusted gateway port listener when the PID file is absent (#9594)", async () => {
     const rememberDockerDriverGatewayPid = vi.fn();
     const getDockerDriverGatewayReuseDrift = vi.fn(() => null);
+    const getDockerDriverGatewayEnv = vi.fn(() => ({
+      OPENSHELL_DRIVERS: "docker",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+    }));
     const application = createDockerDriverReuseApplication({
+      getDockerDriverGatewayEnv,
       getDockerDriverGatewayPid: () => null,
       isDockerDriverGatewayProcessAlive: () => false,
       checkGatewayPortAvailable: vi.fn(async () => ({ ok: false, pid: 731 })),
@@ -283,6 +288,7 @@ describe("Docker-driver gateway reuse application", () => {
       "/opt/openshell-gateway",
       731,
     );
+    expect(getDockerDriverGatewayEnv).toHaveBeenCalledExactlyOnceWith("openshell 0.0.99");
     expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
   });
 

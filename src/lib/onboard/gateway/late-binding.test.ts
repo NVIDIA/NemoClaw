@@ -730,6 +730,7 @@ describe("gateway lifecycle late binding", () => {
       await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
       expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
+      expect(getDockerDriverGatewayEnv).toHaveBeenCalledWith("openshell 0.0.0");
       expect(managedStart).toHaveBeenCalledTimes(1);
 
       const writableParent = path.join(root, "writable-parent");

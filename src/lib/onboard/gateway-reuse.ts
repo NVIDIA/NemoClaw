@@ -8,9 +8,9 @@ import type {
   OpenShellGatewayReuseObserver,
 } from "../adapters/openshell/gateway-reuse";
 import { type OpenShellRuntimeSelection } from "../adapters/openshell/command-argv";
-import type {
-  OpenShellInstalledVersion,
-  OpenShellInstalledVersionObservation,
+import {
+  formatOpenShellInstalledVersionOutput,
+  type OpenShellInstalledVersionObservation,
 } from "../adapters/openshell/installed-version";
 import { type GatewayReuseState } from "../state/gateway";
 import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
@@ -42,7 +42,7 @@ export interface DockerDriverGatewayReuseApplicationDeps {
   getGatewayCompatContainerName(): string;
   isDockerDriverGatewayEnabled(): boolean;
   resolveOpenShellGatewayBinary(): string | null;
-  getDockerDriverGatewayEnv(version?: OpenShellInstalledVersion | null): Record<string, string>;
+  getDockerDriverGatewayEnv(versionOutput?: string | null): Record<string, string>;
   observeInstalledOpenshellVersion(): OpenShellInstalledVersionObservation;
   getDockerDriverGatewayStateDir(): string;
   resolveOpenShellSandboxBinary(): string | null;
@@ -150,12 +150,7 @@ export function createDockerDriverGatewayReuseApplication(
     const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const versionObservation = deps.observeInstalledOpenshellVersion();
     const baseDesiredEnv = deps.getDockerDriverGatewayEnv(
-      versionObservation.ok
-        ? {
-            version: versionObservation.version,
-            development: versionObservation.development,
-          }
-        : null,
+      formatOpenShellInstalledVersionOutput(versionObservation),
     );
     const runtimeIdentity = gatewayBin
       ? buildRuntimeIdentity({

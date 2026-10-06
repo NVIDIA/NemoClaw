@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { formatOpenShellInstalledVersionOutput } from "./installed-version";
 import { createCliOpenShellInstalledVersionObserver } from "./installed-version-cli";
 
 function result(overrides: Record<string, unknown> = {}) {
@@ -10,6 +11,29 @@ function result(overrides: Record<string, unknown> = {}) {
 }
 
 describe("CLI OpenShell installed-version observer (#11832)", () => {
+  it("formats stable, development, and failed observations for legacy consumers", () => {
+    expect(
+      formatOpenShellInstalledVersionOutput({
+        ok: true,
+        version: "0.0.116",
+        development: false,
+      }),
+    ).toBe("openshell 0.0.116");
+    expect(
+      formatOpenShellInstalledVersionOutput({
+        ok: true,
+        version: "0.0.116",
+        development: true,
+      }),
+    ).toBe("openshell 0.0.116-dev");
+    expect(
+      formatOpenShellInstalledVersionOutput({
+        ok: false,
+        error: { kind: "unavailable", message: "not installed" },
+      }),
+    ).toBeNull();
+  });
+
   it("captures a bounded version probe with a filtered environment", () => {
     const capture = vi.fn(() => result());
     const observer = createCliOpenShellInstalledVersionObserver({

@@ -10,10 +10,12 @@ export type OpenShellInstalledVersionObservation =
   | Readonly<{ ok: true; version: string; development: boolean }>
   | Readonly<{ ok: false; error: OpenShellInstalledVersionError }>;
 
-export type OpenShellInstalledVersion = Readonly<{
-  version: string;
-  development: boolean;
-}>;
+export function formatOpenShellInstalledVersionOutput(
+  observation: OpenShellInstalledVersionObservation,
+): string | null {
+  if (!observation.ok) return null;
+  return `openshell ${observation.version}${observation.development ? "-dev" : ""}`;
+}
 
 export type ObserveOpenShellInstalledVersionRequest = Readonly<{
   timeoutMs?: number;

@@ -9,9 +9,9 @@ import {
   buildSelectedOpenShellSubprocessEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/command-argv";
-import type {
-  OpenShellInstalledVersion,
-  OpenShellInstalledVersionObservation,
+import {
+  formatOpenShellInstalledVersionOutput,
+  type OpenShellInstalledVersionObservation,
 } from "../../adapters/openshell/installed-version";
 import { gatewayHostRuntimeEnvironment } from "../runtime-provider/configured-runtime";
 import { trackChildExit } from "../child-exit-tracker";
@@ -238,13 +238,10 @@ export function createDockerDriverGatewayStart(
       }
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const versionObservation = deps.observeInstalledOpenshellVersion(selectedRuntimeEnv);
-      const installedVersion: OpenShellInstalledVersion | null = versionObservation.ok
-        ? {
-            version: versionObservation.version,
-            development: versionObservation.development,
-          }
-        : null;
-      const gatewayEnv = deps.getDockerDriverGatewayEnv(installedVersion);
+      const installedVersion = versionObservation.ok ? versionObservation.version : null;
+      const gatewayEnv = deps.getDockerDriverGatewayEnv(
+        formatOpenShellInstalledVersionOutput(versionObservation),
+      );
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,
@@ -415,7 +412,7 @@ export function createDockerDriverGatewayStart(
           deps.getDockerDriverGatewayEndpoint,
         ),
         gatewayBin: driftGatewayBin,
-        openshellVersion: installedVersion?.version ?? null,
+        openshellVersion: installedVersion,
         dockerHost: process.env.DOCKER_HOST || null,
       });
       const pollCount = deps.envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
