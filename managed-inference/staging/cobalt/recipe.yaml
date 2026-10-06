@@ -46,22 +46,42 @@ spec:
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len
-        value: 16384
-      - name: --dtype
-        value: bfloat16
+        value: 49152
       - name: --trust-remote-code
       - name: --async-scheduling
       - name: --gpu-memory-utilization
-        value: 0.95
+        value: 0.85
       - name: --max-num-seqs
-        value: 2
+        value: 1
+      - name: --max-num-batched-tokens
+        value: 8192
+      - name: --mamba-backend
+        value: flashinfer
+      - name: --kv-cache-dtype
+        value: bfloat16
+      - name: --mamba-ssm-cache-dtype
+        value: float16
+      - name: --enable-mamba-cache-stochastic-rounding
+      - name: --mamba-cache-philox-rounds
+        value: 5
+      - name: --spec-method
+        value: mtp
+      - name: --spec-tokens
+        value: 3
       - name: --enable-auto-tool-choice
       - name: --tool-call-parser
-        value: qwen3_coder
+        value: hermes
       - name: --reasoning-parser
         value: nemotron_v3
+      # The release runtime image must supply the reviewed JSON template at this path.
+      - name: --chat-template
+        value: /opt/cobalt/chat_template.jinja
+      - name: --tool-strict-level
+        value: parameter
+      - name: --default-chat-template-kwargs
+        value: '{"enable_thinking":true}'
       - name: --limit-mm-per-prompt
-        value: '{"image":2,"video":0}'
+        value: '{"image":8,"video":0}'
       # Accept inline images without giving the model server arbitrary media URL or host-file access.
       - name: --allowed-media-domains
         value: cobalt.invalid

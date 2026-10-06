@@ -15,6 +15,7 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
+import { isWebSearchProvider, webSearchEnvFor } from "../../../../src/lib/inference/web-search.ts";
 import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
@@ -103,7 +104,10 @@ const ExportAgentSchema = Type.Object(
       ]),
     ),
     integrationRefs: Type.Optional(
-      Type.Array(Type.Literal("brave-search"), { minItems: 1, maxItems: 1 }),
+      Type.Array(Type.Union([Type.Literal("brave-search"), Type.Literal("tavily-search")]), {
+        minItems: 1,
+        maxItems: 1,
+      }),
     ),
   },
   { additionalProperties: false },
@@ -137,19 +141,34 @@ const ExportSandboxFields = {
     { additionalProperties: false },
   ),
   integrations: Type.Optional(
-    Type.Object(
-      {
-        "brave-search": Type.Object(
-          {
-            kind: Type.Literal("webSearch"),
-            provider: Type.Literal("brave"),
-            credential: CredentialSchema,
-          },
-          { additionalProperties: false },
-        ),
-      },
-      { additionalProperties: false },
-    ),
+    Type.Union([
+      Type.Object(
+        {
+          "brave-search": Type.Object(
+            {
+              kind: Type.Literal("webSearch"),
+              provider: Type.Literal("brave"),
+              credential: CredentialSchema,
+            },
+            { additionalProperties: false },
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          "tavily-search": Type.Object(
+            {
+              kind: Type.Literal("webSearch"),
+              provider: Type.Literal("tavily"),
+              credential: CredentialSchema,
+            },
+            { additionalProperties: false },
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
   ),
 };
 const DeepAgentsExportSandboxSchema = Type.Object(
@@ -599,6 +618,10 @@ function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1Con
   const openclawNativeSettings = expectedOpenclawNativeSettings(entry);
   const hermesNativeSettings =
     entry.agent === "hermes" ? expectedPinnedV1HermesNativeSettings(entry) : undefined;
+  const searchProvider = entry.webSearchEnabled === true ? entry.webSearchProvider : null;
+  if (entry.webSearchEnabled === true && !isWebSearchProvider(searchProvider)) {
+    throw new Error("the live web-search provider is missing or unsupported");
+  }
   return {
     revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
     compiledSandboxes: 1,
@@ -611,6 +634,16 @@ function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1Con
     ...(hermesNativeSettings
       ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
       : {}),
+    webSearch: searchProvider
+      ? {
+          [entry.name]: {
+            provider: searchProvider,
+            credentialReference: webSearchEnvFor(searchProvider),
+            agentRefs: ["primary"],
+            nativeProvider: searchProvider,
+          },
+        }
+      : {},
     openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
     hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
   };
@@ -626,6 +659,7 @@ function comparablePinnedV1Evidence(
   return {
     revision: evidence.revision,
     compiledSandboxes: evidence.compiledSandboxes,
+    webSearch: evidence.webSearch ?? {},
     ...(expected.contextWindows ? { contextWindows: evidence.contextWindows } : {}),
     ...(expected.openclawNativeSettings
       ? {
@@ -706,7 +740,13 @@ function observedFeatures(
   sandbox: V1Alpha1Export["spec"]["sandboxes"][number] | undefined,
 ): string[] {
   const features: string[] = [];
-  if (sandbox?.integrations?.["brave-search"]) features.push("webSearch");
+  if (
+    sandbox?.agent.integrationRefs?.some(
+      (name) => sandbox.integrations?.[name]?.kind === "webSearch",
+    )
+  ) {
+    features.push("webSearch");
+  }
   if (sandbox?.harness.observability) features.push("observability");
   return features.sort();
 }

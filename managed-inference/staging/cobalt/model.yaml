@@ -9,7 +9,7 @@ metadata:
   displayName: Cobalt
 
 spec:
-  # Bind the released artifact and its size before activation; the serving contract below is intentional.
+  # Bind released NVFP4 weights with MTP support and their size before activation.
   id: staging/cobalt
   revision: "0000000000000000000000000000000000000000"
   environmentValue: cobalt

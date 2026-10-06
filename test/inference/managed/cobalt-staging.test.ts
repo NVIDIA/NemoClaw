@@ -103,7 +103,7 @@ describe("inactive Cobalt staging", () => {
     ]);
   });
 
-  it("materializes the fixed BF16 command with bounded media and direct tools", () => {
+  it("materializes fixed MTP, cache, thinking and JSON-tool settings with bounded media", () => {
     const recipe = stagingCatalog().recipes[0]!;
     assert.ok(isHostLocalInferenceServingRecipe(recipe), "Expected host-local recipe");
     assert.ok(recipe.spec.serve.directInstall, "Expected fixed direct-install policy");
@@ -113,27 +113,38 @@ describe("inactive Cobalt staging", () => {
     });
     expect(model).toMatchObject({
       servedModelId: "cobalt",
-      maxModelLen: 16384,
+      maxModelLen: 49152,
       managedBearerAuth: true,
       fixedServeCommand: true,
       installFastSafetensors: false,
-      runtime: { gpuMemoryUtilization: 0.95 },
+      runtime: { gpuMemoryUtilization: 0.85 },
     });
     expect(model.runtime?.dockerRunArgs).toContain("34359738368b");
-    expect(command).toContain("--max-model-len 16384");
-    expect(command).toContain("--dtype bfloat16");
+    expect(command).toContain("--max-model-len 49152");
+    expect(command).toContain("--tensor-parallel-size 1");
     expect(command).toContain("--trust-remote-code");
     expect(command).toContain("--async-scheduling");
-    expect(command).toContain("--gpu-memory-utilization 0.95");
-    expect(command).toContain("--max-num-seqs 2");
+    expect(command).toContain("--gpu-memory-utilization 0.85");
+    expect(command).toContain("--max-num-seqs 1");
+    expect(command).toContain("--max-num-batched-tokens 8192");
+    expect(command).toContain("--mamba-backend flashinfer");
+    expect(command).toContain("--kv-cache-dtype bfloat16");
+    expect(command).toContain("--mamba-ssm-cache-dtype float16");
+    expect(command).toContain("--enable-mamba-cache-stochastic-rounding");
+    expect(command).toContain("--mamba-cache-philox-rounds 5");
+    expect(command).toContain("--spec-method mtp");
+    expect(command).toContain("--spec-tokens 3");
     expect(command).toContain("--enable-auto-tool-choice");
-    expect(command).toContain("--tool-call-parser qwen3_coder");
+    expect(command).toContain("--tool-call-parser hermes");
     expect(command).toContain("--reasoning-parser nemotron_v3");
-    expect(command).toContain('--limit-mm-per-prompt \'{"image":2,"video":0}\'');
+    expect(command).toContain("--chat-template /opt/cobalt/chat_template.jinja");
+    expect(command).toContain("--tool-strict-level parameter");
+    expect(command).toContain("--default-chat-template-kwargs '{\"enable_thinking\":true}'");
+    expect(command).toContain('--limit-mm-per-prompt \'{"image":8,"video":0}\'');
     expect(command).toContain("--allowed-media-domains cobalt.invalid");
     expect(command).toContain("HF_HUB_OFFLINE=1");
     expect(command).not.toMatch(
-      /999999|pip install|--allowed-local-media-path|--speculative-config/,
+      /999999|pip install|--allowed-local-media-path|--dtype |--parallel-tool-calls/,
     );
   });
 
@@ -212,9 +223,9 @@ describe("inactive Cobalt staging", () => {
       servedModelId: "cobalt",
       managedBearerAuth: true,
       fixedServeCommand: true,
-      maxModelLen: 16384,
+      maxModelLen: 49152,
     });
-    expect(buildVllmServeCommand(materialized.model)).toContain("--dtype bfloat16");
+    expect(buildVllmServeCommand(materialized.model)).toContain("--spec-method mtp");
     expect(detectVllmProfile({ platform: "station" })?.defaultModel.envValue).not.toBe("cobalt");
 
     assert.ok(serving, "Expected catalog provenance for the runtime receipt");

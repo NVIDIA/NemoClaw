@@ -10,7 +10,10 @@ import {
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
+import {
+  managedBraveProfile,
+  managedTavilyProfile,
+} from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
@@ -42,41 +45,87 @@ import {
   braveProvider,
 } from "./live-export-source-test-fixture";
 
-function mockBraveLiveSource() {
+function mockSearchLiveSource(
+  searchProvider: "brave" | "tavily",
+  agent: "openclaw" | "hermes" = "openclaw",
+) {
+  const runtimeImage =
+    agent === "hermes" ? imageRef.replace("openclaw-sandbox", "hermes-sandbox") : imageRef;
   const built = buildManagedStartupProfile({
     ...startupInput,
-    webSearch: { fetchEnabled: true, provider: "brave" },
+    agent,
+    ...(agent === "hermes"
+      ? ({
+          inference: { ...startupInput.inference, primaryModelRef: null, compatibility: null },
+          dashboard: {
+            agent: "hermes",
+            mode: "disabled",
+            url: "http://127.0.0.1:18789",
+            browserUrl: "http://127.0.0.1:18789",
+            publicPort: null,
+            internalPort: null,
+            tuiEnabled: false,
+          },
+        } as const)
+      : {}),
+    webSearch: { fetchEnabled: true, provider: searchProvider },
   });
   mockSupportedLiveSource(3, 3, {
     ...entry,
+    agent,
+    imageTag: runtimeImage,
+    ...(agent === "hermes" ? { hermesApiPort: 8642 } : {}),
     webSearchEnabled: true,
-    webSearchProvider: "brave",
+    webSearchProvider: searchProvider,
     workload: {
       ...(entry.workload as Extract<
         NonNullable<SandboxEntry["workload"]>,
         { kind: "managed-image" }
       >),
+      reference: runtimeImage,
       encodedProfile: built.encodedProfile,
       startupProfileSha256: built.startupProfileSha256,
     },
   });
-  const search = braveProvider();
-  raw.getProviderProfile.mockResolvedValue({ profile: managedBraveProfile() });
+  const base = braveProvider();
+  const profile = searchProvider === "brave" ? managedBraveProfile() : managedTavilyProfile(agent);
+  const providerName = `alpha-${searchProvider}-search`;
+  const search = {
+    ...base,
+    provider: {
+      ...base.provider,
+      metadata: { ...base.provider.metadata, name: providerName },
+      type: profile.id,
+      credentials: Object.defineProperty(
+        {},
+        searchProvider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY",
+        {
+          enumerable: true,
+          get: base.readCredential,
+        },
+      ),
+    },
+  };
+  raw.getProviderProfile.mockResolvedValue({ profile });
   raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
-    name === "alpha-brave-search" ? { provider: search.provider } : provider(),
+    name === providerName ? { provider: search.provider } : provider(),
   );
   raw.getSandbox.mockResolvedValue({
     sandbox: {
       ...inventory().sandbox,
-      spec: { template: { image: imageRef }, providers: ["alpha-brave-search"] },
+      spec: { template: { image: runtimeImage }, providers: [providerName] },
     },
   });
   return search;
 }
 
-function mockNativeNvidiaSource() {
+function mockBraveLiveSource() {
+  return mockSearchLiveSource("brave");
+}
+
+function mockNativeNvidiaSource(profileWorkspace = "default") {
   mockSupportedLiveSource();
-  raw.getProvider.mockResolvedValue({ provider: nativeNvidiaProvider() });
+  raw.getProvider.mockResolvedValue({ provider: { ...nativeNvidiaProvider(), profileWorkspace } });
   raw.getProviderProfile.mockResolvedValue({
     profile: {
       id: "nvidia",
@@ -90,6 +139,124 @@ function mockNativeNvidiaSource() {
 }
 
 describe("live export snapshot reader", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "exports %s Tavily from verified SDK reads without reading credential values (#12138)",
+    async (agent) => {
+      const search = mockSearchLiveSource("tavily", agent);
+      const { result, writeStdout, publish } = await exportLiveSource();
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(sandbox.harness.kind).toBe(agent);
+      expect(sandbox.integrations).toEqual({
+        "tavily-search": {
+          kind: "webSearch",
+          provider: "tavily",
+          credential: { env: "TAVILY_API_KEY" },
+        },
+      });
+      expect(sandbox.agent.integrationRefs).toEqual(["tavily-search"]);
+      expect(raw.getProvider.mock.calls.map(([request]) => request.name)).toEqual([
+        "nvidia-prod",
+        "alpha-tavily-search",
+        "nvidia-prod",
+        "alpha-tavily-search",
+      ]);
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: agent === "hermes" ? "tavily-hermes-v1" : "tavily", workspace: "default" },
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(search.readCredential).not.toHaveBeenCalled();
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  describe.each(["openclaw", "hermes"] as const)("%s Tavily export refusal", (agent) => {
+    it.each([
+      [
+        "provider evidence is missing",
+        () =>
+          raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+            name === "alpha-tavily-search"
+              ? Promise.reject(Object.assign(new Error(readFailureCanary), { code: 5 }))
+              : provider(),
+          ),
+      ],
+      [
+        "the sandbox attaches a different provider",
+        () =>
+          raw.getSandbox.mockResolvedValue({
+            sandbox: {
+              ...inventory().sandbox,
+              spec: {
+                template: {
+                  image:
+                    agent === "hermes"
+                      ? imageRef.replace("openclaw-sandbox", "hermes-sandbox")
+                      : imageRef,
+                },
+                providers: ["other-tavily-search"],
+              },
+            },
+          }),
+      ],
+      [
+        "the profile executable differs",
+        () =>
+          raw.getProviderProfile.mockResolvedValue({
+            profile: { ...managedTavilyProfile(agent), binaries: [{ path: "/usr/bin/python" }] },
+          }),
+      ],
+      [
+        "the profile adds a read-write access preset",
+        () => {
+          const profile = managedTavilyProfile(agent);
+          raw.getProviderProfile.mockResolvedValue({
+            profile: {
+              ...profile,
+              endpoints: [{ ...profile.endpoints[0], access: "read-write" }],
+            },
+          });
+        },
+      ],
+      [
+        "the profile allows uninspected credentials",
+        () => {
+          const profile = managedTavilyProfile(agent);
+          raw.getProviderProfile.mockResolvedValue({
+            profile: {
+              ...profile,
+              endpoints: [{ ...profile.endpoints[0], allowUninspectedCredentials: true }],
+            },
+          });
+        },
+      ],
+      [
+        "the profile never stabilizes",
+        () => {
+          let version = 4n;
+          raw.getProviderProfile.mockImplementation(async () => ({
+            profile: {
+              ...managedTavilyProfile(agent),
+              resourceVersion: version++,
+            },
+          }));
+        },
+      ],
+    ] as const)("does not publish when %s (#12138)", async (_label, arrange) => {
+      const search = mockSearchLiveSource("tavily", agent);
+      arrange();
+      const exported = await exportLiveSource();
+      expect(exported.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+      expect(exported.writeStdout).not.toHaveBeenCalled();
+      expect(exported.publish).not.toHaveBeenCalled();
+      expect(search.readCredential).not.toHaveBeenCalled();
+      expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
+    });
+  });
+
   it("exports Brave through SDK metadata without reading its credential value (#10904)", async () => {
     const search = mockBraveLiveSource();
     const { result, writeStdout, publish } = await exportLiveSource();
@@ -457,41 +624,48 @@ describe("live export snapshot reader", () => {
     });
   });
 
-  it("exports canonical YAML for the native NVIDIA hosted provider (#11154)", async () => {
-    mockNativeNvidiaSource();
-    const writeStdout = vi.fn(async (_yaml: string) => {});
-    const publish = vi.fn();
-    const result = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: parseNemoClawConfigDocumentName("alpha"),
-        target: { kind: "stdout" },
-      },
-      {
-        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
-        createDocumentUid: () =>
-          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
-        writeStdout,
-        publish,
-      },
-    );
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const yaml = writeStdout.mock.calls[0]![0];
-    const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.inferenceProviders).toEqual([
-      {
-        name: "hosted-nvidia-prod",
-        provider: "openai",
-        api: "openai-completions",
-        endpoint,
-        credential: { env: "NVIDIA_INFERENCE_API_KEY" },
-      },
-    ]);
-    expect(document.spec.sandboxes[0].harness.kind).toBe("openclaw");
-    expect(yaml).not.toContain(readFailureCanary);
-    expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
-    expect(publish).not.toHaveBeenCalled();
-  });
+  it.each(["", "default"])(
+    "exports canonical YAML for native NVIDIA binding %j (#11154)",
+    async (profileWorkspace) => {
+      mockNativeNvidiaSource(profileWorkspace);
+      const writeStdout = vi.fn(async (_yaml: string) => {});
+      const publish = vi.fn();
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+          writeStdout,
+          publish,
+        },
+      );
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      expect(document.spec.inferenceProviders).toEqual([
+        {
+          name: "hosted-nvidia-prod",
+          provider: "openai",
+          api: "openai-completions",
+          endpoint,
+          credential: { env: "NVIDIA_INFERENCE_API_KEY" },
+        },
+      ]);
+      expect(document.spec.sandboxes[0].harness.kind).toBe("openclaw");
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: "nvidia", workspace: profileWorkspace },
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { label: "endpoint override", providerChange: { config: { NVIDIA_BASE_URL: endpoint } } },
@@ -500,11 +674,11 @@ describe("live export snapshot reader", () => {
       providerChange: { credentials: { OTHER_API_KEY: readFailureCanary } },
     },
     { label: "missing credentials", providerChange: { credentials: {} } },
-    { label: "unverified profile scope", providerChange: { profileWorkspace: "default" } },
+    { label: "foreign profile binding", providerChange: { profileWorkspace: "foreign" } },
   ])("rejects native NVIDIA $label without publishing YAML", async ({ providerChange }) => {
     mockNativeNvidiaSource();
     raw.getProvider.mockResolvedValue({
-      provider: { ...nativeNvidiaProvider(), ...providerChange },
+      provider: { ...nativeNvidiaProvider(), profileWorkspace: "default", ...providerChange },
     });
     const writeStdout = vi.fn();
     const publish = vi.fn();

@@ -221,6 +221,11 @@ It also revalidates the sandbox lifecycle generation, identity, and OpenShell ga
 It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
 A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
 
+The adapter preserves the remote `hermes-acp` exit status, including `255`.
+It reports an SSH transport failure separately when the remote session does not report an exit status.
+If NemoClaw cannot remove its temporary SSH configuration, it reports the retained directory and directs you to remove it before you run `nemoclaw-acp` again.
+That cleanup failure makes an otherwise successful session exit `1`; it does not replace a remote nonzero exit status.
+
 </AgentOnly>
 
 ### `$$nemoclaw completion`
@@ -283,7 +288,21 @@ Exports never contain credential values. They include credential environment-var
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
-Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
+When retained CA state is present, a successful export reports that omission on standard error.
+Export does not change the source sandbox's trust.
+
+Before deploying the YAML, prepare the destination:
+
+- Supply values for `credential.env` references through the destination command's environment.
+  Keep credential values out of YAML.
+  Unset exported credentials after the destination command finishes.
+- If `network.proxy` is present, ensure its host and port are reachable from the destination sandbox.
+  Export does not install the proxy.
+- Review destination CA trust requirements before deployment.
+
+The exporter refuses sources that require host proxy credential replay.
+Experimental runtime identity is not supported by this export command.
+For its separate OpenClaw workflow, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
 Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
@@ -303,6 +322,11 @@ Deep Agents export requires hosted OpenAI Completions inference and explicitly d
 It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
+Managed OpenClaw and Hermes sources can also export Tavily with a `tavily-search` integration, the `TAVILY_API_KEY` reference, and a grant for the primary agent.
+Export verifies the source's provider and profile binding, including the Hermes-specific `tavily-hermes-v1` profile.
+Missing or mismatched search evidence prevents publication.
+Disabled search remains ungranted.
+Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
@@ -1103,7 +1127,7 @@ During that lease, another `launch` still verifies these conditions:
 
 <AgentOnly variant="openclaw,hermes">
 
-- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+- The recorded inference selection matches the live route, and every configured route serves a valid response to a bounded request for the recorded model. The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`. A failed model request rejects readiness before the agent starts. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2233,7 +2257,7 @@ Each active preset is annotated with display-time provenance:
 - `[user-added]` covers other live presets.
 - `[source unverified (gateway unreachable)]` appears only when OpenShell cannot be read; no local policy fallback is shown.
 
-Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label.
+Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding. Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label. For a LangChain Deep Agents Code sandbox, `observability-otlp-local` is labelled `[from dcode agent]`.
 
 ```bash
 $$nemoclaw my-assistant policy list
@@ -2712,7 +2736,7 @@ Add a local skill directory to a running sandbox. NemoClaw validates and private
 $$nemoclaw my-assistant skill install ./my-skill/
 ```
 
-The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
 
 <AgentOnly variant="openclaw">
 
@@ -3524,6 +3548,9 @@ If the in-sandbox config write or integrity hash update fails, the OpenShell rou
 
 Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
+Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
+For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
+NemoClaw preserves an unrecognized underscore spelling for normal provider validation.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
@@ -3532,7 +3559,12 @@ When the switch changes the API family and that request returns HTTP `400` or `4
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
 Each retry uses the same output limit for the selected provider.
 Other HTTP failures are not retried.
-If provider verification or that request fails, the command leaves or restores the previous OpenShell selection and removes the provider only when it can verify the revision created by this switch.
+If OpenShell rejects provider verification before it persists the route or confirms that it did not apply the route, NemoClaw leaves the inference selection unchanged.
+Sandbox-side verification occurs after route application.
+If that verification fails, NemoClaw tries to restore the previous selection and reports whether restoration succeeded.
+If OpenShell cannot confirm whether it changed the route, NemoClaw stops and reports an unknown result.
+Run `$$nemoclaw <name> inference get` to inspect the selected sandbox's gateway before you use the route or retry.
+NemoClaw removes the provider only when it can verify the revision created by this switch.
 If removal was not attempted or could not be confirmed, rerun onboarding before using that provider route or retrying the switch.
 Provider updates for DNS-backed HTTPS routes occur after route selection.
 If sandbox verification fails after an existing provider update succeeds, NemoClaw restores the previous inference selection but leaves the updated provider binding in place.
@@ -4322,6 +4354,10 @@ Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that 
 Choose a non-host-local inference provider instead.
 </Warning>
 
+When NemoCUA uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
+NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
+If that request fails, the expected catalog response does not make the route ready.
+
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
@@ -4357,7 +4393,7 @@ The following flags toggle optional behaviors during onboarding. Set them before
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.116's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. For an externally supervised gateway, use the `stateDir` declared by `NEMOCLAW_GATEWAY_MANAGEMENT`; if this variable is also set, it must resolve to that same directory. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
 | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences `[wechat]` poll diagnostics, including status updates and recoverable errors, during the host-side WeChat QR login. Host-side IDC redirect notices remain visible. |

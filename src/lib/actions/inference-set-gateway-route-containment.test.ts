@@ -604,11 +604,11 @@ describe("runtime shared gateway route containment", () => {
         "set",
         "-g",
         "nemoclaw-9090",
+        "--no-verify",
         "--provider",
         "compatible-anthropic-endpoint",
         "--model",
         "new-model",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );

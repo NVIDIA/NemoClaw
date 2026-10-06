@@ -12,9 +12,7 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": [
-    "@earendil-works/pi-coding-agent@0.80.6"
-  ],
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -63,6 +61,12 @@
       "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"
     },
     {
+      "label": "OpenClaw Tavily plugin 2026.9.2",
+      "packageSpec": "@openclaw/tavily-plugin@2026.9.2",
+      "integrity": "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz"
+    },
+    {
       "label": "OpenClaw Discord plugin 2026.9.2",
       "packageSpec": "@openclaw/discord@2026.9.2",
       "integrity": "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
@@ -101,7 +105,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "cbcfdd15430b81f50ada9f39858a694815e570c8bb3e6b4bb9f1c0b53bf0ef4a"
+      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633"
     },
     {
       "id": "mcporter-runtime",
@@ -110,7 +114,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "c387e62372cba539d24725e70d26b32093a7bb6f001cd16a473ba74404a4e0f9"
+      "lockSha256": "3c81d752d50113a2781b2aa1e8f1faade088f6fe3ed0bdde6ad0fb67a364f958"
     },
     {
       "id": "wechat-runtime",
@@ -128,11 +132,11 @@
     {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
-      "packageSpec": "@modelcontextprotocol/sdk@1.30.0",
-      "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
-      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+      "packageSpec": "@modelcontextprotocol/sdk@1.31.0",
+      "integrity": "sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
+      "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
     }
   ]
 }
