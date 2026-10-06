@@ -10,6 +10,8 @@ import {
   type OnboardProcessResult,
   runOnboardProcessAsync,
 } from "../helpers/onboard-child-process-harness";
+import { projectHostReadiness, type HostObservations } from "../../src/lib/readiness/host";
+import type { SystemReadinessReport } from "../../src/lib/readiness/types";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const probeTimeoutMs = 60_000;
@@ -34,6 +36,8 @@ type ProbeMode =
   | "stale-recovery-admission"
   | "stale-session-decision"
   | "active-cancellation"
+  | "wsl-vllm-fresh"
+  | "wsl-vllm-resume"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -41,7 +45,67 @@ interface ProbeOptions {
   slice: SliceName;
   mode?: ProbeMode;
   policyTier?: "balanced" | "restricted";
+  readinessReport?: SystemReadinessReport;
   workspaceRoot?: string;
+}
+
+function wslReadinessReport(
+  proof: HostObservations["containerGpuProof"] | null = { providerId: "docker", passed: true },
+): SystemReadinessReport {
+  const completedAt = new Date(Date.now() - 1000).toISOString();
+  return projectHostReadiness(
+    {
+      observedAt: completedAt,
+      completedAt,
+      observations: {
+        platform: "linux",
+        architecture: "arm64",
+        isWsl: true,
+        isHeadlessLikely: false,
+        dockerInstalled: true,
+        dockerReachable: true,
+        dockerHostInvalid: false,
+        runtime: "docker-desktop",
+        dockerCgroupVersion: "v2",
+        dockerDefaultCgroupnsMode: "private",
+        dockerStorageDriver: "overlay2",
+        dockerUsesContainerdSnapshotter: false,
+        dockerNvidiaRuntimeAvailable: true,
+        dockerCpus: 8,
+        dockerMemTotalBytes: 32 * 1024 ** 3,
+        isContainerRuntimeUnderProvisioned: false,
+        hasNestedOverlayConflict: false,
+        isUnsupportedRuntime: false,
+        nodeInstalled: true,
+        openshellInstalled: true,
+        hasNvidiaGpu: true,
+        nvidiaGpuCount: 1,
+        nvidiaDriverVersion: "580.65.06",
+        nvidiaGpuMemoryTotalBytes: 31232 * 1024 ** 2,
+        nvidiaGpuMemoryAvailableBytes: 30613 * 1024 ** 2,
+        nvidiaGpuMemoryPerDeviceBytes: 31232 * 1024 ** 2,
+        hostGpuPlatform: "n1x",
+        nvidiaContainerToolkitInstalled: false,
+        dockerCdiSpecDirs: [],
+        cdiNvidiaGpuSpecMissing: true,
+        runtimeProviderId: "docker",
+        runtimeProviderOwnsHostReadiness: false,
+        containerGpuProof: proof ?? undefined,
+        platformIdentity: {
+          nvidiaPlatform: "linux",
+          n1xWslGpu: true,
+          n1xWslProduct: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      },
+    },
+    {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: "a".repeat(40),
+      now: () => new Date(completedAt),
+    },
+  );
 }
 
 interface DistArtifact {
@@ -195,6 +259,7 @@ async function runSliceProbe(
   const scenario = {
     launchMarkerPath: options.launchMarkerPath,
     mode: options.mode ?? "fresh",
+    readinessReport: options.readinessReport,
     slice: options.slice,
   };
   const tmpDir = fs.mkdtempSync(
@@ -223,6 +288,9 @@ async function runSliceProbe(
     );
     const preflightHandlerPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
+    );
+    const setupNimFlowPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "setup-nim-flow.ts"),
     );
     const providerHandlerPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
@@ -284,6 +352,9 @@ if (scenario.mode === "active-cancellation") {
 if (scenario.mode === "dashboard-spawn-failure") {
   require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
 }
+if (scenario.mode.startsWith("wsl-vllm-")) {
+  require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
+}
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
 // Slice dispatch uses fixture gateway bindings and must not observe host listeners.
 require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))})
@@ -305,12 +376,29 @@ const onboardEntryOptions = require(${entryOptionsPath});
 const lockedRuntime = require(${lockedRuntimePath});
 const preflightHandlers = require(${preflightHandlerPath});
 const providerHandlers = require(${providerHandlerPath});
+const setupNimFlow = require(${setupNimFlowPath});
 const gatewayHandlers = require(${gatewayHandlerPath});
 const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
 const staleAdmissionExit = new Error("stale recovery admission refused");
+
+if (scenario.mode.startsWith("wsl-vllm-")) {
+  const readiness = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "fatal-runtime-preflight.ts"))});
+  readiness.assertOnboardHostReadiness = () => scenario.readinessReport;
+  setupNimFlow.createSetupNim = () => async (...args) => {
+    const report = args[10];
+    const selection = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "serving", "host-local-vllm-selection.ts"))})
+      .resolveHostLocalVllmSelection(
+        { name: "N1x", platform: "n1x" },
+        {},
+        { automatic: true, readinessReports: report ? [{ nodeId: "wsl-host", report }] : undefined },
+      );
+    called.push("wsl-managed-vllm:" + selection.kind + ":" + String(report === scenario.readinessReport));
+    throw sentinel;
+  };
+}
 
 if (scenario.mode === "providerless-external-component") {
   require(${externalComponentPath}).loadExternalComponentDeclaration = () => {
@@ -418,12 +506,17 @@ function machine(state, revision = 1) {
   return { version: 1, state, stateEnteredAt: null, revision };
 }
 
-function seedResumeSession(state, sandboxComplete = true) {
+function seedResumeSession(
+  state,
+  sandboxComplete = true,
+  provider = "openai-api",
+  model = "gpt-test",
+) {
   const session = onboardSession.createSession({
     mode: "non-interactive",
     sandboxName: "fsm-sandbox",
-    provider: "openai-api",
-    model: "gpt-test",
+    provider,
+    model,
     machine: machine(state),
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   });
@@ -461,6 +554,21 @@ function baseContext(context, overrides = {}) {
 }
 
 preflightHandlers.handlePreflightState = async (options) => {
+  if (scenario.mode.startsWith("wsl-vllm-")) {
+    options.deps.assertOnboardHostReadiness({ platform: "linux", architecture: "arm64" }, null, {});
+    return {
+      gpu: null,
+      sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
+      resumePreflight: scenario.mode === "wsl-vllm-resume",
+      resumeHasResolvedGpuIntent: scenario.mode === "wsl-vllm-resume",
+      requestedGpuPassthrough: false,
+      gpuPassthrough: false,
+      effectiveSandboxGpuFlag: "disable",
+      effectiveSandboxGpuDevice: null,
+      session: options.session,
+      stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
+    };
+  }
   if (scenario.mode === "providerless-external-component") {
     called.push("preflight-effect");
     return {
@@ -494,6 +602,14 @@ preflightHandlers.handlePreflightState = async (options) => {
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
+  if (scenario.mode.startsWith("wsl-vllm-")) {
+    called.push("gateway:" + options.gatewayName);
+    return {
+      gatewayReuseState: "healthy",
+      session: options.session,
+      stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+    };
+  }
   if (scenario.mode === "providerless-external-component") {
     called.push("gateway-effect");
     return { gatewayReuseState: "healthy", session: options.session, stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }) };
@@ -510,6 +626,10 @@ gatewayHandlers.handleGatewayState = async (options) => {
 };
 
 providerHandlers.handleProviderInferenceState = async (options) => {
+  if (scenario.mode.startsWith("wsl-vllm-")) {
+    called.push("provider-selection");
+    return options.deps.setupNim(options.gpu, options.sandboxName, options.agent);
+  }
   if (scenario.mode !== "ahead-core" && !scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected provider compatibility handler");
   }
@@ -520,7 +640,23 @@ providerHandlers.handleProviderInferenceState = async (options) => {
 };
 
 if (scenario.mode !== "providerless-external-component") {
-  flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
+flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime, phases }) => {
+  if (scenario.mode.startsWith("wsl-vllm-")) {
+    const initialSession = await runtime.session();
+    if (initialSession.machine.state === "init") {
+      await runtime.applyResult(advanceTo("preflight", { metadata: { state: "init" } }));
+    }
+    let nextContext = context;
+    for (const state of ["preflight", "gateway"]) {
+      const phase = phases.find((candidate) => candidate.state === state);
+      if (!phase) throw new Error("missing " + state + " onboarding phase");
+      const phaseResult = await phase.run(nextContext);
+      await runtime.applyResult(phaseResult.result);
+      nextContext = phaseResult.context;
+    }
+    const session = await runtime.session();
+    return { context: baseContext(nextContext, { session }), session };
+  }
     const initialSession = await runtime.session();
     called.push("initial:" + initialSession.machine.state);
     if (scenario.slice === "initial") throw sentinel;
@@ -537,7 +673,7 @@ if (scenario.mode !== "providerless-external-component") {
   };
 }
 
-flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
+flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime, phases }) => {
   if (scenario.mode === "providerless-external-component") {
     called.push("sandbox-effect");
     throw sentinel;
@@ -546,7 +682,13 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
   if (scenario.mode === "ahead-core") {
     throw new Error("strict core runner should not run after an ahead-state handoff");
   }
-  if (scenario.slice === "core") throw sentinel;
+  if (scenario.mode.startsWith("wsl-vllm-")) {
+    const providerPhase = phases.find((phase) => phase.state === "provider_selection");
+    if (!providerPhase) throw new Error("missing provider-selection onboarding phase");
+    await providerPhase.run(context);
+    throw new Error("managed vLLM setup unexpectedly returned");
+  }
+  if (scenario.slice === "core" && !scenario.mode.startsWith("wsl-vllm-")) throw sentinel;
   await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
   await runtime.applyResult(advanceTo("sandbox", { metadata: { state: "inference" } }));
   await runtime.applyResult(
@@ -597,6 +739,9 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
 
 if (scenario.mode === "resume-initial") {
   seedResumeSession("preflight");
+}
+if (scenario.mode === "wsl-vllm-resume") {
+  seedResumeSession("preflight", true, "install-vllm", "N1x");
 }
 if (scenario.mode.includes("core-gateway")) {
   seedResumeSession("inference", scenario.mode !== "resume-incomplete-core-gateway");
@@ -694,6 +839,7 @@ const { onboard } = require(${onboardPath});
         scenario.mode === "providerless-staged-messaging" ||
         scenario.mode === "providerless-external-component",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
+      ...(scenario.mode === "wsl-vllm-resume" ? { resume: true } : {}),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
             authoritativeResumeConfig: true,
@@ -744,6 +890,9 @@ const { onboard } = require(${onboardPath});
           ...probeEnvironment(tmpDir),
           ...(scenario.mode === "endpoint-override"
             ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
+            : {}),
+          ...(scenario.mode.startsWith("wsl-vllm-")
+            ? { NEMOCLAW_PROVIDER: "install-vllm", NEMOCLAW_MODEL: "N1x" }
             : {}),
           ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
           ...(scenario.mode === "providerless-staged-messaging"
@@ -939,6 +1088,26 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
   it("enters the core slice after the initial slice reaches provider selection", async (context) => {
     assert.deepEqual(await runSliceProbe({ slice: "core" }, context), ["initial:init", "core"]);
   });
+
+  it.for(["fresh", "resume"] as const)(
+    "passes current WSL GPU readiness into managed vLLM selection on %s onboard runs (#12218)",
+    async (run, context) => {
+      const called = await runSliceProbe(
+        {
+          slice: "core",
+          mode: `wsl-vllm-${run}`,
+          readinessReport: wslReadinessReport(),
+        },
+        context,
+      );
+      assert.deepEqual(called, [
+        "gateway:nemoclaw",
+        "core",
+        "provider-selection",
+        "wsl-managed-vllm:rejected:true",
+      ]);
+    },
+  );
 
   it("enters the final slice after the core slice reaches the branch state", async (context) => {
     assert.deepEqual(await runSliceProbe({ slice: "final" }, context), [
