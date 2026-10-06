@@ -49,7 +49,6 @@ export type DeepAgentsTraceExpectations = {
 
 type CaptureMetadata = {
   accepted?: unknown;
-  contentType?: unknown;
   method?: unknown;
   path?: unknown;
   port?: unknown;
@@ -233,9 +232,6 @@ export function validateCaptureDirectory(
         `unexpected captured route ${String(metadata.method)} ${String(metadata.path)} on ${String(metadata.port)}`,
       );
     }
-    if (metadata.contentType !== "application/x-protobuf") {
-      throw new Error(`${metadataFile} is not OTLP binary protobuf`);
-    }
     const body = fs.readFileSync(path.join(captureDir, metadataFile.replace(/\.json$/u, ".body")));
     if (body.equals(Buffer.from(allowedProbeBody))) {
       allowedProbeCount += 1;
@@ -250,9 +246,28 @@ export function validateCaptureDirectory(
   return assertDeepAgentsTraceContract(traceBodies, expectations);
 }
 
+// Bound the native inventory before decoding or parsing it. One extra byte
+// distinguishes an exact-limit complete response from a truncated response.
+function readThreadListing(): string {
+  const maxBytes = 1_048_576;
+  const buffer = Buffer.allocUnsafe(maxBytes + 1);
+  let length = 0;
+  while (length <= maxBytes) {
+    const read = fs.readSync(0, buffer, length, buffer.length - length, null);
+    if (read === 0) return buffer.subarray(0, length).toString("utf8");
+    length += read;
+  }
+  throw new Error("dcode thread listing exceeds the 1048576-byte cleanup limit");
+}
+
 async function main(): Promise<void> {
   const [command, argument] = process.argv.slice(2);
-  const input = command === "validate-captures" ? "" : fs.readFileSync(0, "utf8");
+  const input =
+    command === "validate-captures"
+      ? ""
+      : command === "thread-for-prompt"
+        ? readThreadListing()
+        : fs.readFileSync(0, "utf8");
   if (command === "policy-state") {
     process.stdout.write(`${observabilityPresetState(input)}\n`);
     return;

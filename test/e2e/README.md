@@ -512,7 +512,9 @@ the disabled baseline. Observability turns register unique prompts before execut
 only the exact matching native conversation from the complete listing and requires confirmation of its
 deletion, including when turn output is malformed or the command fails after persisting state. Listing and deletion
 each have a 45-second host and remote limit, with a five-second host kill grace. A timeout fails cleanup
-and preserves the failure diagnostic while allowing capture cleanup to continue.
+and preserves the failure diagnostic while allowing capture cleanup to continue. The native listing
+parser accepts at most 1 MiB before decoding JSON. An oversized listing closes the input pipe, fails
+cleanup with its diagnostic, and permits no deletion from incomplete ownership evidence.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.

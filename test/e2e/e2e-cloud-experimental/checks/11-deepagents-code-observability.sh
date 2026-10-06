@@ -101,8 +101,9 @@ cleanup() {
   # These conversations include the synthetic redaction credential. Remove
   # only conversations with our unique exact prompts, even if turn JSON failed.
   # DCode 0.1.71 has no pagination/all flag and clamps nonpositive limits to 1.
-  # SQLite's largest signed limit includes every stored thread; the native and
-  # host deadlines above still bound this complete ownership lookup.
+  # SQLite's largest signed limit includes every stored thread. The parser
+  # rejects listings over 1 MiB before JSON parsing; the native and host
+  # deadlines still bound execution. An incomplete listing never permits deletion.
   local prompt thread deletion_output
   for prompt in ${OBSERVABILITY_PROMPTS[@]+"${OBSERVABILITY_PROMPTS[@]}"}; do
     if ! thread="$(cleanup_sandbox_exec \

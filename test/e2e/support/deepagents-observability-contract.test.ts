@@ -75,6 +75,60 @@ describe("observability conversation cleanup", () => {
     expect(observabilityThreadForPrompt(JSON.stringify(listing), prompt)).toBe(threadId);
   });
 
+  it.each([0, 1])("bounds native listing bytes before parsing (+%i byte)", (extra) => {
+    const encoded = JSON.stringify(listing);
+    const input = encoded + " ".repeat(1_048_576 - Buffer.byteLength(encoded) + extra);
+    const result = spawnSync(
+      path.join(process.cwd(), "node_modules/.bin/tsx"),
+      ["test/e2e/live/deepagents-observability-contract.ts", "thread-for-prompt", prompt],
+      { input, encoding: "utf8", timeout: 3000 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(extra);
+    expect(result.stdout).toBe(extra === 0 ? `${threadId}\n` : "");
+    expect(result.stderr.includes("1048576-byte cleanup limit")).toBe(extra === 1);
+    expect(result.stderr).not.toContain(prompt);
+  });
+
+  it("closes an oversized streaming listing without waiting for EOF", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-stream-"));
+    try {
+      const producer = path.join(root, "producer.cjs");
+      const stopped = path.join(root, "stopped");
+      fs.writeFileSync(
+        producer,
+        `const fs = require("node:fs");
+try { for (;;) fs.writeSync(1, Buffer.alloc(65536, "x")); }
+catch (error) { fs.writeFileSync(process.argv[2], error.code); }
+`,
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          '"$1" "$2" "$3" | "$4" "$5" thread-for-prompt "$6"',
+          "--",
+          process.execPath,
+          producer,
+          stopped,
+          path.join(process.cwd(), "node_modules/.bin/tsx"),
+          "test/e2e/live/deepagents-observability-contract.ts",
+          prompt,
+        ],
+        { encoding: "utf8", timeout: 3000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("1048576-byte cleanup limit");
+      expect(fs.readFileSync(stopped, "utf8")).toBe("EPIPE");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { ...listing, schema_version: 2 },
     { ...listing, command: "non-interactive" },
@@ -92,11 +146,13 @@ describe("observability conversation cleanup", () => {
     ["login", 0],
     ["command-failure", 0],
     ["older-owned", 25],
+    ["oversized", 0],
     ["list-timeout", 0],
     ["delete-timeout", 0],
   ] as const)(
     "cleans up only its own conversations after %s turn evidence fails",
     (failure, newerCount) => {
+      const cleanupRejected = failure.endsWith("-timeout") || failure === "oversized";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-cleanup-"));
       const benign = {
         thread_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -131,7 +187,7 @@ if (args[0] === "bash") {
 if (args[0] === "env") args = args.slice(args.indexOf("dcode"));
 if (args[0] === "dcode") args.shift();
 let threads = JSON.parse(fs.readFileSync(process.env.THREADS_FILE, "utf8"));
-const emit = (command, data) => console.log(JSON.stringify({ schema_version: 1, command, data }));
+const emit = (command, data) => console.log(JSON.stringify({ schema_version: 1, command, data, padding: process.env.FAILURE === "oversized" ? "x".repeat(1_048_576) : "" }));
 if (args[0] === "threads" && process.env.FAILURE === args[1] + "-timeout") {
   setTimeout(() => process.exit(124), 1500);
   return;
@@ -153,7 +209,7 @@ else if (args[0] === "threads" && args[1] === "delete") {
   for (let i = 0; i < Number(process.env.NEWER_THREADS); i++) threads.push({ thread_id: "newer-" + i, initial_prompt: "newer unrelated " + i });
   fs.writeFileSync(process.env.THREADS_FILE, JSON.stringify(threads));
   if (process.env.FAILURE === "command-failure") process.exit(1);
-  if (process.env.FAILURE.endsWith("-timeout") || process.env.FAILURE === "older-owned" || process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
+  if (process.env.FAILURE.endsWith("-timeout") || ["older-owned", "oversized"].includes(process.env.FAILURE) || process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
   else emit("non-interactive", { status: "success", exit_code: 0, completion: { thread_id }, response: direct ? "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL" : "NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL" });
 } else process.exit(9);
 `;
@@ -204,7 +260,7 @@ else if (args[0] === "threads" && args[1] === "delete") {
             (thread: { initial_prompt: string }) => thread.initial_prompt === "unrelated",
           ),
         ).toEqual([benign]);
-        expect(remaining.length).toBe(failure.endsWith("-timeout") ? 2 : 1 + newerCount);
+        expect(remaining.length).toBe(cleanupRejected ? 2 : 1 + newerCount);
         expect(
           remaining.filter((thread: { thread_id: string }) =>
             thread.thread_id.startsWith("newer-"),
@@ -216,12 +272,12 @@ else if (args[0] === "threads" && args[1] === "delete") {
           })),
         );
         expect(result.stderr.includes("could not remove an observability test conversation")).toBe(
-          failure.endsWith("-timeout"),
+          cleanupRejected,
         );
         expect(
           fs.readFileSync(path.join(root, "deleted"), "utf8").trim().split("\n").filter(Boolean),
         ).toEqual(
-          failure.endsWith("-timeout")
+          cleanupRejected
             ? []
             : failure === "login"
               ? ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
@@ -543,6 +599,40 @@ describe("bounded private OTLP capture server", () => {
     expect(isPrivateBridgeIpv4("127.0.0.1", true)).toBe(true);
     expect(isPrivateBridgeIpv4("0.0.0.0", true)).toBe(false);
     expect(isPrivateBridgeIpv4("8.8.8.8", true)).toBe(false);
+  });
+
+  it("rejects a non-protobuf request before persisting an accepted capture", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-type-"));
+    const started = await startOtlpCaptureServers({
+      allowLoopback: true,
+      bindIp: "127.0.0.1",
+      captureDir,
+      collectorPort: 0,
+      decoyPort: 0,
+    });
+    try {
+      const status = await request(
+        started.collectorPort,
+        { "content-length": "4", "content-type": "application/json" },
+        "test",
+      );
+      expect([415, null]).toContain(status);
+      await waitForMetadata(captureDir, 1);
+      const file = fs.readdirSync(captureDir).find((name) => name.endsWith(".json"))!;
+      const metadata = JSON.parse(fs.readFileSync(path.join(captureDir, file), "utf8"));
+      expect(metadata).toMatchObject({
+        accepted: false,
+        contentType: null,
+        rejection: "unexpected content type",
+      });
+      expect(() =>
+        validateCaptureDirectory(captureDir, started.collectorPort, "allow probe", expectations),
+      ).toThrow("records a rejected request");
+      expect(started.snapshot().capturedBytes).toBe(0);
+    } finally {
+      await started.close();
+      fs.rmSync(captureDir, { recursive: true, force: true });
+    }
   });
 
   it("bounds per-request, aggregate, and request-count capture volume", async () => {
