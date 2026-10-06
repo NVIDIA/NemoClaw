@@ -213,7 +213,7 @@ The concrete files differ by agent because each runtime has its own plugin syste
 | Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/runtime-config-guard.py`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, materializes and guards managed runtime configuration during startup, and launches `hermes gateway run` behind the OpenShell proxy. |
 </AgentOnly>
 <AgentOnly variant="deepagents">
-| Deep Agents | `agents/langchain-deepagents-code/manifest.yaml`, `agents/langchain-deepagents-code/generate-config.ts`, `agents/langchain-deepagents-code/start.sh`, and the managed `dcode` launchers | Declares the terminal agent contract, writes `/sandbox/.deepagents/config.toml`, installs managed wrappers for `dcode` and `dcode -n`, and routes inference through `inference.local`. |
+| Deep Agents | `agents/langchain-deepagents-code/manifest.yaml`, `agents/langchain-deepagents-code/generate-config.ts`, `agents/langchain-deepagents-code/start.sh`, and the managed `dcode` launchers | Declares the terminal agent contract, writes `/sandbox/.deepagents/config.toml`, installs managed wrappers for `dcode` and `dcode -n`, and configures the selected inference endpoint. |
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -355,6 +355,10 @@ OpenShell intercepts them and routes them to the configured provider:
 ```text
 Supported agent runtime (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
+
+NVIDIA Endpoints uses an OpenShell provider attached to the sandbox and the agent endpoint `https://integrate.api.nvidia.com/v1`.
+OpenShell replaces credential placeholders only for requests allowed by the attached provider profile.
+Other managed-route selections use `inference.local`.
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
 The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.

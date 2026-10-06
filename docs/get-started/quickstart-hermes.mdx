@@ -351,7 +351,10 @@ Use these details when your first-run path needs more control.
     API-key mode is inference-only and does not enable managed tool gateways.
 
     After you select a provider and model, review the summary and apply the configuration.
-    NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+    NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
+    NVIDIA Endpoints uses an attached OpenShell provider and `https://integrate.api.nvidia.com/v1`.
+    Other managed-route selections use `inference.local`.
+    OpenShell keeps provider credentials outside the sandbox.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
 
@@ -451,14 +454,15 @@ Use these details when your first-run path needs more control.
     ```
 
     `nemohermes inference set` changes the active model or provider without rebuilding the sandbox.
-    It updates the OpenShell inference route and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    It updates the provider attachment for NVIDIA Endpoints or the OpenShell inference route for other managed-route selections.
+    It patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
 
     ```bash
     nemohermes inference set --model <model> --provider <provider>
     ```
 
-    If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell route and NemoClaw registry.
-    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed route.
+    If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the inference selection and NemoClaw registry.
+    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed selection.
   </Accordion>
 </AccordionGroup>
 
