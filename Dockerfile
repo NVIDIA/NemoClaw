@@ -1566,13 +1566,11 @@ RUN chmod 755 /scripts/generate-openclaw-config.mts \
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference
-# User-selected upstream provider (e.g. ollama-local, nim-local, nvidia-prod),
-# carried separately from NEMOCLAW_INFERENCE_PROVIDER_ID, which identifies the
-# managed route as "inference". generate-openclaw-config.mts reads this to apply
-# provider-specific config such as the Local Ollama small-context compaction
-# policy (#5468). Empty default keeps prior behavior when onboard does not supply
-# a value.
+# Keep selected upstream and catalog preset distinct from the managed
+# "inference" route. The generator uses them for provider and profile settings.
+# Empty defaults retain the standard managed-route behavior.
 ARG NEMOCLAW_UPSTREAM_PROVIDER=
+ARG NEMOCLAW_SERVING_PRESET=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
@@ -1663,6 +1661,7 @@ ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
+    NEMOCLAW_SERVING_PRESET=${NEMOCLAW_SERVING_PRESET} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
