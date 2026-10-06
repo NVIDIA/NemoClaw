@@ -453,5 +453,5 @@ The documented service paths are external API endpoints, managed Ollama, [extern
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-NemoClaw has no managed NVIDIA NIM backend and does not select models from vendor catalogs.
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

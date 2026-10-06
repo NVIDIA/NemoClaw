@@ -37,6 +37,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Real Fabric adapters report health as unsupported, so [apply fails at agent readiness](usage.md#fabric-health-during-apply) | [#12443](https://github.com/NVIDIA/NemoClaw/issues/12443) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
+| Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
+| Vendor model catalogs during onboarding | [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650) |
 
 ## Agents and Integrations
 
@@ -45,8 +47,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
-| Collector provisioning and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
-| Tavily search has not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
+| Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 
 ## Access and Diagnostics
 
@@ -74,6 +76,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Corporate CA provisioning across the client, image builds, gateway and native runtimes | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | A rotation runbook for every credential type | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | Privacy review and retention guidance for production tracing | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
+| Okta and Entra runtime identity | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
+| Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
 
 ## SDK and Provider
 

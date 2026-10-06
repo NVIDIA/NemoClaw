@@ -21,11 +21,11 @@ The evaluation steps below create a separate deployment; they do not provide an 
 | Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](reference/cli.md) and [state](state.md) |
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](agents.md) and [interfaces](interfaces.md) |
 | Integrate the TypeScript lifecycle package | [Rust SDK](sdk.md); no compatible TypeScript package is provided |
-| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](sandbox-network.md#choose-a-policy); no managed approval or explanation |
-| Use Okta/Entra runtime identity and OAuth refresh | No v1 equivalent; provider authentication references do not replace it |
+| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](sandbox-network.md#choose-a-policy); managed approval and explanation: [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
+| Use Okta/Entra runtime identity and OAuth refresh | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652); provider authentication references do not replace it |
 | Snapshot, restore, upload/download, or transfer history | No v1 equivalent yet ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)); see [native-data preservation](state.md#configuration-export-and-native-data) |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); MCP servers: [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137); see [additional agent integrations](agents.md#additional-agent-integrations) |
-| Provision a model router, managed NIM/llama.cpp, or distributed inference | Model Router and llama.cpp: [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); no managed NIM |
+| Provision a model router, managed NIM/llama.cpp, or distributed inference | Model Router and llama.cpp: [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); managed NIM: [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [OpenClaw tracing](agents.md#openclaw-tracing) selects an existing collector |
 
 ## Keep Deployment Identities Separate

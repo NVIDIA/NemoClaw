@@ -190,4 +190,4 @@ Log collection for other harnesses, Hermes dashboard logs and an inaccessible sa
 OpenClaw tracing and Brave search have their own [configuration and verification limits](agents.md#openclaw-tracing).
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
-Troubleshooting a production collector and hosted search is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
