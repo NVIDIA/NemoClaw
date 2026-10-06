@@ -195,6 +195,44 @@ class UnsafeReceiptError extends Error {
 }
 class MalformedReceiptError extends Error {}
 
+/** Return only fixed labels; exception messages, paths, and runtime state stay private. */
+export function classifyLaunchReadinessStoreFailure(error: unknown) {
+  if (error instanceof MissingStoreError) return "store-missing";
+  if (error instanceof UnsupportedAuthorityError) return "authority-unsupported";
+  if (error instanceof MalformedReceiptError) return "receipt-malformed";
+  const code =
+    error instanceof UnsafeReceiptError
+      ? error.diagnosticCode
+      : error instanceof Error
+        ? Object.getOwnPropertyDescriptor(error, "code")?.value
+        : null;
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return "permission-denied";
+    case "EROFS":
+      return "read-only-filesystem";
+    case "ENOSPC":
+      return "storage-full";
+    case "ENOENT":
+      return "store-missing";
+  }
+  if (error instanceof UnsafeReceiptError) return "receipt-unsafe";
+  if (error instanceof Error) {
+    switch (Object.getOwnPropertyDescriptor(error, "message")?.value) {
+      case "Launch readiness publication authority changed.":
+        return "authority-changed";
+      case "Launch readiness publication is disabled while authority or clock history is unsafe.":
+        return "publication-disabled";
+      case "Launch readiness publication time is unsafe.":
+        return "publication-time-unsafe";
+      case "Launch readiness lease time envelope is no longer valid.":
+        return "lease-time-invalid";
+    }
+  }
+  return "unclassified";
+}
+
 export class LaunchReadinessFenceError extends Error {
   constructor(
     readonly blocksRecovery: boolean,

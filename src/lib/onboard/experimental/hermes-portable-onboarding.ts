@@ -7,6 +7,8 @@ import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
+import type { OpenShellGpuDiagnostics } from "../../adapters/openshell/gpu-diagnostics";
+import { createRunnerOpenShellGpuDiagnostics } from "../../adapters/openshell/gpu-diagnostics-cli";
 import type {
   CreateOpenShellSandboxRequest,
   OpenShellSandboxLifecycle,
@@ -381,8 +383,10 @@ export function createHermesPortableReadyRunner(
   sandboxName: string,
   gatewayName: string,
   capture: ReturnType<typeof createHermesPortableOpenShellCapture>,
-): (args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult {
-  return (args) => {
+): ((args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult) & {
+  captureGpuDiagnostic(args: string[], timeoutMs: number): HermesPortableOpenShellResult;
+} {
+  const scope = (args: string[]): string[] => {
     const scoped =
       scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
       scopeHermesPortableReadyGetArgs(args, sandboxName, gatewayName) ??
@@ -399,8 +403,28 @@ export function createHermesPortableReadyRunner(
           ? args
           : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
-    return capture(scoped);
+    return scoped;
   };
+  const run = (args: string[]): HermesPortableOpenShellResult => capture(scope(args));
+  return Object.assign(run, {
+    captureGpuDiagnostic: (args: string[], timeoutMs: number) => capture(scope(args), timeoutMs),
+  });
+}
+
+/** Keep Docker GPU failure evidence on the exact receipt-owned portable authority. */
+export function createHermesPortableGpuDiagnostics(
+  sandboxName: string,
+  gatewayName: string,
+  run: ReturnType<typeof createHermesPortableReadyRunner>,
+  now: () => number = Date.now,
+): OpenShellGpuDiagnostics {
+  return createRunnerOpenShellGpuDiagnostics({
+    authority: { sandboxName, target: { kind: "named", gatewayName } },
+    decodeOutput: strictOpenShellText,
+    now,
+    run: (args, timeoutMs) => run.captureGpuDiagnostic([...args], timeoutMs),
+    supportsDoctorLogs: false,
+  });
 }
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });

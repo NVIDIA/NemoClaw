@@ -161,7 +161,11 @@ export function commitRebuildRoutePreflight(
         continue;
       }
       if (peerGatewayName !== input.gatewayName) continue;
-      const credentialEnv = getRebuildCredentialEnvFromRegistry(peer.provider, peer.credentialEnv);
+      const credentialEnv = getRebuildCredentialEnvFromRegistry(
+        peer.provider,
+        peer.credentialEnv,
+        peer.endpointUrl,
+      );
       if (!credentialEnv) continue;
       peer.credentialEnv = credentialEnv;
       migratedSandboxNames.push(peer.name);
@@ -379,6 +383,12 @@ export function acquireRebuildOnboardLock(
       bail,
     );
     return null;
+  }
+  try {
+    onboardSession.selectRebuildSession(sandboxName);
+  } catch (error) {
+    onboardSession.releaseOnboardLock();
+    throw error;
   }
   let released = false;
   const release = () => {

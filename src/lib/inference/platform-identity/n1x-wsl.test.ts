@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { collectN1xWslProduct } from "./n1x-wsl";
+import { collectN1xWslProduct, collectWslNvidiaProduct } from "./n1x-wsl";
 
 const PRODUCT_COMMAND = [
   "powershell.exe",
@@ -24,7 +24,19 @@ describe("N1x WSL product identity", () => {
   });
 
   it("rejects a different Windows product", () => {
-    expect(collectN1xWslProduct({ isWsl: true, runCaptureImpl: () => "SKU 1\r\n" })).toBe(false);
+    expect(collectWslNvidiaProduct({ isWsl: true, runCaptureImpl: () => "SKU 1\r\n" })).toEqual({
+      n1x: false,
+      stationGb300: false,
+    });
+  });
+
+  it("classifies the Dell Station GB300 product for Ollama selection (#12470)", () => {
+    expect(
+      collectWslNvidiaProduct({
+        isWsl: true,
+        runCaptureImpl: () => "Dell Pro Max with Station GB300\r\n",
+      }),
+    ).toEqual({ n1x: false, stationGb300: true });
   });
 
   it.each([
@@ -32,7 +44,7 @@ describe("N1x WSL product identity", () => {
     ["multiline product", "RTX Spark N1X\nforged"],
     ["oversized product", `RTX Spark N1X${"x".repeat(300)}`],
   ])("returns no identity for an %s result", (_scenario, value) => {
-    expect(collectN1xWslProduct({ isWsl: true, runCaptureImpl: () => value })).toBeUndefined();
+    expect(collectWslNvidiaProduct({ isWsl: true, runCaptureImpl: () => value })).toBeUndefined();
   });
 
   it("returns no identity when the Windows product query fails", () => {

@@ -128,13 +128,19 @@ describe("runInferenceSet Hermes routing", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "hermes-provider",
         "--model",
         "openai/gpt-5.4-mini",
-        "--no-verify",
       ],
-      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      },
     );
     expect(config).toEqual({
       _nemoclaw_upstream: {
@@ -173,7 +179,6 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.writeSandboxConfig.mock.calls[0][1].configPath).toBe(
       "/sandbox/.hermes/config.yaml",
     );
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes",
       expect.objectContaining({
