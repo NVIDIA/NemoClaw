@@ -9,9 +9,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import { type DependencyNode, findDependency } from "../fixtures/dependency-graph.ts";
 import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
+const runtimeDirectory = path.join(repoRoot, "tools", "mcp-tool-discovery-runtime");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const dockerfiles = [
   "Dockerfile",
@@ -104,6 +106,25 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
+  it("resolves the fixed proxy address parser in the production graph", () => {
+    const result = spawnSync(
+      "npm",
+      ["ls", "--package-lock-only", "--omit=dev", "--all", "--json"],
+      { cwd: runtimeDirectory, encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
+
+    expect(graph.problems).toBeUndefined();
+    expect(findDependency(graph, "proxy-addr")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
+        version: "2.0.8",
+      }),
+    );
+  });
+
   it.each(dockerfiles)("executes the discovery runtime contract in %s", (dockerfilePath) => {
     expectManagedToolDiscoveryRuntimeImageContract(
       fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
