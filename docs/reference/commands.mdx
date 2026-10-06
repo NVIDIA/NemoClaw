@@ -3353,7 +3353,7 @@ $$nemoclaw tunnel start
 
 Stop host auxiliary services that `$$nemoclaw tunnel start` started (for example cloudflared).
 
-If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains the process, PID file, and dashboard-port record. Do not stop the recorded PID while its identity is uncertain. Before stopping it manually, verify its command line identifies `cloudflared`; then retry `$$nemoclaw tunnel stop`.
+If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains the process, PID file, and dashboard-port record. Do not stop the recorded PID while its identity is uncertain. Before stopping it manually, use the host process manager to verify that the recorded process is `cloudflared` (`cloudflared.exe` on Windows), then stop it and retry `$$nemoclaw tunnel stop`.
 When stop confirmation fails, NemoClaw also skips dependent gateway, channel, model, and managed gateway-port cleanup. After safely stopping the verified `cloudflared` process, rerun the command to retry that cleanup.
 
 Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one messaging bridge.
