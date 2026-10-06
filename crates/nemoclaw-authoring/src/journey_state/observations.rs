@@ -36,16 +36,25 @@ impl JourneyState {
             resolution.target_assessment = Some(crate::assess_target(document, observations)?);
         }
         // Without an engine for its runtime, a managed gateway falls back to the
-        // SDK's default socket, whose read reports a mismatch rather than the cause.
-        if let Some(runtime) = self.runtime_without_local_engine()
-            && let Some(assessment) = resolution.target_assessment.as_mut()
-        {
-            assessment.reasons.insert(
-                0,
-                format!(
-                    "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
-                ),
-            );
+        // SDK's default socket, whose read reports a mismatch rather than the
+        // cause. That default is Docker's socket, so it is not offered as the
+        // engine either: accepting it would author a socket no engine answered on.
+        if let Some(runtime) = self.runtime_without_local_engine() {
+            if let Some(question) = resolution
+                .questions
+                .iter_mut()
+                .find(|question| question.id == GATEWAY_ENGINE_PATH)
+            {
+                question.suggestion = None;
+            }
+            if let Some(assessment) = resolution.target_assessment.as_mut() {
+                assessment.reasons.insert(
+                    0,
+                    format!(
+                        "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+                    ),
+                );
+            }
         }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
@@ -94,7 +103,7 @@ impl JourneyState {
             .pointer("/spec/gateway/management")
             .and_then(Value::as_str)
             != Some("managed")
-            || values.pointer("/spec/gateway/engine").is_some()
+            || values.pointer(GATEWAY_ENGINE_PATH).is_some()
         {
             return None;
         }

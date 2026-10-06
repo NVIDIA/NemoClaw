@@ -32,6 +32,7 @@ use crate::{
 const ROUTE_SELECTION: &str = "route:selection";
 const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
 const RUNTIME_PROVIDER: &str = "/spec/gateway/runtime/provider";
+const GATEWAY_ENGINE_PATH: &str = "/spec/gateway/engine";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +99,7 @@ impl QuestionTarget {
             SdkFieldRole::RuntimeProvider
         } else if path == "/spec/gateway/management" {
             SdkFieldRole::GatewayManagement
-        } else if path == "/spec/gateway/engine" {
+        } else if path == GATEWAY_ENGINE_PATH {
             SdkFieldRole::GatewayEngine
         } else if provider_field && segments[4] == "api" {
             SdkFieldRole::ProviderApi

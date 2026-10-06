@@ -262,7 +262,7 @@ impl AuthoredValues {
         {
             return Ok(());
         }
-        if self.values.pointer("/spec/gateway/engine").is_some() && !self.generated_gateway_engine {
+        if self.values.pointer(GATEWAY_ENGINE_PATH).is_some() && !self.generated_gateway_engine {
             return Ok(());
         }
         let runtime = self
@@ -277,6 +277,6 @@ impl AuthoredValues {
             return Ok(());
         }
         self.generated_gateway_engine = engine.is_some();
-        self.put_sdk_field("/spec/gateway/engine", engine)
+        self.put_sdk_field(GATEWAY_ENGINE_PATH, engine)
     }
 }

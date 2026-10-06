@@ -1485,6 +1485,67 @@ fn a_runtime_no_local_engine_answered_for_is_reported_first() {
     );
 }
 
+/// Answer `id` with whatever the journey suggests, as pressing Enter does.
+fn accept_suggestion(
+    state: &mut nemoclaw_authoring::JourneyState,
+    capabilities: &Capabilities,
+    observations: &DiscoveryObservations,
+    id: &str,
+) {
+    let suggestion = state
+        .resolve_with_observations(capabilities, observations)
+        .unwrap()
+        .question(id)
+        .unwrap()
+        .suggestion()
+        .cloned();
+    state.answer(capabilities, id, suggestion).unwrap();
+}
+
+#[test]
+fn accepting_suggestions_never_points_a_runtime_without_a_local_engine_at_dockers_socket() {
+    let capabilities = Capabilities::available();
+    let engine = "/spec/gateway/engine";
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider", engine]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    accept_suggestion(&mut state, &capabilities, &observations, engine);
+    assert_eq!(state.values().pointer(engine), None);
+    assert_eq!(
+        first_target_reason(&state, &capabilities, &observations).as_deref(),
+        Some(
+            "No podman engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+        )
+    );
+}
+
+#[test]
+fn a_machine_that_was_never_asked_keeps_the_default_engine_suggestion() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let state = JourneyDefinition::new("runtime", base)
+        .ask(["/spec/gateway/engine"])
+        .start(&capabilities)
+        .unwrap();
+    assert_eq!(
+        state
+            .resolve_with_observations(&capabilities, &DiscoveryObservations::new())
+            .unwrap()
+            .question("/spec/gateway/engine")
+            .unwrap()
+            .suggestion(),
+        Some(&json!("unix:///var/run/docker.sock"))
+    );
+}
+
 #[test]
 fn an_explicit_gateway_engine_is_not_reported_as_missing() {
     let capabilities = Capabilities::available();
