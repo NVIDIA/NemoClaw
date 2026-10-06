@@ -187,14 +187,14 @@ function admissionFailureScope(prefix: string) {
 function admissionFailureDeps(scope: ReturnType<typeof admissionFailureScope>): UninstallRunDeps {
   return {
     commandExists: () => false,
-    // Without this the teardown-authority probe consults the host's real
-    // package manager, so an installed OpenShell formula answers instead of the
-    // scenario under test and every case below reports the host's trust error.
+    // Direct production callers bypass the authority wrapper above. Keep this
+    // fixture aligned with that wrapper so host package-manager state does not
+    // choose the cleanup path under test.
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
       mode: "nemoclaw-managed",
-      source: "standalone",
+      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
       endpoint: null,
       stateDir: null,
       supervisor: null,
