@@ -1538,7 +1538,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     cloudflared: true,
     owningPaths: [
+      "src/commands/tunnel/start.ts",
       "src/commands/tunnel/status.ts",
+      "src/commands/tunnel/stop.ts",
       "src/lib/tunnel/services.ts",
       "src/lib/tunnel/service-command.ts",
       "test/e2e/live/tunnel-lifecycle-helpers.ts",
