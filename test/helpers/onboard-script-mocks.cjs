@@ -98,6 +98,7 @@ function registerSourceRequire() {
   const bootstrapTypeScriptFiles = new Set([
     path.resolve(sourceLoader),
     path.resolve(__dirname, "source-require-cache.ts"),
+    path.resolve(__dirname, "source-require-compiler.ts"),
   ]);
   const previousTypeScriptLoader = Module._extensions[".ts"];
 
