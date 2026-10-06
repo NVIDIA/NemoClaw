@@ -24,14 +24,19 @@ it.each([
   },
   {
     name: "URL credentials",
-    url: "https://user-canary:password-canary@inference.example.com:8443/v1?api_key=query-canary&region=west#fragment-canary",
-    expectedEndpoint: `${endpoint}?api_key=%3CREDACTED%3E&region=west`,
+    url: "https://user-canary:password-canary@inference.example.com:8443/v1/API_KEY=path-canary?api_key=query-canary&region=west#fragment-canary",
+    expectedEndpoint:
+      "https://inference.example.com:8443/%3CREDACTED%3E?api_key=%3CREDACTED%3E&region=west",
   },
   {
     name: "encoded token under an ordinary query name",
     url: `${endpoint}?model=${encodeURIComponent(secret).replace("n", "%6e")}`,
   },
-  { name: "token in the path", url: `${endpoint}/${secret}` },
+  {
+    name: "literal and percent-encoded tokens in the path",
+    url: `${endpoint}/${secret}/%6e%76%61%70%69%2d${"a".repeat(40)}`,
+    expectedEndpoint: "https://inference.example.com:8443/%3CREDACTED%3E",
+  },
   {
     name: "oversized endpoint",
     url: `${endpoint}/${"x".repeat(1000)}?api_key=query-canary`,
@@ -39,7 +44,7 @@ it.each([
   {
     name: "malformed URL with terminal controls",
     url: "https://[invalid/\u001b[31m\n?token=query-canary",
-    expectedEndpoint: "https://[invalid/",
+    expectedEndpoint: "<REDACTED>",
     expectedProbeCalls: 0,
   },
 ])("identifies a failed custom endpoint safely: $name (#11999)", async (testCase) => {
@@ -103,8 +108,11 @@ it.each([
     expect(endpointLine).toContain(testCase.expectedEndpoint ?? endpoint);
     expect(endpointLine.length).toBeLessThan(300);
     expect(endpointLine).not.toMatch(/[\u0000-\u001f\u007f]/);
-    expect(output).not.toContain(secret);
-    expect(output).not.toMatch(/user-canary|password-canary|query-canary|fragment-canary/);
+    const decodedOutput = decodeURIComponent(output);
+    expect(decodedOutput).not.toContain(secret);
+    expect(decodedOutput).not.toMatch(
+      /user-canary|password-canary|path-canary|query-canary|fragment-canary/,
+    );
     expect(log).not.toHaveBeenCalled();
   } finally {
     process.exitCode = originalExitCode;

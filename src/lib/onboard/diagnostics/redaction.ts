@@ -446,8 +446,21 @@ export function redactOnboardDiagnosticText(message: string): string {
 
 /** Redact endpoint credentials before bounding and escaping the displayed URL. */
 export function formatOnboardEndpointDiagnostic(endpointUrl: string): string {
-  const endpoint = redactStandaloneSecretsFull(redactUrl(endpointUrl) ?? "<REDACTED>");
-  return JSON.stringify(endpoint.slice(0, 240));
+  try {
+    const endpoint = new URL(redactUrl(endpointUrl) ?? "");
+    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+      return JSON.stringify("<REDACTED>");
+    }
+    const path = decodeURIComponent(endpoint.pathname);
+    // Omit the whole path when credentials or further encoding could hide
+    // a secret; partial replacement could leave part of a credential visible.
+    if (path.includes("%") || redactFull(path) !== path) {
+      endpoint.pathname = "/<REDACTED>";
+    }
+    return JSON.stringify(redactStandaloneSecretsFull(endpoint.toString()).slice(0, 240));
+  } catch {
+    return JSON.stringify("<REDACTED>");
+  }
 }
 
 /** Preserve the command diagnostic's existing redaction and length contract. */
