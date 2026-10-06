@@ -310,6 +310,34 @@ describe("llama.cpp private bridge argument boundary", () => {
   });
 });
 
+it("accepts a localhost upstream only with one loopback listener and a distinct port (#12285)", () => {
+  const input = [
+    "--transaction",
+    TRANSACTION,
+    "--auth-mode",
+    "api-key-fd3",
+    "--target-host",
+    "127.0.0.1",
+    "--target-port",
+    "49152",
+    "--listen-port",
+    "8081",
+    "--bind-address",
+    "127.0.0.1",
+  ];
+  expect(parseLlamaCppPrivateBridgeArguments(input)).toMatchObject({
+    targetHost: "127.0.0.1",
+    targetPort: 49152,
+    bindAddresses: ["127.0.0.1"],
+  });
+  expect(() =>
+    parseLlamaCppPrivateBridgeArguments([...input, "--bind-address", "172.29.0.1"]),
+  ).toThrow("authority is invalid");
+  const recursive = input.slice();
+  recursive[recursive.indexOf("--target-port") + 1] = "08081";
+  expect(() => parseLlamaCppPrivateBridgeArguments(recursive)).toThrow("authority is invalid");
+});
+
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

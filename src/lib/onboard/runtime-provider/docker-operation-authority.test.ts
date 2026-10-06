@@ -564,6 +564,7 @@ describe("managed llama.cpp operation probe strategy", () => {
 
       expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
         ...input,
+        ...(status === "docker-desktop" ? { bindings: { loopbackUpstream: true } } : {}),
         loopbackProbe,
       });
     },

@@ -17,7 +17,7 @@ export interface DockerLlamaCppPrivateBridgeAuthority {
   readonly targetHost: string;
   readonly targetPort: number;
   readonly listenPort: number;
-  readonly bindAddresses: readonly ["127.0.0.1", string];
+  readonly bindAddresses: readonly ["127.0.0.1"] | readonly ["127.0.0.1", string];
 }
 
 export interface DockerLlamaCppPrivateBridgeController {
@@ -63,11 +63,13 @@ function normalizeAuthority(
     !path.isAbsolute(value.apiKeyPath) ||
     value.apiKeyPath.includes("\0") ||
     path.normalize(value.apiKeyPath) !== value.apiKeyPath ||
-    !isPrivateIpv4(value.targetHost) ||
-    value.bindAddresses.length !== 2 ||
     value.bindAddresses[0] !== "127.0.0.1" ||
-    !isPrivateIpv4(value.bindAddresses[1]) ||
-    value.bindAddresses[1] === value.targetHost
+    !(value.targetHost === "127.0.0.1"
+      ? value.bindAddresses.length === 1 && value.targetPort !== value.listenPort
+      : isPrivateIpv4(value.targetHost) &&
+        value.bindAddresses.length === 2 &&
+        isPrivateIpv4(value.bindAddresses[1]) &&
+        value.bindAddresses[1] !== value.targetHost)
   ) {
     throw new Error("Docker llama.cpp private bridge authority is invalid.");
   }
@@ -77,7 +79,9 @@ function normalizeAuthority(
     targetHost: value.targetHost,
     targetPort: exactPort(value.targetPort, "target port"),
     listenPort: exactPort(value.listenPort, "listen port"),
-    bindAddresses: Object.freeze([...value.bindAddresses]) as readonly ["127.0.0.1", string],
+    bindAddresses: Object.freeze([
+      ...value.bindAddresses,
+    ]) as DockerLlamaCppPrivateBridgeAuthority["bindAddresses"],
   });
 }
 
@@ -94,10 +98,7 @@ function bridgeArguments(authorityValue: DockerLlamaCppPrivateBridgeAuthority): 
     String(authority.targetPort),
     "--listen-port",
     String(authority.listenPort),
-    "--bind-address",
-    authority.bindAddresses[0],
-    "--bind-address",
-    authority.bindAddresses[1],
+    ...authority.bindAddresses.flatMap((address) => ["--bind-address", address]),
   ]);
 }
 

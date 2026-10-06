@@ -23,7 +23,7 @@ export interface LlamaCppPrivateBridgeArguments {
   readonly targetHost: string;
   readonly targetPort: number;
   readonly listenPort: number;
-  readonly bindAddresses: readonly ["127.0.0.1", string];
+  readonly bindAddresses: readonly ["127.0.0.1"] | readonly ["127.0.0.1", string];
 }
 
 function exactPort(value: string, label: string): number {
@@ -78,11 +78,15 @@ export function parseLlamaCppPrivateBridgeArguments(
   if (
     !SHA256.test(transactionId) ||
     one("--auth-mode") !== AUTH_MODE ||
-    !isPrivateIpv4(targetHost) ||
-    bindAddresses.length !== 2 ||
     bindAddresses[0] !== "127.0.0.1" ||
-    !isPrivateIpv4(bindAddresses[1]!) ||
-    bindAddresses[1] === targetHost
+    !(targetHost === "127.0.0.1"
+      ? bindAddresses.length === 1 &&
+        exactPort(one("--target-port"), "target port") !==
+          exactPort(one("--listen-port"), "listen port")
+      : isPrivateIpv4(targetHost) &&
+        bindAddresses.length === 2 &&
+        isPrivateIpv4(bindAddresses[1]!) &&
+        bindAddresses[1] !== targetHost)
   ) {
     throw new Error("private bridge authority is invalid");
   }
@@ -91,10 +95,9 @@ export function parseLlamaCppPrivateBridgeArguments(
     targetHost,
     targetPort: exactPort(one("--target-port"), "target port"),
     listenPort: exactPort(one("--listen-port"), "listen port"),
-    bindAddresses: Object.freeze(["127.0.0.1", bindAddresses[1]!]) as readonly [
-      "127.0.0.1",
-      string,
-    ],
+    bindAddresses: Object.freeze([
+      ...bindAddresses,
+    ]) as LlamaCppPrivateBridgeArguments["bindAddresses"],
   });
 }
 

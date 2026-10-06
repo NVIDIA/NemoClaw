@@ -812,11 +812,21 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure/u],
     ["runtime", "", "8081", "127.0.0.1", 1, /must not publish/u],
     ["runtime-wide", "", "8081", "0.0.0.0", 1, /must not publish/u],
+    ["wsl-wide", "0", "49152", "0.0.0.0", 1, /publication|published guard port/u],
+    ["wsl-duplicate", "0", "49152", "127.0.0.1", 2, /publication|published guard port/u],
+    ["wsl-recursive", "0", "8081", "127.0.0.1", 1, /publication|published guard port/u],
   ] as const)(
     "rolls back exact ownership for unexpected %s Docker publication (#8544)",
     (_kind, configured, published, ip, count, expectedError) => {
       const [fixture, store] = [dockerFixture(configured, published, ip, count), journalStore()];
-      const lifecycle = createLifecycle(options(fixture, store));
+      const input = options(fixture, store);
+      const lifecycle = createLifecycle({
+        ...input,
+        bindings: {
+          ...input.bindings,
+          ...(_kind.startsWith("wsl-") ? { loopbackUpstream: true as const } : {}),
+        },
+      });
       expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
       const calls = fixture.capture.mock.calls.map((call) => call[0]);
       expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
@@ -1464,4 +1474,26 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
     expect(unavailableStore.list()).toEqual([]);
   });
+});
+
+it("uses the guarded localhost upstream through WSL start, resume and cleanup (#12285)", () => {
+  const fixture = dockerFixture("0", "49152", "127.0.0.1", 1);
+  const privateBridge = privateBridgeFixture();
+  const input = { ...options(fixture), loopbackProbe: "host-process" as const };
+  input.bindings = { ...input.bindings, loopbackUpstream: true };
+  const lifecycle = createLifecycle(input, {}, privateBridge);
+  const receipt = lifecycle.start(receiptWriter());
+  expect(privateBridge.start.mock.calls[0]?.[0]).toMatchObject({
+    targetHost: "127.0.0.1",
+    targetPort: 49152,
+    bindAddresses: ["127.0.0.1"],
+  });
+  expect(fixture.capture.mock.calls.flatMap(([args]) => args)).toContain(
+    "host.openshell.internal:host-gateway",
+  );
+  lifecycle.runtime.stopManaged(receipt);
+  lifecycle.resume(receipt);
+  lifecycle.runtime.preserveForRebuild(receipt);
+  lifecycle.runtime.destroy(receipt);
+  expect(fixture.engine.capture(["container", "inspect", RUNTIME_ID]).status).toBe(1);
 });

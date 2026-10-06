@@ -189,6 +189,10 @@ export function createDockerFixture(
   const capture = vi.fn((args: readonly string[]) => {
     const unexpected = `unexpected Docker command: ${args.join(" ")}`;
     switch (args[0]) {
+      case "version":
+        return { status: 0, stdout: "29.8.0", stderr: "" };
+      case "image":
+        return { status: 0, stdout: "managed-bearer-v1", stderr: "" };
       case "network":
         switch (args[1]) {
           case "inspect":

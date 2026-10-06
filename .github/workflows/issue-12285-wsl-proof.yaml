@@ -46,3 +46,34 @@ jobs:
           wsl.exe --distribution Ubuntu-24.04 --user root -- sh -c 'uname -a; test -e /proc/sys/kernel/osrelease; uname -r | grep -i microsoft-standard-WSL2'
           if ($LASTEXITCODE -ne 0) { throw "WSL2 execution failed with exit $LASTEXITCODE" }
           wsl.exe --list --verbose
+
+      - name: Install and start the pinned Docker Desktop WSL backend
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'Docker Desktop Installer.exe'
+          Invoke-WebRequest 'https://desktop.docker.com/win/main/amd64/240920/Docker%20Desktop%20Installer.exe' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'c139124c9cf71477dc565c3c0ea5a18f90b93d68ebe9aaa848a065960416c0bc') {
+            throw 'Docker Desktop installer checksum mismatch'
+          }
+          $installation = Start-Process $installer -ArgumentList @('install', '--quiet', '--accept-license', '--backend=wsl-2', '--no-windows-containers') -Wait -PassThru
+          if ($installation.ExitCode -ne 0) { throw "Docker Desktop installation failed: $($installation.ExitCode)" }
+          $settingsDirectory = Join-Path $env:APPDATA 'Docker'
+          New-Item -ItemType Directory -Force $settingsDirectory | Out-Null
+          $settingsPath = Join-Path $settingsDirectory 'settings-store.json'
+          $settings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
+          $settings.wslEngineEnabled = $true
+          $settings.enableIntegrationWithDefaultWslDistro = $true
+          $settings.integratedWslDistros = @('Ubuntu-24.04')
+          $settings | ConvertTo-Json -Depth 20 | Set-Content $settingsPath -Encoding utf8NoBOM
+          $desktop = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+          $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+          Start-Process $desktop
+          $deadline = (Get-Date).AddMinutes(4)
+          do {
+            & $docker --context desktop-linux info --format '{{.OperatingSystem}}'
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 2
+          } while ((Get-Date) -lt $deadline)
+          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop did not start its Linux backend within four minutes' }
+          wsl.exe --distribution Ubuntu-24.04 --user root -- docker info --format '{{.OperatingSystem}}'
+          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop WSL integration is unavailable' }

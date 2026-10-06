@@ -116,14 +116,21 @@ export function createDockerLlamaCppHostLocalOperation(
     // Docker Desktop WSL isolates the VM loopback from the distro loopback, so
     // the bridge loopback proof runs from this CLI process instead of a
     // host-network probe container.
-    createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
-      createLifecycle({
+    createLlamaCppLifecycle: (
+      input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
+    ) => {
+      const desktop =
+        detectWslDockerDesktopStatus({
+          env,
+          dockerInfoFormat: (format) => engine.capture(["info", "--format", format]).stdout,
+        }) === "docker-desktop";
+      return createLifecycle({
         ...input,
+        ...(desktop ? { bindings: { ...input.bindings, loopbackUpstream: true } } : {}),
         ...(deadlineMs === undefined ? {} : { engine }),
-        loopbackProbe:
-          input.loopbackProbe ??
-          (detectWslDockerDesktopStatus() === "docker-desktop" ? "host-process" : undefined),
-      }),
+        loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
+      });
+    },
   });
 }
 
