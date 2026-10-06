@@ -522,6 +522,64 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
+  it.each([
+    {
+      failure: "malformed",
+      prepare: (archivePath: string) => writeFileSync(archivePath, "not a tar archive"),
+      env: {},
+      message: "OpenClaw npm remediation command failed",
+    },
+    {
+      failure: "missing",
+      prepare: (_archivePath: string) => undefined,
+      env: {},
+      message: "OpenClaw npm remediation command failed",
+    },
+    {
+      failure: "unavailable tar",
+      prepare: (archivePath: string) => writeFileSync(archivePath, "not a tar archive"),
+      env: { PATH: "" },
+      message: "OpenClaw npm remediation command could not start",
+    },
+  ])("withholds archive paths and child diagnostics when $failure", ({ prepare, env, message }) => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-private-archive-marker-"));
+    temporaryDirectories.push(directory);
+    const archivePath = path.join(directory, "private-archive-marker.tgz");
+    prepare(archivePath);
+    const request = {
+      archivePath,
+      packageSpec: "@openclaw/slack@2026.9.2",
+      workingDirectory: path.join(directory, "work"),
+      env,
+    };
+
+    expect(() => buildRemediatedOpenClawArchive(request)).toThrow(message);
+    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-archive-marker");
+  });
+
+  it("rejects unsafe archive members without echoing their names or archive path", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-private-archive-marker-"));
+    temporaryDirectories.push(directory);
+    const memberName = "private-member-marker";
+    writeFileSync(path.join(directory, memberName), "untrusted member");
+    const archivePath = path.join(directory, "private-archive-marker.tgz");
+    const packed = spawnSync("tar", ["-czf", archivePath, "-C", directory, memberName], {
+      encoding: "utf8",
+    });
+    expect(packed.status, packed.stderr).toBe(0);
+    const request = {
+      archivePath,
+      packageSpec: "@openclaw/slack@2026.9.2",
+      workingDirectory: path.join(directory, "work"),
+    };
+
+    expect(() => buildRemediatedOpenClawArchive(request)).toThrow(
+      "npm archive has an unsafe member",
+    );
+    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-member-marker");
+    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-archive-marker");
+  });
+
   it("hashes package entries through opened file descriptors", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-integrity-"));
     temporaryDirectories.push(directory);

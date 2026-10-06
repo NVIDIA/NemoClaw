@@ -220,9 +220,9 @@ function run(command: string, args: readonly string[], cwd: string, env: NodeJS.
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error) throw result.error;
+  if (result.error) throw new Error("OpenClaw npm remediation command could not start");
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+    throw new Error("OpenClaw npm remediation command failed");
   }
   return result.stdout;
 }
@@ -235,7 +235,7 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
     .split("\n")
     .filter((entry) => entry.length > 0);
   if (names.length === 0 || verbose.length !== names.length) {
-    throw new Error(`npm archive ${archivePath} has an invalid member listing`);
+    throw new Error("npm archive has an invalid member listing");
   }
   const seen = new Set<string>();
   for (let index = 0; index < names.length; index += 1) {
@@ -249,12 +249,12 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
       normalized.split("/").some((part) => part === "" || part === "." || part === "..") ||
       seen.has(normalized)
     ) {
-      throw new Error(`npm archive ${archivePath} has an unsafe member: ${member}`);
+      throw new Error("npm archive has an unsafe member");
     }
     seen.add(normalized);
   }
   if (!seen.has("package/package.json")) {
-    throw new Error(`npm archive ${archivePath} has no package/package.json`);
+    throw new Error("npm archive has no package/package.json");
   }
 }
 
@@ -269,7 +269,7 @@ function extractArchive(
   run("tar", ["-xzf", archivePath, "-C", destination], cwd, env);
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
-    throw new Error(`npm archive ${archivePath} did not extract a package directory`);
+    throw new Error("npm archive did not extract a package directory");
   }
   return packageDirectory;
 }
