@@ -355,7 +355,7 @@ describe("onboard entrypoint lifecycle events", () => {
       payload.stderr,
       /Resumable state belongs to sandbox 'recorded-sandbox', not 'requested-sandbox'/,
     );
-    assert.match(payload.stderr, /Run: nemoclaw onboard/);
+    assert.match(payload.stderr, /Run: nemoclaw onboard --fresh/);
     assert.doesNotMatch(payload.stderr, /synthetic resume-conflict event failure/);
   });
 });

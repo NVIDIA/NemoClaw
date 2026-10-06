@@ -572,7 +572,7 @@ async function exitForResumeConflicts(
     }
     reportResumeConflict(conflict, deps);
   }
-  deps.error(`  Run: ${deps.cliName()} onboard              # start a fresh onboarding session`);
+  deps.error(`  Run: ${deps.cliName()} onboard --fresh      # start a fresh onboarding session`);
   deps.error("  Or rerun with the original settings to continue that session.");
   deps.exitProcess(1);
 }

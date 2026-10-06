@@ -638,7 +638,7 @@ describe("prepareOnboardSession", () => {
       "  Session was started with --from '/abs/Dockerfile.old', not '/abs/Dockerfile.new'.",
     );
     expect(deps.error).toHaveBeenCalledWith(
-      "  Run: nemoclaw onboard              # start a fresh onboarding session",
+      "  Run: nemoclaw onboard --fresh      # start a fresh onboarding session",
     );
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
