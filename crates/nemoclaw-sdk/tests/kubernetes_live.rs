@@ -87,6 +87,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         helm: required("NEMOCLAW_TEST_HELM").into(),
         kubeconfig: target.kubeconfig.clone(),
         state: state.path().join("kubernetes"),
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
 
     let storage = operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();

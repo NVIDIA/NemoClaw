@@ -157,6 +157,7 @@ pub async fn connection(
             helm: "helm".into(),
             kubeconfig: cluster.kubeconfig.clone(),
             state,
+            openshift_wait: operations::OPENSHIFT_WAIT,
         };
         operations.connect(&spec).await
     };

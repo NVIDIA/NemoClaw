@@ -41,7 +41,12 @@ pub struct Operations {
     pub kubeconfig: PathBuf,
     /// Private state directory holding the receipt.
     pub state: PathBuf,
+    /// How long to wait for OpenShift to assign a new namespace its UID range.
+    pub openshift_wait: std::time::Duration,
 }
+
+/// OpenShift writes a namespace's UID range within seconds of creating it.
+pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Operations {
     fn target<'a>(
@@ -218,7 +223,8 @@ impl Operations {
                 }
                 let mut release = self.release(spec, Some(&material))?;
                 if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    release.identity = Some(namespace_identity(&cluster, &namespace).await?);
+                    release.identity =
+                        Some(namespace_identity(&cluster, &namespace, self.openshift_wait).await?);
                 }
                 gateway::install(&release).await?;
                 let statefulset = self
@@ -355,6 +361,7 @@ impl Operations {
 async fn namespace_identity(
     cluster: &Cluster,
     namespace: &str,
+    wait: std::time::Duration,
 ) -> Result<gateway::Identity, ObservationError> {
     let address = Owned {
         api_version: "v1".into(),
@@ -363,7 +370,7 @@ async fn namespace_identity(
         name: namespace.into(),
         uid: String::new(),
     };
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + wait;
     loop {
         let annotations = cluster
             .get(&address)
@@ -378,6 +385,6 @@ async fn namespace_identity(
                 "OpenShift did not assign the namespace a UID range; check that this is an OpenShift cluster; resources retained",
             ));
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500).min(wait)).await;
     }
 }

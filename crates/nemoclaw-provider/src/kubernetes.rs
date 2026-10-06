@@ -90,6 +90,7 @@ async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
         helm: "helm".into(),
         kubeconfig,
         state,
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     })
 }
 

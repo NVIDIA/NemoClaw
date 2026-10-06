@@ -88,6 +88,8 @@ async fn operations(
         helm: helm(directory),
         kubeconfig: directory.join("kubeconfig"),
         state: directory.join("state"),
+        // Short, so a cluster without OpenShift ranges fails fast.
+        openshift_wait: std::time::Duration::from_millis(50),
     };
     (fixture, operations)
 }
@@ -188,7 +190,7 @@ async fn on_openshift_the_gateway_runs_as_the_namespace_identity() {
     assert_eq!(values["podSecurityContext"]["fsGroup"], 1_000_690_000);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn on_a_cluster_without_openshift_ranges_the_gateway_is_not_installed() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
