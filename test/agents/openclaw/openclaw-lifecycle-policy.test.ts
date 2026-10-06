@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { shellCommandSegmentBetween } from "../../helpers/dockerfile-run-shell.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const PRODUCTION_BOUNDARY_AUDIT = String.raw`
@@ -113,6 +114,47 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
+  it("installs a native CLI launcher owned by the reviewed OpenClaw package", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launcher-layout-"));
+    try {
+      const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf8");
+      const prefix = path.join(root, "usr/local");
+      const modules = path.join(prefix, "lib/nemoclaw/openclaw-runtime/node_modules");
+      const packageRoot = path.join(modules, "openclaw");
+      const launcher = path.join(prefix, "bin/openclaw");
+      fs.mkdirSync(packageRoot, { recursive: true });
+      fs.mkdirSync(path.join(modules, ".bin"));
+      fs.mkdirSync(path.dirname(launcher));
+      fs.writeFileSync(
+        path.join(prefix, "lib/nemoclaw/openclaw-cli-wrapper.sh"),
+        '#!/bin/sh\nprintf "launcher arg=%s\\n" "$@"\n',
+      );
+      fs.symlinkSync(path.join(modules, ".bin/openclaw"), launcher);
+      const command = shellCommandSegmentBetween(
+        dockerfile,
+        "rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw",
+        "    && node -e",
+      )
+        .replace(/\\$/, "")
+        .replaceAll("/usr/local", prefix)
+        .replace("-o root -g root ", "");
+      // Exercise the image's installation commands without requiring root on the test host.
+      const result = spawnSync("sh", ["-ec", command], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      const target = fs.realpathSync(launcher);
+      const relative = path.relative(fs.realpathSync(packageRoot), target);
+      expect(relative).not.toBe("");
+      expect(relative.split(path.sep)[0]).not.toBe("..");
+      expect(path.isAbsolute(relative)).toBe(false);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o755);
+      const invoked = spawnSync(launcher, ["update", "--dry-run"], { encoding: "utf8" });
+      expect(invoked.status, invoked.stderr).toBe(0);
+      expect(invoked.stdout).toBe("launcher arg=update\nlauncher arg=--dry-run\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("selects the system npm owner only for native OpenClaw self-update", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-wrapper-"));
     const fakeNode = path.join(root, "node");

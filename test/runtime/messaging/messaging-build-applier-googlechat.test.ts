@@ -8,6 +8,30 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 
+// Keep the historical Slack remediation fixture independent of production version pins.
+vi.mock("../../../src/lib/messaging/channels/slack/manifest.ts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../src/lib/messaging/channels/slack/manifest.ts")>();
+  return {
+    ...actual,
+    slackManifest: {
+      ...actual.slackManifest,
+      agentPackages: actual.slackManifest.agentPackages.map((pkg) => ({
+        ...pkg,
+        integrityByVersion: {
+          ...pkg.integrityByVersion,
+          "2026.9.2":
+            "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
+        },
+        tarballUrlByVersion: {
+          ...pkg.tarballUrlByVersion,
+          "2026.9.2": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz",
+        },
+      })),
+    },
+  };
+});
+
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();

@@ -1685,14 +1685,16 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
     esac \
     && command -v setpriv >/dev/null 2>&1
 
-# Preserve the CLI's package-resolution symlink while its .bin wrapper selects
-# /usr/local only for 2026.9.1 self-update owner detection. Install this before
-# config generation so the late runtime payload copy remains within the reviewed
-# post-generator instruction sequence.
+# Keep the CLI wrapper inside OpenClaw's package so native self-update can verify
+# launcher ownership. Its .bin symlink still selects /usr/local for updates.
+# Install this before config generation so the late runtime payload copy remains
+# within the reviewed post-generator instruction sequence.
 COPY scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
 RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && install -o root -g root -m 0755 \
         /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/nemoclaw-cli-wrapper.sh \
+    && ln -s ../openclaw/nemoclaw-cli-wrapper.sh \
         /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && node -e 'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5"); if (typeof JSON5.parse !== "function") process.exit(1)' \
     && openclaw_json5_unsafe="$(find -L /usr/local/lib/node_modules/openclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
