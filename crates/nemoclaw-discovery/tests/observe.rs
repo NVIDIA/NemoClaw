@@ -3,10 +3,9 @@
 #![cfg(unix)]
 use crate::transport;
 use nemoclaw_discovery::{Direct, observe};
-use nemoclaw_sdk::config::InferenceApi;
 use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, ObservationError, Secrets,
-    config::ComputeDriver,
+    config::{ComputeDriver, InferenceApi},
     discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support},
     inference_discovery::EndpointRequest,

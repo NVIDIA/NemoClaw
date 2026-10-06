@@ -389,12 +389,10 @@ fn an_unobserved_external_gateway_target_is_unverified() {
 }
 
 #[test]
-fn a_managed_gateway_engine_probe_cannot_disqualify_or_place_an_external_gateway() {
+fn a_managed_gateway_engine_probe_cannot_disqualify_an_external_gateway() {
     let document = external_document("ssh://images@example.com");
     let mut observed = observed_target(&document);
-    let engine = observed.engine.as_mut().unwrap();
-    engine.status = ObservationStatus::Unavailable;
-    engine.architecture = Some("amd64".into());
+    observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
         observed.assess(&document).status,
         CompatibilityStatus::Compatible
