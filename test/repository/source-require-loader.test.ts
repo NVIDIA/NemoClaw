@@ -567,6 +567,7 @@ const expected = new Set([
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-compiler.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-coverage.cts"))}),
 ]);
 const compiled = [];
 const originalCompile = Module.prototype._compile;
@@ -612,7 +613,7 @@ if (require.cache[typescriptPath] !== undefined) {
     require.cache[typescriptPath] === undefined ||
     registeredTypeScriptLoader === nativeTypeScriptLoader ||
     !rejectedUnexpected ||
-    compiled.length !== 3 ||
+    compiled.length !== expected.size ||
     compiled.some((entry) => !entry.sourceMapped)
   ) {
     console.error(JSON.stringify({ fixture, compiled, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));

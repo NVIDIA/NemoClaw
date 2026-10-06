@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import Module from "node:module";
 import path from "node:path";
-import { instrumentSourceForCoverage, shouldInstrumentSource } from "./source-coverage.cts";
+const {
+  instrumentSourceForCoverage,
+  shouldInstrumentSource,
+}: typeof import("./source-coverage.cts") = require("./source-coverage.cts");
 import { compileSourceRequire } from "./source-require-compiler";
 
 type CommonJsModule = NodeModule & {

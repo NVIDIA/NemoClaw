@@ -4,11 +4,64 @@
 const path = require("node:path");
 const { fileURLToPath } = require("node:url");
 
-const OPTIONS_ENV = "NEMOCLAW_SOURCE_COVERAGE_OPTIONS";
-const COVERAGE_KEY = "__nemoclawSourceCoverage__";
+const OPTIONS_ENVImpl = "NEMOCLAW_SOURCE_COVERAGE_OPTIONS";
+const COVERAGE_KEYImpl = "__nemoclawSourceCoverage__";
 const STATE_KEY = Symbol.for("nemoclaw.source-coverage.state");
 
-function enableSourceCoverage(options, isEnabled = () => true) {
+type BabelTypes = typeof import("@babel/types");
+type CoverageOptions = {
+  roots: string[];
+  include?: string | string[];
+  exclude?: string[];
+  allowExternal?: boolean;
+  changedFiles?: string[];
+  ignoreClassMethods?: string[];
+};
+type FileCoverage = {
+  s: Record<string, number>;
+  f: Record<string, number>;
+  b: Record<string, number[]>;
+  statementMap: Record<string, unknown>;
+  fnMap: Record<string, unknown>;
+  branchMap: Record<string, unknown>;
+};
+type InstrumentedSource = { code: string; map?: unknown; coverage?: FileCoverage };
+type CoverageState = {
+  options: CoverageOptions;
+  cache: Map<string, { source: string; result: InstrumentedSource }>;
+  matcher: (filename: string) => boolean;
+  isEnabled: () => boolean;
+  instrument: typeof instrumentSourceForCoverageImpl;
+  fingerprint?: string;
+};
+type CounterPath = {
+  node: import("@babel/types").UpdateExpression;
+  getFunctionParent(): unknown;
+  replaceWith(node: import("@babel/types").Expression): void;
+  skip(): void;
+};
+type ProgramPath = {
+  node: import("@babel/types").Program;
+  traverse(visitor: { UpdateExpression(counter: CounterPath): void }): void;
+};
+const coverageGlobal = globalThis as typeof globalThis & {
+  [STATE_KEY]?: CoverageState;
+  [COVERAGE_KEYImpl]?: Record<string, FileCoverage>;
+};
+
+// Node loads this collector as native CommonJS in strip-only mode. These
+// declarations expose its typed API without emitting unsupported export syntax.
+export declare const OPTIONS_ENV: typeof OPTIONS_ENVImpl;
+export declare const COVERAGE_KEY: typeof COVERAGE_KEYImpl;
+export declare const enableSourceCoverage: typeof enableSourceCoverageImpl;
+export declare const disableSourceCoverage: typeof disableSourceCoverageImpl;
+export declare const resetSourceCoverage: typeof resetSourceCoverageImpl;
+export declare const instrumentSource: typeof instrumentSourceImpl;
+export declare const shouldInstrumentSource: typeof shouldInstrumentSourceImpl;
+export declare const instrumentSourceForCoverage: typeof instrumentSourceForCoverageImpl;
+export declare const sourceCoverageCacheIdentity: typeof sourceCoverageCacheIdentityImpl;
+
+function enableSourceCoverageImpl(options: CoverageOptions, isEnabled = () => true) {
   // Compile once before enabling the hook that examines every native import.
   const picomatch = require("picomatch");
   const matcher = picomatch(options.include ?? "**", {
@@ -16,38 +69,42 @@ function enableSourceCoverage(options, isEnabled = () => true) {
     dot: true,
     ignore: options.exclude,
   });
-  globalThis[STATE_KEY] = {
+  coverageGlobal[STATE_KEY] = {
     options,
     cache: new Map(),
     matcher,
     isEnabled,
-    instrument: instrumentSourceForCoverage,
+    instrument: instrumentSourceForCoverageImpl,
   };
 }
 
-function disableSourceCoverage() {
-  delete globalThis[STATE_KEY];
+function disableSourceCoverageImpl() {
+  delete coverageGlobal[STATE_KEY];
 }
 
-function resetSourceCoverage() {
-  const serialized = process.env[OPTIONS_ENV];
+function resetSourceCoverageImpl() {
+  const serialized = process.env[OPTIONS_ENVImpl];
   if (!serialized) throw new Error("Source coverage options were not initialized");
-  enableSourceCoverage(JSON.parse(serialized));
+  enableSourceCoverageImpl(JSON.parse(serialized));
   // Keep objects referenced by cached modules alive across non-isolated runs.
-  for (const file of Object.values(globalThis[COVERAGE_KEY] ?? {})) {
-    for (const metric of ["s", "f"]) {
+  for (const file of Object.values(coverageGlobal[COVERAGE_KEYImpl] ?? {})) {
+    for (const metric of ["s", "f"] as const) {
       for (const key of Object.keys(file[metric])) file[metric][key] = 0;
     }
     for (const key of Object.keys(file.b)) file.b[key].fill(0);
   }
 }
 
-function canonicalFilename(id) {
+function canonicalFilename(id: string) {
   const filename = id.startsWith("file:") ? fileURLToPath(id) : id.split("?")[0];
   return path.resolve(filename).replaceAll("\\", "/");
 }
 
-function isIncluded(filename, options, matcher) {
+function isIncluded(
+  filename: string,
+  options: CoverageOptions,
+  matcher: (filename: string) => boolean,
+) {
   if (
     options.allowExternal === false &&
     !options.roots.some((root) => {
@@ -61,15 +118,15 @@ function isIncluded(filename, options, matcher) {
   return matcher(filename) && (!options.changedFiles || options.changedFiles.includes(filename));
 }
 
-function guardSerializedCounters(program, types) {
+function guardSerializedCounters(program: ProgramPath, types: BabelTypes) {
   const factory = program.node.body[0];
   if (factory?.loc || !types.isFunctionDeclaration(factory)) return;
-  const name = factory.id.name;
+  const name = factory.id!.name;
   if (!name.startsWith("cov_")) return;
   program.traverse({
     UpdateExpression(counter) {
       if (counter.node.loc || !counter.getFunctionParent()) return;
-      let root = counter.node.argument;
+      let root: import("@babel/types").Node = counter.node.argument;
       while (types.isMemberExpression(root)) root = root.object;
       if (!types.isCallExpression(root) || !types.isIdentifier(root.callee, { name })) return;
       // A serialized function can run outside the instrumented module. Keep
@@ -90,10 +147,34 @@ function guardSerializedCounters(program, types) {
   });
 }
 
-function instrumentSource(source, filename, options) {
-  const { transformSync } = require("@babel/core");
-  const { programVisitor, readInitialCoverage } = require("istanbul-lib-instrument");
-  let coverage;
+function instrumentSourceImpl(
+  source: string,
+  filename: string,
+  options: CoverageOptions,
+): InstrumentedSource {
+  const { transformSync }: typeof import("@babel/core") = require("@babel/core");
+  // The published 1.x declarations describe Babel 6 string paths; the locked
+  // 6.x implementation uses Babel 7 NodePaths and accepts an AST.
+  const {
+    programVisitor,
+    readInitialCoverage,
+  }: {
+    programVisitor(
+      types: BabelTypes,
+      filename: string,
+      options: {
+        coverageVariable: string;
+        coverageGlobalScope: string;
+        coverageGlobalScopeFunc: boolean;
+        ignoreClassMethods?: string[];
+      },
+    ): {
+      enter(path: ProgramPath): void;
+      exit(path: ProgramPath): { fileCoverage: FileCoverage } | undefined;
+    };
+    readInitialCoverage(ast: import("@babel/types").File): { coverageData: FileCoverage } | null;
+  } = require("istanbul-lib-instrument");
+  let coverage: FileCoverage | undefined;
   const result = transformSync(source, {
     filename,
     configFile: false,
@@ -106,14 +187,14 @@ function instrumentSource(source, filename, options) {
       sourceType: "module",
       plugins: [
         "typescript",
-        ...(filename.endsWith("x") ? ["jsx"] : []),
+        ...(filename.endsWith("x") ? ["jsx" as const] : []),
         ["importAttributes", { deprecatedAssertSyntax: true }],
       ],
     },
     plugins: [
-      ({ types }) => {
+      ({ types }: { types: BabelTypes }) => {
         const visitor = programVisitor(types, filename, {
-          coverageVariable: COVERAGE_KEY,
+          coverageVariable: COVERAGE_KEYImpl,
           coverageGlobalScope: "globalThis",
           coverageGlobalScopeFunc: false,
           ignoreClassMethods: options.ignoreClassMethods,
@@ -122,7 +203,7 @@ function instrumentSource(source, filename, options) {
           visitor: {
             Program: {
               enter: visitor.enter,
-              exit(program) {
+              exit(program: ProgramPath) {
                 coverage = visitor.exit(program)?.fileCoverage;
                 if (coverage) guardSerializedCounters(program, types);
               },
@@ -132,12 +213,15 @@ function instrumentSource(source, filename, options) {
       },
     ],
   });
+  if (!result?.ast || typeof result.code !== "string") {
+    throw new Error(`Source coverage transform produced no code or AST: ${filename}`);
+  }
   if (!coverage) return { code: source, coverage: readInitialCoverage(result.ast)?.coverageData };
   return { code: result.code, map: result.map, coverage };
 }
 
-function shouldInstrumentSource(id) {
-  const state = globalThis[STATE_KEY];
+function shouldInstrumentSourceImpl(id: string) {
+  const state = coverageGlobal[STATE_KEY];
   return Boolean(
     state &&
     state.isEnabled() &&
@@ -146,20 +230,20 @@ function shouldInstrumentSource(id) {
   );
 }
 
-function instrumentSourceForCoverage(source, id) {
-  if (!shouldInstrumentSource(id)) return undefined;
-  const state = globalThis[STATE_KEY];
+function instrumentSourceForCoverageImpl(source: string, id: string) {
+  if (!shouldInstrumentSourceImpl(id)) return undefined;
+  const state = coverageGlobal[STATE_KEY]!;
   const filename = canonicalFilename(id);
   const cached = state.cache.get(filename);
   if (cached?.source === source) return cached.result;
-  const result = instrumentSource(source, filename, state.options);
+  const result = instrumentSourceImpl(source, filename, state.options);
   state.cache.set(filename, { source, result });
   return result;
 }
 
-function sourceCoverageCacheIdentity(id) {
-  if (!shouldInstrumentSource(id)) return "";
-  const state = globalThis[STATE_KEY];
+function sourceCoverageCacheIdentityImpl(id: string) {
+  if (!shouldInstrumentSourceImpl(id)) return "";
+  const state = coverageGlobal[STATE_KEY]!;
   if (!state.fingerprint) {
     const fs = require("node:fs");
     const lockfile = path.resolve(__dirname, "../../package-lock.json");
@@ -176,17 +260,17 @@ function sourceCoverageCacheIdentity(id) {
       .update(JSON.stringify(state.options.ignoreClassMethods ?? []))
       .digest("hex");
   }
-  return state.fingerprint;
+  return state.fingerprint!;
 }
 
 module.exports = {
-  OPTIONS_ENV,
-  COVERAGE_KEY,
-  enableSourceCoverage,
-  disableSourceCoverage,
-  resetSourceCoverage,
-  instrumentSource,
-  shouldInstrumentSource,
-  instrumentSourceForCoverage,
-  sourceCoverageCacheIdentity,
+  OPTIONS_ENV: OPTIONS_ENVImpl,
+  COVERAGE_KEY: COVERAGE_KEYImpl,
+  enableSourceCoverage: enableSourceCoverageImpl,
+  disableSourceCoverage: disableSourceCoverageImpl,
+  resetSourceCoverage: resetSourceCoverageImpl,
+  instrumentSource: instrumentSourceImpl,
+  shouldInstrumentSource: shouldInstrumentSourceImpl,
+  instrumentSourceForCoverage: instrumentSourceForCoverageImpl,
+  sourceCoverageCacheIdentity: sourceCoverageCacheIdentityImpl,
 };

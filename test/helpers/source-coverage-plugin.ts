@@ -11,11 +11,18 @@ export function sourceCoveragePlugin(): Plugin {
       // Blob replay installs placeholder transforms for recorded modules.
       // Report merging executes no tests and can load the provider natively.
       const merging =
-        config.test?.mergeReports ||
+        Reflect.get(config.test ?? {}, "mergeReports") ||
         process.argv.some((argument) =>
           /^(?:--mergeReports|--merge-reports)(?:=|$)/.test(argument),
         );
-      if (merging) return { test: { experimental: { viteModuleRunner: false } } };
+      return {
+        test: {
+          // The shared CommonJS collector is typed, but Vite parses .cts as
+          // JavaScript. Node strips its types and preserves the native cache.
+          server: { deps: { external: [/[/\\]test[/\\]helpers[/\\]source-coverage\.cts$/] } },
+          ...(merging ? { experimental: { viteModuleRunner: false } } : {}),
+        },
+      };
     },
     transform(source, id) {
       // The provider publishes the collector shared with the native loader.

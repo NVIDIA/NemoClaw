@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import ts from "typescript";
-import { instrumentSourceForCoverage, sourceCoverageCacheIdentity } from "./source-coverage.cts";
+const {
+  instrumentSourceForCoverage,
+  sourceCoverageCacheIdentity,
+}: typeof import("./source-coverage.cts") = require("./source-coverage.cts");
 
 import {
   loadSourceRequireCompilerOptions,
