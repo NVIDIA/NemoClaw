@@ -127,6 +127,92 @@ function mutationOutcomeMayBeAmbiguous(error: OpenShellProviderError): boolean {
   );
 }
 
+function authorityPersistenceRecovery(gatewayName: string): string {
+  return `Run 'nemoclaw credentials reset ${NVIDIA_HOSTED_LOGICAL_PROVIDER} --yes' against gateway '${gatewayName}', then retry.`;
+}
+
+async function removeNewNativeNvidiaProvider(input: {
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  expected: NativeNvidiaProviderAttachment;
+}): Promise<void> {
+  const provider = await inspectNativeProvider(input.adapter, input.target);
+  if (!provider) return;
+  const current = attachmentFromMetadata(provider);
+  if (current.providerId !== input.expected.providerId) {
+    throw new NativeNvidiaProviderError(
+      `Refusing to remove OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' because its identity changed.`,
+    );
+  }
+  const removed = await input.adapter.deleteProvider({
+    target: input.target,
+    providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+  });
+  if (!removed.ok && !mutationOutcomeMayBeAmbiguous(removed.error)) {
+    throw new NativeNvidiaProviderError(
+      `Could not remove OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}': ${providerErrorDetail(removed.error)}`,
+    );
+  }
+  const after = await inspectNativeProvider(input.adapter, input.target);
+  if (after) {
+    const observed = attachmentFromMetadata(after);
+    const identity =
+      observed.providerId === input.expected.providerId ? "still exists" : "changed identity";
+    throw new NativeNvidiaProviderError(
+      `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' ${identity} after cleanup.`,
+    );
+  }
+}
+
+/** Record provider authority or remove only the new, unreferenced provider. */
+export async function persistNativeNvidiaProviderAuthority(input: {
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  gatewayName: string;
+  receipt: NativeNvidiaProviderAttachment;
+  existing?: NativeNvidiaProviderAttachment;
+  readAuthority: (gatewayName: string) => NativeNvidiaProviderAttachment | undefined;
+  writeAuthority: (gatewayName: string, receipt: NativeNvidiaProviderAttachment) => void;
+}): Promise<void> {
+  try {
+    input.writeAuthority(input.gatewayName, input.receipt);
+    return;
+  } catch (writeError) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    let observed: NativeNvidiaProviderAttachment | undefined;
+    try {
+      observed = input.readAuthority(input.gatewayName);
+    } catch (readError) {
+      const readDetail = readError instanceof Error ? readError.message : String(readError);
+      throw new NativeNvidiaProviderError(
+        `NemoClaw could not record or confirm ownership of OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' for gateway '${input.gatewayName}'. The provider was retained. ${authorityPersistenceRecovery(input.gatewayName)}\n  Write failure: ${writeDetail}\n  Read failure: ${readDetail}`,
+      );
+    }
+    if (observed?.providerId === input.receipt.providerId) return;
+    if (input.existing || observed) {
+      throw new NativeNvidiaProviderError(
+        `NemoClaw could not record ownership of OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' for gateway '${input.gatewayName}'. The provider was retained because this operation cannot prove that it is unreferenced. ${authorityPersistenceRecovery(input.gatewayName)}\n  ${writeDetail}`,
+      );
+    }
+    try {
+      await removeNewNativeNvidiaProvider({
+        adapter: input.adapter,
+        target: input.target,
+        expected: input.receipt,
+      });
+    } catch (cleanupError) {
+      const cleanupDetail =
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new NativeNvidiaProviderError(
+        `NemoClaw could not record ownership of OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' for gateway '${input.gatewayName}', and cleanup did not complete. ${authorityPersistenceRecovery(input.gatewayName)}\n  Write failure: ${writeDetail}\n  Cleanup failure: ${cleanupDetail}`,
+      );
+    }
+    throw new NativeNvidiaProviderError(
+      `NemoClaw could not record ownership of OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' for gateway '${input.gatewayName}'. The newly created provider was removed. Retry the command.\n  ${writeDetail}`,
+    );
+  }
+}
+
 /** Ensure the least-privilege NVIDIA profile and provider without retrying an ambiguous mutation. */
 export async function ensureNativeNvidiaProvider(input: {
   adapter: OpenShellProviderAdapter;

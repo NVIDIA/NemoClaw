@@ -10,10 +10,12 @@ import {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   nativeNvidiaProviderProfilePath,
+  type NativeNvidiaProviderAttachment,
   NativeNvidiaProviderError,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  persistNativeNvidiaProviderAuthority,
   verifyNativeNvidiaProviderAttachment,
 } from "./native-nvidia";
 
@@ -106,6 +108,102 @@ describe("native NVIDIA OpenShell provider", () => {
         config: [],
       }),
     );
+  });
+
+  it("removes a new provider when authority persistence fails (#12562)", async () => {
+    let providerPresent = true;
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
+      providerPresent
+        ? { ok: true, value: metadata() }
+        : {
+            ok: false,
+            error: { kind: "command", reason: "not_found", message: "not found" },
+          },
+    );
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
+      providerPresent = false;
+      return { ok: true };
+    });
+    const receipt = {
+      schemaVersion: 1,
+      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      providerId: "provider-id",
+    } as const;
+
+    await expect(
+      persistNativeNvidiaProviderAuthority({
+        adapter: adapter({ getProvider, deleteProvider }),
+        target,
+        gatewayName: "nemoclaw",
+        receipt,
+        readAuthority: () => undefined,
+        writeAuthority: () => {
+          throw new Error("state directory is read-only");
+        },
+      }),
+    ).rejects.toThrow(/newly created provider was removed.*state directory is read-only/su);
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    });
+  });
+
+  it("keeps a provider when a failed write persisted its authority (#12562)", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      providerId: "provider-id",
+    } as const;
+    let authority: NativeNvidiaProviderAttachment | undefined;
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
+
+    await expect(
+      persistNativeNvidiaProviderAuthority({
+        adapter: adapter({ deleteProvider }),
+        target,
+        gatewayName: "nemoclaw",
+        receipt,
+        readAuthority: () => authority,
+        writeAuthority: (_gatewayName, value) => {
+          authority = value;
+          throw new Error("directory sync failed");
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("refuses cleanup when the provider identity changed after a failed write (#12562)", async () => {
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
+
+    await expect(
+      persistNativeNvidiaProviderAuthority({
+        adapter: adapter({
+          getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+            ok: true,
+            value: metadata({
+              revision: { id: "replacement-id", resourceVersion: 2 },
+            }),
+          })),
+          deleteProvider,
+        }),
+        target,
+        gatewayName: "nemoclaw",
+        receipt: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+        readAuthority: () => undefined,
+        writeAuthority: () => {
+          throw new Error("state directory is read-only");
+        },
+      }),
+    ).rejects.toThrow(/credentials reset nvidia-prod.*identity changed/su);
+    expect(deleteProvider).not.toHaveBeenCalled();
   });
 
   it("observes an ambiguous create result without issuing a second mutation (#12558)", async () => {
