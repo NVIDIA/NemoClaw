@@ -12,22 +12,35 @@ agent-variants: ["openclaw"]
 ---
 
 NemoClaw configures safeguard compaction for OpenClaw sandboxes that use its managed `inference.local` route, except for Local Ollama routes.
-The safeguard bounds each compaction attempt while leaving summarization behavior under OpenClaw's control.
+The safeguard configures a timeout for each built-in summarization request while leaving summarization behavior under OpenClaw's control.
 
 ## Compaction Attempt Limit
 
-Each automatic or explicitly requested compaction attempt is limited to 120 seconds by default.
-The N1x managed vLLM profile allows 300 seconds because compaction with its 32,768-token context window can take longer than 120 seconds.
+NemoClaw sets OpenClaw's compaction timeout to 120 seconds by default.
+The N1x managed vLLM profile uses 300 seconds because compaction with its 32,768-token context window can take longer than 120 seconds.
+OpenClaw applies this timeout to each built-in summarization request.
+An attempt that uses multiple requests can take longer than this limit.
 OpenClaw reports progress while the attempt runs.
 
 After a successful attempt, OpenClaw rotates the active transcript while preserving the most recent turn.
 
 ## Compaction Results
 
-The time limit prevents an individual attempt from running indefinitely.
+The time limit bounds each summarization request.
 It does not guarantee that compaction succeeds or reduces the active context.
 
 OpenClaw owns the summarization behavior and decides whether the compacted transcript satisfies its requirements.
+
+## N1x Summary Retry
+
+The N1x managed vLLM profile keeps OpenClaw's summary quality guard enabled and allows one corrective retry after an audit rejection.
+OpenClaw gives the model feedback about the failed checks, then audits the replacement summary.
+Other profiles configured by NemoClaw to use this safeguard keep zero corrective retries.
+
+The audit checks required summary sections, extracted identifiers, and the latest user request.
+If the replacement fails the audit, OpenClaw cancels compaction and preserves the existing conversation history.
+A generation error or caller cancellation can also stop compaction.
+The retry does not guarantee that the model produces an acceptable summary or reduces the active context.
 
 ## When the Setting Applies
 
