@@ -479,7 +479,7 @@ ADD --chmod=0444 --checksum=sha256:e09206c60fccafb952c854af7629cbb031a98d6da2e14
 ADD --chmod=0444 --checksum=sha256:5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz /safe-buffer-5.2.1.tgz
 ADD --chmod=0444 --checksum=sha256:78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3 https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz /safer-buffer-2.1.2.tgz
 ADD --chmod=0444 --checksum=sha256:22fb96ba4ca943c41560f8dd21b405f388a8e4c010ebc8b88c5e3f8f8da73c6c https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.120.0.tgz /sdk-0.120.0.tgz
-ADD --chmod=0444 --checksum=sha256:2cac3f3e38fec2815ed9efafa2947faf8c6957310684f99703f3d180f3e9af1a https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz /sdk-1.30.0.tgz
+ADD --chmod=0444 --checksum=sha256:d2ff62b961316c4c4d7b03367ea8f70121839401adbd7a8aa4175f8e85c87af0 https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz /sdk-1.31.0.tgz
 ADD --chmod=0444 --checksum=sha256:57beb0f7705b09406e5bcc984d1f6a141940680b4c42755be026f77f64365a37 https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.4.0.tgz /sdk-1.4.0.tgz
 ADD --chmod=0444 --checksum=sha256:4465839df9cf25046eacb64e37a38e7a2d033546356335190234bad60bd85d42 https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.43.0.tgz /semantic-conventions-1.43.0.tgz
 ADD --chmod=0444 --checksum=sha256:d85045d4300d7d57c891336b95df532e73f34c22ffcd222452b6d08b9d127d5d https://registry.npmjs.org/semver/-/semver-7.8.5.tgz /semver-7.8.5.tgz
@@ -605,10 +605,7 @@ ADD --chmod=0444 --checksum=sha256:96a03e2ac0906b035085ec4e2307dd8076fb02673b8f5
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
-# Keep the messaging graph inert unless release builds select its lock cache.
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS openclaw-managed-messaging-npm-cache-0
-RUN install -d -o root -g root -m 0755 /out/npm-cache
-
+# Selected and managed-union plugins share the reviewed offline dependency cache.
 FROM npm12 AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
@@ -647,7 +644,7 @@ RUN --network=none set -eu; \
     chmod -R a+rX,go-w /out/npm-cache
 
 # hadolint ignore=DL3006
-FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} AS openclaw-managed-messaging-npm-cache
+FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache
 
 FROM scratch AS openclaw-dependency-payload
 
@@ -957,7 +954,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=cbcfdd15430b81f50ada9f39858a694815e570c8bb3e6b4bb9f1c0b53bf0ef4a; \
+        OPENCLAW_LOCK_SHA256=b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -1566,13 +1563,11 @@ RUN chmod 755 /scripts/generate-openclaw-config.mts \
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference
-# User-selected upstream provider (e.g. ollama-local, nim-local, nvidia-prod),
-# carried separately from NEMOCLAW_INFERENCE_PROVIDER_ID, which identifies the
-# managed route as "inference". generate-openclaw-config.mts reads this to apply
-# provider-specific config such as the Local Ollama small-context compaction
-# policy (#5468). Empty default keeps prior behavior when onboard does not supply
-# a value.
+# Keep selected upstream and catalog preset distinct from the managed
+# "inference" route. The generator uses them for provider and profile settings.
+# Empty defaults retain the standard managed-route behavior.
 ARG NEMOCLAW_UPSTREAM_PROVIDER=
+ARG NEMOCLAW_SERVING_PRESET=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
@@ -1663,6 +1658,7 @@ ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
+    NEMOCLAW_SERVING_PRESET=${NEMOCLAW_SERVING_PRESET} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
@@ -1862,11 +1858,7 @@ USER sandbox
 # The selected phase keeps exactly one messaging-applier invocation per build.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
-    else \
-        trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
-    fi; \
+    trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
     unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
     if [ -n "$unsafe_cache_entry" ]; then \
         printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
@@ -1877,12 +1869,12 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
     chmod -R u+rwX,go-w "$install_cache"; \
+    export NPM_CONFIG_CACHE="$install_cache"; \
+    export NPM_CONFIG_OFFLINE=true; \
+    export NPM_CONFIG_AUDIT=false; \
+    export NPM_CONFIG_FUND=false; \
     messaging_phase=agent-install; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        export NPM_CONFIG_CACHE="$install_cache"; \
-        export NPM_CONFIG_OFFLINE=true; \
-        export NPM_CONFIG_AUDIT=false; \
-        export NPM_CONFIG_FUND=false; \
         messaging_phase=managed-image-capability-union; \
     fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
