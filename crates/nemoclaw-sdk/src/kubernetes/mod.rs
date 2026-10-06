@@ -8,6 +8,7 @@
 //! another cluster by accident.
 
 pub mod cluster;
+pub mod gateway;
 pub mod receipt;
 pub mod storage;
 

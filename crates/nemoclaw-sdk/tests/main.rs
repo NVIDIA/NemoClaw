@@ -80,6 +80,8 @@ mod kubernetes_cluster;
 mod kubernetes_compile;
 #[path = "kubernetes_connection.rs"]
 mod kubernetes_connection;
+#[path = "kubernetes_gateway.rs"]
+mod kubernetes_gateway;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
 #[path = "kubernetes_receipt.rs"]

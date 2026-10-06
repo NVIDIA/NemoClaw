@@ -14,6 +14,7 @@ fn main() {
         ("DEFAULT_GATEWAY_IMAGE", "/images/gateway"),
         ("SANDBOX_RUNTIME_IMAGE", "/images/sandboxRuntime"),
         ("SUPERVISOR_IMAGE", "/images/supervisor"),
+        ("GATEWAY_CHART", "/images/gatewayChart"),
         ("OPENSHELL_VERSION", "/openshell"),
         ("OPENTOFU_VERSION", "/opentofu"),
     ] {
