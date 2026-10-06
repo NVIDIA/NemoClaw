@@ -10,6 +10,7 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -21,7 +22,6 @@ import {
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
-import { rejectUnsafePackageTree, requireRealDirectory } from "./bundled-npm-package.mts";
 
 type JsonObject = Record<string, any>;
 
@@ -1688,17 +1688,16 @@ export function remediateInstalledOfficialOpenClawPlugin(
   if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
     throw new Error("Official plugin remediation requires its verified install path");
   }
-  let installedDependency = requireRealDirectory(
-    request.packageDirectory,
-    "Official plugin install directory",
-  );
-  for (const component of ["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]) {
-    installedDependency = requireRealDirectory(
-      join(installedDependency, component),
-      "Official plugin dependency directory",
-    );
+  let installedDependency = resolve(request.packageDirectory);
+  for (const component of ["", "node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]) {
+    installedDependency = join(installedDependency, component);
+    const metadata = lstatSync(installedDependency);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Official plugin dependency directory must be a real directory");
+    }
   }
-  rejectUnsafePackageTree(installedDependency, "Official plugin dependency directory");
+  // The existing no-follow tree walk also rejects unsafe installed members.
+  hashPackageTree(installedDependency);
   const remediated = remediateReviewedOpenClawPluginArchive(request);
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
