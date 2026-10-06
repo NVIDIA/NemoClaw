@@ -13,15 +13,20 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import {
   assertAgentExecutionSucceeded,
   cleanupGpu,
+  createGpuPrivateHome,
   env,
   hasExactReadyPhase,
   ollamaCleanupScript,
+  ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
   REPO_ROOT,
   startAttachedOllama,
+  trackGpuGatewayCleanup,
   waitForAttachedOllama,
 } from "../live/gpu-e2e-helpers.ts";
 import * as observedChild from "../fixtures/observed-child-process.ts";
@@ -626,18 +631,109 @@ describe("GPU E2E helpers", () => {
 
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
+    const cleanupEnv = { HOME: "/private/gpu-cleanup" };
+    const cleanupOrder: string[] = [];
+    const cleanupGatewayRegistration = vi.fn(async () => {
+      cleanupOrder.push("remove gateway registration");
+    });
     const host = {
       command: async (command: string) =>
         command === "bash"
           ? { exitCode: 1, stderr: "Ollama still listens on 127.0.0.1:11434", stdout: "" }
           : success,
+      cleanupGatewayRegistration,
     } as unknown as HostCliClient;
+    const openshell = vi.fn(async () => success);
     const sandbox = {
       cleanupSandbox: async () => success,
-      openshell: async () => success,
+      openshell,
     } as unknown as SandboxClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        cleanupOrder.push("stop gateway runtime");
+        return null;
+      }),
+    } as unknown as LifecyclePhaseFixture;
 
-    await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
+    await expect(cleanupGpu(host, lifecycle, sandbox, cleanupEnv)).rejects.toThrow(
+      /still listens/u,
+    );
+    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({
+      env: cleanupEnv,
+      userServiceMode: "permanent",
+    });
+    expect(cleanupOrder).toEqual(["stop gateway runtime", "remove gateway registration"]);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "cleanup-gateway-destroy-gpu" }),
+    );
+    expect(openshell).not.toHaveBeenCalled();
+  });
+
+  it("stops terminal GPU gateway runtime before registration and private-state cleanup", async () => {
+    const cleanup = new CleanupRegistry();
+    const cleanupOrder: string[] = [];
+    const cleanupEnv = { HOME: "/private/export-home" };
+    const host = {
+      cleanupGatewayRegistration: vi.fn(async () => {
+        cleanupOrder.push("remove gateway registration");
+      }),
+    } as unknown as HostCliClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        cleanupOrder.push("stop gateway runtime");
+        return null;
+      }),
+    } as unknown as LifecyclePhaseFixture;
+
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "export-cleanup-gateway", () => {
+      cleanupOrder.push("remove private state");
+    });
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([]);
+    expect(cleanupOrder).toEqual([
+      "stop gateway runtime",
+      "remove gateway registration",
+      "remove private state",
+    ]);
+    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({
+      env: cleanupEnv,
+      userServiceMode: "permanent",
+    });
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "export-cleanup-gateway", env: cleanupEnv }),
+    );
+  });
+
+  it("preserves retryable GPU gateway state when runtime cleanup fails", async () => {
+    const cleanup = new CleanupRegistry();
+    const cleanupEnv = { HOME: "/private/export-home" };
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const removePrivateState = vi.fn(() => undefined);
+    const host = { cleanupGatewayRegistration } as unknown as HostCliClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        throw new Error("gateway runtime stop failed");
+      }),
+    } as unknown as LifecyclePhaseFixture;
+
+    trackGpuGatewayCleanup(
+      cleanup,
+      host,
+      lifecycle,
+      cleanupEnv,
+      "export-cleanup-gateway",
+      removePrivateState,
+    );
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({ message: "gateway runtime stop failed" }),
+    ]);
+    expect(cleanupGatewayRegistration).not.toHaveBeenCalled();
+    expect(removePrivateState).not.toHaveBeenCalled();
   });
 
   it("forwards the workflow-owned Ollama model pull timeout", () => {
@@ -662,6 +758,23 @@ describe("GPU E2E helpers", () => {
     expect(
       env({ NEMOCLAW_MODEL: "qwen2.5:0.5b" }, { NEMOCLAW_MODEL: GPU_MODEL }).NEMOCLAW_MODEL,
     ).toBe("qwen2.5:0.5b");
+  });
+
+  it("resolves the proxy token from the export scenario's private home", () => {
+    expect(ollamaProxyTokenFile("/private/export-home")).toBe(
+      "/private/export-home/.nemoclaw/ollama-proxy-token",
+    );
+  });
+
+  it("creates isolated GPU state beneath the account home", () => {
+    const accountHome = mkdtempSync(path.join(tmpdir(), "nemoclaw-gpu-account-home-"));
+    try {
+      const privateHome = createGpuPrivateHome(accountHome);
+      expect(path.dirname(privateHome)).toBe(accountHome);
+      expect(path.basename(privateHome)).toMatch(/^\.nemoclaw-gpu-e2e-/u);
+    } finally {
+      rmSync(accountHome, { recursive: true, force: true });
+    }
   });
 
   it("forwards the workflow-owned trace directory through availability probes", () => {

@@ -1108,6 +1108,7 @@ export function createSandboxGpuCreateAttemptRunner(
             verifyGpuOrExit: deferNativeProofFailure ? undefined : runtimePatch.verifyGpuOrExit,
             reportGpuProofFailure: !deferNativeProofFailure,
             selectedMode: runtimePatch.selectedMode,
+            openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
             runCaptureOpenshell: deps.runCaptureOpenshell,
             log: console.log,
           },

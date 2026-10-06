@@ -27,7 +27,7 @@ const teamDocumentName = parseNemoClawConfigDocumentName("team");
 const documentUid = parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000");
 
 function dependencies(): ConfigExportDependencies {
-  const observation = { sandboxName: "alpha", inference: { provider: "openai-api" } } as never;
+  const observation = { sandboxName: "alpha" } as never;
   const config = { kind: "NemoClawConfig" } as never;
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
