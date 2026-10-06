@@ -27,6 +27,10 @@ describe("inference set sandbox configuration read failures", () => {
       [
         "#!/usr/bin/env bash",
         `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: nvidia/llama-3.3-nemotron-super-49b-v1'",
+        "  exit 0",
+        "fi",
         "printf '%s\\n' 'exec session setup failed: container not ready' >&2",
         "exit 1",
       ].join("\n"),
@@ -111,9 +115,10 @@ describe("inference set sandbox configuration read failures", () => {
       expect(output).not.toContain("Setting OpenShell inference route");
       expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
       const openshellCalls = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
-      expect(openshellCalls).toHaveLength(1);
-      expect(openshellCalls[0]).toContain("sandbox exec");
-      expect(openshellCalls[0]).toContain("cat /sandbox/.openclaw/openclaw.json");
+      expect(openshellCalls).toHaveLength(2);
+      expect(openshellCalls[0]).toContain("inference get -g nemoclaw");
+      expect(openshellCalls[1]).toContain("sandbox exec");
+      expect(openshellCalls[1]).toContain("cat /sandbox/.openclaw/openclaw.json");
       expect(openshellCalls).not.toContainEqual(expect.stringMatching(/\binference set\b/u));
       expect(result.status).toBe(1);
     },

@@ -238,20 +238,27 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),
     ).resolves.toMatchObject({ provider, model: "vendor/model-b" });
 
-    expect(captureOpenshell).toHaveBeenCalledWith(
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "list", "-g", "nemoclaw-18080", "--names"],
+      expect.objectContaining({ ignoreError: true, timeout: 5_000 }),
+    );
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      2,
       [
         "inference",
         "set",
         "-g",
         "nemoclaw-18080",
+        "--no-verify",
         "--provider",
         provider,
         "--model",
         "vendor/model-b",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(captureOpenshell).toHaveBeenCalledTimes(2);
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
