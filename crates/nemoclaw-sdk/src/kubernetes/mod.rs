@@ -155,6 +155,7 @@ pub async fn connection(
             server: server(&cluster)?,
             client: connect(&cluster).await?,
             state,
+            openshift_wait: operations::OPENSHIFT_WAIT,
         };
         operations.connect(&spec).await
     };

@@ -385,6 +385,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         server: server(&tofu.target).unwrap(),
         client: connect(&tofu.target).await.unwrap(),
         state: tofu.directory.join("kubernetes"),
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     let all = [
         "nemoclaw_kubernetes_storage.runtime",

@@ -104,6 +104,7 @@ async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
         server,
         client,
         state,
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     })
 }
 

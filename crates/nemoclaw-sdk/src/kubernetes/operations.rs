@@ -44,7 +44,12 @@ pub struct Operations {
     pub server: String,
     /// Private state directory holding the receipt.
     pub state: PathBuf,
+    /// How long to wait for OpenShift to assign a new namespace its UID range.
+    pub openshift_wait: std::time::Duration,
 }
+
+/// OpenShift writes a namespace's UID range within seconds of creating it.
+pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Operations {
     fn target<'a>(
@@ -322,8 +327,12 @@ impl Operations {
                 self.read(spec, prior).await?;
                 let cluster = self.cluster(spec);
                 if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    let identity =
-                        namespace_identity(&cluster, self.namespace(spec, &receipt)?).await?;
+                    let identity = namespace_identity(
+                        &cluster,
+                        self.namespace(spec, &receipt)?,
+                        self.openshift_wait,
+                    )
+                    .await?;
                     if receipt
                         .namespace_identity
                         .is_some_and(|recorded| recorded != identity)
@@ -519,8 +528,9 @@ impl Operations {
 async fn namespace_identity(
     cluster: &Cluster,
     namespace: &Owned,
+    wait: std::time::Duration,
 ) -> Result<Identity, ObservationError> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + wait;
     loop {
         let annotations = cluster
             .verify(namespace)
@@ -536,6 +546,6 @@ async fn namespace_identity(
                 "OpenShift did not assign the namespace a UID range; check that this is an OpenShift cluster; resources retained",
             ));
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500).min(wait)).await;
     }
 }

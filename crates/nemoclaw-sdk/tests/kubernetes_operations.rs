@@ -71,6 +71,8 @@ async fn operations(
         client: client(&fixture),
         server: fixture.endpoint.clone(),
         state: directory.join("state"),
+        // Short, so a cluster without OpenShift ranges fails fast.
+        openshift_wait: std::time::Duration::from_millis(50),
     };
     (fixture, operations)
 }
@@ -200,11 +202,12 @@ async fn on_openshift_authentication_exports_the_retained_namespace_identity() {
     assert_eq!(read.gateway_values, response.gateway_values);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn openshift_waits_for_namespace_annotations_before_writing_issuer_objects() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
-    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    let (_fixture, mut operations) = operations(&objects, directory.path()).await;
+    operations.openshift_wait = std::time::Duration::from_secs(1);
     operations
         .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
         .await
@@ -212,7 +215,7 @@ async fn openshift_waits_for_namespace_annotations_before_writing_issuer_objects
     let before = objects.0.lock().unwrap().clone();
     let spec = spec_on(AUTH_KIND, "openshift");
     let (response, ()) = tokio::join!(operations.ensure(&spec, None), async {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         assert_eq!(*objects.0.lock().unwrap(), before);
         assign_openshift_range(&objects);
     });
@@ -346,7 +349,7 @@ async fn openshift_identity_never_comes_from_a_replacement_namespace() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn without_openshift_ranges_authentication_stops_before_writing_issuer_objects() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
@@ -836,6 +839,7 @@ async fn release_storage_query_errors_stop_observation_and_issuer_cleanup() {
             client: client(&fixture),
             server: operations.server.clone(),
             state: operations.state.clone(),
+            openshift_wait: operations.openshift_wait,
         };
         let before = objects.0.lock().unwrap().clone();
         assert_eq!(
@@ -935,6 +939,7 @@ async fn an_incomplete_release_list_cannot_establish_absence() {
             client: client(&fixture),
             server: operations.server.clone(),
             state: operations.state.clone(),
+            openshift_wait: operations.openshift_wait,
         };
         assert_eq!(
             incomplete

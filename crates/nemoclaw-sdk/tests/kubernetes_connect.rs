@@ -91,6 +91,7 @@ async fn running(objects: &Objects, directory: &Path) -> (crate::transport::Fixt
         client: client(&fixture),
         server: fixture.endpoint.clone(),
         state: directory.join("state"),
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     operations
         .ensure(&spec(STORAGE_KIND, 1), None)
