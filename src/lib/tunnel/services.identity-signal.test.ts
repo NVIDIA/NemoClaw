@@ -170,6 +170,6 @@ describe("cloudflared identity-bound signaling", () => {
         await exited;
       }
     },
-    15_000,
+    30_000,
   );
 });

@@ -461,7 +461,11 @@ function signalCloudflaredWithWindowsHandle(
       {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 7000,
+        // Starting Windows PowerShell and compiling this small P/Invoke helper
+        // can exceed the old 7s budget on a cold GitHub-hosted runner. Keep a
+        // bounded timeout, but leave enough room for the identity check and
+        // handle-based termination to finish before failing closed.
+        timeout: 20_000,
         env: { ...process.env, NEMOCLAW_CLOUDFLARED_PROCESS_ID: String(pid) },
       },
     ).trim();
