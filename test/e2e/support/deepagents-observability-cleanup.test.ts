@@ -36,47 +36,50 @@ describe("observability probe conversation cleanup", () => {
   });
 
   it.each([
-    [0, true],
-    [0, false],
-    [7, true],
-  ])("cleans the exact probe on failed-turn exit (%s, present=%s)", (nativeStatus, present) => {
-    const workspace = createHostProcessWorkspace("dcode-exit-cleanup-");
-    const pidFile = workspace.path("collector.pid");
-    onTestFinished(async () => {
-      await cleanupExistingPath(pidFile, () =>
-        terminateProcessIfRunning(Number(fs.readFileSync(pidFile, "utf8"))),
-      );
-      await cleanupExistingPath(workspace.path("capture-dir"), () =>
-        fs.rmSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim(), {
-          recursive: true,
-          force: true,
+    [0, true, false],
+    [0, false, false],
+    [7, true, false],
+    [0, true, true],
+  ])(
+    "cleans the exact probe on failed-turn exit (%s, present=%s, interrupted=%s)",
+    (nativeStatus, present, interrupted) => {
+      const workspace = createHostProcessWorkspace("dcode-exit-cleanup-");
+      const pidFile = workspace.path("collector.pid");
+      onTestFinished(async () => {
+        await cleanupExistingPath(pidFile, () =>
+          terminateProcessIfRunning(Number(fs.readFileSync(pidFile, "utf8"))),
+        );
+        await cleanupExistingPath(workspace.path("capture-dir"), () =>
+          fs.rmSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim(), {
+            recursive: true,
+            force: true,
+          }),
+        );
+        workspace.remove();
+      });
+      const fixtureFile = (relative: string, content = "") => {
+        const target = workspace.path(relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content);
+        return target;
+      };
+      const command = (name: string, body: string) =>
+        workspace.writeExecutable(name, `#!/bin/bash\nset -eu\n${body}`);
+      fixtureFile(
+        ".nemoclaw/sandboxes.json",
+        JSON.stringify({
+          sandboxes: { "test-sandbox": { observabilityEnabled: true } },
         }),
       );
-      workspace.remove();
-    });
-    const fixtureFile = (relative: string, content = "") => {
-      const target = workspace.path(relative);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, content);
-      return target;
-    };
-    const command = (name: string, body: string) =>
-      workspace.writeExecutable(name, `#!/bin/bash\nset -eu\n${body}`);
-    fixtureFile(
-      ".nemoclaw/sandboxes.json",
-      JSON.stringify({
-        sandboxes: { "test-sandbox": { observabilityEnabled: true } },
-      }),
-    );
-    fixtureFile("test/e2e/live/deepagents-otlp-capture-server.ts");
-    fixtureFile("test/e2e/live/deepagents-observability-contract.ts");
-    fixtureFile("policy", "active\n");
-    fixtureFile("control-thread", "unrelated conversation");
-    fixtureFile(present ? "probe-thread" : "absent-thread", "synthetic probe");
-    fixtureFile("turn.json", turn);
-    const tsx = command(
-      "tsx",
-      `case "$1" in
+      fixtureFile("test/e2e/live/deepagents-otlp-capture-server.ts");
+      fixtureFile("test/e2e/live/deepagents-observability-contract.ts");
+      fixtureFile("policy", "active\n");
+      fixtureFile("control-thread", "unrelated conversation");
+      fixtureFile(present ? "probe-thread" : "absent-thread", "synthetic probe");
+      fixtureFile("turn.json", turn);
+      const tsx = command(
+        "tsx",
+        `case "$1" in
   *capture-server.ts)
     echo "$$" > "$CASE_ROOT/collector.pid"
     printf '%s\\n' "$2" > "$CASE_ROOT/capture-dir"
@@ -89,14 +92,19 @@ describe("observability probe conversation cleanup", () => {
     *) exit 92 ;;
     esac ;;
 esac`,
-    );
-    fs.mkdirSync(workspace.path("node_modules/.bin"), { recursive: true });
-    fs.symlinkSync(tsx, workspace.path("node_modules/.bin/tsx"));
-    command(
-      "openshell",
-      `case "$*" in
+      );
+      fs.mkdirSync(workspace.path("node_modules/.bin"), { recursive: true });
+      fs.symlinkSync(tsx, workspace.path("node_modules/.bin/tsx"));
+      command(
+        "openshell",
+        `case "$*" in
   *'getent ahostsv4'*) echo NEMOCLAW_OTLP_BIND_IP=192.168.1.2 ;;
-  *'dcode --json -n'*) cat "$CASE_ROOT/turn.json"; exit 7 ;;
+  *'dcode --json --timeout 90 -n'*)
+    cat "$CASE_ROOT/turn.json"
+    if [ "$INTERRUPT_TURN" = true ]; then
+      kill -TERM "$(cat "$CASE_ROOT/check.pid")"
+    fi
+    exit 7 ;;
   *'dcode threads delete'*)
     test "$9" = ${threadId}
     printf '%s\\n' "$9" > "$CASE_ROOT/deleted-thread"
@@ -105,10 +113,10 @@ esac`,
     ;;
   *'.nemoclaw-observability-enabled'*) echo 1 ;;
 esac`,
-    );
-    const cli = command(
-      "cli",
-      `case "$2" in
+      );
+      const cli = command(
+        "cli",
+        `case "$2" in
   policy-list) cat "$CASE_ROOT/policy" ;;
   policy-add) echo active > "$CASE_ROOT/policy" ;;
   policy-remove) echo inactive > "$CASE_ROOT/policy" ;;
@@ -119,39 +127,48 @@ esac`,
     esac ;;
   *) exit 93 ;;
 esac`,
-    );
-    command("ip", "echo '1: fixture inet 192.168.1.2/24'");
-    command("curl", "exit 0");
-    command("sleep", "exec /bin/sleep 0.02");
-    command("timeout", 'shift 2; exec "$@"');
-    const result = workspace.run(
-      "bash",
-      [path.resolve("test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh")],
-      {
-        timeout: 10_000,
-        env: {
-          PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
-          HOME: workspace.homeDir,
-          CASE_ROOT: workspace.root,
-          REPO: workspace.root,
-          SANDBOX_NAME: "test-sandbox",
-          NEMOCLAW_CLI_BIN: cli,
-          REAL_TSX: path.resolve("node_modules/.bin/tsx"),
-          REAL_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
-          NATIVE_STATUS: String(nativeStatus),
+      );
+      command("ip", "echo '1: fixture inet 192.168.1.2/24'");
+      command("curl", "exit 0");
+      command("sleep", "exec /bin/sleep 0.02");
+      command("timeout", 'shift 2; exec "$@"');
+      const result = workspace.run(
+        "bash",
+        [
+          "-c",
+          'echo "$$" > "$CASE_ROOT/check.pid"; exec bash "$1"',
+          "observability-check",
+          path.resolve(
+            "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+          ),
+        ],
+        {
+          timeout: 10_000,
+          env: {
+            PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
+            HOME: workspace.homeDir,
+            CASE_ROOT: workspace.root,
+            REPO: workspace.root,
+            SANDBOX_NAME: "test-sandbox",
+            NEMOCLAW_CLI_BIN: cli,
+            REAL_TSX: path.resolve("node_modules/.bin/tsx"),
+            REAL_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
+            NATIVE_STATUS: String(nativeStatus),
+            INTERRUPT_TURN: String(interrupted),
+          },
         },
-      },
-    );
-    expect(result.status, result.output).toBe(1);
-    expect(fs.readFileSync(workspace.path("deleted-thread"), "utf8").trim()).toBe(threadId);
-    expect(fs.existsSync(workspace.path("probe-thread"))).toBe(present && nativeStatus !== 0);
-    expect(fs.readFileSync(workspace.path("control-thread"), "utf8")).toBe(
-      "unrelated conversation",
-    );
-    expect(fs.readFileSync(workspace.path("policy"), "utf8").trim()).toBe("active");
-    expect(fs.existsSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim())).toBe(
-      false,
-    );
-    expect(result.stderr.includes("probe conversation cleanup failed")).toBe(nativeStatus !== 0);
-  });
+      );
+      expect(result.status, result.output).toBe(interrupted ? 143 : 1);
+      expect(fs.readFileSync(workspace.path("deleted-thread"), "utf8").trim()).toBe(threadId);
+      expect(fs.existsSync(workspace.path("probe-thread"))).toBe(present && nativeStatus !== 0);
+      expect(fs.readFileSync(workspace.path("control-thread"), "utf8")).toBe(
+        "unrelated conversation",
+      );
+      expect(fs.readFileSync(workspace.path("policy"), "utf8").trim()).toBe("active");
+      expect(fs.existsSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim())).toBe(
+        false,
+      );
+      expect(result.stderr.includes("probe conversation cleanup failed")).toBe(nativeStatus !== 0);
+    },
+  );
 });

@@ -25,7 +25,7 @@ COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
 DIRECT_TURN_STARTED=0
-direct_output=""
+DIRECT_OUTPUT="${CAPTURE_DIR}/direct.json"
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -104,6 +104,8 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
 
@@ -286,18 +288,20 @@ binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER
 pass "OTLP route is denied to an unmanaged binary"
 
 run_dcode_direct() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  timeout --kill-after=5 120 openshell sandbox exec --name "$SANDBOX_NAME" -- \
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode --json -n \
+    dcode --json --timeout 90 -n \
     "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." \
     2>"${CAPTURE_DIR}/direct.stderr"
 }
 
 cleanup_probe_thread() {
   local thread_id
-  thread_id="$(printf '%s\n' "$direct_output" | "$TSX" "$CONTRACT_HELPER" probe-thread-id)" \
+  thread_id="$("$TSX" "$CONTRACT_HELPER" probe-thread-id <"$DIRECT_OUTPUT")" \
     || return 1
+  printf '%s: probe conversation cleanup: dcode threads delete %s --json\n' \
+    "$PREFIX" "$thread_id" >&2
   # Native deletion succeeds when the exact thread is removed or already absent.
   # A turn can fail before writing checkpoints; both outcomes leave no probe state.
   timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
@@ -407,7 +411,9 @@ marker_output="$(observability_marker_value)" \
 pass "host observability policy is restored before positive trace checks"
 
 DIRECT_TURN_STARTED=1
-direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
+# Preserve native cancellation metadata before the parent resumes or exits.
+run_dcode_direct >"$DIRECT_OUTPUT" || fail "direct-exec dcode observability turn failed"
+direct_output="$(cat "$DIRECT_OUTPUT")"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"
