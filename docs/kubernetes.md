@@ -17,6 +17,8 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
   The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
+  If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
+  OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.

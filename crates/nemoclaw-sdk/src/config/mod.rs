@@ -157,6 +157,7 @@ impl Document {
         let mut names = Vec::new();
         if let Some(kubernetes) = g.as_kubernetes() {
             names.push(kubernetes.kubeconfig.env.as_str());
+            names.extend(kubernetes.environment.iter().map(String::as_str));
         }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());

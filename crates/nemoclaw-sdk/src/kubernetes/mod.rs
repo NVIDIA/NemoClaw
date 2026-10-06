@@ -101,7 +101,9 @@ pub(crate) fn kubeconfig_path(value: &str) -> Result<PathBuf, ObservationError> 
 }
 
 /// Connect to the target's context. The kubeconfig's exec credential plugins
-/// run as written, with the caller's environment.
+/// run as written, with this process's environment: the caller's in the SDK,
+/// and the platform variables plus `gateway.kubernetes.environment` inside
+/// OpenTofu's providers.
 pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, ObservationError> {
     let kubeconfig =
         Kubeconfig::read_from(&target.kubeconfig).map_err(|_| ObservationError::Authentication)?;

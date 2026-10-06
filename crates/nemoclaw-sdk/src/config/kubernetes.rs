@@ -24,6 +24,10 @@ pub struct ManagedKubernetes {
     pub namespace: String,
     /// Explicit generated development authentication profile; this is not a production identity service.
     pub authentication: KubernetesAuthentication,
+    /// Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 32))]
+    pub environment: Vec<String>,
 }
 
 /// Authentication provisioned for a managed Kubernetes gateway.

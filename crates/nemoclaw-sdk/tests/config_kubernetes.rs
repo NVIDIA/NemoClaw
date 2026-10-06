@@ -85,6 +85,54 @@ fn a_managed_gateway_schema_still_states_its_local_defaults() {
     assert!(managed["properties"]["image"]["default"].is_string());
 }
 
+/// A kubeconfig's exec plugin, such as a cloud CLI, may need the caller's
+/// variables. OpenTofu passes only platform variables, so the author names
+/// these, and they count as credentials.
+#[test]
+fn a_managed_target_names_the_variables_its_kubeconfig_needs() {
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "AWS_REGION"]);
+    assert!(jsonschema::is_valid(&schema::input_schema(), &input));
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    assert_eq!(
+        document.spec.gateway.as_kubernetes().unwrap().environment,
+        ["AWS_PROFILE", "AWS_REGION"]
+    );
+    assert_eq!(
+        document.credential_names(),
+        [
+            "AWS_PROFILE",
+            "AWS_REGION",
+            "CLUSTER_KUBECONFIG",
+            "TEST_IMAGE_METADATA"
+        ]
+    );
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+}
+
+#[test]
+fn listed_variables_cannot_shadow_process_or_runtime_controls() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for name in [
+        "PATH",
+        "KUBECONFIG",
+        "HTTPS_PROXY",
+        "TF_LOG",
+        "HELM_DRIVER",
+        "LD_PRELOAD",
+        "lowercase",
+        "AWS_PROFILE AWS_REGION",
+    ] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["environment"] = json!([name]);
+        assert!(!validator.is_valid(&input), "{name}");
+    }
+    let mut repeated = managed_document();
+    repeated["spec"]["gateway"]["kubernetes"]["environment"] =
+        json!(["AWS_PROFILE", "AWS_PROFILE"]);
+    assert!(!validator.is_valid(&repeated));
+}
+
 #[test]
 fn kubernetes_sandboxes_must_name_their_image_metadata() {
     // No local engine can be inspected, so each image's metadata bundle is

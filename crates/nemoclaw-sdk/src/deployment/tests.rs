@@ -22,6 +22,41 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
     (document, generations)
 }
 
+/// The listed variables reach OpenTofu with their resolved values, and an
+/// unset one fails before any cluster operation, like a credential reference.
+#[test]
+fn a_kubernetes_targets_listed_variables_reach_its_providers() {
+    struct Values;
+    impl Secrets for Values {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            match name {
+                "TEST_KUBECONFIG" => Ok("/private/kubeconfig".into()),
+                "AWS_PROFILE" => Ok("cluster-admin".into()),
+                _ => Err(crate::ObservationError::Authentication),
+            }
+        }
+    }
+    let (document, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(Values));
+    let environment = deployment
+        .provider_environment(&document, temporary.path(), true)
+        .unwrap();
+    assert_eq!(environment["AWS_PROFILE"], "cluster-admin");
+
+    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "AWS_REGION"]);
+    let unset = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    assert!(
+        deployment
+            .provider_environment(&unset, temporary.path(), true)
+            .is_err()
+    );
+}
+
 #[test]
 fn relative_kubeconfig_keeps_its_callers_meaning_in_provider_directories() {
     struct Kubeconfig(String);

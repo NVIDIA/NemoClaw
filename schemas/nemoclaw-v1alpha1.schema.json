@@ -1045,6 +1045,65 @@
           "pattern": "^[^\\x00-\\x20\\x7f]+$(?![\\s\\S])",
           "type": "string"
         },
+        "environment": {
+          "description": "Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.",
+          "items": {
+            "not": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "PATH",
+                        "HOME",
+                        "USERPROFILE",
+                        "KUBECONFIG",
+                        "TMPDIR",
+                        "TMP",
+                        "TEMP",
+                        "SYSTEMROOT",
+                        "COMSPEC",
+                        "PATHEXT",
+                        "SHELL",
+                        "ENV",
+                        "BASH_ENV",
+                        "IFS",
+                        "CDPATH",
+                        "SSL_CERT_FILE",
+                        "SSL_CERT_DIR",
+                        "REQUESTS_CA_BUNDLE",
+                        "CURL_CA_BUNDLE",
+                        "HTTP_PROXY",
+                        "HTTPS_PROXY",
+                        "ALL_PROXY",
+                        "NO_PROXY",
+                        "KUBERNETES_MASTER",
+                        "KUBERNETES_SERVICE_HOST",
+                        "KUBERNETES_SERVICE_PORT",
+                        "KUBERNETES_SERVICE_PORT_HTTPS"
+                      ]
+                    },
+                    {
+                      "pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"
+                    }
+                  ]
+                },
+                {
+                  "const": "NEMOCLAW_KUBERNETES_STATE"
+                },
+                {
+                  "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+                }
+              ]
+            },
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+        },
         "kubeconfig": {
           "$ref": "#/$defs/Credential",
           "description": "Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",

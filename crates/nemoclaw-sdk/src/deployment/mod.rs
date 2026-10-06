@@ -635,6 +635,7 @@ fn gateway_environment(
     let mut names = BTreeSet::new();
     if let Some(kubernetes) = gateway.as_kubernetes() {
         names.insert(kubernetes.kubeconfig.env.as_str());
+        names.extend(kubernetes.environment.iter().map(String::as_str));
     }
     if let Some(credential) = gateway.credential() {
         names.insert(credential.env.as_str());

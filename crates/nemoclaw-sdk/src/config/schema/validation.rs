@@ -131,6 +131,27 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "kubeconfig environment reference must not shadow process, trust, proxy, or cluster controls"
         }}}),
     );
+    // The listed variables reach OpenTofu beside its platform variables, so
+    // they follow the kubeconfig reference's rules and cannot replace those.
+    let reserved =
+        defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
+    property(
+        &mut defs["ManagedKubernetes"],
+        "environment",
+        json!({
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "pattern": c::ENV,
+                "not": {"anyOf": [
+                    reserved,
+                    {"const": "NEMOCLAW_KUBERNETES_STATE"},
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                ]}
+            },
+            "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+        }),
+    );
     property(
         &mut defs["Spec"],
         "sandboxes",
