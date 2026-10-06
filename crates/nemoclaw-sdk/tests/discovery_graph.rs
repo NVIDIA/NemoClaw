@@ -95,7 +95,7 @@ fn external_gateway_with_a_remote_service() -> Document {
 }
 
 #[test]
-fn external_gateway_with_a_remote_service_discovery_inputs_are_pinned() {
+fn external_gateway_discovery_never_substitutes_the_client_engine_for_a_service_target() {
     let document = external_gateway_with_a_remote_service();
     let expected: Value = serde_json::from_str(include_str!(
         "fixtures/discovery_graph/external-service.json"
