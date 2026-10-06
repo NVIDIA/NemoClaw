@@ -257,6 +257,7 @@ describe("controlled setup-node environments", () => {
           sparsePaths === undefined ||
           (sparsePaths.includes(".github/actions/setup-reviewed-npm") &&
             sparsePaths.includes("ci/reviewed-npm-audit.json") &&
+            sparsePaths.includes("scripts/lib/npm-diagnostics.sh") &&
             sparsePaths.includes("scripts/lib/reviewed-npm-audit.mts"));
         return {
           label: `${path.relative(REPO_ROOT, file)}:${label}:${step.uses}`,
@@ -273,6 +274,7 @@ describe("controlled setup-node environments", () => {
     const requiredSparsePaths = [
       ".github/actions/setup-reviewed-npm",
       "ci/reviewed-npm-audit.json",
+      "scripts/lib/npm-diagnostics.sh",
     ];
 
     const invalidCheckouts = workflowGroups

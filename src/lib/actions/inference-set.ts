@@ -1442,8 +1442,11 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve that address; verify from inside the sandbox
   // instead, exactly like an explicit bridge route.
   const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
-  const probeDirectSandboxBridge =
+  // OpenRouter onboarding registers a sandbox-facing adapter without a custom
+  // provider binding. Verify its model switches through the sandbox route too.
+  const probeSandboxRoute =
     selectingNativeNvidia ||
+    provider === "openrouter-api" ||
     isSandboxBridgeProviderBinding(directProviderBinding) ||
     loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
@@ -1451,7 +1454,7 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve host.openshell.internal, so its result would be a
   // guaranteed false negative. HTTPS-pin adapters retain their local-health
   // verification; direct bridge routes are probed from the sandbox below.
-  if (httpsPinProviderBinding || probeDirectSandboxBridge) {
+  if (httpsPinProviderBinding || probeSandboxRoute) {
     effectiveNoVerify = true;
   }
   if (deps.isLocalInferenceProvider(provider)) {
@@ -1557,7 +1560,7 @@ async function runInferenceSetWithoutHostLock(
       nativeNvidia: selectingNativeNvidia,
       directProviderBinding: Boolean(directProviderBinding),
       httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
-      probeDirectSandboxBridge,
+      probeDirectSandboxBridge: probeSandboxRoute,
       rollbackRoute: Boolean(rollbackRoute),
       previousNativeNvidiaAttachment: Boolean(previousNativeNvidiaAttachment),
     })
@@ -1706,13 +1709,14 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
-    if (probeDirectSandboxBridge) {
+    if (probeSandboxRoute) {
       let probe: Awaited<ReturnType<InferenceSetSandboxRouteProbe>>;
       try {
         probe = await probeInferenceSetSandboxRouteUntilConverged(
           {
             input: {
               sandboxName,
+              gatewayName: preparedRoute.gatewayName,
               provider,
               model,
               preferredInferenceApi: preMutationInferenceApi,
