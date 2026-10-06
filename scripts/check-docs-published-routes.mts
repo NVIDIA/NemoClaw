@@ -374,6 +374,7 @@ export type MarkdownLink = { text: string; target: string; line: number };
 export function extractMarkdownLinks(body: string): MarkdownLink[] {
   const links: MarkdownLink[] = [];
   const lines = body.split(/\r?\n/);
+  const hrefLines = new Array<string>(lines.length).fill("\0");
   // Track the opening fence char and length: a fence closes only on the same
   // char with length >= the opener (CommonMark), so a 3-backtick line inside a
   // 4-backtick or ~~~ block does not prematurely flip state.
@@ -397,18 +398,26 @@ export function extractMarkdownLinks(body: string): MarkdownLink[] {
     // keep an empty link-text group (`[]`) matchable so links whose text is
     // entirely an inline-code span (e.g. [`nemoclaw list`](...)) are still seen.
     const scan = rawLine.replace(/`[^`]*`/g, "");
+    hrefLines[i] = scan;
     // Tolerate an optional CommonMark link title: [text](target "title").
     const linkRe = /(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
     let match: RegExpExecArray | null;
     while ((match = linkRe.exec(scan)) !== null) {
       links.push({ text: match[1], target: match[2], line: i + 1 });
     }
-    const hrefRe = /\bhref\s*=\s*\{?\s*(["'])([^"']+)\1\s*\}?/g;
-    while ((match = hrefRe.exec(scan)) !== null) {
-      links.push({ text: "MDX href", target: match[2], line: i + 1 });
-    }
   });
-  return links;
+  // Preserve line boundaries while preventing matches across fenced examples.
+  const hrefScan = hrefLines.join("\n");
+  const hrefRe = /(?<!\S)href\s*=\s*(?:\{\s*(["'])([^"'\0]+)\1\s*\}|(["'])([^"'\0]+)\3)/g;
+  let match: RegExpExecArray | null;
+  while ((match = hrefRe.exec(hrefScan)) !== null) {
+    links.push({
+      text: "MDX href",
+      target: match[2] ?? match[4],
+      line: hrefScan.slice(0, match.index).split("\n").length,
+    });
+  }
+  return links.sort((left, right) => left.line - right.line);
 }
 
 function isInternalRouteLink(target: string): boolean {

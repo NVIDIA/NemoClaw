@@ -111,19 +111,30 @@ ${body}
 
 describe("published docs route checking", () => {
   it("checks static MDX hrefs, including multiline attributes, outside code examples", () => {
-    withDocsSource(
-      commandsSource(
-        `<Card\n href="/user-guide/openclaw/reference/commands" />\n<Link href={'../missing-page'} />\n\`\`\`mdx\n<Card href="../code-example" />\n\`\`\``,
-      ),
-      (docsDir) => {
-        const index = buildPublishedRouteIndex(navYaml);
-        const violations = findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir);
-        expect(violations.map(({ target }) => target)).toEqual([
-          "../missing-page",
-          "../missing-page",
-        ]);
-      },
-    );
+    const body = [
+      '<Card data-href="../ignored"',
+      " href=",
+      '  "/user-guide/openclaw/reference/commands" />',
+      "<Link href={",
+      '  "../missing-page"',
+      "} />",
+      '`<Card href="../inline-example" />`',
+      "```mdx",
+      '<Card href="../code-example" />',
+      "```",
+    ].join("\n");
+    expect(extractMarkdownLinks(body)).toEqual([
+      { text: "MDX href", target: "/user-guide/openclaw/reference/commands", line: 2 },
+      { text: "MDX href", target: "../missing-page", line: 4 },
+    ]);
+    withDocsSource(commandsSource(body), (docsDir) => {
+      const index = buildPublishedRouteIndex(navYaml);
+      const violations = findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir);
+      expect(violations.map(({ target }) => target)).toEqual([
+        "../missing-page",
+        "../missing-page",
+      ]);
+    });
   });
   it.each(["openclaw", "hermes", "deepagents", "pi"])(
     "indexes the native changelog route for %s",
