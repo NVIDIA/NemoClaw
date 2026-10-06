@@ -12,6 +12,7 @@ use nemoclaw_sdk::{
         DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
         FabricObservation, ObservationStatus,
     },
+    fabric_capabilities::Support,
 };
 
 /// Whether any reason the assessment gives contains `text`.
@@ -94,32 +95,97 @@ fn available_engine_and_owner_valid_configuration_establish_compatibility() {
     assert_eq!(document.yaml().unwrap(), before);
 }
 
+/// The provider's verdict on the observed image, as the plan relays it.
+fn judged_as(observed: &mut Observed, status: Support, checks: &[(&str, Support, &str)]) {
+    observed.fabric.as_mut().unwrap().compatibility = Some(crate::support::verdict(status, checks));
+}
+
 #[test]
-fn a_catalog_without_the_documents_adapter_is_a_conflict() {
+fn an_unsupported_check_is_a_conflict_that_gives_its_reason() {
     let document = document();
     let mut observed = observed_target(&document);
-    observed
-        .fabric
-        .as_mut()
-        .unwrap()
-        .catalog
-        .as_mut()
-        .unwrap()
-        .adapters
-        .retain(|adapter| adapter.descriptor["adapter_id"] != "nvidia.fabric.openclaw");
+    judged_as(
+        &mut observed,
+        Support::Unsupported,
+        &[
+            ("fabric_plan", Support::Supported, "the plan is valid"),
+            (
+                "image_platform",
+                Support::Unsupported,
+                "image is amd64, engine is arm64",
+            ),
+        ],
+    );
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-    assert_says(&assessment, "fabric_plan");
+    assert_says(
+        &assessment,
+        "image_platform: image is amd64, engine is arm64.",
+    );
+    assert_silent(&assessment, "fabric_plan");
+}
+
+#[test]
+fn an_unknown_check_leaves_the_target_unverified_and_gives_its_reason() {
+    let document = document();
+    let mut observed = observed_target(&document);
+    judged_as(
+        &mut observed,
+        Support::Unknown,
+        &[("bridge_interface", Support::Unknown, "no bridge advertised")],
+    );
+    let assessment = observed.assess(&document);
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+    assert_says(&assessment, "bridge_interface: no bridge advertised.");
+}
+
+#[test]
+fn an_unsupported_check_wins_over_an_unknown_one() {
+    let document = document();
+    let mut observed = observed_target(&document);
+    judged_as(
+        &mut observed,
+        Support::Unsupported,
+        &[
+            ("fabric_catalog", Support::Unknown, "no catalog"),
+            ("image_platform", Support::Unsupported, "wrong architecture"),
+        ],
+    );
+    let assessment = observed.assess(&document);
+    assert_eq!(assessment.status, CompatibilityStatus::Conflict);
+    assert_says(&assessment, "fabric_catalog: no catalog.");
+    assert_says(&assessment, "image_platform: wrong architecture.");
+}
+
+#[test]
+fn a_verdict_on_an_image_without_an_id_is_ignored() {
+    let document = document();
+    let mut observed = observed_target(&document);
+    judged_as(
+        &mut observed,
+        Support::Unsupported,
+        &[("image_platform", Support::Unsupported, "wrong architecture")],
+    );
+    observed.fabric.as_mut().unwrap().image_id = None;
+    let assessment = observed.assess(&document);
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+    assert_silent(&assessment, "wrong architecture");
 }
 
 #[test]
 fn an_image_that_is_not_present_is_unverified_rather_than_a_conflict() {
     let document = document();
     let mut observed = observed_target(&document);
+    judged_as(
+        &mut observed,
+        Support::Unsupported,
+        &[("image_platform", Support::Unsupported, "wrong architecture")],
+    );
     observed.fabric.as_mut().unwrap().status = ObservationStatus::Unavailable;
     let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_says(&assessment, "image is not present");
+    assert_silent(&assessment, "wrong architecture");
 }
 
 #[test]
@@ -219,55 +285,6 @@ fn identity_edits_keep_observations_and_runtime_edits_recheck_engine() {
     changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     let assessment = assess_target(&changed_driver, &observations).unwrap();
     assert_says(&assessment, "The selected engine has not been observed");
-}
-
-#[test]
-fn native_configuration_is_checked_by_the_fabric_planner() {
-    let valid = document();
-    assert_eq!(
-        observed_target(&valid).assess(&valid).status,
-        CompatibilityStatus::Compatible
-    );
-    let mut document = valid.clone();
-    document.spec.sandboxes[0]
-        .harness
-        .as_mut()
-        .unwrap()
-        .settings =
-        Some(serde_json::from_value(serde_json::json!({"not_in_the_owner_schema": true})).unwrap());
-    let assessment = observed_target(&document).assess(&document);
-    assert_eq!(assessment.status, CompatibilityStatus::Conflict);
-    assert_says(&assessment, "fabric_plan");
-}
-
-#[test]
-fn image_platform_conflict_blocks_while_missing_platform_stays_unverified() {
-    let document = document();
-    let mut observed = observed_target(&document);
-    observed.fabric.as_mut().unwrap().image.architecture = Some("amd64".into());
-    assert_eq!(
-        observed.assess(&document).status,
-        CompatibilityStatus::Conflict
-    );
-    observed.fabric.as_mut().unwrap().image.architecture = None;
-    assert_eq!(
-        observed.assess(&document).status,
-        CompatibilityStatus::Unverified
-    );
-}
-
-#[test]
-fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
-    let document = document();
-    let mut observed = observed_target(&document);
-    let image = observed.fabric.as_mut().unwrap();
-    image.status = ObservationStatus::Unknown;
-    image.catalog = None;
-    image.image.architecture = Some("amd64".into());
-    assert_eq!(
-        observed.assess(&document).status,
-        CompatibilityStatus::Conflict
-    );
 }
 
 fn external_document(engine: &str) -> Document {

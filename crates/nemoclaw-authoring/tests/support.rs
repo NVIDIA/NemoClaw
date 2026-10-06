@@ -8,7 +8,7 @@ use nemoclaw_sdk::{
         DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
         FabricObservation, ObservationStatus, plan_queries,
     },
-    fabric_capabilities::{ImageMetadata, assess_image},
+    fabric_capabilities::{CapabilityCheck, CompatibilityReport, ImageMetadata, Support},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
 };
 
@@ -105,7 +105,24 @@ pub fn rejecting_engine() -> EngineObservation {
     }
 }
 
-/// The document's image, present on the engine with an installed Fabric catalog.
+/// A provider's verdict on an image: the overall `status` over the given
+/// `(requirement, status, reason)` checks.
+pub fn verdict(status: Support, checks: &[(&str, Support, &str)]) -> CompatibilityReport {
+    CompatibilityReport {
+        status,
+        adapter_id: None,
+        checks: checks
+            .iter()
+            .map(|(requirement, status, reason)| CapabilityCheck {
+                requirement: (*requirement).into(),
+                status: *status,
+                reason: (*reason).into(),
+            })
+            .collect(),
+    }
+}
+
+/// The document's image, present on the engine and judged compatible by the provider.
 pub fn installed_image(document: &Document) -> FabricObservation {
     FabricObservation {
         status: ObservationStatus::Available,
@@ -119,7 +136,10 @@ pub fn installed_image(document: &Document) -> FabricObservation {
             repo_digests: vec![target(document).image],
             ..Default::default()
         },
-        compatibility: None,
+        compatibility: Some(verdict(
+            Support::Supported,
+            &[("fabric_plan", Support::Supported, "the plan is valid")],
+        )),
     }
 }
 
@@ -130,34 +150,6 @@ pub fn image_query(document: &Document) -> DiscoveryQuery {
         .into_iter()
         .find(|query| matches!(query, DiscoveryQuery::Fabric { .. }))
         .unwrap()
-}
-
-/// What the provider returns for `query`: the raw image read judged against the
-/// query's requirements, on its engine's platform when it names one.
-pub fn judged(
-    query: &DiscoveryQuery,
-    mut fabric: FabricObservation,
-    engine: Option<&EngineObservation>,
-) -> FabricObservation {
-    let DiscoveryQuery::Fabric {
-        image,
-        requirements,
-        platform,
-        ..
-    } = query
-    else {
-        panic!("an image query")
-    };
-    let platform = engine.filter(|_| platform.is_some());
-    fabric.compatibility = Some(assess_image(
-        fabric.catalog.as_ref(),
-        requirements,
-        &fabric.image,
-        image,
-        platform.and_then(|engine| engine.architecture.as_deref()),
-        platform.and_then(|engine| engine.operating_system.as_deref()),
-    ));
-    fabric
 }
 
 /// The observations a journey would hold after reading `document`'s engine and
@@ -171,7 +163,6 @@ pub fn target_observations(
     let mut observations = DiscoveryObservations::new();
     if let Some(fabric) = fabric {
         let query = image_query(document);
-        let fabric = judged(&query, fabric, engine.as_ref());
         observations.record(query, DiscoveryObservation::Fabric(fabric));
     }
     if let Some(engine) = engine {
