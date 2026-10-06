@@ -24,6 +24,8 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
+DIRECT_TURN_STARTED=0
+direct_output=""
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -83,6 +85,12 @@ restore_observability_policy() {
 cleanup() {
   local exit_status="$?"
   trap - EXIT
+  # The redaction probe is deliberately credential-shaped. Remove only its
+  # native thread so a later rebuild can inspect the retained conversations.
+  if [ "$DIRECT_TURN_STARTED" -eq 1 ] && ! cleanup_probe_thread; then
+    printf '%s: probe conversation cleanup failed\n' "$PREFIX" >&2
+    exit_status=1
+  fi
   if ! restore_observability_policy; then
     printf '%s: policy cleanup failed; run: nemoclaw %q policy-add observability-otlp-local --yes\n' \
       "$PREFIX" "$SANDBOX_NAME" >&2
@@ -281,8 +289,19 @@ run_dcode_direct() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode -n \
-    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." 2>&1
+    dcode --json -n \
+    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." \
+    2>"${CAPTURE_DIR}/direct.stderr"
+}
+
+cleanup_probe_thread() {
+  local thread_id
+  thread_id="$(printf '%s\n' "$direct_output" | "$TSX" "$CONTRACT_HELPER" probe-thread-id)" \
+    || return 1
+  # Native deletion succeeds when the exact thread is removed or already absent.
+  # A turn can fail before writing checkpoints; both outcomes leave no probe state.
+  timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    dcode threads delete "$thread_id" --json >/dev/null
 }
 
 run_dcode_login() {
@@ -387,6 +406,7 @@ marker_output="$(observability_marker_value)" \
 [ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
 pass "host observability policy is restored before positive trace checks"
 
+DIRECT_TURN_STARTED=1
 direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
