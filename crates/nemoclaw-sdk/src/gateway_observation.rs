@@ -92,7 +92,7 @@ impl GatewayCapabilities {
                             .collect::<Vec<_>>()
                             .join(" / ");
                         format!(
-                            "gateway compute driver is {observed}, but runtime.provider is {driver}"
+                            "gateway compute driver is {observed}, but spec.gateway.runtime.provider is {driver}"
                         )
                     }),
             ),
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(
             observed(required, &[&["podman", "selected"]]).incompatibility(["docker"]),
             Some(
-                "gateway compute driver is podman / selected, but runtime.provider is docker"
+                "gateway compute driver is podman / selected, but spec.gateway.runtime.provider is docker"
                     .into()
             )
         );
@@ -239,14 +239,14 @@ mod tests {
             observed("0.0.1", &[&["docker"]]).incompatibility(["docker", "podman"]),
             Some(format!(
                 "gateway runs OpenShell 0.0.1, but this build requires {required}; \
-                 gateway compute driver is docker, but runtime.provider is podman"
+                 gateway compute driver is docker, but spec.gateway.runtime.provider is podman"
             ))
         );
         assert_eq!(
             observed("1.0\nforged", &[&["docker\u{7}"]]).incompatibility(["docker"]),
             Some(format!(
                 "gateway runs OpenShell 1.0\\nforged, but this build requires {required}; \
-                 gateway compute driver is docker\\u{{7}}, but runtime.provider is docker"
+                 gateway compute driver is docker\\u{{7}}, but spec.gateway.runtime.provider is docker"
             ))
         );
         let error = observed(required, &[&["podman"]])
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(
             error,
             "gateway is incompatible with this configuration: gateway compute driver is \
-             podman, but runtime.provider is docker"
+             podman, but spec.gateway.runtime.provider is docker"
         );
     }
 }
@@ -288,7 +288,7 @@ mod discovery_tests {
         assert_eq!(mismatch.status, ObservationStatus::Unavailable);
         assert_eq!(
             mismatch.reason.as_deref(),
-            Some("gateway compute driver is docker, but runtime.provider is podman")
+            Some("gateway compute driver is docker, but spec.gateway.runtime.provider is podman")
         );
         let old_version = GatewayObservation::from_result(
             Ok(GatewayCapabilities {
@@ -304,7 +304,7 @@ mod discovery_tests {
             old_version.reason,
             Some(format!(
                 "gateway runs OpenShell 0.0.1, but this build requires {}; gateway compute \
-                 driver is docker, but runtime.provider is podman",
+                 driver is docker, but spec.gateway.runtime.provider is podman",
                 crate::artifact_pins::OPENSHELL_VERSION
             ))
         );

@@ -518,7 +518,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
         {
             break;
         }

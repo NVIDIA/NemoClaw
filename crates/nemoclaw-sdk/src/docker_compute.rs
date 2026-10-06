@@ -588,7 +588,7 @@ mod tests {
             .as_managed_mut()
             .unwrap()
             .image_pull_policy = Some(ImagePullPolicy::Always);
-        document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+        document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
         let generations = crate::state::Record::new(document.clone())
             .unwrap()
             .generations;

@@ -38,7 +38,7 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
         env: "MODEL_TOKEN".into(),
     });
     let first = remote.inference_connection().unwrap();
-    remote.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+    remote.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
     remote.validate().unwrap();
     assert_eq!(remote.inference_connection().unwrap(), first);
     assert_eq!(first.endpoint, "https://inference.example.test:9443/v1");

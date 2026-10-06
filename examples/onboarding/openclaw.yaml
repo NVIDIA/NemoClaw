@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
   inferenceProviders:
     - name: nvidia-prod
       provider: openai
@@ -19,8 +21,6 @@ spec:
         env: NVIDIA_API_KEY
   sandboxes:
     - name: assistant
-      runtime:
-        provider: docker
       harness:
         kind: nvidia.fabric.openclaw
       agent:

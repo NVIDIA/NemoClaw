@@ -9,6 +9,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17681
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2
@@ -81,8 +83,6 @@ spec:
   - name: assistant
     image:
       ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
-    runtime:
-      provider: docker
     network:
       tier: isolated
     harness:

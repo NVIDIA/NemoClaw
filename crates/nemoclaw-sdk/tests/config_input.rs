@@ -87,7 +87,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
         explicit["spec"]["gateway"][key] = json!("");
     }
     explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});
-    explicit["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
+    explicit["spec"]["gateway"]["runtime"] = json!({"provider": "docker"});
     explicit["spec"]["sandboxes"][0]["network"] = json!({"tier": ""});
     explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,

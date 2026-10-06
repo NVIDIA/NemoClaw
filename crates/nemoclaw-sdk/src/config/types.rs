@@ -124,6 +124,10 @@ impl Default for Gateway {
 /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
 /// Installation settings for a managed local gateway.
 pub struct ManagedGateway {
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the gateway runs every sandbox with; omission selects Docker.
+    pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
     /// Local gateway HTTP origin with an unprivileged loopback port.
@@ -155,6 +159,10 @@ pub struct ManagedGateway {
 #[serde(default, deny_unknown_fields)]
 /// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
 pub struct ExternalGateway {
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports.
+    pub runtime: Runtime,
     /// Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -248,10 +256,6 @@ pub struct Sandbox {
     #[schemars(default)]
     /// Sandbox agent image; omission selects the SDK pin for the selected harness.
     pub image: Image,
-    #[serde(rename = "runtime")]
-    #[schemars(default)]
-    /// Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver.
-    pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
@@ -275,7 +279,7 @@ pub struct Image {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Sandbox runtime selected through OpenShell.
+/// The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
 pub struct Runtime {
     #[serde(rename = "provider")]
     #[schemars(default)]

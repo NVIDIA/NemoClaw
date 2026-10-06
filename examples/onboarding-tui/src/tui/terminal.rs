@@ -490,7 +490,7 @@ mod tests {
             "engine": "ssh://images@example.com",
         }))
         .unwrap();
-        document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
+        document.spec.gateway.runtime_mut().provider = nemoclaw_sdk::config::ComputeDriver::Podman;
         let key = discovery_key_for_document(&document).unwrap();
         let request = inference_request_for_document(&document, None).unwrap();
         assert_eq!(

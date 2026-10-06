@@ -111,7 +111,7 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     service.serving = Default::default();
     service.memory = Default::default();
     defaulted.spec.sandboxes[0].image.ref_.clear();
-    defaulted.spec.sandboxes[0].runtime = Default::default();
+    *defaulted.spec.gateway.runtime_mut() = Default::default();
     defaulted.spec.sandboxes[0].network.policy = Default::default();
     defaulted.defaults();
     assert_eq!(defaulted, original);
