@@ -46,6 +46,14 @@ struct Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
+        // Keep a failed run's cluster for inspection when asked to.
+        if std::env::var_os("NEMOCLAW_KEEP_KIND_CLUSTER").is_some() {
+            eprintln!(
+                "Kept kind cluster {}; delete it with: kind delete cluster --name {}",
+                self.name, self.name
+            );
+            return;
+        }
         let _ = Command::new(&self.kind)
             .args(["delete", "cluster", "--name", &self.name])
             .stdin(Stdio::null())
@@ -134,6 +142,45 @@ pub(super) async fn run_live_kind(
         "--timeout=120s",
     ]))?;
 
+    // An agent image from this checkout, by digest, loaded into the node and
+    // described by its metadata bundle. Pi is the smaller image but is built
+    // only for ARM64; OpenClaw is built for both.
+    let (target, harness) = if platform == "linux_arm64" {
+        ("pi", "nvidia.fabric.pi")
+    } else {
+        ("openclaw", "nvidia.fabric.openclaw")
+    };
+    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
+    let prefix = format!("{name}-agent");
+    let tag = format!("{prefix}:{target}");
+    let images = ImagesCleanup(tag.clone());
+    run(Command::new(std::env::current_exe()?)
+        .args(["images", "build", "--platform", &docker_platform, target])
+        .env("IMAGE_PREFIX", &prefix))?;
+    let id = String::from_utf8(
+        Command::new("docker")
+            .args(["image", "inspect", "--format", "{{.Id}}", &tag])
+            .output()?
+            .stdout,
+    )?;
+    let image = format!("docker.io/library/{prefix}@{}", id.trim());
+    let metadata = inputs.path().join("agent.metadata.json");
+    nemoclaw_build::images::export_metadata(&tag, &docker_platform, &metadata)?;
+    run(Command::new(&kind).args(["load", "docker-image", "--name", &name, &tag]))?;
+    // kind loads the image by tag only; name it by digest too, so a sandbox
+    // that references the digest finds it on the node instead of pulling.
+    run(Command::new("docker").args([
+        "exec",
+        &node_container,
+        "ctr",
+        "-n",
+        "k8s.io",
+        "images",
+        "tag",
+        &format!("docker.io/library/{tag}"),
+        &image,
+    ]))?;
+
     let [args] = Step::LiveKind.cargo_args() else {
         unreachable!("live-kind is one nextest command")
     };
@@ -143,8 +190,26 @@ pub(super) async fn run_live_kind(
         .args(*args)
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_BUNDLE", &bundle);
+        .env("NEMOCLAW_TEST_BUNDLE", &bundle)
+        .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
+        .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
+        .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata);
     let result = run(&mut command);
     drop(cluster);
+    drop(images);
     result
+}
+
+/// Removes the agent image this run built.
+struct ImagesCleanup(String);
+
+impl Drop for ImagesCleanup {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args(["image", "rm", "--force", &self.0])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }

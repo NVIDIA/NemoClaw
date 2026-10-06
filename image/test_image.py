@@ -203,6 +203,9 @@ class AgentImage(unittest.TestCase):
             self.assertFalse(list(Path("/app/dist/state").glob("*.sqlite*")))
             self.assertFalse(Path("/app/dist/config-journal-fingerprint.key").exists())
             self.assertFalse(Path("/tmp/plugin-build").exists())
+            # The agent reads OpenClaw but must not change it.
+            self.assertEqual(Path("/app").stat().st_uid, 0)
+            self.assertFalse(os.access("/app/dist/extensions", os.W_OK))
             for name in ("brave", "tavily"):
                 self.assertIn(name, set(plugins))
                 self.assertEqual(plugins[name]["origin"], "bundled")
@@ -232,6 +235,14 @@ class AgentImage(unittest.TestCase):
         # Docker and Podman use the image's own user, so one ID fits all three.
         self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))
         self.assertEqual(Path("/sandbox").stat().st_uid, 10001)
+        # OpenShell seeds a Kubernetes workspace by copying the image's
+        # /sandbox, and its supervisor makes probe directories under TMPDIR
+        # before Fabric starts; the seed must already hold that directory.
+        runtime = json.loads(Path("/opt/nemoclaw/runtime.json").read_text())
+        temporary = Path(runtime["environment"]["TMPDIR"])
+        self.assertTrue(temporary.is_relative_to("/sandbox"), temporary)
+        self.assertTrue(temporary.is_dir(), temporary)
+        self.assertEqual(temporary.stat().st_uid, 10001)
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 

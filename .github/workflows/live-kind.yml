@@ -44,6 +44,15 @@ jobs:
         run: cargo ci build
       - name: Build and verify native bundle
         run: cargo ci bundle
+      # The agent image's metadata bundle is read from an OCI index, which
+      # Docker writes only with its containerd image store.
+      - name: Use the containerd image store
+        run: |
+          config=/etc/docker/daemon.json
+          if [ -s "$config" ]; then current=$(sudo cat "$config"); else current='{}'; fi
+          printf '%s' "$current" | jq '.features["containerd-snapshotter"] = true' | sudo tee "$config" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
       - name: Run Kubernetes live tests
         run: cargo ci live-kind
       - name: Upload live test results

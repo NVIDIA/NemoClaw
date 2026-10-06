@@ -27,16 +27,20 @@ Afterward it removes the images it built and every container, volume, and networ
 It requests no inference and needs no GPU or credentials.
 A run on Linux ARM64 takes about five minutes after the build.
 
-On Linux with Docker, `cargo ci live-kind` runs the Kubernetes live tests; plain `cargo ci` never selects it either.
+On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), `cargo ci live-kind` runs the Kubernetes live tests; plain `cargo ci` never selects it either.
 Run `cargo ci build` and `cargo ci bundle` first.
 The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
-It then runs the `live-kind` nextest profile against that cluster with the verified native bundle.
-OpenTofu and its Helm provider run with an empty `PATH`; no Helm CLI is required.
-The test installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
-It then removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
-The step deletes the cluster whether or not the test passes.
-It needs no images built by this repository, no GPU and no credentials.
-A run on Linux ARM64 takes about 90 seconds after the build.
+It builds an agent image from this checkout (Pi on ARM64, OpenClaw on AMD64), exports its metadata bundle, and loads the image into the cluster by digest.
+It then runs the two tests in the `live-kind` nextest profile with the verified native bundle; no Helm CLI is required.
+The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
+It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
+The agent test applies through the public SDK, creates a sandbox, and requires apply to stop only at the agent health check, which the pinned Fabric reports as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
+It then destroys the deployment while retaining gateway storage.
+The step deletes the cluster and removes its built image tag whether or not the tests pass; pulled images and build caches remain.
+Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` before running to keep the cluster for inspection; remove it afterward with the printed kind command.
+The tests request no inference and need no GPU or credentials.
+Initial image builds need network access and can take longer than the tests.
+See [live prerequisites and retained state](live-tests.md#kubernetes-gateway-without-the-helm-cli).
 
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
 

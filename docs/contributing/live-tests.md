@@ -11,6 +11,24 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
+On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run both Kubernetes tests on a fresh kind cluster:
+
+```sh
+cargo ci build
+cargo ci bundle
+cargo ci live-kind
+```
+
+The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
+The agent test uses the public SDK to deploy a gateway and sandbox from that image.
+It expects apply to fail only at `data.nemoclaw_sandbox_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)); destroy then retains gateway storage.
+Neither test requests inference or needs a GPU or credentials.
+
+The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
+Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` to retain the cluster on either outcome, then delete it with the printed kind command after inspection.
+The gateway test's private state directory remains as described below, including when the runner deletes the cluster.
+
 To render the pinned chart through the bundled provider without cluster access:
 
 ```sh
@@ -21,7 +39,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The render test also rejects an unavailable chart digest.
 
-Use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
+To run only the gateway test, use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
 Supply its explicit kubeconfig and context, and a verified immutable bundle built from the checkout:
 
 ```sh
