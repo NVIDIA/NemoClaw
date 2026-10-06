@@ -157,7 +157,6 @@ async function collectNativeHostedRouteProbe(
   return buildSandboxInferenceRouteHealth(null, null, invocation, {
     provider: route.provider,
     nativeHosted: true,
-    agentName: route.agentName ?? null,
   });
 }
 

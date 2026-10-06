@@ -27,6 +27,7 @@ export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export {
   detachNativeHostedProvider,
   ensureNativeHostedProvider,
+  persistNativeHostedProviderAuthority,
   ensureNativeHostedProviderAttached,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,

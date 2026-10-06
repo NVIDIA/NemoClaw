@@ -20,6 +20,7 @@ import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
 import {
   ensureNativeHostedProvider,
+  persistNativeHostedProviderAuthority,
   nativeHostedProviderProfilePath,
 } from "../inference/native-hosted";
 import {
@@ -443,26 +444,36 @@ export async function runCredentialsAddAction(
           ...(expected ? { expected } : {}),
         });
         if (!expected) {
-          try {
-            const nvidiaReceipt = normalizeNativeNvidiaProviderAttachment(receipt);
-            if (nvidiaReceipt)
-              (deps.setNativeNvidiaProviderAuthority ?? setNativeNvidiaProviderAuthority)(
-                target.gatewayName,
-                nvidiaReceipt,
-              );
-            else
-              (deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority)(
-                target.gatewayName,
-                receipt,
-              );
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            return fail([
-              `  OpenShell provider '${hostedProfile!.providerName}' was created, but NemoClaw could not record its ownership.`,
-              `  Run '${CLI_NAME} credentials reset ${hostedProfile!.logicalProvider} --yes' to remove the incomplete provider, then retry.`,
-              `  ${detail}`,
-            ]);
-          }
+          await persistNativeHostedProviderAuthority({
+            adapter: providerAdapter,
+            target,
+            profile: hostedProfile!,
+            gatewayName: target.gatewayName,
+            receipt,
+            readAuthority: (gatewayName) =>
+              nativeNvidiaCredentialAlias
+                ? (deps.getNativeNvidiaProviderAuthority ?? getNativeNvidiaProviderAuthority)(
+                    gatewayName,
+                  )
+                : (deps.getNativeHostedProviderAuthority ?? getNativeHostedProviderAuthority)(
+                    gatewayName,
+                    hostedProfile!.profileId,
+                  ),
+            writeAuthority: (gatewayName, authority) => {
+              const nvidiaReceipt = normalizeNativeNvidiaProviderAttachment(authority);
+              if (nvidiaReceipt) {
+                (deps.setNativeNvidiaProviderAuthority ?? setNativeNvidiaProviderAuthority)(
+                  gatewayName,
+                  nvidiaReceipt,
+                );
+              } else {
+                (deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority)(
+                  gatewayName,
+                  authority,
+                );
+              }
+            },
+          });
         }
         return ok([
           `  Registered provider '${provider}' with the OpenShell gateway.`,

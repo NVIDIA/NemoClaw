@@ -18,6 +18,7 @@ import {
   getSandboxInferenceConfig,
   detachNativeHostedProvider,
   ensureNativeHostedProvider,
+  persistNativeHostedProviderAuthority,
   ensureNativeHostedProviderAttached,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
@@ -1008,6 +1009,20 @@ async function prepareNativeHostedSelection(input: {
       ? { expected: input.expectedAttachment }
       : {}),
   });
+  await persistNativeHostedProviderAuthority({
+    adapter: input.deps.providerAdapter,
+    target,
+    profile,
+    gatewayName: input.gatewayName,
+    receipt: ensured,
+    ...(input.expectedAttachment?.profileId === profile.profileId
+      ? { existing: input.expectedAttachment }
+      : {}),
+    readAuthority: (gatewayName) =>
+      readRegisteredNativeAuthority(input.deps, gatewayName, input.provider),
+    writeAuthority: (gatewayName, receipt) =>
+      recordNativeProviderAuthority(input.deps, gatewayName, receipt),
+  });
   const attached = await ensureNativeHostedProviderAttached({
     adapter: input.deps.providerAdapter,
     target,
@@ -1489,8 +1504,11 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve that address; verify from inside the sandbox
   // instead, exactly like an explicit bridge route.
   const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
-  const probeDirectSandboxBridge =
+  // OpenRouter onboarding registers a sandbox-facing adapter without a custom
+  // provider binding. Verify its model switches through the sandbox route too.
+  const probeSandboxRoute =
     selectingNativeHosted ||
+    provider === "openrouter-api" ||
     isSandboxBridgeProviderBinding(directProviderBinding) ||
     loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
@@ -1498,7 +1516,7 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve host.openshell.internal, so its result would be a
   // guaranteed false negative. HTTPS-pin adapters retain their local-health
   // verification; direct bridge routes are probed from the sandbox below.
-  if (httpsPinProviderBinding || probeDirectSandboxBridge) {
+  if (httpsPinProviderBinding || probeSandboxRoute) {
     effectiveNoVerify = true;
   }
   if (deps.isLocalInferenceProvider(provider)) {
@@ -1608,7 +1626,7 @@ async function runInferenceSetWithoutHostLock(
       nativeHosted: selectingNativeHosted,
       directProviderBinding: Boolean(directProviderBinding),
       httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
-      probeDirectSandboxBridge,
+      probeDirectSandboxBridge: probeSandboxRoute,
       rollbackRoute: Boolean(rollbackRoute),
       previousNativeHostedAttachment: Boolean(previousNativeHostedAttachment),
     })
@@ -1673,7 +1691,6 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeHostedProviderAttachment = nativeHostedSelection.attachment;
     nativeHostedAttachmentChanged = nativeHostedSelection.attachmentChanged;
-    recordNativeProviderAuthority(deps, preparedRoute.gatewayName, nativeHostedProviderAttachment);
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
@@ -1760,13 +1777,14 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
-    if (probeDirectSandboxBridge) {
+    if (probeSandboxRoute) {
       let probe: Awaited<ReturnType<InferenceSetSandboxRouteProbe>>;
       try {
         probe = await probeInferenceSetSandboxRouteUntilConverged(
           {
             input: {
               sandboxName,
+              gatewayName: preparedRoute.gatewayName,
               provider,
               model,
               preferredInferenceApi: preMutationInferenceApi,

@@ -19,7 +19,7 @@ import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia";
-
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../inference/openrouter";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
@@ -357,32 +357,9 @@ function buildInvokedRouteHealth(
 }
 
 export type SandboxInferenceRouteHealthContext = {
-  agentName: string | null;
   provider: string | null;
   nativeHosted?: boolean;
 };
-
-/**
- * The one agent and provider combination whose models route intentionally
- * answers HTTP 404: Deep Agents Code on OpenRouter (#9834). This is the
- * authoritative rule for that exception; launch readiness and status both
- * call it so the two cannot drift apart again (#10080).
- *
- * Matching this predicate is necessary but not sufficient. Both callers must
- * additionally require a successful bounded inference request before they
- * accept the 404, because the route status alone proves nothing about whether
- * the sandbox can invoke its selected model.
- */
-export function isDcodeOpenRouterModelsRoute404(
-  context: SandboxInferenceRouteHealthContext,
-  httpStatus: number,
-): boolean {
-  return (
-    context.agentName === DCODE_AGENT_NAME &&
-    context.provider?.trim() === "openrouter-api" &&
-    httpStatus === 404
-  );
-}
 
 // A models route that answers but is credential-gated (401/403) stays
 // authoritative through one successful inference request, because the request
@@ -390,10 +367,9 @@ export function isDcodeOpenRouterModelsRoute404(
 //
 // HTTP 404 is the one status that request cannot vouch for: it means the model
 // catalog is absent, so nothing validated the selected model against the
-// provider. Only Deep Agents Code on OpenRouter is expected to answer 404
-// (#9834), and even there the invocation must succeed. Every other agent and
-// provider fails closed on 404, so `status` cannot report Ready for a route
-// that genuine model-list validation would reject (#10080).
+// provider. NemoClaw's OpenRouter adapter is expected to answer 404 (#12621),
+// and even there the invocation must succeed. Every other provider fails closed
+// on 404, so `status` cannot report Ready for an unvalidated route (#10080).
 function routeStatusAccepted(
   gateway: SandboxInferenceRouteHealth,
   invocation: SandboxInferenceInvocationResult | null,
@@ -401,7 +377,10 @@ function routeStatusAccepted(
 ): boolean {
   if (gateway.httpStatus >= 200 && gateway.httpStatus < 300) return true;
   if (gateway.httpStatus === 404) {
-    return isDcodeOpenRouterModelsRoute404(context, gateway.httpStatus) && invocation?.ok === true;
+    return (
+      isOpenRouterRuntimeAdapterModelsRoute404(context.provider, gateway.httpStatus) &&
+      invocation?.ok === true
+    );
   }
   return (gateway.httpStatus === 401 || gateway.httpStatus === 403) && invocation?.ok === true;
 }
@@ -459,8 +438,8 @@ export function buildSandboxInferenceRouteHealth(
             detail:
               `Inference gateway served a request, but ${endpoint} returned HTTP ` +
               `${gateway.httpStatus}, so the selected model was never validated against a model ` +
-              `catalog. Only Deep Agents Code with OpenRouter is expected to answer that; ` +
-              `treating this route as not ready.`,
+              `catalog. This provider does not have a supported catalog-less route; treating the ` +
+              `route as not ready.`,
             failureLabel: "unreachable" as const,
           }
         : invoked;

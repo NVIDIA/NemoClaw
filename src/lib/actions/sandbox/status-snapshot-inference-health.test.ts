@@ -590,7 +590,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
   });
 
-  it("reports an OpenClaw sandbox with a 404 models route as not ready (#10080)", async () => {
+  it("reports a non-OpenRouter sandbox with a 404 models route as not ready (#10080)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -710,7 +710,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as not ready when the invocation fails (#10080)", async () => {
+  it("reports a supported OpenRouter 404 route as not ready when the invocation fails (#12621)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -730,7 +730,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
           httpStatus: 401,
         },
         {
-          agent: "langchain-deepagents-code",
+          agent: "hermes",
           provider: "openrouter-api",
           model: "openai/gpt-4o-mini",
         },

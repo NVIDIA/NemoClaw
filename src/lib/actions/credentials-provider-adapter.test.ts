@@ -56,6 +56,10 @@ function nativeNvidiaProviderAdapter(): OpenShellProviderAdapter {
       providerPresent = true;
       return { ok: true as const };
     }),
+    deleteProvider: vi.fn(async () => {
+      providerPresent = false;
+      return { ok: true as const };
+    }),
   });
 }
 
@@ -152,7 +156,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
   });
 
-  it("reports a reset action when native NVIDIA authority persistence fails", async () => {
+  it("removes the native NVIDIA provider when authority persistence fails", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
     const adapter = nativeNvidiaProviderAdapter();
 
@@ -174,13 +178,13 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.failureLines).toContain(
-      "  OpenShell provider 'nemoclaw-nvidia-prod-v1' was created, but NemoClaw could not record its ownership.",
+    expect(result.failureLines.join("\n")).toMatch(
+      /newly created provider was removed.*state directory is read-only/su,
     );
-    expect(result.failureLines).toContain(
-      "  Run 'nemoclaw credentials reset nvidia-prod --yes' to remove the incomplete provider, then retry.",
-    );
-    expect(result.failureLines).toContain("  state directory is read-only");
+    expect(adapter.deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
   });
 

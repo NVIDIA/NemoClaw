@@ -249,6 +249,80 @@ describe("runInferenceSet OpenClaw routing", () => {
     );
   });
 
+  it("removes a new native NVIDIA provider when authority persistence fails (#12562)", async () => {
+    const providerId = "22222222-3333-4444-8555-666666666666";
+    let providerPresent = false;
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => {
+      providerPresent = true;
+      return { ok: true };
+    });
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
+      providerPresent = false;
+      return { ok: true };
+    });
+    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider: vi.fn(async () =>
+        providerPresent
+          ? {
+              ok: true as const,
+              value: {
+                name: "nemoclaw-nvidia-prod-v1",
+                type: "nemoclaw-nvidia-inference-v1",
+                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+                configKeys: [],
+                revision: { id: providerId, resourceVersion: 1 },
+              },
+            }
+          : {
+              ok: false as const,
+              error: {
+                kind: "command" as const,
+                reason: "not_found" as const,
+                message: "provider not found",
+              },
+            },
+      ),
+      createProvider,
+      deleteProvider,
+      attachProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-openai-inference-v1",
+          providerName: "nemoclaw-openai-api-v1",
+          providerId: "previous-openai-id",
+        },
+      },
+      getNativeNvidiaProviderAuthority: () => undefined,
+      setNativeNvidiaProviderAuthority: () => {
+        throw new Error("state directory is read-only");
+      },
+      providerAdapter,
+      resolveCredentialValue: () => "replacement-credential",
+    });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true }, deps),
+    ).rejects.toThrow(/newly created provider was removed.*state directory is read-only/su);
+
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("detaches previous native access before publishing another provider", async () => {
     const deps = createDeps({
       config: {

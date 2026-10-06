@@ -24,6 +24,7 @@ import {
   normalizeNativeNvidiaProviderAttachment,
   nativeHostedProfile,
   ensureNativeHostedProvider,
+  persistNativeHostedProviderAuthority,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
   resolveGatewayNativeHostedProviderAuthority,
@@ -1027,10 +1028,33 @@ export function createSetupInference(
             const nvidiaAuthority = normalizeNativeNvidiaProviderAttachment(
               nativeHostedProviderAttachment,
             );
-            if (nvidiaAuthority)
-              deps.setNativeNvidiaProviderAuthority?.(gatewayName, nvidiaAuthority);
-            else
-              deps.setNativeHostedProviderAuthority?.(gatewayName, nativeHostedProviderAttachment);
+            const readAuthority = nvidiaAuthority
+              ? deps.getNativeNvidiaProviderAuthority
+              : deps.getNativeHostedProviderAuthority &&
+                ((name: string) => deps.getNativeHostedProviderAuthority!(name, profile.profileId));
+            const writeAuthority = nvidiaAuthority
+              ? deps.setNativeNvidiaProviderAuthority &&
+                ((name: string, receipt: NativeHostedProviderAttachment) =>
+                  deps.setNativeNvidiaProviderAuthority!(
+                    name,
+                    normalizeNativeNvidiaProviderAttachment(receipt)!,
+                  ))
+              : deps.setNativeHostedProviderAuthority;
+            if (readAuthority && writeAuthority) {
+              await persistNativeHostedProviderAuthority({
+                adapter: providerAdapter,
+                target: { kind: "named", gatewayName },
+                profile,
+                gatewayName,
+                receipt: nativeHostedProviderAttachment,
+                ...(providerAuthority ? { existing: providerAuthority } : {}),
+                readAuthority,
+                writeAuthority,
+              });
+            } else {
+              writeAuthority?.(gatewayName, nativeHostedProviderAttachment);
+            }
+
             return null;
           }
 
