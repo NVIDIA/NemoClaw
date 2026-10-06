@@ -5,6 +5,8 @@
 # Requires explicit access to an existing Kubernetes cluster with Agent Sandbox
 # and one default StorageClass installed.
 # Replace the deployment UID and every image digest before applying.
+# Write each image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -37,7 +39,7 @@ spec:
         kind: nvidia.fabric.openclaw
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:
@@ -70,7 +72,7 @@ spec:
         kind: nvidia.fabric.openclaw
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:
@@ -103,7 +105,7 @@ spec:
         kind: nvidia.fabric.openclaw
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:
