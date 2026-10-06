@@ -544,6 +544,27 @@ jobs:
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
           test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
+          audit_config="$RUNNER_TEMP/pr-mcporter-audit-config.json"
+          # PR builds must accept an audited dependency repair before its lock
+          # identity reaches main. Retain all other base-owned policy fields.
+          node --input-type=module - \
+            "$trusted_root/ci/reviewed-npm-audit.json" \
+            "$GITHUB_WORKSPACE/ci/reviewed-npm-audit.json" "$audit_config" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { isDeepStrictEqual } from "node:util";
+          const [trustedPath, candidatePath, outputPath] = process.argv.slice(2);
+          const trusted = JSON.parse(readFileSync(trustedPath, "utf8"));
+          const candidate = JSON.parse(readFileSync(candidatePath, "utf8"));
+          const baseGraph = trusted.lockedGraphs.find((graph) => graph.id === "mcporter-runtime");
+          const candidateGraph = candidate.lockedGraphs.find((graph) => graph.id === "mcporter-runtime");
+          if (!baseGraph || !candidateGraph || !isDeepStrictEqual(
+            { ...candidateGraph, lockSha256: baseGraph.lockSha256 }, baseGraph,
+          )) {
+            throw new Error("Candidate mcporter package identity differs from the trusted base");
+          }
+          baseGraph.lockSha256 = candidateGraph.lockSha256;
+          writeFileSync(outputPath, JSON.stringify(trusted), { mode: 0o600 });
+          NODE
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -552,7 +573,7 @@ jobs:
             --raw-report "$raw" \
             --exceptions "$trusted_root/ci/npm-audit-exceptions.json" \
             --graph mcporter-runtime \
-            --audit-config "$trusted_root/ci/reviewed-npm-audit.json" \
+            --audit-config "$audit_config" \
             --registry https://registry.yarnpkg.com \
             --threshold high \
             --result "$policy"
