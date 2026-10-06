@@ -8,7 +8,10 @@ import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
+import {
+  approveOpenClawAdminScope,
+  exactRequestAdminApprovalConnectScript,
+} from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
@@ -365,9 +368,10 @@ describe("managed image activation failure diagnostics", () => {
     expect(hostCommand.mock.calls[1]![1][1]).toContain(`expected_request_id='${requestIds[1]}'`);
   });
 
-  it("preserves feature approval success without running host logout hooks or creating a cron job", async () => {
+  it("approves the captured request when an earlier request remains pending", async () => {
     const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const staleRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
     const commandLog = fixture.path("commands.log");
     const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fs.writeFileSync(join(fixture.homeDir, ".bash_logout"), "echo HOST_LOGOUT_RAN; false\n");
@@ -383,8 +387,15 @@ esac
 `,
     );
     try {
+      const preparedEnv = prepareManagedAdminState(fixture.root, requestId);
+      const devicesPath = preparedEnv.FAKE_DEVICES_STATE!;
+      const devicesState = JSON.parse(fs.readFileSync(devicesPath, "utf8")) as {
+        pending: Array<Record<string, unknown>>;
+      };
+      devicesState.pending.unshift({ ...devicesState.pending[0], requestId: staleRequestId });
+      fs.writeFileSync(devicesPath, JSON.stringify(devicesState));
       const env = fixture.environment({
-        ...prepareManagedAdminState(fixture.root, requestId),
+        ...preparedEnv,
         ADMIN_COMMAND_LOG: commandLog,
         OPENCLAW_GATEWAY_PORT: "18789",
         OPENCLAW_GATEWAY_TOKEN: "fixture-token",
@@ -416,6 +427,56 @@ esac
       expect(fs.readFileSync(commandLog, "utf8")).toBe(
         `devices list --json\ndevices approve ${requestId}\n`,
       );
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("rejects duplicate canonical records for the captured request", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-duplicate-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const approveLog = fixture.path("approve.log");
+    const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf '%s\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
+`,
+    );
+
+    try {
+      const preparedEnv = prepareManagedAdminState(fixture.root, requestId);
+      const devicesPath = preparedEnv.FAKE_DEVICES_STATE!;
+      const devicesState = JSON.parse(fs.readFileSync(devicesPath, "utf8")) as {
+        pending: Array<Record<string, unknown>>;
+      };
+      devicesState.pending.push({ ...devicesState.pending[0] });
+      fs.writeFileSync(devicesPath, JSON.stringify(devicesState));
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cron", requestId)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...preparedEnv,
+            MANAGED_ADMIN_APPROVE_LOG: approveLog,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("ADMIN_REQUEST_SELECTION_FAILED");
+      expect(existsSync(approveLog)).toBe(false);
+      expect(result.stderr).not.toContain(requestId);
     } finally {
       fixture.remove();
     }
