@@ -13,6 +13,8 @@ mod catalog_sources;
 mod ci;
 #[path = "docs.rs"]
 mod docs;
+#[path = "fabric_cache.rs"]
+mod fabric_cache;
 #[cfg(feature = "sdk")]
 #[path = "fern.rs"]
 mod fern;

@@ -38,6 +38,7 @@ default-filter = '''
 | (package(nemoclaw-build) & (
     test(runtime_archive_loads_with_its_exported_digest)
     | test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache)
+    | test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/)

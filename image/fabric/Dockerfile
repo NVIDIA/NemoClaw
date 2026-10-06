@@ -43,7 +43,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
     && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
+# Archive extraction gives every Fabric revision the same paths and timestamps,
+# so a shared Cargo target cache can link a newer binding against an older core.
+# Share downloads only; compiled artifacts stay in this source-specific layer.
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
