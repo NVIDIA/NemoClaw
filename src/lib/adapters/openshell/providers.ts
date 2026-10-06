@@ -18,6 +18,8 @@ import {
 
 import {
   ManagedBraveProfileResponseSchema,
+  ManagedTavilyProfileResponseSchema,
+  ManagedHermesTavilyProfileResponseSchema,
   ManagedOpenAiProfileResponseSchema,
   BuiltinNvidiaProfileResponseSchema,
   ProviderResponseSchema,
@@ -26,6 +28,14 @@ import {
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
+
+const managedProfileSchemas = {
+  brave: ManagedBraveProfileResponseSchema,
+  openai: ManagedOpenAiProfileResponseSchema,
+  tavily: ManagedTavilyProfileResponseSchema,
+  "tavily-hermes-v1": ManagedHermesTavilyProfileResponseSchema,
+};
+type ManagedProfileContract = keyof typeof managedProfileSchemas;
 
 export type Provider = Readonly<
   Pick<OpenShellProviderMetadata, "name" | "type" | "credentialKeys" | "configKeys"> & {
@@ -37,7 +47,7 @@ export type Provider = Readonly<
     profileWorkspace?: string;
     // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
-      id: "brave" | "openai";
+      id: ManagedProfileContract;
       source: "builtin" | "user";
       scope: "" | "platform" | "workspace";
       resourceVersion: string;
@@ -50,7 +60,7 @@ export interface Providers {
       Readonly<{
         name: string;
         configKeys: readonly string[];
-        profileContract?: "brave" | "openai";
+        profileContract?: ManagedProfileContract;
       }>,
   ): Promise<Provider | null>;
 }
@@ -58,12 +68,13 @@ export interface Providers {
 async function readBuiltinNvidiaEndpoint(
   client: OpenShellReadClient,
   request: ReadRequest,
+  profileWorkspace: string,
 ): Promise<string> {
   request.signal.throwIfAborted();
   readValue(
     BuiltinNvidiaProfileResponseSchema,
     await client.raw.getProviderProfile(
-      { id: "nvidia", workspace: request.workspace },
+      { id: "nvidia", workspace: profileWorkspace },
       { signal: request.signal },
     ),
   );
@@ -73,7 +84,7 @@ async function readBuiltinNvidiaEndpoint(
 async function readManagedProfile(
   client: OpenShellReadClient,
   request: ReadRequest,
-  profileId: "brave" | "openai",
+  profileId: ManagedProfileContract,
   providerType: string,
   profileWorkspace: string | undefined,
 ): Promise<NonNullable<Provider["managedProfile"]> | null> {
@@ -100,13 +111,10 @@ async function readManagedProfile(
 
 function validateManagedProfileResponse(
   response: unknown,
-  profileId: "brave" | "openai",
+  profileId: ManagedProfileContract,
   profileWorkspace: string,
 ): NonNullable<Provider["managedProfile"]> {
-  const { profile } = readValue(
-    profileId === "brave" ? ManagedBraveProfileResponseSchema : ManagedOpenAiProfileResponseSchema,
-    response,
-  );
+  const { profile } = readValue(managedProfileSchemas[profileId], response);
   const builtin = profile.source === "builtin";
   const customScope = profileWorkspace === "" ? "platform" : "workspace";
   const expectedScope = builtin ? "" : customScope;
@@ -133,10 +141,14 @@ async function readProfileEvidence(
   let builtinInferenceEndpoint: string | undefined;
   if (
     provider.type === "nvidia" &&
-    provider.profileWorkspace === "" &&
+    (provider.profileWorkspace === "" || provider.profileWorkspace === request.workspace) &&
     Object.keys(provider.config).length === 0
   ) {
-    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(client, request);
+    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(
+      client,
+      request,
+      provider.profileWorkspace,
+    );
   }
   const managedProfile =
     request.profileContract === undefined

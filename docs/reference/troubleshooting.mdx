@@ -698,19 +698,27 @@ Unknown service query errors remain fatal. The installer also stops for malforme
 
 ### Sandbox build fails during OpenClaw plugin install
 
-During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package. The neutral managed image does not declare `plugins.entries.tavily`; onboarding adds that entry only when you select Tavily Search.
+Managed OpenClaw images preinstall the reviewed Brave and Tavily plugins from pinned archives.
+The image build verifies archive integrity before installing each plugin offline.
+Both search plugins remain disabled in the neutral image; onboarding enables only the selected provider and supplies its OpenShell credential reference.
 
-Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
+An `integrity mismatch` or `has no committed npm integrity pin` error stops the build before the affected plugin is installed.
+If `openclaw plugins install` fails, the build stops before running `openclaw doctor` for that provider.
+Preserve the complete error, plugin name, and NemoClaw revision, then report the failed archive verification or native installation to a maintainer.
+Do not change the package pins or bypass verification to continue.
+Widening sandbox network policy or disabling web search does not repair these offline build failures.
 
-```bash
-NEMOCLAW_WEB_SEARCH_PROVIDER=none $$nemoclaw onboard --resume
-```
+Archive downloads occur before the offline installation step.
+For a failed download, check the host network or proxy that fetches the archive; sandbox egress policy does not control that download.
 
-If you want the feature, fix the network or policy path first, then resume onboarding:
+After the reviewed build inputs or native installation failure are corrected, rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
 
 ```bash
 $$nemoclaw onboard --resume
 ```
+
+Confirm that archive verification and plugin installation complete without errors.
 
 </AgentOnly>
 
@@ -1272,13 +1280,14 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw,hermes,deepagents">
 
-### Onboarding fails because the inference route served no model catalog
+### Onboarding reports a model-catalog HTTP 404
 
-Onboarding verifies the sandbox inference route before it reports the deployment healthy.
-When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
-Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+NemoClaw accepts that response only after a bounded inference request serves the selected model.
+Onboarding and `status` report the route ready when that request succeeds.
 
 Re-check the route and the recorded provider and model:
 
@@ -1286,10 +1295,16 @@ Re-check the route and the recorded provider and model:
 $$nemoclaw <name> status
 ```
 
-`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+If the inference request fails, `status` reports that failure instead of accepting the catalog response.
+Confirm the OpenRouter credential and selected model, then continue the recorded session:
 
-Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
-This result is resumable, so correct the endpoint and continue the recorded session:
+```bash
+$$nemoclaw onboard --resume
+```
+
+For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
+Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
+Then continue the recorded session:
 
 ```bash
 $$nemoclaw onboard --resume
@@ -2174,7 +2189,7 @@ Fix the streaming layer on the endpoint or gateway, or onboard with a different 
 
 This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. NemoClaw accepts `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance input only while managed Dockerfile callers transition, but it does not emit an OpenClaw device-auth bypass key. Changing the input before or after a build does not skip device pairing.
 
-Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
+Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/security-controls/gateway-authentication-controls).
 
 ### OpenClaw Config Is Empty After Legacy or Manual Damage
 

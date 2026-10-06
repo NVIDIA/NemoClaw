@@ -95,14 +95,15 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "compatible-endpoint",
         "--model",
         "model-b",
-        "--no-verify",
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
       sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "model-b",
@@ -141,11 +142,11 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "compatible-endpoint",
         "--model",
         "model-b",
-        "--no-verify",
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalled();
@@ -202,14 +203,15 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
           "set",
           "-g",
           "nemoclaw",
+          "--no-verify",
           "--provider",
           "compatible-endpoint",
           "--model",
           "model-b",
-          "--no-verify",
         ],
       ]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw",
         sandboxName: "alpha",
         provider: "compatible-endpoint",
         model: "model-b",

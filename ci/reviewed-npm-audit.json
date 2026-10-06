@@ -12,9 +12,7 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": [
-    "@earendil-works/pi-coding-agent@0.80.6"
-  ],
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -61,6 +59,12 @@
       "packageSpec": "@openclaw/brave-plugin@2026.9.2",
       "integrity": "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==",
       "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"
+    },
+    {
+      "label": "OpenClaw Tavily plugin 2026.9.2",
+      "packageSpec": "@openclaw/tavily-plugin@2026.9.2",
+      "integrity": "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz"
     },
     {
       "label": "OpenClaw Discord plugin 2026.9.2",
@@ -110,7 +114,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "c387e62372cba539d24725e70d26b32093a7bb6f001cd16a473ba74404a4e0f9"
+      "lockSha256": "b7e4639c1fc4c82f884f04c180bb21d3a2e6a42555631e3f3853a6ff4c43097c"
     },
     {
       "id": "wechat-runtime",
@@ -132,7 +136,7 @@
       "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
       "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
+      "lockSha256": "638758ddee2772a6cb2ad8b68f4697708b5ddf21334e2f9fa79bef1d1fed1907"
     }
   ]
 }
