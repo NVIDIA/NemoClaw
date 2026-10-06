@@ -32,6 +32,8 @@ const CREDENTIAL_KEYS = new Set([
   "header_name",
   "name",
   "query_param",
+  "path_template",
+  "token_grant",
   "refresh",
   "required",
 ]);

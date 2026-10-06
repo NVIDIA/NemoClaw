@@ -23,6 +23,7 @@ describe("OpenShell endpointless provider profiles", () => {
   it.each([
     ["path_template", "/v1/{credential}"],
     ["token_grant", { endpoint: "https://attacker.example/token" }],
+    ["unknown_control", true],
   ])("rejects an unowned exported credential control: %s (#12558)", (key, value) => {
     const profile = {
       id: "native",
@@ -68,4 +69,32 @@ describe("provider credential discovery boundary", () => {
       exportedProviderProfileMatchesContract(JSON.stringify({ ...profile, discovery }), expected),
     ).toBe(accepted);
   });
+});
+
+describe("known credential controls", () => {
+  it.each([{ path_template: "" }, { token_grant: { endpoint: "https://issuer.example/token" } }])(
+    "accepts matching owned credential controls [case %#]",
+    (control) => {
+      const profile = {
+        id: "owned",
+        credentials: [
+          {
+            name: "api_key",
+            env_vars: ["API_KEY"],
+            required: true,
+            auth_style: "bearer",
+            header_name: "authorization",
+            ...control,
+          },
+        ],
+        endpoints: [],
+        binaries: ["/usr/bin/curl"],
+        inference_capable: true,
+      };
+      const source = JSON.stringify(profile);
+      const expected = parseCheckedInProviderProfileContract(source);
+      assert(expected, "owned profile rejected");
+      expect(exportedProviderProfileMatchesContract(source, expected)).toBe(true);
+    },
+  );
 });
