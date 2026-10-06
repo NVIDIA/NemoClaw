@@ -45,7 +45,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
-| `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again; see [compatibility diagnostics](validation/fabric-compatibility-linux-arm64.md) |
+| `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
@@ -72,7 +72,6 @@ All explicit YAML tags, including `!!binary`, `!!str`, `!!map`, and `!!seq`, are
 Tag-like text inside a quoted or block string is preserved.
 
 Correct the input, then rerun plan with the same state directory before choosing apply.
-The [validation diagnostic qualification](validation/configuration-diagnostics-linux-arm64.md) records the tests and CLI checks.
 
 ## Recover a Managed Gateway Startup Failure
 
@@ -86,7 +85,6 @@ After correcting the image or configuration problem, explicitly reapply using th
 If retiring the deployment, preview and [destroy](usage.md#destroy) it with the same state directory.
 Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
 If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
-The [gateway startup qualification](validation/gateway-startup-linux-arm64.md) records the tested paths and limits.
 
 ## Inference and Agent Readiness
 
@@ -113,8 +111,6 @@ The SDK excludes unrecognized reasons and raw backend condition messages because
 Use the OpenShell inspection and log collection procedure below before cleanup.
 If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
 A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
-The [startup diagnostic qualification](validation/sandbox-startup-linux-arm64.md) records the live missing-user reproduction and fixture coverage.
-The [current main-process environment blocker](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) can stop startup before native log files exist.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 

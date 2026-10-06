@@ -46,7 +46,6 @@ The SDK preserves and validates this metadata during image discovery.
 The SDK compiles image discovery into each sandbox's launch and policy, retaining the binding in state and OpenShell annotations for refresh and teardown.
 Provider profiles use the selected adapter's nonempty executable list; inference and search registrations are scoped by immutable image and adapter identity so different images do not combine executable permissions.
 An explicit sandbox policy replaces the image's filesystem and process defaults while preserving deployment-managed endpoint grants.
-The [ARM64 metadata qualification](../docs/validation/image-runtime-metadata-linux-arm64.md) records the earlier publication-only checks; the [consumer qualification](../docs/validation/image-runtime-consumers-linux-arm64.md) covers the subsequent deployment integration.
 
 `fabric/catalog.json` is an offline snapshot produced by Fabric discovery at the revision and checksum recorded in that file and pinned in the Dockerfile.
 2026-09-24: serialize canonical descriptor records and provenance without local adapter additions or native schema patches.

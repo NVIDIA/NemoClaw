@@ -43,12 +43,7 @@ Cache and compute use native Docker-provider reconciliation; a cross-host transf
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.
 
-The earlier custom-controller lifecycle was qualified by a live two-daemon DGX Spark test.
-That retained result does not qualify the current Docker-provider path on GPU hardware.
-The live test used a second Docker daemon in a network namespace, SSH control, rootless Podman sandboxes, and actual OpenClaw replies through OpenShell.
-See [the recorded test results](validation/rust-dual-daemon-linux-arm64.json).
-
-Both daemons shared the physical host and GPU; a separate-host deployment and other hardware remain qualification gates.
+The current Docker-provider path is unqualified on GPU hardware; a separate-host deployment and other hardware remain qualification gates.
 
 A successful apply establishes configuration and readiness.
 Verify an agent response through OpenShell separately using [inference verification](inference.md#verify-the-result).

@@ -46,7 +46,7 @@ Follow the [source-build guide](build.md) for tool versions and a verified CLI/O
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-[Native platform test results](validation/rust-native-platforms.json) identify the tested revisions; they do not qualify GPU deployment on all five platforms.
+Native CI builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
 
 Prebuilt release downloads and a supported installation/upgrade channel: **TBD**.
 
@@ -55,7 +55,7 @@ Prebuilt release downloads and a supported installation/upgrade channel: **TBD**
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](usage.md) and [inference](inference.md) |
-| Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
+| Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](build.md#build-agent-images) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](usage.md#use-a-managed-podman-gateway) |
@@ -73,8 +73,6 @@ The example deployment UUIDs, endpoints, and local image digests must be replace
 | Linux AMD64 Fabric deployment | **TBD** — the native Deep Agents and OpenClaw image builds and tests do not establish gateway provisioning or an end-to-end agent response |
 | AMD64 Nemotron image and GPU inference | **TBD** — configuration and build-platform tests do not establish a successful image build, model load, or agent response on the target host |
 | Windows/WSL or macOS local GPU deployment | **TBD** — native client test results do not establish runtime support |
-| Separate physical SSH model host | **TBD** — the retained two-daemon live result used one DGX Spark |
+| Separate physical SSH model host | **TBD** — requires qualification with the model service on a separate physical host |
 | Distributed inference across two Sparks or Stations | **TBD** — SSH placement alone does not implement distributed inference |
 | Every harness/provider/model combination | **TBD** — requires test results for the specific combination |
-
-Use [recorded test results](validation/README.md) for the configurations tested so far.

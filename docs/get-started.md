@@ -33,7 +33,7 @@ Review [credential ownership](security.md#credentials-and-authentication) and [d
 
 ## 2. Build the Agent Image
 
-Follow [the Fabric image build](inference.md#build-an-image-with-the-configuration-interface) for OpenClaw.
+Follow [the agent image build](build.md#build-agent-images) for OpenClaw.
 Record the printed immutable image reference and make that exact image available to the gateway's sandbox compute daemon.
 The image must include this revision's configuration and dashboard interfaces.
 An example's old digest or zero-digest placeholder is not a downloadable release artifact.
@@ -41,19 +41,29 @@ An example's old digest or zero-digest placeholder is not a downloadable release
 ## 3. Prepare Desired-State YAML
 
 Use a working directory that does not already contain another deployment.
-Copy the maintained [dashboard example](../examples/openclaw-dashboard.yaml) into it:
+Copy the maintained [dashboard example](../examples/openclaw-dashboard.yaml) into it and generate a fresh deployment UUID:
 
 ```sh
 mkdir -p .local/first-deployment
 cp examples/openclaw-dashboard.yaml .local/first-deployment/deployment.yaml
-python3 -c 'import uuid; print(uuid.uuid4())'
+uuidgen
 ```
+
+To answer questions instead of editing YAML, run [guided onboarding](reference/cli.md#commands) in a terminal:
+
+```sh
+mkdir -p .local/first-deployment
+nemoclaw onboard examples/openclaw-dashboard.yaml --output .local/first-deployment/deployment.yaml
+```
+
+Onboarding starts from the example's values, writes a fresh `metadata.uid`, and saves validated YAML without creating deployment state.
+Check the saved file against the table below before planning.
 
 Edit the copied YAML before executing it:
 
 | Field | Value to supply |
 |---|---|
-| `metadata.uid` | The fresh UUID printed above; retain it for every operation on this deployment |
+| `metadata.uid` | The fresh UUID printed above, or the one onboarding wrote; retain it for every operation on this deployment |
 | `metadata.name` | Your deployment label |
 | `spec.gateway.endpoint` | Your existing gateway's endpoint |
 | `spec.gateway.credential` and `spec.gateway.tls` | References required by that gateway; omit optional fields when unused |
@@ -123,7 +133,7 @@ Keep the forward bound to loopback.
 In the native dashboard, send a short prompt such as `Reply with a short greeting.`
 Verify an agent reply, which tests this endpoint/model/harness interaction beyond dashboard access or readiness.
 It does not establish general model quality or tool reliability.
-Browser and first-message rehearsal of this exact procedure: **TBD** — retained historical interface fixtures do not qualify the migrated adapter.
+Browser and first-message rehearsal of this exact procedure: **TBD**.
 
 Stop forwarding with Ctrl-C when finished.
 The deployment continues running after the client exits.

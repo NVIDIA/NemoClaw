@@ -56,31 +56,6 @@ The standalone example uses the same questionnaire:
 cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-### Watch and replay the built-in guided scenario
-
-This local scenario needs Python 3 and tmux.
-It creates a tmux session, a temporary YAML file, and a screen transcript; it does not contact a deployment target or apply resources.
-From the repository root, build the example and start the replay:
-
-```sh
-cargo build -p nemoclaw-onboarding
-python3 examples/onboarding-tui/scripts/replay_guided.py --wait-for-viewer --keep-session --delay 2
-```
-
-The driver prints a `tmux attach-session -r` command.
-Run it in another terminal to watch; replay waits for that viewer before answering.
-It checks each expected screen, saves YAML to a new temporary path, checks selected fields, and writes a JSONL screen transcript beside the YAML.
-Omit `--wait-for-viewer` and use `--delay 0` for a fast unattended replay.
-The default scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
-To replay the more sparse inline template through the same TUI, run:
-
-```sh
-python3 examples/onboarding-tui/scripts/replay_guided.py --template crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml --wait-for-viewer --keep-session --delay 2
-```
-
-This template supplies the inline forms and one route, then asks for missing names, gateway management, harness, provider preset, and model. The replay selects OpenClaw and checks the saved desired state. It does not probe or apply a target.
-If a question changes, replay stops and prints the unexpected screen; inspect the transcript and rerun with new output paths after updating the expected steps.
-
 Both entrypoints treat input YAML only as defaults for a new deployment.
 There is no mode for editing an existing deployment or retaining the template's UID.
 Both entrypoints accept the single-sandbox deployment examples as templates, including existing managed inference services and multiple model routes.

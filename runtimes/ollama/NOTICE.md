@@ -20,5 +20,5 @@ The runtime verifies pinned model manifests and blobs in persistent storage befo
 Model licenses remain with the registry snapshot; they are not replaced by the supervisor license.
 
 Deterministic tests cover the adapter and shared lifecycle.
-The [Linux ARM64 cache qualification](../../docs/validation/model-cache-linux-arm64.md) verifies this base image's version and its observation of a synthetic cache installed by the runtime.
+The [model cache test](../../docs/contributing/integration-tests.md#model-cache-compatibility) verifies this base image's version and its observation of a synthetic cache installed by the runtime.
 Live GPU inference qualification of this artifact remains TBD; an upstream image pin and successful build alone do not qualify a GPU or model.

@@ -20,7 +20,6 @@ Confirm that the selected example's gateway and inference ports are unused and t
 Stop or resize only workloads you own before reserving GPU capacity.
 
 The [hardware profile reference](../../docs/models.md#choose-a-hardware-profile) defines the admission checks.
-The retained records cover the [OpenClaw example](../../docs/validation/dgx-station-qwen3-openclaw-linux-arm64.md) and [shared OpenClaw and Pi example](../../docs/validation/dgx-station-shared-model-linux-arm64.md).
 
 ## Build the ARM64 Artifacts
 

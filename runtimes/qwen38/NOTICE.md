@@ -81,6 +81,6 @@ This image retains its recipe scripts separately under `/opt/nemoclaw/source/` a
 Building the retained supervisor requires the pinned Rust toolchain and a native C build toolchain.
 It does not require the Protocol Buffers compiler.
 
-These corrections apply to newly built artifacts; they do not alter previously built images or historical validation records.
+These corrections apply to newly built artifacts; they do not alter previously built images.
 Retaining source and attribution does not itself provide the remote-user source offer required by AGPL section 13 for a modified network service.
 Deployment and distribution obligations must also be satisfied.

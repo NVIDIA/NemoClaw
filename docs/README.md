@@ -6,7 +6,6 @@
 These guides describe the v1 development branch.
 Sections marked **TBD** need a verified implementation, test results, or a completed procedure before they can describe supported use.
 TBD is not a support claim or a delivery commitment.
-Use the [validation matrix](validation/README.md) to distinguish tested configurations from checks still required.
 
 ## Get Started
 
@@ -56,33 +55,30 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 
 | Task | Guide |
 |---|---|
-| Run workspace checks and collect coverage | [Tests](testing.md) |
-| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](testing/fixtures.md) |
-| Test explicitly owned live resources | [Run live tests](testing/live.md) |
-| Inspect retained results and their limits | [Recorded test results](validation/README.md) |
-| Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
-| Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
-| Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |
+| Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
+| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](contributing/integration-tests.md) |
+| Test explicitly owned live resources | [Run live tests](contributing/live-tests.md) |
+| Write or reorganize documentation | [Contribute documentation](contributing/documentation.md) |
+| Validate, preview, or publish the v1 site | [Documentation build](contributing/documentation-build.md) |
+| Update the generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
 
 ## Understand the Design
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-The design decision defines current invariants; historical test results apply only to their recorded revisions and environments.
+The design decision defines current invariants.
 
 | Topic | Owner |
 |---|---|
 | Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
 | Authoring concepts, ownership, and validation gates | [Authoring domain model](design/authoring-domain.md) |
-| Partial-document onboarding coverage and remaining work | [Onboarding journey prototype](design/onboarding-journeys.md) |
+| Partial-document onboarding coverage and open design questions | [Onboarding journey prototype](design/onboarding-journeys.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
-| Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
+| Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
-| Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
-| Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 
 ## Sources and Fixtures
 

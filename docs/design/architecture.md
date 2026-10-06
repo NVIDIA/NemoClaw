@@ -77,7 +77,7 @@ See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
 
 ## Configuration
 
-Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
+Desired-state YAML passes through the SDK's [configuration validation](../contributing/configuration-schema.md).
 Configuration retains credential references, not values.
 
 The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) retains sparse authored values while a frontend answers questions.
@@ -103,7 +103,7 @@ A pin update must preserve the currently qualified native configuration, model r
 
 The [authoring domain model](authoring-domain.md) defines the journey's configuration, run state, question resolution, and validation gates.
 It separates authored intent from decision status, interview position, and target observations.
-The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
+The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and open design questions.
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
@@ -231,6 +231,5 @@ Export preserves desired settings and credential references, not agent files, hi
 
 ## Validation
 
-[Integration fixtures](../testing/fixtures.md) exercise the production provider and SDK through the pinned OpenTofu binary, including interrupted operations and failed observations.
-[Recorded results](../validation/README.md) identify tested revisions, platforms, and remaining limits.
+[Integration fixtures](../contributing/integration-tests.md) exercise the production provider and SDK through the pinned OpenTofu binary, including interrupted operations and failed observations.
 Successful resource creation or readiness does not establish working inference; that requires a separate model or agent response test.

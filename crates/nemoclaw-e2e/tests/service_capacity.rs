@@ -5,7 +5,7 @@
 use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
@@ -19,12 +19,11 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
-    fs::write(
+    std::os::unix::fs::symlink(
+        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
         root.join("bin/ssh"),
-        include_bytes!("fixtures/remote_ssh.py"),
     )
     .unwrap();
-    fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
     for (file, value) in [
         ("engine.json", json!({"effects":0})),
         ("fixture.json", json!({})),

@@ -6,7 +6,7 @@
 <!-- Generated from the SDK schema. Edit Rust field descriptions and constraints, then run cargo run --locked -p nemoclaw-build -- schema. -->
 
 This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.
-See [schema maintenance](../configuration-schema.md) for generation and validation commands.
+See [schema maintenance](../contributing/configuration-schema.md) for generation and validation commands.
 
 Paths use `[]` for an array element and `{key}` for a map entry.
 Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.
