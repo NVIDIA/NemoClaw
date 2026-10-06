@@ -247,10 +247,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
-    nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
-      rest.nativeBedrockProviderAttachment,
-      rest,
-    ),
+    ...(rest.nativeBedrockProviderAttachment !== undefined
+      ? {
+          nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
+            rest.nativeBedrockProviderAttachment,
+            rest,
+          ),
+        }
+      : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
@@ -315,10 +319,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
-    nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
-      rest.nativeBedrockProviderAttachment,
-      rest,
-    ),
+    ...(rest.nativeBedrockProviderAttachment !== undefined
+      ? {
+          nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
+            rest.nativeBedrockProviderAttachment,
+            rest,
+          ),
+        }
+      : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),

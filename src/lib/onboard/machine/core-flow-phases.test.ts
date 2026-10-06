@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { nativeBedrockSwitchFixture } from "../../inference/native-bedrock/switch.test-support";
 import * as credentialStore from "../../credentials/store";
 import {
   type InferenceEndpointSource,
@@ -14,6 +15,7 @@ import {
   isPendingReservationForSession,
   removeSandbox,
   reserveSandboxInferenceRoute,
+  updateSandbox,
 } from "../../state/registry";
 import { classifySandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import type { InferenceRouteReservationAuthority } from "../types";
@@ -333,6 +335,7 @@ function createPhases(
 
 describe("core onboard flow phases", () => {
   it("keeps a fresh Bedrock route reservation identical through sandbox admission (#9833)", async () => {
+    const { receipt } = nativeBedrockSwitchFixture();
     const durableSession = createSession();
     const sandboxName = `hosted-route-${durableSession.sessionId}`;
     const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
@@ -347,6 +350,8 @@ describe("core onboard flow phases", () => {
       const reservation = getSandbox(sandboxName);
       expect(authority).toMatchObject({ sessionId: durableSession.sessionId });
       expect(createIntent.endpointSource).toBe("onboard");
+      expect(createIntent).toMatchObject({ resolved: { inferenceProvider: receipt.providerName } });
+      expect(reservation?.nativeBedrockProviderAttachment).toEqual(receipt);
       expect(
         classifySandboxInferenceRouteReservation(
           {
@@ -391,6 +396,7 @@ describe("core onboard flow phases", () => {
                 reservationSessionId: options?.reservationSessionId,
               }),
             ).toBe(true);
+            updateSandbox(name, { nativeBedrockProviderAttachment: receipt });
             return { ok: true as const };
           },
         ),

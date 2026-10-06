@@ -96,7 +96,7 @@ describe("runInferenceSet local-provider verification", () => {
       session: baseSession(),
     });
 
-    await runInferenceSet({ provider: "openrouter", model: "openai/gpt-5.4-mini" }, deps);
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4-mini" }, deps);
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
