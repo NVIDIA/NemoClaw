@@ -143,8 +143,8 @@ export async function nativeCompatibleRotationFixture() {
     ),
     detachProvider: vi.fn(
       async ({ sandboxName, providerName }: { sandboxName: string; providerName: string }) => {
-        attachments.get(sandboxName)?.delete(providerName);
-        return { ok: true as const };
+        const changed = attachments.get(sandboxName)?.delete(providerName) ?? false;
+        return { ok: true as const, value: { changed } };
       },
     ),
   };
