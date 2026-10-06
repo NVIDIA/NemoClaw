@@ -1055,6 +1055,7 @@ test(
         host.cleanupSandbox(SANDBOX_NAME, {
           artifactName: "cleanup-nemoclaw-destroy",
           env: env(),
+          preserveGatewayRegistration: USE_PREINSTALLED_LAUNCHABLE,
           redactionValues: [hosted.apiKey],
           timeoutMs: 120_000,
         }),
@@ -1425,11 +1426,13 @@ test(
 
     progress.phase("remove full-E2E sandbox");
     const finalDestroy = USE_PREINSTALLED_LAUNCHABLE
-      ? await repoNemoclaw(
-          host,
-          [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
-          "verify-cleanup-nemoclaw-destroy",
-        )
+      ? await host.destroySandbox(SANDBOX_NAME, {
+          artifactName: "verify-cleanup-nemoclaw-destroy",
+          env: env(),
+          preserveGatewayRegistration: true,
+          redactionValues,
+          timeoutMs: 120_000,
+        })
       : null;
     await (USE_PREINSTALLED_LAUNCHABLE
       ? Promise.resolve()
