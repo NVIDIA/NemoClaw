@@ -109,7 +109,7 @@ describe("agent variant docs", () => {
     const sourcePath = "manage-sandboxes/recover-rebuild-sandboxes.mdx";
     const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
     const render = (variant: "openclaw" | "hermes" | "deepagents") =>
-      renderAgentVariantPage(pageSource, variant, { sourcePath });
+      renderAgentVariantPage(pageSource, variant, { sourcePath }).replace(/\s+/g, " ");
     const gatewayStartRepair =
       "The `start` command repairs the agent runtime and host-side port forwards.";
     const gatewayStartSuccess =

@@ -682,7 +682,8 @@ describe.concurrent("CLI sandbox status text output", () => {
         30000,
       );
 
-      expect(r.code, r.out).toBe(gatewayState === "present" ? 1 : 0);
+      // An intentional stop does not require a live inference route or agent probe.
+      expect(r.code, r.out).toBe(0);
       expect(r.out).not.toContain("Failure layer:");
       expect(r.out).toContain("Phase: Stopped");
       expect(r.out).not.toContain("Phase: Provisioning");
@@ -706,6 +707,7 @@ describe.concurrent("CLI sandbox status text output", () => {
       expect(parsed.phase).toBe("Stopped");
       expect(parsed.gatewayState).toBe(gatewayState);
       expect(parsed.failureLayer).toBeNull();
+      expect(parsed.routeDrift).toBeNull();
     },
   );
 });

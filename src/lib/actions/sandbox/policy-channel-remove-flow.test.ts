@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
@@ -24,8 +28,11 @@ import * as commandTransport from "../../adapters/sandbox/command-transport";
 describe("policy channel remove/enable flows", () => {
   let exitSpy: MockInstance;
   let logSpy: MockInstance;
+  let testHome: string;
 
   beforeEach(() => {
+    testHome = mkdtempSync(join(tmpdir(), "nemoclaw-channel-remove-"));
+    vi.stubEnv("HOME", testHome);
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -45,6 +52,8 @@ describe("policy channel remove/enable flows", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    rmSync(testHome, { recursive: true, force: true });
   });
 
   async function arrangeChannelRemoval(

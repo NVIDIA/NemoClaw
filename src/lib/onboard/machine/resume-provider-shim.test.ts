@@ -3,7 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../credentials/store", () => ({
+vi.mock("../../credentials/store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../credentials/store")>()),
   resolveProviderCredential: vi.fn(() => null),
 }));
 

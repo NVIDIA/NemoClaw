@@ -176,6 +176,7 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
       "ensure_hermes_runtime_api_server_key() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
+      "validate_hermes_native_inference_credential() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "migrate_legacy_hermes_dashboard_state() { :; }",
       "configure_messaging_channels() { :; }",
@@ -186,7 +187,7 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
       "finalize_tirith_marker_retry",
     ]);
 
-    expect(run.result.status).toBe(0);
+    expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.markerKind?.isFile()).toBe(true);
     expect(run.markerContent).toBe("download_failed");
   });

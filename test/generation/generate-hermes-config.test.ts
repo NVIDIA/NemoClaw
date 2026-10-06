@@ -268,6 +268,18 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     ),
     path.join(fixtureRoot, "src", "lib", "inference", "native-hosted", "openrouter-headers.ts"),
   );
+  fs.copyFileSync(
+    path.join(
+      import.meta.dirname,
+      "../..",
+      "src",
+      "lib",
+      "inference",
+      "native-hosted",
+      "profiles.ts",
+    ),
+    path.join(fixtureRoot, "src", "lib", "inference", "native-hosted", "profiles.ts"),
+  );
   return fixtureScriptPath;
 }
 
