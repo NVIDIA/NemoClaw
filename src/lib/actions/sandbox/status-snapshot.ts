@@ -865,7 +865,6 @@ export async function collectSandboxStatusSnapshot(
           probeLabel: "provider attachment",
         }
       : buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
-          agentName: sb?.agent ?? null,
           provider: invocationRoute.provider ?? null,
           nativeNvidia,
           ...(bedrockReceipt

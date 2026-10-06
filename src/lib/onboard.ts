@@ -3271,7 +3271,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     agent?.name,
                   ),
                 inferenceRouteContext: {
-                  agentName: agent?.name,
                   provider: liveFinalFlowContext.provider,
                 },
               },

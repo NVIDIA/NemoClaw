@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   NativeProviderError as NativeNvidiaProviderError,
   ensureNativeProvider,
+  persistNativeProviderAuthority,
   verifyNativeProviderAttachment,
   ensureNativeProviderAttached,
   detachNativeProvider,
@@ -117,4 +118,25 @@ export async function detachNativeNvidiaProvider(
   },
 ): Promise<void> {
   return detachNativeProvider({ ...input, profile: nativeProfile() });
+}
+
+/** Persist before attaching; failed writes must not strand an unowned provider. */
+export async function persistNativeNvidiaProviderAuthority(
+  input: Omit<
+    Parameters<typeof persistNativeProviderAuthority>[0],
+    "profile" | "recoveryGuidance" | "receipt" | "existing" | "readAuthority" | "writeAuthority"
+  > & {
+    receipt: NativeNvidiaProviderAttachment;
+    existing?: NativeNvidiaProviderAttachment;
+    readAuthority: (gatewayName: string) => NativeNvidiaProviderAttachment | undefined;
+    writeAuthority: (gatewayName: string, receipt: NativeNvidiaProviderAttachment) => void;
+  },
+): Promise<void> {
+  return persistNativeProviderAuthority({
+    ...input,
+    profile: nativeProfile(),
+    recoveryGuidance: `Run 'nemoclaw credentials reset ${NVIDIA_HOSTED_LOGICAL_PROVIDER} --yes' against gateway '${input.gatewayName}', then retry.`,
+    writeAuthority: (gatewayName, receipt) =>
+      input.writeAuthority(gatewayName, nvidiaReceipt(receipt)),
+  });
 }

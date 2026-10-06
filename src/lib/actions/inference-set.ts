@@ -47,6 +47,7 @@ import {
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
   resolveAgentInferenceApi,
   type NativeNvidiaProviderAttachment,
@@ -1063,6 +1064,19 @@ async function prepareNativeNvidiaSelection(input: {
     credentialValue: input.deps.resolveCredentialValue(NVIDIA_HOSTED_CREDENTIAL_ENV) || null,
     ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
   });
+  if (input.deps.getNativeNvidiaProviderAuthority) {
+    await persistNativeNvidiaProviderAuthority({
+      adapter: input.deps.providerAdapter,
+      target,
+      gatewayName: input.gatewayName,
+      receipt: ensured,
+      ...(input.expectedAttachment ? { existing: input.expectedAttachment } : {}),
+      readAuthority: input.deps.getNativeNvidiaProviderAuthority,
+      writeAuthority: input.deps.setNativeNvidiaProviderAuthority,
+    });
+  } else {
+    input.deps.setNativeNvidiaProviderAuthority(input.gatewayName, ensured);
+  }
   const attached = await ensureNativeNvidiaProviderAttached({
     adapter: input.deps.providerAdapter,
     target,
@@ -1118,15 +1132,6 @@ function nativeNvidiaDepartureRegistryFields(
   detached: boolean,
 ): Pick<SandboxEntry, "nativeNvidiaProviderAttachment"> | Record<string, never> {
   return detached ? { nativeNvidiaProviderAttachment: undefined } : {};
-}
-
-function recordNativeNvidiaProviderAuthority(input: {
-  attachment?: NativeNvidiaProviderAttachment;
-  gatewayName: string;
-  deps: InferenceSetDeps;
-}): void {
-  if (!input.attachment) return;
-  input.deps.setNativeNvidiaProviderAuthority(input.gatewayName, input.attachment);
 }
 
 async function restorePreviousNativeNvidiaAfterFailedPublish(input: {
@@ -1746,8 +1751,11 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve that address; verify from inside the sandbox
   // instead, exactly like an explicit bridge route.
   const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
-  const probeDirectSandboxBridge =
+  // OpenRouter onboarding registers a sandbox-facing adapter without a custom
+  // provider binding. Verify its model switches through the sandbox route too.
+  const probeSandboxRoute =
     selectingNative ||
+    provider === "openrouter-api" ||
     isSandboxBridgeProviderBinding(directProviderBinding) ||
     loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
@@ -1755,7 +1763,7 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve host.openshell.internal, so its result would be a
   // guaranteed false negative. HTTPS-pin adapters retain their local-health
   // verification; direct bridge routes are probed from the sandbox below.
-  if (httpsPinProviderBinding || probeDirectSandboxBridge) {
+  if (httpsPinProviderBinding || probeSandboxRoute) {
     effectiveNoVerify = true;
   }
   effectiveNoVerify = validateLocalProviderBeforeSelection(provider, deps) || effectiveNoVerify;
@@ -1843,7 +1851,7 @@ async function runInferenceSetWithoutHostLock(
       nativeNvidia: selectingNative,
       directProviderBinding: Boolean(directProviderBinding),
       httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
-      probeDirectSandboxBridge,
+      probeDirectSandboxBridge: probeSandboxRoute,
       rollbackRoute: Boolean(rollbackRoute),
       previousNativeNvidiaAttachment: Boolean(previousNativeNvidiaAttachment),
     })
@@ -1956,11 +1964,6 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeNvidiaProviderAttachment = nativeNvidiaSelection.attachment;
     nativeNvidiaAttachmentChanged = nativeNvidiaSelection.attachmentChanged;
-    recordNativeNvidiaProviderAuthority({
-      attachment: nativeNvidiaProviderAttachment,
-      gatewayName: preparedRoute.gatewayName,
-      deps,
-    });
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
@@ -2046,7 +2049,7 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
-    if (probeDirectSandboxBridge) {
+    if (probeSandboxRoute) {
       let probe: Awaited<ReturnType<InferenceSetSandboxRouteProbe>>;
       try {
         probe = await probeInferenceSetSandboxRouteUntilConverged(

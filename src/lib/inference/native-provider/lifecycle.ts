@@ -102,6 +102,94 @@ function mutationOutcomeMayBeAmbiguous(error: OpenShellProviderError): boolean {
   );
 }
 
+async function removeNewNativeProvider(input: {
+  profile: NativeProviderProfile;
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  expected: NativeProviderAttachment;
+}): Promise<void> {
+  const provider = await inspectNativeProvider(input.adapter, input.target, input.profile);
+  if (!provider) return;
+  const current = attachmentFromMetadata(provider, input.profile);
+  if (current.providerId !== input.expected.providerId) {
+    throw new NativeProviderError(
+      `Refusing to remove OpenShell provider '${input.profile.providerName}' because its identity changed.`,
+    );
+  }
+  const removed = await input.adapter.deleteProvider({
+    target: input.target,
+    providerName: input.profile.providerName,
+  });
+  if (!removed.ok && !mutationOutcomeMayBeAmbiguous(removed.error)) {
+    throw new NativeProviderError(
+      `Could not remove OpenShell provider '${input.profile.providerName}': ${providerErrorDetail(removed.error)}`,
+    );
+  }
+  const after = await inspectNativeProvider(input.adapter, input.target, input.profile);
+  if (after) {
+    const observed = attachmentFromMetadata(after, input.profile);
+    const identity =
+      observed.providerId === input.expected.providerId ? "still exists" : "changed identity";
+    throw new NativeProviderError(
+      `OpenShell provider '${input.profile.providerName}' ${identity} after cleanup.`,
+    );
+  }
+}
+
+/** Record provider authority or remove only the new, unreferenced provider. */
+export async function persistNativeProviderAuthority(input: {
+  profile: NativeProviderProfile;
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  gatewayName: string;
+  recoveryGuidance: string;
+  receipt: NativeProviderAttachment;
+  existing?: NativeProviderAttachment;
+  readAuthority: (gatewayName: string) => NativeProviderAttachment | undefined;
+  writeAuthority: (gatewayName: string, receipt: NativeProviderAttachment) => void;
+}): Promise<void> {
+  assertExpectedProfile(input.profile, input.receipt);
+  assertExpectedProfile(input.profile, input.existing);
+  try {
+    input.writeAuthority(input.gatewayName, input.receipt);
+    return;
+  } catch (writeError) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    let observed: NativeProviderAttachment | undefined;
+    try {
+      observed = input.readAuthority(input.gatewayName);
+    } catch (readError) {
+      const readDetail = readError instanceof Error ? readError.message : String(readError);
+      throw new NativeProviderError(
+        `NemoClaw could not record or confirm ownership of OpenShell provider '${input.profile.providerName}' for gateway '${input.gatewayName}'. The provider was retained. ${input.recoveryGuidance}\n  Write failure: ${writeDetail}\n  Read failure: ${readDetail}`,
+      );
+    }
+    if (observed?.providerId === input.receipt.providerId) return;
+    if (input.existing || observed) {
+      throw new NativeProviderError(
+        `NemoClaw could not record ownership of OpenShell provider '${input.profile.providerName}' for gateway '${input.gatewayName}'. The provider was retained because this operation cannot prove that it is unreferenced. ${input.recoveryGuidance}\n  ${writeDetail}`,
+      );
+    }
+    try {
+      await removeNewNativeProvider({
+        adapter: input.adapter,
+        target: input.target,
+        expected: input.receipt,
+        profile: input.profile,
+      });
+    } catch (cleanupError) {
+      const cleanupDetail =
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new NativeProviderError(
+        `NemoClaw could not record ownership of OpenShell provider '${input.profile.providerName}' for gateway '${input.gatewayName}', and cleanup did not complete. ${input.recoveryGuidance}\n  Write failure: ${writeDetail}\n  Cleanup failure: ${cleanupDetail}`,
+      );
+    }
+    throw new NativeProviderError(
+      `NemoClaw could not record ownership of OpenShell provider '${input.profile.providerName}' for gateway '${input.gatewayName}'. The newly created provider was removed. Retry the command.\n  ${writeDetail}`,
+    );
+  }
+}
+
 /** Ensure the least-privilege hosted profile and provider without retrying an ambiguous mutation. */
 export async function ensureNativeProvider(input: {
   profile: NativeProviderProfile;

@@ -828,12 +828,14 @@ describe("runInferenceSet compatible providers", () => {
     );
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
       expect.objectContaining({
+        gatewayName: "nemoclaw",
         sandboxName: "alpha",
         provider: "compatible-anthropic-endpoint",
         model: "mock-anthropic-model",
         preferredInferenceApi: "anthropic-messages",
       }),
     );
+
     expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
       deps.calls.updateSandbox.mock.invocationCallOrder[0],
     );

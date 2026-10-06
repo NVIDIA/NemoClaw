@@ -1280,13 +1280,14 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw,hermes,deepagents">
 
-### Onboarding fails because the inference route served no model catalog
+### Onboarding reports a model-catalog HTTP 404
 
-Onboarding verifies the sandbox inference route before it reports the deployment healthy.
-When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
-Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+NemoClaw accepts that response only after a bounded inference request serves the selected model.
+Onboarding and `status` report the route ready when that request succeeds.
 
 Re-check the route and the recorded provider and model:
 
@@ -1294,10 +1295,16 @@ Re-check the route and the recorded provider and model:
 $$nemoclaw <name> status
 ```
 
-`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+If the inference request fails, `status` reports that failure instead of accepting the catalog response.
+Confirm the OpenRouter credential and selected model, then continue the recorded session:
 
-Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
-This result is resumable, so correct the endpoint and continue the recorded session:
+```bash
+$$nemoclaw onboard --resume
+```
+
+For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
+Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
+Then continue the recorded session:
 
 ```bash
 $$nemoclaw onboard --resume

@@ -58,6 +58,7 @@ export {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
 } from "./native-nvidia";
 export type { NativeNvidiaProviderAttachment } from "./native-nvidia";

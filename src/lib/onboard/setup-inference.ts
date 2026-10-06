@@ -51,6 +51,7 @@ import {
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
   type NativeNvidiaProviderAttachment,
 } from "../inference/native-nvidia";
@@ -1176,7 +1177,19 @@ export function createSetupInference(
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
             });
-            deps.setNativeNvidiaProviderAuthority?.(gatewayName, nativeNvidiaProviderAttachment);
+            if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
+              await persistNativeNvidiaProviderAuthority({
+                adapter: providerAdapter,
+                target: { kind: "named", gatewayName },
+                gatewayName,
+                receipt: nativeNvidiaProviderAttachment,
+                ...(providerAuthority ? { existing: providerAuthority } : {}),
+                readAuthority: deps.getNativeNvidiaProviderAuthority,
+                writeAuthority: deps.setNativeNvidiaProviderAuthority,
+              });
+            } else {
+              deps.setNativeNvidiaProviderAuthority?.(gatewayName, nativeNvidiaProviderAttachment);
+            }
             return null;
           }
 

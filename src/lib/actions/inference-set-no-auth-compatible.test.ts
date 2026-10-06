@@ -104,8 +104,8 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
-      sandboxName: "alpha",
       gatewayName: "nemoclaw",
+      sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "model-b",
       preferredInferenceApi: "openai-completions",
@@ -212,8 +212,8 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         ],
       ]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
-        sandboxName: "alpha",
         gatewayName: "nemoclaw",
+        sandboxName: "alpha",
         provider: "compatible-endpoint",
         model: "model-b",
         preferredInferenceApi: "openai-completions",

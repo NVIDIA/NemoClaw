@@ -299,6 +299,92 @@ describe("native NVIDIA onboarding", () => {
     });
   });
 
+  it("removes a new provider when gateway authority persistence fails (#12562)", async () => {
+    let providerPresent = false;
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
+      providerPresent
+        ? {
+            ok: true,
+            value: {
+              name: "nemoclaw-nvidia-prod-v1",
+              type: "nemoclaw-nvidia-inference-v1",
+              credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+              configKeys: [],
+              revision: { id: "provider-id", resourceVersion: 4 },
+            },
+          }
+        : {
+            ok: false,
+            error: { kind: "command", reason: "not_found", message: "not found" },
+          },
+    );
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
+      providerPresent = false;
+      return { ok: true };
+    });
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider,
+      createProvider: vi.fn(async () => {
+        providerPresent = true;
+        return { ok: true as const };
+      }),
+      deleteProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const updateSandbox = vi.fn(() => true);
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => null,
+      getNativeNvidiaProviderAuthority: () => undefined,
+      setNativeNvidiaProviderAuthority: () => {
+        throw new Error("state directory is read-only");
+      },
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        { revalidateSandboxIdentity: () => undefined },
+      ),
+    ).rejects.toThrow(/newly created provider was removed.*state directory is read-only/su);
+
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "onboarding-gateway" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+  });
+
   it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
     const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
     const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
