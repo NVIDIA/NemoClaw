@@ -71,6 +71,28 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     assert!(value["spec"].get("services").is_none());
 }
 
+/// The live-docker gateway tests read this document, so it must be one the
+/// SDK accepts; a field-by-field check missed a stale shape before.
+#[cfg(feature = "sdk")]
+#[test]
+fn gateway_documents_parse_as_current_configuration() {
+    use ci::live::{GatewayInputs, gateway_document, uuid};
+    let uid = uuid().unwrap();
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &uid,
+        port: 17950,
+        subnet: "172.30.202.0/24",
+        image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+        harness: "nvidia.fabric.pi",
+    });
+    let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
+    assert_eq!(
+        parsed.spec.gateway.runtime().provider,
+        nemoclaw_sdk::config::ComputeDriver::Docker
+    );
+}
+
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, bytes) in entries {
