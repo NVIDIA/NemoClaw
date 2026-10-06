@@ -49,9 +49,12 @@ pub struct Receipt {
     /// Set once the namespace and key exist.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub storage_ready: bool,
-    /// The development issuer's objects, created with the gateway release.
+    /// The development issuer's objects, created before the gateway release.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issuer: Vec<Owned>,
+    /// Set after every issuer object exists and its identity is recorded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub issuer_ready: bool,
     /// Set while a Helm release exists for the gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,

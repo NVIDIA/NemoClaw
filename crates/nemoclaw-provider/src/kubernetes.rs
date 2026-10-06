@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Provider resources for a Kubernetes gateway: `kubernetes_storage` and
-//! `kubernetes_gateway`.
+//! Kubernetes preparation, authentication and gateway observation resources.
 //!
 //! Each row carries the encoded specification. Operations connect with the
 //! kubeconfig and context it names and keep their receipt in the directory
@@ -13,7 +12,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use nemoclaw_sdk::kubernetes::{
-    ClusterTarget, GATEWAY_KIND, STATE_ENV, STORAGE_KIND, Spec, connect,
+    AUTH_KIND, ClusterTarget, GATEWAY_KIND, STATE_ENV, STORAGE_KIND, Spec, connect,
     operations::{Operations, Response},
     server,
 };
@@ -27,7 +26,7 @@ impl KubernetesBackend {
         Self
     }
     pub fn supports(kind: &str) -> bool {
-        matches!(kind, STORAGE_KIND | GATEWAY_KIND)
+        matches!(kind, STORAGE_KIND | AUTH_KIND | GATEWAY_KIND)
     }
 }
 
@@ -58,11 +57,22 @@ fn row(source: &Row, response: Response) -> Result<Option<Row>, ObservationError
         .ok_or(ObservationError::Incomplete)?
         .clone();
     let running = response.running.ok_or(ObservationError::Incomplete)?;
-    Ok(Some(Row::from([
+    let authentication = Spec::decode(&spec)
+        .map_err(|_| ObservationError::Query)?
+        .kind
+        == AUTH_KIND;
+    let mut result = Row::from([
         ("spec".into(), spec),
         ("id".into(), id),
         ("running".into(), running.to_string()),
-    ])))
+    ]);
+    if authentication {
+        let release_present = response
+            .release_present
+            .ok_or(ObservationError::Incomplete)?;
+        result.insert("release_present".into(), release_present.to_string());
+    }
+    Ok(Some(result))
 }
 
 async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
@@ -87,10 +97,18 @@ async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
     Ok(Operations {
         server,
         client,
-        helm: "helm".into(),
-        kubeconfig,
         state,
     })
+}
+
+fn failed_mutation(
+    error: ObservationError,
+    observed: Result<Option<Row>, ObservationError>,
+) -> Mutation {
+    match observed {
+        Ok(Some(row)) => Mutation::partial(row, error),
+        Ok(None) | Err(_) => Mutation::failed(error),
+    }
 }
 
 #[async_trait]
@@ -111,13 +129,15 @@ impl Backend for KubernetesBackend {
         &self,
         kind: &str,
         prior: &Row,
-        _removing: bool,
+        removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
         let spec = spec(kind, prior)?;
-        let response = operations(&spec)
-            .await?
-            .read(&spec, bound_id(prior))
-            .await?;
+        let operations = operations(&spec).await?;
+        let response = if removing {
+            operations.read_for_removal(&spec, bound_id(prior)).await?
+        } else {
+            operations.read(&spec, bound_id(prior)).await?
+        };
         let row = row(prior, response)?;
         // Storage is retained: once recorded, it never reads as absent.
         if row.is_none() && kind == STORAGE_KIND && bound_id(prior).is_some() {
@@ -127,18 +147,30 @@ impl Backend for KubernetesBackend {
     }
 
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        let result = async {
-            let spec = spec(kind, desired)?;
-            let response = operations(&spec)
-                .await?
-                .ensure(&spec, bound_id(desired))
-                .await?;
-            row(desired, response)?.ok_or(ObservationError::Incomplete)
-        }
-        .await;
-        match result {
-            Ok(row) => Mutation::complete(row),
-            Err(error) => Mutation::failed(error),
+        let spec = match spec(kind, desired) {
+            Ok(spec) => spec,
+            Err(error) => return Mutation::failed(error),
+        };
+        let operations = match operations(&spec).await {
+            Ok(operations) => operations,
+            Err(error) => return Mutation::failed(error),
+        };
+        match operations.ensure(&spec, bound_id(desired)).await {
+            Ok(response) => match row(desired, response) {
+                Ok(Some(row)) => Mutation::complete(row),
+                Ok(None) => Mutation::failed(ObservationError::Incomplete),
+                Err(error) => Mutation::failed(error),
+            },
+            Err(error) => {
+                // A verified receipt may contain objects from a partially
+                // completed create. Keep their binding so destroy can clean
+                // them up, without retrying the mutation or hiding its error.
+                let observed = operations
+                    .read_for_removal(&spec, bound_id(desired))
+                    .await
+                    .and_then(|response| row(desired, response));
+                failed_mutation(error, observed)
+            }
         }
     }
 
@@ -197,10 +229,105 @@ mod tests {
         let missing = Response {
             id: Some("uid-1".into()),
             running: None,
+            ..Response::default()
         };
         assert_eq!(row(&source, missing), Err(ObservationError::Incomplete));
         let absent = Response::default();
         assert_eq!(row(&source, absent), Ok(None));
+    }
+
+    #[test]
+    fn authentication_requires_an_independent_release_observation() {
+        let source = spec_row(AUTH_KIND);
+        let missing = Response {
+            id: Some("issuer-uid".into()),
+            running: Some(true),
+            release_present: None,
+        };
+        assert_eq!(row(&source, missing), Err(ObservationError::Incomplete));
+        for present in [false, true] {
+            let observed = row(
+                &source,
+                Response {
+                    id: Some("issuer-uid".into()),
+                    running: Some(true),
+                    release_present: Some(present),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(observed["release_present"], present.to_string());
+        }
+    }
+
+    #[test]
+    fn authentication_planning_preserves_only_refreshed_release_observation() {
+        let definition = crate::Definition::new(
+            AUTH_KIND,
+            &["spec", "running", "release_present"],
+            &["running", "release_present"],
+        );
+        for present in ["false", "true"] {
+            let prior = crate::State::from([
+                (
+                    "id".into(),
+                    tf_provider::value::Value::Value("issuer-uid".into()),
+                ),
+                (
+                    "spec".into(),
+                    tf_provider::value::Value::Value(spec_row(AUTH_KIND)["spec"].clone()),
+                ),
+                (
+                    "running".into(),
+                    tf_provider::value::Value::Value("true".into()),
+                ),
+                (
+                    "release_present".into(),
+                    tf_provider::value::Value::Value(present.into()),
+                ),
+            ]);
+            let mut proposed = prior.clone();
+            proposed.insert("release_present".into(), tf_provider::value::Value::Unknown);
+            let (planned, replacements) = crate::plan_update(&definition, &prior, proposed);
+            assert_eq!(planned["release_present"], prior["release_present"]);
+            assert!(replacements.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_incomplete_apply_retains_a_verified_partial_binding_and_its_error() {
+        let source = spec_row(AUTH_KIND);
+        let observed = row(
+            &source,
+            Response {
+                id: Some("recorded-issuer-uid".into()),
+                running: Some(false),
+                release_present: Some(false),
+            },
+        );
+        let mutation = failed_mutation(ObservationError::Permission, observed);
+        assert_eq!(mutation.error(), Some(ObservationError::Permission));
+        let state = mutation
+            .state()
+            .expect("retain the verified identity for teardown");
+        assert_eq!(state["id"], "recorded-issuer-uid");
+        assert_eq!(state["running"], "false");
+        assert_eq!(state["spec"], source["spec"]);
+    }
+
+    #[test]
+    fn failed_or_absent_readback_never_invents_a_partial_binding() {
+        for observed in [
+            Ok(None),
+            Err(ObservationError::Authentication),
+            Err(ObservationError::Transport),
+            Err(ObservationError::BindingMismatch),
+            Err(ObservationError::Incomplete),
+        ] {
+            let mutation = failed_mutation(ObservationError::Permission, observed);
+            assert!(mutation.state().is_none());
+            assert_eq!(mutation.error(), Some(ObservationError::Permission));
+        }
     }
 
     #[tokio::test]

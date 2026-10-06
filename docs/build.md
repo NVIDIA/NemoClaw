@@ -23,9 +23,10 @@ Run the bundle builder:
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The builder downloads and verifies the OpenTofu archive, builds the CLI and production provider with the lockfile, and writes `dist/<platform>`.
-The manifest records each shipped file’s hash, including the OpenTofu license.
+The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and NemoClaw provider with the lockfile, and writes `dist/<platform>`.
+The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
+Managed Kubernetes deployment uses the bundled Helm provider and requires no host Helm CLI.
 
 Each bundle includes `schemas/nemoclaw-v1alpha1.schema.json`, generated from its SDK contract and covered by the manifest hash.
 Use that file for [editor assistance](usage.md#editor-schema-assistance) with the bundled CLI.
@@ -35,6 +36,7 @@ The builder records its source fingerprint at compilation and rejects changed in
 If it reports `build tool source inputs changed`, rebuild and run it with the `cargo run` command above.
 The builder also rejects source changes during assembly.
 Bundles created before schema packaging must be rebuilt; the SDK rejects a manifest that omits the schema or a schema file that fails its recorded hash.
+It also rejects bundles missing the pinned Helm provider or its license, or whose recorded hashes fail verification.
 
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 

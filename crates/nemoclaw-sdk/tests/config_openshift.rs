@@ -119,8 +119,11 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
         assert!(graph["data"].get("nemoclaw_target_hardware").is_none());
         let targets = runtime_targets(&document, &generations).unwrap();
         if managed {
-            assert_eq!(targets.len(), 2);
-            for target in targets {
+            assert_eq!(targets.len(), 4);
+            for target in targets
+                .iter()
+                .filter(|target| target.kind != "helm_release")
+            {
                 let spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
                 assert_eq!(spec["settings"]["runtime"]["provider"], "openshift");
             }

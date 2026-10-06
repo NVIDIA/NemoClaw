@@ -15,6 +15,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
+| Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
 | NemoClaw provider | OpenShell operations, Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
@@ -29,6 +30,15 @@ Pure policy compilation stays in SDK configuration; OpenShell transport and muta
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
+
+For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness.
+The native bundle includes the pinned Helm provider; no Helm CLI is required.
+NemoClaw checks retained Kubernetes identities before the Helm release can change, then records the ready StatefulSet identity.
+Teardown reverses that order, removes the release before the issuer, and retains the namespace, encryption key, and persistent volumes.
+Before teardown accepts a missing release, the authentication resource must independently confirm that its Helm release records are absent.
+Issuer private material stays outside Helm values and OpenTofu state.
+The provider receives the explicit kubeconfig and context; ambient Helm and Kubernetes provider settings are excluded.
+State from the earlier combined gateway resource must be recovered or destroyed with its original bundle before using this graph.
 
 ## OpenShell SDK Boundary
 

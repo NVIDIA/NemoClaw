@@ -9,6 +9,42 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Kubernetes Gateway Without the Helm CLI
+
+To render the pinned chart through the bundled provider without cluster access:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-sdk --test integration \
+    kubernetes_gateway::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
+```
+
+The render test also rejects an unavailable chart digest.
+
+Use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
+Supply its explicit kubeconfig and context, and a verified immutable bundle built from the checkout:
+
+```sh
+NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
+NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-sdk --test integration \
+    kubernetes_live::the_gateway_installs_authenticates_and_is_removed_keeping_storage \
+    -- --ignored --exact --nocapture
+```
+
+The test runs the compiled runtime and teardown graphs through the bundled OpenTofu and providers.
+Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
+The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
+It removes and reinstalls the native Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
+It creates no agent sandbox and requests no inference.
+
+The test prints the path to its private temporary state directory and retains it after success or failure.
+That directory contains OpenTofu state, saved plans, the authored document, generated signing and TLS material, and private diagnostic output; keep it private and outside Git.
+Raw OpenTofu output is suppressed from the test log because it can contain deployment values; each command's stdout and stderr remain in `diagnostics/` with mode `0600` on Unix.
+Successful completion retains cluster storage; dispose of the owned test cluster and then remove the printed state directory when finished.
+If the test fails, keep the same state and inspect its owned resources before cleanup.
+
 ## Dependency Upgrade Test
 
 Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.

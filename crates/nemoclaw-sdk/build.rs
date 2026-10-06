@@ -18,6 +18,7 @@ fn main() {
         ("DEVELOPMENT_ISSUER_IMAGE", "/images/developmentIssuer"),
         ("OPENSHELL_VERSION", "/openshell"),
         ("OPENTOFU_VERSION", "/opentofu"),
+        ("HELM_PROVIDER_VERSION", "/helmProvider"),
     ] {
         let value = pins
             .pointer(pointer)

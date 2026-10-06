@@ -28,10 +28,12 @@ It requests no inference and needs no GPU or credentials.
 A run on Linux ARM64 takes about five minutes after the build.
 
 On Linux with Docker, `cargo ci live-kind` runs the Kubernetes live tests; plain `cargo ci` never selects it either.
-It downloads the pinned kind and helm by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
-It then runs the `live-kind` nextest profile against that cluster.
+Run `cargo ci build` and `cargo ci bundle` first.
+The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
+It then runs the `live-kind` nextest profile against that cluster with the verified native bundle.
+OpenTofu and its Helm provider run with an empty `PATH`; no Helm CLI is required.
 The test installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
-It then removes the gateway, checks that storage remains, and installs the gateway again on the kept storage.
+It then removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
 The step deletes the cluster whether or not the test passes.
 It needs no images built by this repository, no GPU and no credentials.
 A run on Linux ARM64 takes about 90 seconds after the build.

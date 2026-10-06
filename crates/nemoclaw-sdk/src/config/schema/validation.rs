@@ -109,7 +109,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "pattern": c::ENV,
             "not": {"anyOf": [
                 {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                {"pattern": "^NEMOCLAW_MANAGED_K8S_"}
+                {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
             ]},
             "x-nemoclaw-error": "credential environment reference must be valid and must not shadow managed Kubernetes runtime controls"
         }),

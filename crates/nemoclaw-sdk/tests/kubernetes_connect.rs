@@ -9,7 +9,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use nemoclaw_sdk::{
     Error,
     kubernetes::{
-        CA_ENV, CERT_ENV, GATEWAY_KIND, KEY_ENV, STORAGE_KIND, Spec, TOKEN_ENV,
+        AUTH_KIND, CA_ENV, CERT_ENV, GATEWAY_KIND, KEY_ENV, STORAGE_KIND, Spec, TOKEN_ENV,
         connection::forward, operations::Operations,
     },
 };
@@ -87,23 +87,20 @@ async fn running(objects: &Objects, directory: &Path) -> (crate::transport::Fixt
         objects.insert(object);
     }
     let fixture = objects.serve().await;
-    let helm = directory.join("helm");
-    std::fs::write(&helm, "#!/bin/sh\nexit 0\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&helm, std::fs::Permissions::from_mode(0o700)).unwrap();
     let operations = Operations {
         client: client(&fixture),
         server: fixture.endpoint.clone(),
-        helm,
-        kubeconfig: directory.join("kubeconfig"),
         state: directory.join("state"),
     };
     operations
         .ensure(&spec(STORAGE_KIND, 1), None)
         .await
         .unwrap();
+    operations.ensure(&spec(AUTH_KIND, 1), None).await.unwrap();
     objects.insert(json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
-        "metadata": {"name": NAME, "namespace": "agents", "uid": "gateway-uid", "generation": 1},
+        "metadata": {"name": NAME, "namespace": "agents", "uid": "gateway-uid", "generation": 1,
+            "labels": {"app.kubernetes.io/instance": NAME},
+            "annotations": {"meta.helm.sh/release-name": NAME, "meta.helm.sh/release-namespace": "agents"}},
         "status": {"readyReplicas": 1, "observedGeneration": 1}}));
     operations
         .ensure(&spec(GATEWAY_KIND, 1), None)

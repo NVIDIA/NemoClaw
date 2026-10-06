@@ -96,9 +96,9 @@ pub fn objects(material: &Material, name: &str, namespace: &str) -> Vec<Value> {
 }
 
 /// Chart values that make the gateway trust tokens from this issuer.
-pub fn oidc_values(material: &Material, name: &str, audience: &str) -> Value {
+pub fn oidc_values(name: &str, namespace: &str, audience: &str) -> Value {
     json!({
-        "issuer": material.issuer(),
+        "issuer": format!("https://{name}-oidc.{namespace}.svc.cluster.local:{PORT}"),
         "audience": audience,
         "jwksTtl": 60,
         "rolesClaim": "roles",

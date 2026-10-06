@@ -40,6 +40,10 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ matrix.platform }}
+      - name: Build test executables
+        run: cargo ci build
+      - name: Build and verify native bundle
+        run: cargo ci bundle
       - name: Run Kubernetes live tests
         run: cargo ci live-kind
       - name: Upload live test results

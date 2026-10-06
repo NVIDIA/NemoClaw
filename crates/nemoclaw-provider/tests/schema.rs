@@ -74,6 +74,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "gateway_storage",
         "inference_storage",
         "kubernetes_storage",
+        "kubernetes_auth",
         "kubernetes_gateway",
     ] {
         assert!(resources.contains_key(name));
@@ -144,12 +145,25 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
                 "managed_gateway"
                     | "agent_configuration"
                     | "kubernetes_storage"
+                    | "kubernetes_auth"
                     | "kubernetes_gateway"
             ),
             "{kind}"
         );
         if let Some(running) = running {
             assert!(matches!(running.constraint, AttributeConstraint::Computed));
+        }
+        let release_present = schema.block.attributes.get("release_present");
+        assert_eq!(
+            release_present.is_some(),
+            kind == "kubernetes_auth",
+            "{kind}"
+        );
+        if let Some(release_present) = release_present {
+            assert!(matches!(
+                release_present.constraint,
+                AttributeConstraint::Computed
+            ));
         }
         let digest = schema.block.attributes.get("digest");
         assert_eq!(digest.is_some(), kind == "ollama_external_model", "{kind}");

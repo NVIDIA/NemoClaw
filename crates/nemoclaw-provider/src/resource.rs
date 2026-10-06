@@ -111,6 +111,9 @@ impl ResourceAdapter {
     fn observed_data_path(&self) -> bool {
         self.definition.kind == "gateway_storage"
     }
+    fn observed_release_present(&self) -> bool {
+        self.definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND
+    }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
@@ -194,7 +197,8 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
-                        || (k == "data_path" && self.observed_data_path()) =>
+                        || (k == "data_path" && self.observed_data_path())
+                        || (k == "release_present" && self.observed_release_present()) =>
                 {
                     Ok((k.clone(), String::new()))
                 }
@@ -314,6 +318,7 @@ impl Resource for ResourceAdapter {
                         constraint: if name == "id"
                             || (name == "running" && self.observed_running())
                             || (name == "data_path" && self.observed_data_path())
+                            || (name == "release_present" && self.observed_release_present())
                         {
                             AttributeConstraint::Computed
                         } else if self.optional(name) {
@@ -394,6 +399,9 @@ impl Resource for ResourceAdapter {
         }
         if self.observed_running() {
             proposed.insert("running".into(), Value::Unknown);
+        }
+        if self.observed_release_present() {
+            proposed.insert("release_present".into(), Value::Unknown);
         }
         for field in &self.definition.fields {
             // Core may propose unknown for an omitted OptionalComputed value.

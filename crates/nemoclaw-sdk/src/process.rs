@@ -294,12 +294,15 @@ fn inherited_variable(name: &str) -> bool {
         "TF_",
         "TOFU_",
         "PLUGIN_",
+        "HELM_",
+        "KUBE_",
         "NEMOCLAW_INTERNAL_",
         "NEMOCLAW_MANAGED_K8S_",
     ]
     .iter()
     .any(|prefix| upper.starts_with(prefix))
         && upper != crate::kubernetes::STATE_ENV
+        && upper != "KUBECONFIG"
 }
 
 #[cfg(test)]
@@ -311,6 +314,13 @@ fn kubernetes_connection_environment_requires_explicit_operation_overrides() {
         crate::kubernetes::CA_ENV,
         crate::kubernetes::CERT_ENV,
         crate::kubernetes::KEY_ENV,
+        "TF_VAR_nemoclaw_kubeconfig",
+        "HELM_NAMESPACE",
+        "HELM_DRIVER",
+        "HELM_REGISTRY_CONFIG",
+        "KUBE_HOST",
+        "KUBE_TOKEN",
+        "KUBECONFIG",
     ] {
         assert!(!inherited_variable(name));
         assert!(!inherited_variable(&name.to_ascii_lowercase()));
