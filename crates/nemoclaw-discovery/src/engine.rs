@@ -46,6 +46,8 @@ impl Engine {
         }
     }
 
+    // Only Unix transports, a local socket or SSH, construct an engine client.
+    #[cfg(unix)]
     pub(crate) fn new(api: bollard::Docker, endpoint: &str) -> Self {
         Self {
             api,
