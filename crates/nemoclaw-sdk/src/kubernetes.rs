@@ -7,9 +7,70 @@
 //! service variables is never consulted, so one deployment cannot reach
 //! another cluster by accident.
 
-use crate::ObservationError;
+use crate::{Error, ObservationError, config::ManagedGateway};
 use kube::config::{KubeConfigOptions, Kubeconfig};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Resource kinds a Kubernetes gateway compiles into: the retained storage
+/// and the gateway release that uses it.
+pub const STORAGE_KIND: &str = "kubernetes_storage";
+pub const GATEWAY_KIND: &str = "kubernetes_gateway";
+/// Environment names that carry the gateway's generated client credentials
+/// from the runtime stage to the OpenShell provider. Authored references may
+/// not use them.
+pub const TOKEN_ENV: &str = "NEMOCLAW_MANAGED_K8S_TOKEN";
+pub const CA_ENV: &str = "NEMOCLAW_MANAGED_K8S_CA";
+pub const CERT_ENV: &str = "NEMOCLAW_MANAGED_K8S_CERT";
+pub const KEY_ENV: &str = "NEMOCLAW_MANAGED_K8S_KEY";
+/// Directory holding the gateway's private receipt and generated material.
+pub const STATE_ENV: &str = "NEMOCLAW_KUBERNETES_STATE";
+
+/// The managed specification one Kubernetes resource is compiled from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Spec {
+    pub layout: u32,
+    pub kind: String,
+    pub name: String,
+    pub owner: String,
+    pub generation: String,
+    pub settings: ManagedGateway,
+}
+
+impl Spec {
+    pub fn validate(&self) -> Result<(), Error> {
+        let identifier = |pattern: &str, value: &str| {
+            regex::Regex::new(pattern)
+                .expect("constant pattern")
+                .is_match(value)
+        };
+        if self.layout != 1
+            || !matches!(self.kind.as_str(), STORAGE_KIND | GATEWAY_KIND)
+            || !identifier(r"^nc-[a-f0-9]{16}-gateway$", &self.name)
+            || !identifier(r"^[a-f0-9-]{36}$", &self.owner)
+            || !identifier(r"^[a-f0-9]{32}$", &self.generation)
+            || self.settings.kubernetes.is_none()
+        {
+            return Err(Error::Conflict(
+                "invalid managed Kubernetes identity or layout",
+            ));
+        }
+        self.settings.validate_managed()?;
+        Ok(())
+    }
+    pub fn decode(value: &str) -> Result<Self, Error> {
+        let spec: Self = serde_json::from_str(value)
+            .map_err(|_| Error::Conflict("invalid managed Kubernetes specification"))?;
+        spec.validate()?;
+        Ok(spec)
+    }
+    pub fn encode(&self) -> Result<String, Error> {
+        self.validate()?;
+        serde_json::to_string(self)
+            .map_err(|_| Error::State("cannot encode Kubernetes specification"))
+    }
+}
 
 /// The kubeconfig file and context a deployment names.
 #[derive(Clone, Debug, PartialEq, Eq)]

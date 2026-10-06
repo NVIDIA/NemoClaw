@@ -31,7 +31,7 @@ pub(crate) fn populate(
         }
     }
     let mut engines = crate::services::discovery_engines(document)?;
-    if let Some(gateway) = document.spec.gateway.as_managed() {
+    if let Some(gateway) = document.spec.gateway.as_local_managed() {
         engines.insert(gateway.engine.clone());
     }
     for (index, engine) in engines.iter().enumerate() {
@@ -48,7 +48,7 @@ pub(crate) fn populate(
         crate::config::Gateway::Managed(gateway) => &gateway.engine,
         crate::config::Gateway::External(gateway) => &gateway.engine,
     });
-    let managed = document.spec.gateway.as_managed().is_some();
+    let managed = document.spec.gateway.as_local_managed().is_some();
     if managed {
         graph["data"]["nemoclaw_engine_capabilities"]["current"] = json!({
             "engine": engine,
@@ -83,7 +83,7 @@ pub(crate) fn populate(
         );
 
         graph["data"]["nemoclaw_fabric_capabilities"][&name] = json!({
-            "engine": engine,
+            "engine": if sandbox.runtime.provider.is_kubernetes() { "" } else { &engine },
             "image": literal(&sandbox.image.ref_),
             "requirements_json": literal(&serde_json::to_string(&requirements).expect("Fabric requirements")),
             "lifecycle": { "postcondition": [{
@@ -91,9 +91,25 @@ pub(crate) fn populate(
                 "error_message": rejection
             }, {
                 "condition": "${self.runtime_json != \"\"}",
-                "error_message": format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
+                "error_message": if sandbox.runtime.provider.is_kubernetes() {
+                    format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
+                } else {
+                    format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
+                }
             }] }
         });
+        if sandbox.runtime.provider.is_kubernetes() {
+            // Destroy does not need image metadata, so a document without it
+            // still compiles. Deployment discovery rejects the empty reference;
+            // teardown removes these data sources without reading the image.
+            graph["data"]["nemoclaw_fabric_capabilities"][&name]["metadata_env"] = json!(
+                sandbox
+                    .image
+                    .metadata
+                    .as_ref()
+                    .map_or("", |metadata| metadata.env.as_str())
+            );
+        }
         if managed {
             graph["data"]["nemoclaw_fabric_capabilities"][&name]["architecture"] = json!(
                 "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).architecture}"

@@ -102,13 +102,45 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         );
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
-    property(&mut defs["Credential"], "env", json!({"pattern": c::ENV}));
+    property(
+        &mut defs["Credential"],
+        "env",
+        json!({
+            "pattern": c::ENV,
+            "not": {"anyOf": [
+                {"const": "NEMOCLAW_KUBERNETES_STATE"},
+                {"pattern": "^NEMOCLAW_MANAGED_K8S_"}
+            ]},
+            "x-nemoclaw-error": "credential environment reference must be valid and must not shadow managed Kubernetes runtime controls"
+        }),
+    );
+    property(
+        &mut defs["ManagedKubernetes"],
+        "kubeconfig",
+        json!({"properties": {"env": {
+            "not": {"anyOf": [
+                {"enum": [
+                    "PATH", "HOME", "USERPROFILE", "KUBECONFIG", "TMPDIR", "TMP", "TEMP",
+                    "SYSTEMROOT", "COMSPEC", "PATHEXT", "SHELL", "ENV", "BASH_ENV", "IFS", "CDPATH",
+                    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "KUBERNETES_MASTER",
+                    "KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT", "KUBERNETES_SERVICE_PORT_HTTPS"
+                ]},
+                {"pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"}
+            ]},
+            "x-nemoclaw-error": "kubeconfig environment reference must not shadow process, trust, proxy, or cluster controls"
+        }}}),
+    );
     property(
         &mut defs["Spec"],
         "sandboxes",
         json!({"minItems":1,"maxItems":32}),
     );
-    defs["Sandbox"]["allOf"] = json!([]);
+    defs["Sandbox"]["allOf"] = json!([{
+        "if": at("runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
+        "then": at("image/ref", json!({"pattern":c::IMAGE}), true),
+        "else": at("image", forbid(&["metadata"]), false)
+    }]);
     optional_string(
         &mut defs["Image"],
         "ref",
@@ -121,7 +153,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         .unwrap()
         .remove("default");
     defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
-        "Omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
+        "Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
     );
     property(
         &mut defs["Runtime"],
@@ -237,6 +269,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"description": "Whether this deployment manages the gateway."}),
         );
         if gateway["properties"]["management"]["const"] == "managed" {
+            let mut local = json!({"properties": {}, "required": []});
             for (field, rule) in [
                 (
                     "endpoint",
@@ -257,10 +290,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             ] {
                 let mut rule = rule;
                 if normalized {
-                    gateway["required"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(json!(field));
+                    local["required"].as_array_mut().unwrap().push(json!(field));
                     if let Some(choices) = rule.get_mut("anyOf").and_then(Value::as_array_mut) {
                         choices.retain(|choice| choice.get("const") != Some(&json!("")));
                     }
@@ -268,15 +298,27 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                         rule["enum"] = json!([DEFAULT_GATEWAY_IMAGE]);
                     }
                 }
-                property(gateway, field, rule);
-                if field != "networkCIDR" {
-                    property(
-                        gateway,
-                        field,
-                        json!({"x-nemoclaw-default-rule": "Omitted or empty selects the default."}),
-                    );
-                }
+                local["properties"][field] = rule;
+                property(
+                    gateway,
+                    field,
+                    json!({"x-nemoclaw-default-rule": if field == "endpoint" {
+                        "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
+                    } else if field == "networkCIDR" {
+                        "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
+                    } else {
+                        "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
+                    }}),
+                );
             }
+            gateway["if"] = json!({"required": ["kubernetes"]});
+            gateway["then"] = json!({
+                "required": ["endpoint"],
+                "properties": {"endpoint": {"pattern": c::KUBERNETES_GATEWAY_ENDPOINT}},
+                "allOf": [forbid(&["engine", "image", "imagePullPolicy", "networkCIDR"])],
+                "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
+            });
+            gateway["else"] = local;
         } else {
             property(gateway, "endpoint", json!({"pattern": "^https?://"}));
             gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
@@ -307,14 +349,45 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     }]);
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/management", json!({"const":"managed"}), true),
-        "then": {"anyOf": [
-            at("spec/sandboxes/[]/runtime/provider", json!({"const":"docker"}), false),
-            at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
-        ]}
+        "then": {
+            "if": at("spec/gateway", json!({"required":["kubernetes"]}), true),
+            "then": {
+                "if": at("spec/gateway/kubernetes/distribution", json!({"const":"openshift"}), true),
+                "then": at("spec/sandboxes/[]/runtime/provider", json!({"const":"openshift"}), true),
+                "else": at("spec/sandboxes/[]/runtime/provider", json!({"const":"kubernetes"}), true)
+            },
+            "else": {"anyOf": [
+                at("spec/sandboxes/[]/runtime/provider", json!({"const":"docker"}), false),
+                at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
+            ]}
+        }
+    }));
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/sandboxes", json!({
+            "contains": at("runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true)
+        }), true),
+        "then": {
+            "allOf": [
+                {"anyOf": [
+                    at("spec/gateway/management", json!({"const":"external"}), true),
+                    at("spec/gateway", json!({"required":["management","kubernetes"], "properties":{"management":{"const":"managed"}}}), true)
+                ]},
+                at("spec/services", json!({"maxProperties":0}), false)
+            ],
+            "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+        }
+    }));
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/sandboxes", json!({
+            "contains": at("runtime/provider", json!({"const":"openshift"}), true)
+        }), true),
+        "then": at("spec/sandboxes/[]/runtime/provider", json!({"const":"openshift"}), true),
+        "x-nemoclaw-error": "OpenShift deployments require the matching platform profile for every sandbox"
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, Agent Sandbox prerequisite management, and development authentication profile. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; every sandbox selects kubernetes, or openshift with distribution: openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

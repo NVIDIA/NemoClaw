@@ -26,6 +26,10 @@ mod config_diagnostics;
 mod config_input;
 #[path = "config_kinds.rs"]
 mod config_kinds;
+#[path = "config_kubernetes.rs"]
+mod config_kubernetes;
+#[path = "config_openshift.rs"]
+mod config_openshift;
 #[path = "config_scenarios.rs"]
 mod config_scenarios;
 #[path = "config_schema.rs"]
@@ -68,8 +72,12 @@ mod inference_settings;
 mod inline_recipe;
 #[path = "interfaces.rs"]
 mod interfaces;
+#[path = "kubernetes_compile.rs"]
+mod kubernetes_compile;
 #[path = "kubernetes_connection.rs"]
 mod kubernetes_connection;
+#[path = "kubernetes_managed_compile.rs"]
+mod kubernetes_managed_compile;
 #[path = "managed_auth.rs"]
 mod managed_auth;
 #[path = "managed_hermes.rs"]

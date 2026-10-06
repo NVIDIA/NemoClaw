@@ -27,6 +27,7 @@ use std::fmt;
 pub mod fabric_capabilities;
 pub mod fabric_catalog;
 pub mod fabric_config;
+pub mod image_metadata;
 pub mod image_runtime;
 
 mod artifact_pins {

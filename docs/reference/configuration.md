@@ -19,6 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
+- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, Agent Sandbox prerequisite management, and development authentication profile. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; every sandbox selects kubernetes, or openshift with distribution: openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -97,6 +98,20 @@ Paths:
 |---|---|---|---|---|
 | `timeoutSeconds` | integer | No | — | Invocation timeout in seconds passed to Fabric. Readiness has its own deployment deadline. Constraints: minimum 1; maximum 1000000000. |
 
+## AgentSandboxPrerequisite
+
+Ownership policy for the pinned Agent Sandbox controller and custom resource definitions.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes.prerequisites.agentSandbox`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `management` | string | Yes | — | Existing verifies a compatible installation; managed installs owned prerequisites when absent and does not adopt a foreign installation. Constraints: `"existing"` or `"managed"`. |
+
 ## AgentTools
 
 Explicit native tool identifiers forwarded to Fabric.
@@ -168,6 +183,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.gateway.credential`
+- `spec.gateway.kubernetes.kubeconfig`
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
@@ -176,13 +192,14 @@ Paths:
 - `spec.integrations.{key}.credential`
 - `spec.sandboxes[].agent.inference.routes[].provider.credential`
 - `spec.sandboxes[].agent.integrations.{key}.credential`
+- `spec.sandboxes[].image.metadata`
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `env` | string | Yes | — | Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `env` | string | Yes | — | Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_ prefix are reserved for SDK runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## DedicatedHardware
 
@@ -281,7 +298,7 @@ Paths:
 
 ## Gateway
 
-Install a local gateway or connect to an existing gateway.
+Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -299,12 +316,13 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local gateway HTTP origin with an unprivileged loopback port. Constraints: `""` or pattern `^http://127\.0\.0\.1:[0-9]+/?$`. Omitted or empty selects the default. |
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects the default. |
-| `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"`. Omitted or empty selects the default. |
-| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
+| `endpoint` | string | No | — | Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway. Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port. |
+| `engine` | string | No | — | Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes. Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes. |
+| `image` | string | No | — | Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned. Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
+| `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
-| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
 
 ### Alternative 2
 
@@ -315,7 +333,7 @@ An existing gateway managed outside this deployment.
 |---|---|---|---|---|
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
-| `engine` | string | No | — | Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown. |
+| `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
@@ -364,7 +382,8 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ref` | string | No | — | Immutable image reference. Omitted or empty selects the SDK pin for the selected harness. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `metadata` | [Credential](#credential) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`. Kubernetes and OpenShift planning requires it; destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
+| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 
 ## ImagePullPolicy
 
@@ -486,6 +505,53 @@ Web search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
+
+## KubernetesAuthentication
+
+Authentication provisioned for a managed Kubernetes gateway.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes.authentication`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `profile` | string | Yes | — | Development generates the scoped local authentication fixture. Existing production issuers use gateway.management: external. Constraints: `"development"`. |
+
+## KubernetesPrerequisites
+
+Installation policy for the pinned Kubernetes prerequisites.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes.prerequisites`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `agentSandbox` | [AgentSandboxPrerequisite](#agentsandboxprerequisite) | Yes | — | Whether to require an existing Agent Sandbox installation or install the pinned prerequisite when absent. |
+
+## ManagedKubernetes
+
+Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | Explicit generated development authentication profile; this is not a production identity service. |
+| `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `distribution` | string | No | — | Platform profile. OpenShift requires explicit platform-owned security prerequisites; it uses OpenShell's Kubernetes driver. Constraints: `"kubernetes"` or `"openshift"`. |
+| `kubeconfig` | [Credential](#credential) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
+| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
+| `prerequisites` | [KubernetesPrerequisites](#kubernetesprerequisites) | Yes | — | Explicit prerequisite ownership. Managed installation may create cluster-wide resources when the pinned prerequisite is absent. |
 
 ## Manifest
 
@@ -903,7 +969,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `provider` | string | No | `"docker"` | Docker or Podman driver. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"`. |
+| `provider` | string | No | `"docker"` | Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"` or `"kubernetes"` or `"openshift"`. |
 
 ## Sandbox
 
@@ -921,7 +987,7 @@ Paths:
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK pin for the selected harness. |
+| `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
