@@ -54,7 +54,7 @@ describe("CLI dispatch for terminal agents", () => {
         '  cmd="${*: -1}"',
         '  case "$cmd" in',
         '    *"inference.local/v1/models"*) echo "OK 200"; exit 0 ;;',
-        `    *"inference.local/v1/chat/completions"*) printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'; exit 0 ;;`,
+        `    *"integrate.api.nvidia.com/v1/chat/completions"*) printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'; exit 0 ;;`,
         '    *"dcode --version"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "dcode 0.1.55"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',

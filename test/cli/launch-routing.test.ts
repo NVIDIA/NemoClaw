@@ -119,7 +119,7 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "      exit 0",
       "    fi",
       "  done",
-      '  if [[ "$*" == *"inference.local/v1/chat/completions"* ]]; then',
+      '  if [[ "$*" == *"integrate.api.nvidia.com/v1/chat/completions"* ]]; then',
       `    printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'`,
       "    exit 0",
       "  fi",

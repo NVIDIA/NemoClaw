@@ -123,16 +123,16 @@ export function renderHermesPortableDockerfileBuildSettings(
     input.preferredInferenceApi,
   );
   const replacements = [
-    ["NEMOCLAW_MODEL", input.model],
-    ["NEMOCLAW_INFERENCE_PROVIDER_ID", inference.providerKey],
-    ["NEMOCLAW_UPSTREAM_PROVIDER", input.provider ?? inference.providerKey],
-    ["NEMOCLAW_INFERENCE_BASE_URL", inference.inferenceBaseUrl],
-    ["NEMOCLAW_INFERENCE_API", inference.inferenceApi],
-    ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
-    ["CHAT_UI_URL", ""],
+    { name: "NEMOCLAW_MODEL", value: input.model },
+    { name: "NEMOCLAW_INFERENCE_PROVIDER_ID", value: inference.providerKey },
+    { name: "NEMOCLAW_UPSTREAM_PROVIDER", value: input.provider ?? inference.providerKey },
+    { name: "NEMOCLAW_INFERENCE_BASE_URL", value: inference.inferenceBaseUrl },
+    { name: "NEMOCLAW_INFERENCE_API", value: inference.inferenceApi },
+    { name: "NEMOCLAW_TOOL_DISCLOSURE", value: toolDisclosure },
+    { name: "CHAT_UI_URL", value: "" },
   ] as const;
   const rendered = replacements.reduce(
-    (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
+    (rendered, { name, value }) => replaceExactHermesPortableDockerArg(rendered, name, value),
     pinHermesPortableTargetArchitecture(source),
   );
   if (input.baseImageRef === undefined) return rendered;

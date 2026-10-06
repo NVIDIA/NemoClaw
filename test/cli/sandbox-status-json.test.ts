@@ -305,7 +305,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
       ok: false,
       probed: true,
       failureLabel: "unhealthy",
-      endpoint: "https://inference.local/v1/chat/completions",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
     });
     expect(parsed.inferenceHealth.detail).toContain("not deployed for your account");
     expect(parsed.inferenceHealth.detail).toContain("nvidia/nemotron");
@@ -313,7 +313,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
   });
 
   it.each([401, 403])(
-    "sandbox status --json fails an inference.local HTTP %s that rejects an agent request",
+    "sandbox status --json fails a native NVIDIA HTTP %s that rejects an agent request",
     async (httpStatus) => {
       const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
         routeOutput: `OK ${httpStatus}`,
@@ -334,7 +334,7 @@ describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000)
         failureLabel: "unauthorized",
         // The rejected request is the invocation, so the row names its path
         // rather than the models route it did not use (#10879).
-        endpoint: "https://inference.local/v1/chat/completions",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
       });
       expect(parsed.inferenceHealth.detail).toContain(String(httpStatus));
       expect(parsed.inferenceHealth.subprobes).toContainEqual(
