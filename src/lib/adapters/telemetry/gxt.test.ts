@@ -24,7 +24,7 @@ import {
   acceptsSmsRegistrationParameters,
   acceptsTelemetryParameters,
   hasCompatibleTelemetryMetadata,
-} from "./gxt.test-support";
+} from "./gxt-test-fixture";
 
 const sentAt = new Date("2026-09-30T12:34:56.789Z");
 const publicModelCodes = { qwen: "qwen3_6_27b_fp8" };

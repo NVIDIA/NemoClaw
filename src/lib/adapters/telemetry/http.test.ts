@@ -20,7 +20,7 @@ import {
 } from "./gxt";
 import { postTelemetryBatch, postTelemetryEvent, TELEMETRY_DELIVERY_DEADLINE_MS } from "./http";
 import { MAX_TELEMETRY_BATCH_EVENTS } from "../../domain/telemetry/observations";
-import { acceptsTelemetryParameters } from "./gxt.test-support";
+import { acceptsTelemetryParameters } from "./gxt-test-fixture";
 
 const servers: http.Server[] = [];
 

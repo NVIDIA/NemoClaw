@@ -6,8 +6,10 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
 import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
-import { isWsl, type WslDetectionOptions } from "./platform/wsl";
+import { isWsl as detectWsl, type WslDetectionOptions } from "./platform/wsl";
 import { buildDockerSubprocessEnv } from "./subprocess-env";
+
+const isWsl = detectWsl;
 
 export type { WslDetectionOptions } from "./platform/wsl";
 

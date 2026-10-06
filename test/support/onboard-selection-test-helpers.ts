@@ -204,7 +204,7 @@ export function runNativeDockerWindowsProviderBoundary(options: {
     path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-  const wslPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform", "wsl.ts"));
+  const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
   const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
   const topologyPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
@@ -218,10 +218,10 @@ export function runNativeDockerWindowsProviderBoundary(options: {
   const script = String.raw`
 const scenario = ${scenario};
 const runner = require(${runnerPath});
-const wsl = require(${wslPath});
+const platform = require(${platformPath});
 const wait = require(${waitPath});
 
-wsl.isWsl = () => true;
+platform.isWsl = () => true;
 wait.waitForHttp = () => {
   console.error("OLLAMA_READINESS_PROBED");
   return true;

@@ -8,7 +8,7 @@ import smsRegistrationSchema from "../../../../schemas/nemoclaw-telemetry-sms.sc
 import type { TelemetryEvent } from "../../domain/telemetry/event";
 
 function schemaValidator(composedOnly = false) {
-  const validator = new Ajv({ allErrors: true, strict: false });
+  const validator = new Ajv({ allErrors: false, strict: false });
   validator.addFormat("date-time", (value: string) => {
     const timestamp = new Date(value);
     return Number.isFinite(timestamp.getTime()) && timestamp.toISOString() === value;
@@ -42,7 +42,7 @@ export function acceptsFamilyParameters(
   name: TelemetryEvent["event"],
   parameters: unknown,
 ): boolean {
-  const validator = new Ajv({ allErrors: true, strict: false });
+  const validator = new Ajv({ allErrors: false, strict: false });
   validator.addFormat("date-time", (value: string) => {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) && date.toISOString() === value;
@@ -71,7 +71,7 @@ export function acceptsSmsRegistrationParameters(value: unknown, name?: string):
         definitions: smsRegistrationSchema.definitions,
       }
     : smsRegistrationSchema;
-  return Boolean(new Ajv({ allErrors: true, strict: false }).compile(schema as AnySchema)(value));
+  return Boolean(new Ajv({ allErrors: false, strict: false }).compile(schema as AnySchema)(value));
 }
 
 export function hasCompatibleTelemetryMetadata(
