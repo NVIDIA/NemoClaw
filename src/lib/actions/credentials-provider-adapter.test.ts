@@ -78,6 +78,40 @@ function providerAdapter(
   };
 }
 
+function nativeNvidiaProviderAdapter(): OpenShellProviderAdapter {
+  let providerPresent = false;
+  return providerAdapter({
+    getProvider: vi.fn(async (request) =>
+      providerPresent
+        ? {
+            ok: true as const,
+            value: {
+              name: request.providerName,
+              type: "nemoclaw-nvidia-inference-v1",
+              credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+              configKeys: [],
+              revision: {
+                id: "11111111-2222-4333-8444-555555555555",
+                resourceVersion: 1,
+              },
+            },
+          }
+        : {
+            ok: false as const,
+            error: {
+              kind: "command" as const,
+              reason: "not_found" as const,
+              message: "provider not found",
+            },
+          },
+    ),
+    createProvider: vi.fn(async () => {
+      providerPresent = true;
+      return { ok: true as const };
+    }),
+  });
+}
+
 describe("credential actions use typed OpenShell provider results", () => {
   beforeEach(() => {
     setGlobalCliActionRuntimeHooksForTest({
@@ -129,35 +163,8 @@ describe("credential actions use typed OpenShell provider results", () => {
       recordExtraProvider,
       forgetExtraProvider: () => true,
     });
-    let providerPresent = false;
     const providerId = "11111111-2222-4333-8444-555555555555";
-    const adapter = providerAdapter({
-      getProvider: vi.fn(async (request) =>
-        providerPresent
-          ? {
-              ok: true as const,
-              value: {
-                name: request.providerName,
-                type: "nemoclaw-nvidia-inference-v1",
-                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-                configKeys: [],
-                revision: { id: providerId, resourceVersion: 1 },
-              },
-            }
-          : {
-              ok: false as const,
-              error: {
-                kind: "command" as const,
-                reason: "not_found" as const,
-                message: "provider not found",
-              },
-            },
-      ),
-      createProvider: vi.fn(async () => {
-        providerPresent = true;
-        return { ok: true as const };
-      }),
-    });
+    const adapter = nativeNvidiaProviderAdapter();
     const setNativeNvidiaProviderAuthority = vi.fn();
 
     const result = await runCredentialsAddAction(
@@ -195,6 +202,38 @@ describe("credential actions use typed OpenShell provider results", () => {
       providerId,
     });
     expect(recordExtraProvider).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
+  it("reports a reset action when native NVIDIA authority persistence fails", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const adapter = nativeNvidiaProviderAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority: () => {
+          throw new Error("state directory is read-only");
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  OpenShell provider 'nemoclaw-nvidia-prod-v1' was created, but NemoClaw could not record its ownership.",
+    );
+    expect(result.failureLines).toContain(
+      "  Run 'nemoclaw credentials reset nvidia-prod --yes' to remove the incomplete provider, then retry.",
+    );
+    expect(result.failureLines).toContain("  state directory is read-only");
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
   });
 
