@@ -17,10 +17,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  applyOpenClawSlackProxyAddrRemediation,
+  remediateInstalledOfficialOpenClawPlugin,
   remediateReviewedOpenClawPluginArchive,
 } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
@@ -823,21 +823,32 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
               : "inspection failed",
           );
         }
-        const verifiedInstall = verifyTrustedOfficialNpmInstall(
+        const packageDirectory = verifyTrustedOfficialNpmInstall(
           install,
           officialPluginId,
           inspection,
         );
-        if (install.npmPackageSpec === "@openclaw/slack@2026.9.2") {
-          applyOpenClawSlackProxyAddrRemediation({
-            env: installEnv as NodeJS.ProcessEnv,
-            packageDirectory: validatedSlackInstallDirectory(
-              verifiedInstall.installPath,
-              commandEnv,
-            ),
-            workingDirectory: packed.rootDir,
-          });
-        }
+        const homeValue = (value: string | undefined) =>
+          value?.trim() && value.trim() !== "undefined" && value.trim() !== "null"
+            ? value.trim()
+            : undefined;
+        const osHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? homedir();
+        const expand = (value: string, home: string) =>
+          resolve(value.trim().replace(/^~(?=$|[\\/])/, () => home));
+        const home = expand(homeValue(env.OPENCLAW_HOME) ?? osHome, osHome);
+        const stateRoot = env.OPENCLAW_STATE_DIR?.trim()
+          ? expand(env.OPENCLAW_STATE_DIR, home)
+          : env.OPENCLAW_CONFIG_PATH?.trim()
+            ? dirname(expand(env.OPENCLAW_CONFIG_PATH, home))
+            : join(home, ".openclaw");
+        remediateInstalledOfficialOpenClawPlugin({
+          archivePath: packed.archivePath,
+          env: installEnv as NodeJS.ProcessEnv,
+          packageSpec: install.npmPackageSpec!,
+          packageDirectory,
+          trustedStateRoot: resolve(stateRoot),
+          workingDirectory: packed.rootDir,
+        });
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -1461,7 +1472,7 @@ function verifyTrustedOfficialNpmInstall(
   install: OpenClawPluginInstall,
   pluginId: string,
   inspectOutput: string,
-): Record<string, unknown> {
+): string | undefined {
   let inspected: unknown;
   try {
     inspected = JSON.parse(inspectOutput);
@@ -1485,56 +1496,7 @@ function verifyTrustedOfficialNpmInstall(
       "did not retain trusted exact registry provenance",
     );
   }
-  return record;
-}
-
-/** Match the pinned OpenClaw managed npm layout, never an invented extensions path. */
-function validatedSlackInstallDirectory(installPath: unknown, env: Env): string {
-  try {
-    const homeValue = (value: string | undefined) =>
-      value?.trim() && value.trim() !== "undefined" && value.trim() !== "null"
-        ? value.trim()
-        : undefined;
-    const osHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? homedir();
-    const expand = (value: string, home: string) =>
-      resolve(value.trim().replace(/^~(?=$|[\\/])/, () => home));
-    const home = expand(homeValue(env.OPENCLAW_HOME) ?? osHome, osHome);
-    const configRoot = env.OPENCLAW_STATE_DIR?.trim()
-      ? expand(env.OPENCLAW_STATE_DIR, home)
-      : env.OPENCLAW_CONFIG_PATH?.trim()
-        ? dirname(expand(env.OPENCLAW_CONFIG_PATH, home))
-        : join(home, ".openclaw");
-    const projectsRoot = join(configRoot, "npm", "projects");
-    const matchesPackageLayout = (root: string, candidate: string) => {
-      const parts = relative(root, candidate).split(sep);
-      return (
-        parts.length === 4 &&
-        parts[0] !== ".." &&
-        parts[0] !== "" &&
-        parts[1] === "node_modules" &&
-        parts[2] === "@openclaw" &&
-        parts[3] === "slack"
-      );
-    };
-    if (
-      typeof installPath !== "string" ||
-      !isAbsolute(installPath) ||
-      installPath.split(sep).includes("..") ||
-      !matchesPackageLayout(projectsRoot, installPath)
-    ) {
-      throw new Error();
-    }
-    const packageStat = lstatSync(installPath);
-    if (!packageStat.isDirectory() || packageStat.isSymbolicLink()) throw new Error();
-    const canonicalRoot = realpathSync(projectsRoot);
-    const canonicalPackage = realpathSync(installPath);
-    if (!matchesPackageLayout(canonicalRoot, canonicalPackage)) throw new Error();
-    return canonicalPackage;
-  } catch {
-    throw new MessagingBuildApplierError(
-      "OpenClaw Slack remediation requires a valid managed npm package directory",
-    );
-  }
+  return sanitizeOptionalString(record.installPath);
 }
 
 function packVerifiedOpenClawPluginArchive(

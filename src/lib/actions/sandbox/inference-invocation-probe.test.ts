@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import {
@@ -57,6 +58,7 @@ function runProbeCommandWithBody(
   body: string,
   parentDirectory: string = tmpdir(),
   probeInput = input,
+  workloadEnvironment: Record<string, string> = {},
 ): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
@@ -77,7 +79,7 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: { ...process.env, ...workloadEnvironment, PATH: `${bin}:${process.env.PATH || ""}` },
     });
     return {
       stdout: run.stdout || "",
@@ -96,23 +98,18 @@ const NVCF_BODY_VARIANTS = [
 
 describe("native hosted inference protocol requests", () => {
   it.each<[string, string, string, string[]]>([
-    [
-      "openai-api",
-      "openai-responses",
-      "https://api.openai.com/v1/responses",
-      ["Authorization: Bearer nemoclaw-openshell-provider"],
-    ],
+    ["openai-api", "openai-responses", "https://api.openai.com/v1/responses", []],
     [
       "anthropic-prod",
       "anthropic-messages",
       "https://api.anthropic.com/v1/messages",
-      ["x-api-key: nemoclaw-openshell-provider", "anthropic-version: 2023-06-01"],
+      ["anthropic-version: 2023-06-01"],
     ],
     [
       "gemini-api",
       "openai-completions",
       "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-      ["Authorization: Bearer nemoclaw-openshell-provider"],
+      [],
     ],
     [
       "openrouter-api",
@@ -124,24 +121,35 @@ describe("native hosted inference protocol requests", () => {
       "hermes-provider",
       "openai-responses",
       "https://inference-api.nousresearch.com/v1/responses",
-      ["Authorization: Bearer nemoclaw-openshell-provider"],
+      [],
     ],
     [
       "hermes-provider",
       "openai-completions",
       "https://inference-api.nousresearch.com/v1/chat/completions",
-      ["Authorization: Bearer nemoclaw-openshell-provider"],
+      [],
     ],
   ])(
     "sends %s requests to its native protocol endpoint (#12589)",
     (provider, preferredInferenceApi, endpoint, headers) => {
-      const result = runProbeCommandWithBody("200", "{}", tmpdir(), {
-        ...input,
-        provider,
-        preferredInferenceApi,
-        nativeProvider: true,
-      } as typeof input);
+      const credentialEnv = nativeHostedProfile(provider)!.credentialEnv;
+      const handle = `openshell:resolve:env:v42_${credentialEnv}`;
+      const result = runProbeCommandWithBody(
+        "200",
+        "{}",
+        tmpdir(),
+        {
+          ...input,
+          provider,
+          preferredInferenceApi,
+          nativeProvider: true,
+        } as typeof input,
+        { [credentialEnv]: handle },
+      );
       expect(result.argv).toContain(endpoint);
+      expect(result.argv).toContain(
+        `${provider === "anthropic-prod" ? "x-api-key: " : "Authorization: Bearer "}${handle}`,
+      );
       expect(result.argv).toEqual(expect.arrayContaining(headers));
       expect(result.argv.join(" ")).not.toContain("inference.local");
     },
@@ -195,10 +203,11 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain("Authorization: Bearer ");
+    expect(command).toContain("${NVIDIA_INFERENCE_API_KEY:-}");
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).not.toContain("nemoclaw-openshell-provider");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {

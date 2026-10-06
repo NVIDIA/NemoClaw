@@ -391,6 +391,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
       inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: { supportsStore: false },
     });
@@ -413,6 +414,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
       inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: { supportsStore: false },
     });
@@ -437,6 +439,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
       inferenceBaseUrl: "https://openrouter.ai/api/v1",
+      inferenceCredentialEnv: "OPENROUTER_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -502,6 +505,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/gemini-2.5-flash`,
       inferenceBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      inferenceCredentialEnv: "GEMINI_API_KEY",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -514,6 +518,7 @@ describe("getSandboxInferenceConfig", () => {
       providerKey: "openai",
       primaryModelRef: "openai/gpt-5.4",
       inferenceBaseUrl: "https://api.openai.com/v1",
+      inferenceCredentialEnv: "OPENAI_API_KEY",
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });

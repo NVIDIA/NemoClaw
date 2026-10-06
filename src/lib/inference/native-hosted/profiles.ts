@@ -7,7 +7,12 @@ export interface NativeHostedProfile {
   readonly profileId: string;
   readonly providerName: string;
   readonly endpoint: string;
-  readonly credentialEnv: string;
+  readonly credentialEnv:
+    | "NVIDIA_INFERENCE_API_KEY"
+    | "OPENAI_API_KEY"
+    | "ANTHROPIC_API_KEY"
+    | "GEMINI_API_KEY"
+    | "OPENROUTER_API_KEY";
 }
 
 export const NATIVE_HOSTED_PROFILES: readonly NativeHostedProfile[] = [

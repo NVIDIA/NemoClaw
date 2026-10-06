@@ -163,3 +163,9 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 The repository-check runner reports durations and selects checks from changed paths, including deletions.
 Compiler hooks share content-based local result reuse with explicit validation. Changed or unavailable
 inputs require execution; reuse does not replace trusted validation or independent CI.
+
+Pi image source changes can be committed and pushed before candidate builds generate fresh
+qualification receipts. Local checks still validate both receipts and their exact candidate
+authority. CI additionally requires refreshed receipts whose source matches the Pi image inputs;
+keep the PR draft until that qualification passes. This lets the candidate workflow build published
+source without weakening runtime image admission or the CI merge gate.

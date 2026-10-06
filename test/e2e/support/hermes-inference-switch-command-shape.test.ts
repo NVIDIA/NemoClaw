@@ -5,7 +5,10 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import {
+  resolveAgentInferenceApi,
+  nativeHostedProfile,
+} from "../../../src/lib/inference/config.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthropic-switch.ts";
@@ -64,12 +67,14 @@ describe("Hermes inference switch command shape", () => {
       "/chat/completions",
     ],
   ])(
-    "uses native endpoint and placeholder authentication for %s probes",
+    "uses native endpoint and issued credential authentication for %s probes",
     (provider, endpoint, header, route) => {
       expect(expectedBaseUrl(provider)).toBe(endpoint);
       const command = sandboxInferenceCommand('{"model":"selected-model"}', provider);
       expect(command).toContain(`${endpoint}${route}`);
-      expect(command.toLowerCase()).toContain(`${header} nemoclaw-openshell-provider`);
+      expect(command.toLowerCase()).toContain(header);
+      expect(command).toContain('"$AUTH_HEADER"');
+      expect(command).not.toContain("nemoclaw-openshell-provider");
       expect(command).not.toContain("inference.local");
     },
   );
@@ -147,7 +152,8 @@ describe("Hermes inference switch command shape", () => {
     const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain('"$AUTH_HEADER"');
     expect(command).not.toContain("inference.local");
   });
 
@@ -208,10 +214,34 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
+  });
+
+  it.each([
+    "nvidia-prod",
+    "openai-api",
+    "anthropic-prod",
+    "gemini-api",
+    "openrouter-api",
+    "hermes-provider",
+  ])("accepts only the selected native credential reference for %s", (provider) => {
+    const pattern = apiKeyShapeCommand(provider)[2]!;
+    const credentialEnv = nativeHostedProfile(provider)!.credentialEnv;
+    const reference = "${" + credentialEnv + "}";
+    const probe = (value: string) =>
+      spawnSync("grep", ["-Eq", pattern], {
+        encoding: "utf8",
+        input: `  api_key: ${value}\n`,
+      }).status;
+    expect(probe(reference)).toBe(0);
+    expect(probe(`"${reference}"`)).toBe(0);
+    expect(probe(`'${reference}'`)).toBe(0);
+    expect(probe("sk-OPENSHELL-PROXY-REWRITE")).toBe(1);
+    expect(probe("${WRONG_API_KEY}")).toBe(1);
+    expect(probe(`${reference} trailing`)).toBe(1);
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {

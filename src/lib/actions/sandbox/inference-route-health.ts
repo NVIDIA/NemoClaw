@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeInferenceProbeAuthScript } from "../../inference/probe/native-inference-probe-auth";
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
@@ -93,7 +94,7 @@ export type SandboxInferenceRouteHealth = {
 
 const NATIVE_NVIDIA_MODELS_ENDPOINT = `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/models`;
 const NATIVE_NVIDIA_MODELS_PROBE_SCRIPT = [
-  "AUTH_HEADER=$(printf 'Authorization: %s %s' 'Bearer' 'nemoclaw-openshell-provider')",
+  ...nativeInferenceProbeAuthScript("NVIDIA_INFERENCE_API_KEY"),
   `HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" --connect-timeout 3 --max-time 15 ${NATIVE_NVIDIA_MODELS_ENDPOINT} 2>/dev/null) || HTTP_CODE=000`,
   'case "$HTTP_CODE" in 2[0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
 ].join("; ");

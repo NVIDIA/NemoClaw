@@ -78,6 +78,7 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
+      "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
           uuid: bundledVersion(
@@ -95,7 +96,6 @@ describe("OpenClaw managed messaging offline image build", () => {
           ),
         },
       },
-      "proxy-addr": "2.0.8",
     });
     expect(nestedOverrideLocations).toHaveLength(3);
     nestedOverrideLocations.forEach((location) => {

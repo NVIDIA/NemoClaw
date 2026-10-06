@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeInferenceProbeAuthScript } from "../../inference/probe/native-inference-probe-auth";
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { getOpenRouterCurlHeaders } from "../../inference/openrouter";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
@@ -97,14 +98,8 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     config.inferenceApi === "anthropic-messages" && !baseUrl.endsWith("/v1")
       ? `${baseUrl}/v1`
       : baseUrl;
-  const nativeHeaders = useNativeHosted
-    ? [
-        input.provider === "anthropic-prod"
-          ? "x-api-key: nemoclaw-openshell-provider"
-          : "Authorization: Bearer nemoclaw-openshell-provider",
-        ...(input.provider === "openrouter-api" ? getOpenRouterCurlHeaders() : []),
-      ]
-    : [];
+  const nativeHeaders =
+    useNativeHosted && input.provider === "openrouter-api" ? getOpenRouterCurlHeaders() : [];
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
@@ -153,13 +148,20 @@ export function buildSandboxInferenceInvocationCommand(
   const headerArgs = ["Content-Type: application/json", ...request.headers]
     .map((header) => `-H ${shellQuote(header)}`)
     .join(" ");
+  const nativeCredentialEnv =
+    input.nativeProvider === true ? nativeHostedProfile(input.provider)?.credentialEnv : undefined;
+  const authScript = nativeCredentialEnv
+    ? nativeInferenceProbeAuthScript(nativeCredentialEnv, input.provider === "anthropic-prod")
+    : [];
+  const authArg = nativeCredentialEnv ? ' -H "$AUTH_HEADER"' : "";
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...authScript,
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
-    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs}${authArg} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already

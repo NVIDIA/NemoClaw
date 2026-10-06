@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -27,7 +28,7 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
   return {
     ...original,
-    applyOpenClawSlackProxyAddrRemediation: applySlackProxyAddrRemediation,
+    remediateInstalledOfficialOpenClawPlugin: applySlackProxyAddrRemediation,
     remediateReviewedOpenClawPluginArchive: ({ archivePath }: { archivePath: string }) => ({
       archivePath,
       integrity: "sha512-messaging-integrity-test-remediation",
@@ -38,7 +39,10 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
 
 beforeEach(() => {
   vi.clearAllMocks();
+  applySlackProxyAddrRemediation.mockReset();
 });
+
+const SLACK_PROJECT = `openclaw-slack-${createHash("sha256").update("@openclaw/slack").digest("hex").slice(0, 10)}`;
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -214,16 +218,40 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       root: "alternate/state",
     },
   ])("remediates the verified managed Slack install using $name", async ({ overrides, root }) => {
+    const original = await vi.importActual<
+      typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")
+    >("../../../scripts/lib/openclaw-npm-remediation.mts");
+    applySlackProxyAddrRemediation.mockImplementation(
+      original.remediateInstalledOfficialOpenClawPlugin,
+    );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-remediation-"));
     const packageDirectory = path.join(
       tmp,
       root,
-      "npm/projects/project/node_modules/@openclaw/slack",
+      `npm/projects/${SLACK_PROJECT}/node_modules/@openclaw/slack`,
     );
     fs.mkdirSync(packageDirectory, { recursive: true });
     // The ordinary managed OpenClaw peer link is legal below the package root.
     fs.mkdirSync(path.join(packageDirectory, "node_modules"));
     fs.symlinkSync(tmp, path.join(packageDirectory, "node_modules/openclaw"));
+    const dependencyDirectory = path.join(
+      packageDirectory,
+      "node_modules/@slack/bolt/node_modules/proxy-addr",
+    );
+    fs.mkdirSync(dependencyDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(packageDirectory, "package.json"),
+      JSON.stringify({ name: "@openclaw/slack", version: "2026.9.2" }),
+    );
+    fs.writeFileSync(
+      path.join(dependencyDirectory, "package.json"),
+      JSON.stringify({
+        name: "proxy-addr",
+        version: "2.0.7",
+        dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+      }),
+    );
+    fs.writeFileSync(path.join(dependencyDirectory, "index.js"), "vulnerable-canary");
     const tracePath = path.join(tmp, "openclaw.trace");
     const inspection = JSON.stringify({
       plugin: { id: "slack", trustedOfficialInstall: true },
@@ -268,6 +296,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           HOME: tmp,
           ...overrides,
+          NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
+            import.meta.dirname,
+            "../../fixtures/npm/proxy-addr-2.0.8",
+          ),
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_SLACK_2026_9_2_INTEGRITY,
           OPENCLAW_VERSION: "2026.9.2",
@@ -278,10 +310,20 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       const plan = readMessagingBuildPlanFromEnv(env, "openclaw");
 
       expect(applyMessagingBuildPhase(plan, "agent-install", env)).toEqual([]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(dependencyDirectory, "package.json"), "utf8")).version,
+      ).toBe("2.0.8");
+      expect(fs.readFileSync(path.join(dependencyDirectory, "index.js"), "utf8")).not.toContain(
+        "vulnerable-canary",
+      );
+      expect(
+        fs.lstatSync(path.join(packageDirectory, "node_modules/openclaw")).isSymbolicLink(),
+      ).toBe(true);
       expect(applySlackProxyAddrRemediation).toHaveBeenCalledOnce();
       expect(applySlackProxyAddrRemediation).toHaveBeenCalledWith(
         expect.objectContaining({
-          packageDirectory: fs.realpathSync(packageDirectory),
+          packageDirectory,
+          trustedStateRoot: path.join(tmp, root),
         }),
       );
       const remediationRequest = applySlackProxyAddrRemediation.mock.calls[0]?.[0] as {
@@ -310,11 +352,17 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     "file",
     "untrusted provenance",
   ])("refuses Slack remediation before mutation for %s", async (scenario) => {
+    const original = await vi.importActual<
+      typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")
+    >("../../../scripts/lib/openclaw-npm-remediation.mts");
+    applySlackProxyAddrRemediation.mockImplementation(
+      original.remediateInstalledOfficialOpenClawPlugin,
+    );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-install-denial-"));
     try {
       const packageDirectory = path.join(
         tmp,
-        ".openclaw/npm/projects/project/node_modules/@openclaw/slack",
+        `.openclaw/npm/projects/${SLACK_PROJECT}/node_modules/@openclaw/slack`,
       );
       fs.mkdirSync(packageDirectory, { recursive: true });
       const sentinel = path.join(packageDirectory, "untouched");
@@ -398,9 +446,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       const expectedMessage =
         scenario === "untrusted provenance"
           ? "OpenClaw official npm plugin slack did not retain trusted exact registry provenance"
-          : "OpenClaw Slack remediation requires a valid managed npm package directory";
+          : "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph";
       expect(failure).toThrow(expect.objectContaining({ message: expectedMessage }));
-      expect(applySlackProxyAddrRemediation).not.toHaveBeenCalled();
+
       expect(fs.readFileSync(sentinel, "utf8")).toBe("original");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

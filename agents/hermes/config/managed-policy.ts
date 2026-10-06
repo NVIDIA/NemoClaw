@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles.ts";
 import type { HermesManagedRouting } from "../../../src/lib/hermes-managed-route.ts";
 import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
 import type { HermesBuildSettings } from "./build-env.ts";
@@ -288,6 +289,10 @@ export function buildHermesManagedPolicy(
       upstreamProvider: settings.upstreamProvider,
       inferenceApi: settings.inferenceApi,
       contextWindow: settings.contextWindow,
+      credentialEnv:
+        nativeHostedProfile(settings.upstreamProvider)?.endpoint === settings.baseUrl
+          ? nativeHostedProfile(settings.upstreamProvider)?.credentialEnv
+          : undefined,
     });
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

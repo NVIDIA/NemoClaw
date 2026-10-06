@@ -119,13 +119,15 @@ RUN set -eu; \
     installed_version="$(printf '%s' "$pi_version" | tr -d '[:space:]')"; \
     [ "$installed_version" = "${PI_VERSION}" ]
 
-COPY agents/pi/generate-config.ts /opt/nemoclaw-pi/generate-config.ts
+COPY agents/pi/generate-config.ts agents/pi/resolve-native-credential.ts /opt/nemoclaw-pi/
+COPY src/lib/inference/native-hosted/profiles.ts src/lib/inference/native-hosted/openrouter-headers.ts /src/lib/inference/native-hosted/
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/pi/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
-RUN chmod 444 /opt/nemoclaw-pi/generate-config.ts /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+RUN test -x /usr/local/bin/node \
+    && chmod 444 /src/lib/inference/native-hosted/profiles.ts /src/lib/inference/native-hosted/openrouter-headers.ts /opt/nemoclaw-pi/generate-config.ts /opt/nemoclaw-pi/resolve-native-credential.ts /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold \
     && chmod -R a+rX /opt/nemoclaw-blueprint
 

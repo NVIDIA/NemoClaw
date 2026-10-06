@@ -13,7 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
-import { nativeHostedProfile } from "./native-hosted/profiles";
+import { nativeHostedProfile, NATIVE_HOSTED_PROFILES } from "./native-hosted/profiles";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -191,6 +191,7 @@ export interface SandboxInferenceConfig {
   inferenceBaseUrl: string;
   inferenceApi: string;
   inferenceCompat: Record<string, unknown> | null;
+  inferenceCredentialEnv?: string;
 }
 
 /**
@@ -425,7 +426,16 @@ export function getSandboxInferenceConfig(
   }
 
   inferenceBaseUrl = nativeHostedProfile(provider)?.endpoint ?? inferenceBaseUrl;
-  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
+  return {
+    providerKey,
+    primaryModelRef,
+    inferenceBaseUrl,
+    inferenceApi,
+    inferenceCompat,
+    ...(nativeHostedProfile(provider)
+      ? { inferenceCredentialEnv: nativeHostedProfile(provider)!.credentialEnv }
+      : {}),
+  };
 }
 
 /**
@@ -521,3 +531,7 @@ export {
   resolveGatewayNativeHostedProviderAuthority,
   retainNativeHostedProviderAuthority,
 } from "./native-hosted/authority";
+
+export function isNativeHostedCredentialReference(value: unknown): boolean {
+  return NATIVE_HOSTED_PROFILES.some((profile) => value === `\${${profile.credentialEnv}}`);
+}

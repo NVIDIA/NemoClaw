@@ -968,13 +968,25 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     });
   }
+  const nativeRoutes: Record<string, readonly [string, string]> = {
+    "nvidia-prod": ["https://integrate.api.nvidia.com/v1", "NVIDIA_INFERENCE_API_KEY"],
+    "openai-api": ["https://api.openai.com/v1", "OPENAI_API_KEY"],
+    "anthropic-prod": ["https://api.anthropic.com", "ANTHROPIC_API_KEY"],
+    "gemini-api": ["https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"],
+    "openrouter-api": ["https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"],
+    "hermes-provider": ["https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY"],
+  };
+  const nativeProfile = nativeRoutes[upstreamProvider];
   const providers = {
     [providerKey]: {
       ...(upstreamProvider === "openrouter-api"
         ? { headers: Object.fromEntries(OPENROUTER_DEFAULT_HEADERS) }
         : {}),
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey:
+        nativeProfile && inferenceBaseUrl === nativeProfile[0]
+          ? `\${${nativeProfile[1]}}`
+          : "unused",
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

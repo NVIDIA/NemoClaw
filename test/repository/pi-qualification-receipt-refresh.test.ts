@@ -49,6 +49,7 @@ describe("Pi qualification receipt refresh", () => {
   let acceptedDigests: Set<string>;
 
   beforeEach(() => {
+    vi.stubEnv("CI", "true");
     vi.stubEnv("GITHUB_ACTIONS", "false");
     vi.stubEnv("GITHUB_EVENT_NAME", "");
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-receipt-refresh-"));
@@ -124,6 +125,39 @@ describe("Pi qualification receipt refresh", () => {
       ...(options.headRevision !== null ? { headRevision: options.headRevision ?? "HEAD" } : {}),
     });
   }
+
+  it("allows local source publication before candidate receipts are available", () => {
+    vi.stubEnv("CI", "false");
+    expect(() => run(["protected/app/config.json"], { sourceParity: false })).not.toThrow();
+  });
+
+  it("allows a local merge with valid inherited receipts before rebuilding images", () => {
+    vi.stubEnv("CI", "false");
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        sourceParity: false,
+        mergeInProgress: true,
+        headRevision: null,
+      }),
+    ).not.toThrow();
+  });
+
+  it("still rejects unauthorized receipt contents during local source publication", () => {
+    vi.stubEnv("CI", "false");
+    expect(() => run(["protected/app/config.json"], { accepted: new Set() })).toThrow(
+      "is not present in the Pi candidate receipt authority",
+    );
+  });
+
+  it("enforces source parity in GitHub Actions even when CI is unset", () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        sourceParity: false,
+      }),
+    ).toThrow(`Pi image inputs changed after receipt source revision ${SOURCE_REVISION}`);
+  });
 
   it.each([
     ["copied source", "protected/app/config.json"],

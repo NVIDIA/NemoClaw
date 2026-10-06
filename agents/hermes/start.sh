@@ -2721,6 +2721,11 @@ validate_hermes_env_secret_boundary() {
     "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
 }
 
+validate_hermes_native_inference_credential() {
+  "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" native-inference-credential \
+    --hermes-dir "$HERMES_DIR" --hash-file "$HERMES_HASH_FILE" || return 1
+}
+
 validate_hermes_runtime_env_secret_boundary() {
   HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET" "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
     "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
@@ -2897,6 +2902,7 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  validate_hermes_native_inference_credential || return 1
 }
 
 migrate_legacy_hermes_dashboard_state() {
@@ -3046,6 +3052,7 @@ prepare_hermes_root_runtime() {
   refresh_hermes_provider_placeholders both || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  validate_hermes_native_inference_credential || return 1
 }
 
 launch_hermes_gateway_current_user() {

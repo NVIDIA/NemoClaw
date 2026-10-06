@@ -1074,6 +1074,29 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_inference_api_key() -> str:
+    """Use only the issued handle for the root-owned native inference route."""
+    base_url = managed_inference_base_url()
+    profiles = {
+        "nvidia-prod": ("https://integrate.api.nvidia.com/v1", "NVIDIA_INFERENCE_API_KEY"),
+        "openai-api": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+        "anthropic-prod": ("https://api.anthropic.com", "ANTHROPIC_API_KEY"),
+        "gemini-api": ("https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
+        "openrouter-api": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+        "hermes-provider": ("https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY"),
+    }
+    profile = profiles.get(_managed_upstream_provider())
+    credential_env = profile[1] if profile and base_url == profile[0] else None
+    if credential_env is None:
+        return "nemoclaw-managed-inference"
+    value = os.environ.get(credential_env, "")
+    if re.fullmatch(
+        rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{credential_env}", value
+    ) is None:
+        raise RuntimeError("Native inference requires an issued OpenShell credential handle")
+    return value
+
+
 def managed_fetch_proxy_url() -> str | None:
     """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
 

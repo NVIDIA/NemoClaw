@@ -155,3 +155,27 @@ describe("Hermes managed policy", () => {
     expect(patcher.status, patcher.stderr).toBe(0);
   });
 });
+
+describe("native inference credential references", () => {
+  it.each([
+    ["nvidia-prod", "https://integrate.api.nvidia.com/v1", "NVIDIA_INFERENCE_API_KEY"],
+    ["openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY"],
+    ["anthropic-prod", "https://api.anthropic.com", "ANTHROPIC_API_KEY"],
+    ["gemini-api", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"],
+    ["openrouter-api", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"],
+    ["hermes-provider", "https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY"],
+  ])("references issued runtime credentials in every %s route leaf", (provider, baseUrl, key) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, upstreamProvider: provider, baseUrl },
+      {},
+    );
+    const reference = "$" + "{" + key + "}";
+    expect(policy.config.model?.api_key).toBe(reference);
+    expect(Object.values(policy.config.providers ?? {}).map((value) => value.api_key)).toEqual([
+      reference,
+    ]);
+    expect(policy.config.custom_providers?.map((value) => value.api_key)).toEqual([reference]);
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+});

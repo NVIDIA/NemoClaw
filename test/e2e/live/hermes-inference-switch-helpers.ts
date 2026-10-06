@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeInferenceProbeAuthScript } from "../../../src/lib/inference/probe/native-inference-probe-auth.ts";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -769,8 +770,13 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+export function apiKeyShapeCommand(provider = SWITCH_PROVIDER): string[] {
+  const profile = nativeHostedProfile(provider);
+  const reference = profile ? `\\$\\{${profile.credentialEnv}\\}` : null;
+  const pattern = reference
+    ? `^[[:space:]]*api_key:[[:space:]]*("${reference}"|'${reference}'|${reference})[[:space:]]*$`
+    : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {
@@ -826,23 +832,18 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-const NATIVE_PROVIDER_PLACEHOLDER_AUTH_HEADER =
-  "Author" + "ization: Bearer nemoclaw-openshell-provider";
-
 export function sandboxInferenceCommand(payload: string, provider = SWITCH_PROVIDER): string {
   const profile = nativeHostedProfile(provider);
   if (profile) {
     const anthropic = provider === "anthropic-prod";
     const endpoint = `${profile.endpoint}${anthropic ? "/v1/messages" : "/chat/completions"}`;
-    const authHeader = anthropic
-      ? "x-api-key: nemoclaw-openshell-provider"
-      : NATIVE_PROVIDER_PLACEHOLDER_AUTH_HEADER;
+    const auth = nativeInferenceProbeAuthScript(profile.credentialEnv, anthropic).join("; ");
     const attributionHeaders =
       provider === "openrouter-api"
         ? OPENROUTER_DEFAULT_HEADERS.map(([name, value]) => ` -H '${name}: ${value}'`).join("")
         : "";
     const versionHeader = anthropic ? " -H 'anthropic-version: 2023-06-01'" : "";
-    return `curl -sS --max-time 90 ${endpoint} -H 'Content-Type: application/json' -H '${authHeader}'${versionHeader}${attributionHeaders} -d '${quotePayload(payload)}'`;
+    return `${auth}; curl -sS --max-time 90 ${endpoint} -H 'Content-Type: application/json' -H "$AUTH_HEADER"${versionHeader}${attributionHeaders} -d '${quotePayload(payload)}'`;
   }
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`

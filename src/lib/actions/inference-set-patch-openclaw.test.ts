@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
 import { describe, expect, it } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig } from "./inference-set";
@@ -13,6 +14,24 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it.each(NATIVE_HOSTED_PROFILES)(
+    "uses $label workload references and clears them on switch",
+    (profile) => {
+      const config: ConfigObject = {
+        models: { providers: { inference: { apiKey: "stale-sentinel" } } },
+      };
+      const first = patchOpenClawInferenceConfig(config, profile.logicalProvider, "selected");
+      const providers = (config.models as ConfigObject).providers as ConfigObject;
+      expect((providers[first.route.providerKey] as ConfigObject).apiKey).toBe(
+        `\${${profile.credentialEnv}}`,
+      );
+      patchOpenClawInferenceConfig(config, "compatible-endpoint", "selected", "openai-completions");
+      expect(Object.values(providers).map((value) => (value as ConfigObject).apiKey)).not.toContain(
+        `\${${profile.credentialEnv}}`,
+      );
+    },
+  );
+
   it("adds OpenRouter attribution and removes only owned headers when switching away", () => {
     const config: ConfigObject = {
       models: { providers: { inference: { headers: { "X-Operator": "keep" } } } },
@@ -97,7 +116,7 @@ describe("patchOpenClawInferenceConfig", () => {
       providers: {
         inference: {
           baseUrl: "https://integrate.api.nvidia.com/v1",
-          apiKey: "unused",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
@@ -167,7 +186,7 @@ describe("patchOpenClawInferenceConfig", () => {
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "unused",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
         models: [
           {
@@ -223,7 +242,7 @@ describe("patchOpenClawInferenceConfig", () => {
         providers: {
           inference: {
             baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "unused",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
             models: [
               {
@@ -325,7 +344,7 @@ describe("patchOpenClawInferenceConfig", () => {
       providers: {
         anthropic: {
           baseUrl: "https://api.anthropic.com",
-          apiKey: "unused",
+          apiKey: "${ANTHROPIC_API_KEY}",
           api: "anthropic-messages",
           models: [
             {

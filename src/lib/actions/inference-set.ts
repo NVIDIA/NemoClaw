@@ -12,6 +12,7 @@ import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   nativeHostedProfile,
+  isNativeHostedCredentialReference,
   OPENROUTER_DEFAULT_HEADERS,
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -696,7 +697,13 @@ function buildProviderConfig(
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
-    apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
+    apiKey: route.inferenceCredentialEnv
+      ? `\${${route.inferenceCredentialEnv}}`
+      : typeof existing.apiKey === "string" &&
+          existing.apiKey &&
+          !isNativeHostedCredentialReference(existing.apiKey)
+        ? existing.apiKey
+        : "unused",
     api: route.inferenceApi,
     models:
       selectedIndex < 0
@@ -736,6 +743,15 @@ export function patchOpenClawInferenceConfig(
   const models = ensureObject(config, "models");
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
+  for (const [key, value] of Object.entries(providers)) {
+    if (
+      isConfigObject(value) &&
+      key !== route.providerKey &&
+      isNativeHostedCredentialReference(value.apiKey)
+    ) {
+      value.apiKey = "unused";
+    }
+  }
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
   providers[route.providerKey] = buildProviderConfig(
     existingProvider,
@@ -832,6 +848,7 @@ export function patchHermesInferenceConfig(
   applyHermesManagedRoute(config, {
     model,
     baseUrl: route.inferenceBaseUrl,
+    credentialEnv: route.inferenceCredentialEnv,
     upstreamProvider: provider,
     inferenceApi: route.inferenceApi,
     contextWindow,

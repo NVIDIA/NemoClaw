@@ -43,7 +43,6 @@ const NEMOTRON_ULTRA_MODEL_IDS = new Set([
   "nvidia/nvidia/nemotron-3-ultra",
 ]);
 const MANAGED_INFERENCE_API_KEY_ENV = "DEEPAGENTS_CODE_OPENAI_API_KEY";
-const ATTACHED_PROVIDER_API_KEY_ENV = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(
@@ -162,10 +161,12 @@ function providerConfigLines(
   model: string,
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
+  upstreamProvider: string,
 ): string[] {
-  const apiKeyEnv = NATIVE_HOSTED_PROFILES.some((profile) => profile.endpoint === baseUrl)
-    ? ATTACHED_PROVIDER_API_KEY_ENV
-    : MANAGED_INFERENCE_API_KEY_ENV;
+  const profile = NATIVE_HOSTED_PROFILES.find(
+    (candidate) => candidate.logicalProvider === upstreamProvider && candidate.endpoint === baseUrl,
+  );
+  const apiKeyEnv = profile?.credentialEnv ?? MANAGED_INFERENCE_API_KEY_ENV;
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
@@ -207,7 +208,13 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "[models]",
     `default = ${tomlString(defaultModel)}`,
     "",
-    ...providerConfigLines(provider, model, settings.baseUrl, settings.reasoningEffort),
+    ...providerConfigLines(
+      provider,
+      model,
+      settings.baseUrl,
+      settings.reasoningEffort,
+      settings.upstreamProvider,
+    ),
     "",
     "[update]",
     "check = false",

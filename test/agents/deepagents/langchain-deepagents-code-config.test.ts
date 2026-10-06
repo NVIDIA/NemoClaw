@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles";
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -86,12 +87,13 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
   });
 
-  it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
+  it("uses the issued credential environment for native NVIDIA inference (#12558)", () => {
     const config = runGenerator({
       NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
     });
 
-    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
@@ -101,14 +103,14 @@ describe("LangChain Deep Agents Code config generator", () => {
     ["gemini-api", "https://generativelanguage.googleapis.com/v1beta/openai"],
     ["openrouter-api", "https://openrouter.ai/api/v1"],
     ["hermes-provider", "https://inference-api.nousresearch.com/v1"],
-  ])("uses the attached-provider placeholder for native %s (#12589)", (provider, endpoint) => {
+  ])("uses the issued credential environment for native %s (#12589)", (provider, endpoint) => {
     const config = runGenerator({
       NEMOCLAW_UPSTREAM_PROVIDER: provider,
       NEMOCLAW_INFERENCE_BASE_URL: endpoint,
     });
 
     expect(config).toContain(`base_url = "${endpoint}"`);
-    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).toContain(`api_key_env = "${nativeHostedProfile(provider)!.credentialEnv}"`);
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
