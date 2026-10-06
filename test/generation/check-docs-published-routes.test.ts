@@ -21,7 +21,6 @@ import {
   publishedSourcePages,
   renderPublishedPageBodies,
   resolvePublishedRoute,
-  withoutPendingLinkFixes,
 } from "../../scripts/check-docs-published-routes.mts";
 
 const navYaml = `
@@ -744,22 +743,7 @@ describe("published page coverage (#12328)", () => {
   });
 
   it("has no unresolved internal link on any published page", () => {
-    const violations = withoutPendingLinkFixes(
-      sources.flatMap((source) => findBrokenPublishedRoutes(source, index)),
-    );
+    const violations = sources.flatMap((source) => findBrokenPublishedRoutes(source, index));
     expect(violations).toEqual([]);
-  });
-
-  it("retains other violations when a pending link fix is exempted (#12326)", () => {
-    const pending = {
-      sourcePath: "get-started/quickstart-hermes.mdx",
-      fromRoute: "/user-guide/hermes/get-started/quickstart",
-      text: "Portable Ollama prerequisites",
-      target: "../inference/set-up-ollama#use-portable-ollama-with-hermes",
-      line: 1,
-      resolved: "/user-guide/hermes/inference/set-up-ollama",
-    };
-    const other = { ...pending, target: "../inference/missing-page" };
-    expect(withoutPendingLinkFixes([pending, other])).toEqual([other]);
   });
 });
