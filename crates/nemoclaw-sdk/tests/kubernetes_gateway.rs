@@ -6,7 +6,7 @@
 use nemoclaw_sdk::{
     bundle::Bundle,
     config::ComputeDriver,
-    kubernetes::{GATEWAY_KIND, Spec, gateway, gateway::Identity},
+    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, gateway::Identity, issuer},
 };
 use serde_json::{Value, json};
 use std::{fs, path::Path, time::Duration};
@@ -44,25 +44,43 @@ fn the_chart_values_pin_every_image_by_digest_and_require_authentication() {
     assert_eq!(values["server"]["disableTls"], false);
     assert_eq!(values["server"]["tls"]["enableMtls"], true);
     assert_eq!(values["server"]["telemetryEnabled"], false);
-    for (pointer, suffix) in [
-        ("/server/credentialStorage/existingSecret", "kek"),
-        ("/server/tls/certSecretName", "server-tls"),
-        ("/server/tls/clientTlsSecretName", "client-tls"),
-        ("/server/sandboxJwt/signingSecretName", "jwt-keys"),
-        ("/server/oidc/caConfigMapName", "oidc-ca"),
-    ] {
-        assert_eq!(
-            values.pointer(pointer).unwrap(),
-            &json!(format!("nc-0123456789abcdef-gateway-{suffix}"))
-        );
-    }
+}
+
+#[test]
+fn chart_authentication_values_contain_only_references_and_public_policy() {
+    let spec = spec();
+    let server = gateway::values(&spec).unwrap()["server"].clone();
+    // Exact shapes reject additional inline keys, certificates, tokens, or
+    // credential-storage data before they can enter native Helm state.
     assert_eq!(
-        values["server"]["oidc"]["issuer"],
-        "https://nc-0123456789abcdef-gateway-oidc.agents.svc.cluster.local:8443"
+        server["tls"],
+        json!({
+            "enableMtls": true,
+            "certSecretName": format!("{}-server-tls", spec.name),
+            "clientTlsSecretName": format!("{}-client-tls", spec.name),
+        })
     );
-    assert!(
-        !values.to_string().contains("PRIVATE KEY"),
-        "generated private material does not belong in Helm values",
+    assert_eq!(
+        server["sandboxJwt"],
+        json!({"signingSecretName": format!("{}-jwt-keys", spec.name)})
+    );
+    assert_eq!(
+        server["credentialStorage"],
+        json!({"existingSecret": format!("{}-kek", spec.name)})
+    );
+    assert_eq!(
+        server["oidc"],
+        json!({
+            "issuer": format!("https://{}-oidc.agents.svc.cluster.local:8443", spec.name),
+            "audience": spec.owner,
+            "jwksTtl": 60,
+            "rolesClaim": "roles",
+            "adminRole": "nemoclaw-development-admin",
+            "userRole": "nemoclaw-development-user",
+            "scopesClaim": "scope",
+            "caConfigMapName": format!("{}-oidc-ca", spec.name),
+            "dangerouslyAllowInsecureHttp": false,
+        })
     );
 }
 
@@ -193,6 +211,57 @@ async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<
     )
 }
 
+/// Check actual chart objects against the objects NemoClaw prepares. Helm must
+/// never include those objects in its release and remove them during uninstall.
+fn assert_release_ownership(rendered: &str, spec: &Spec) {
+    let directory = tempfile::tempdir().unwrap();
+    let namespace = &spec.settings.kubernetes.as_ref().unwrap().namespace;
+    let material = Development::new(
+        directory.path().join("auth"),
+        &spec.name,
+        namespace,
+        &spec.owner,
+    )
+    .ensure()
+    .unwrap();
+    let mut prepared = issuer::objects(&material, &spec.name, namespace);
+    prepared.extend([
+        json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}}),
+        json!({"apiVersion": "v1", "kind": "Secret", "metadata": {
+            "name": format!("{}-kek", spec.name), "namespace": namespace,
+        }}),
+    ]);
+    let objects: Vec<Value> = serde_saphyr::from_multiple(rendered).unwrap();
+    let identity = |object: &Value| {
+        (
+            object["apiVersion"].clone(),
+            object["kind"].clone(),
+            object["metadata"]["name"].clone(),
+        )
+    };
+    for object in &objects {
+        assert!(
+            !prepared
+                .iter()
+                .any(|owned| identity(owned) == identity(object)),
+            "Helm must not own NemoClaw's {} {}",
+            object["kind"],
+            object["metadata"]["name"],
+        );
+        assert_ne!(object["kind"], "Namespace");
+    }
+    assert_eq!(
+        objects
+            .iter()
+            .filter(
+                |object| object["kind"] == "StatefulSet" && object["metadata"]["name"] == spec.name
+            )
+            .count(),
+        1,
+        "the release owns the gateway StatefulSet"
+    );
+}
+
 #[tokio::test]
 #[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
 async fn the_pinned_chart_renders_with_the_sdk_values() {
@@ -201,6 +270,7 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
     let rendered = render(&spec, gateway::CHART, None)
         .await
         .expect("the pinned chart renders");
+    assert_release_ownership(&rendered, &spec);
     assert!(
         rendered.contains("runAsUser: 1000\n"),
         "Kubernetes keeps the chart's gateway UID"
@@ -241,6 +311,7 @@ async fn on_openshift_the_gateway_takes_the_namespace_uid() {
     let rendered = render(&spec, gateway::CHART, Some(identity))
         .await
         .expect("the pinned chart renders");
+    assert_release_ownership(&rendered, &spec);
     assert!(rendered.contains("runAsUser: 1000680000"), "{rendered}");
     assert!(rendered.contains("fsGroup: 1000690000"), "{rendered}");
     assert!(!rendered.contains("runAsUser: 1000\n"));

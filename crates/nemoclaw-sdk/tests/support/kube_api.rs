@@ -7,7 +7,7 @@
 //! code; anything else answers 500.
 
 #![allow(dead_code)]
-use crate::transport::Fixture;
+use super::transport::Fixture;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -179,5 +179,6 @@ impl Objects {
 
 /// A client for a fixture started by `Objects::serve`.
 pub fn client(fixture: &Fixture) -> kube::Client {
-    nemoclaw_sdk::kubernetes::client(kube::Config::new(fixture.endpoint.parse().unwrap())).unwrap()
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    kube::Client::try_from(kube::Config::new(fixture.endpoint.parse().unwrap())).unwrap()
 }

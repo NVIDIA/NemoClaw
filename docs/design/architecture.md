@@ -31,14 +31,33 @@ Pure policy compilation stays in SDK configuration; OpenShell transport and muta
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
 
+## Managed Kubernetes Ownership
+
 For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness.
 The native bundle includes the pinned Helm provider; no Helm CLI is required.
-NemoClaw checks retained Kubernetes identities before the Helm release can change, then records the ready StatefulSet identity.
+
+| Owner | Managed Kubernetes responsibility |
+|---|---|
+| SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and coordinate runtime and OpenShell stages |
+| OpenTofu | Execute dependencies and retain each provider's resource state |
+| NemoClaw provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
+| Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
+| Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
+
+The NemoClaw provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
+Before Helm can change the release, NemoClaw verifies retained Kubernetes identities; after installation, it records the StatefulSet identity and observes readiness.
+For OpenShift, authentication preparation reads the owned namespace's UID and group ranges and supplies non-secret chart overrides through a computed resource output.
+Helm waits for that output, and subsequent refresh rejects a changed namespace identity.
 Teardown reverses that order, removes the release before the issuer, and retains the namespace, encryption key, and persistent volumes.
 Before teardown accepts a missing release, the authentication resource must independently confirm that its Helm release records are absent.
+The SDK also checkpoints an established release binding before removal because the pinned Helm provider can forget it after a failed lookup.
+Recovery validates the original bundle, intent, generations, state lineage and serial, and resource identities, then uses OpenTofu's state operations to restore only a missing Helm binding.
+It preserves the latest state of other resources; a fresh checked plan must authorize subsequent deletion.
+Confirmed authentication cleanup prevents restoration after successful release removal.
+The [Helm removal recovery procedure](../usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
 Issuer private material stays outside Helm values and OpenTofu state.
 The provider receives the explicit kubeconfig and context; ambient Helm and Kubernetes provider settings are excluded.
-State from the earlier combined gateway resource must be recovered or destroyed with its original bundle before using this graph.
+The [migration policy](../migration.md#move-from-the-combined-kubernetes-gateway-resource) keeps deployments using the earlier combined gateway resource with their original bundle and state; the new graph starts a separate deployment.
 
 ## OpenShell SDK Boundary
 

@@ -186,8 +186,14 @@ async fn on_openshift_authentication_exports_the_retained_namespace_identity() {
         .unwrap();
     let values: serde_json::Value =
         serde_json::from_str(response.gateway_values.as_deref().unwrap()).unwrap();
-    assert_eq!(values["securityContext"]["runAsUser"], 1_000_680_000);
-    assert_eq!(values["podSecurityContext"]["fsGroup"], 1_000_690_000);
+    assert_eq!(
+        values,
+        json!({
+            "securityContext": {"runAsUser": 1_000_680_000},
+            "podSecurityContext": {"fsGroup": 1_000_690_000},
+        }),
+        "only the numeric namespace identity may enter Helm through authentication state"
+    );
     assert_eq!(response.running, Some(true));
     let receipt = Receipt::load(&operations.state, OWNER, NAME)
         .unwrap()

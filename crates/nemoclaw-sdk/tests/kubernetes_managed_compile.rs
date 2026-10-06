@@ -59,10 +59,15 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     let release = &graph["resource"]["helm_release"]["gateway"];
     assert_eq!(release["chart"], nemoclaw_sdk::kubernetes::gateway::CHART);
     assert_eq!(release["namespace"], "test-agents");
+    assert_eq!(release["create_namespace"], false);
     assert_eq!(release["take_ownership"], false);
     assert_eq!(release["upgrade_install"], false);
     assert_eq!(release["wait"], true);
     assert_eq!(release["wait_for_jobs"], true);
+    assert_eq!(
+        graph["resource"]["nemoclaw_kubernetes_auth"]["runtime"]["depends_on"],
+        json!(["nemoclaw_kubernetes_storage.runtime"])
+    );
     assert_eq!(
         release["depends_on"],
         json!(["nemoclaw_kubernetes_auth.runtime"])
@@ -70,6 +75,21 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     assert_eq!(
         graph["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
         json!(["helm_release.gateway"])
+    );
+    assert_eq!(
+        graph["resource"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "helm_release",
+            "nemoclaw_kubernetes_auth",
+            "nemoclaw_kubernetes_gateway",
+            "nemoclaw_kubernetes_storage",
+        ],
+        "one native release owns chart resources; prerequisites and readiness stay separate"
     );
     let targets = runtime_targets(&document(), &generations).unwrap();
     assert!(

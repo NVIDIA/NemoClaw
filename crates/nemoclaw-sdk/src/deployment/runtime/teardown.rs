@@ -5,7 +5,7 @@ use super::*;
 
 // Teardown uses gateway authentication but never invokes inference. Keep the
 // retained document and resource graph intact; narrow only subprocess secrets.
-fn destroy_environment(document: &Document) -> Document {
+pub(super) fn destroy_environment(document: &Document) -> Document {
     let mut environment = document.clone();
     for provider in environment.provider_definitions_mut() {
         provider.credential = None;
@@ -46,6 +46,10 @@ impl Deployment {
         } else {
             None
         };
+        if let Some(stage) = &runtime {
+            self.recover_helm_binding(&bundle, stage, &record, preview, cancel)
+                .await?;
+        }
         let runtime_bindings = if let Some(stage) = &runtime {
             self.state_bindings(
                 &bundle,
@@ -124,7 +128,12 @@ impl Deployment {
         (self.progress)(Progress::Destroying);
         for (stage, is_runtime, planned) in stages {
             if planned {
-                operation
+                if is_runtime {
+                    operation
+                        .checkpoint_helm_binding(&bundle, stage, &record, cancel)
+                        .await?;
+                }
+                let applied = operation
                     .tofu(
                         &bundle,
                         stage,
@@ -132,7 +141,24 @@ impl Deployment {
                         &["apply", "-input=false", "-no-color", "destroy.plan"],
                         cancel,
                     )
-                    .await?;
+                    .await;
+                // Cancellation keeps the durable checkpoint for the next
+                // destroy. Otherwise repair lost state before returning the
+                // original error, without retrying any remote mutation.
+                if is_runtime {
+                    if cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let restored = operation
+                        .recover_helm_binding(&bundle, stage, &record, false, cancel)
+                        .await?;
+                    if restored && applied.is_ok() {
+                        return Err(Error::Conflict(
+                            "Helm release deletion was not confirmed; its binding was restored, rerun destroy",
+                        ));
+                    }
+                }
+                applied?;
             }
             if !is_runtime {
                 record.finish_root_destroy();
