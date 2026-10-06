@@ -239,6 +239,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts",
     );
     expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
+    expect(dockerfile).toContain(
+      "COPY src/lib/inference/native-hosted/profiles.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/profiles.ts",
+    );
+    expect(dockerfile).toContain(
+      "RUN chmod 444 /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/profiles.ts",
+    );
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
       'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',

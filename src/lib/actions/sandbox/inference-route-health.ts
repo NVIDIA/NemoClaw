@@ -16,7 +16,6 @@ import {
 } from "../../inference/native-hosted";
 import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
-  verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia";
 
@@ -56,7 +55,7 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
     await input.verify(input);
     return;
   }
-  await verifyNativeNvidiaProviderAttachment({
+  await verifyNativeHostedProviderAttachment({
     adapter: createCliOpenShellProviderAdapter(),
     target: { kind: "named", gatewayName: input.gatewayName },
     sandboxName: input.sandboxName,

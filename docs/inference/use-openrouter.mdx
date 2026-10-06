@@ -4,13 +4,13 @@
 title: "Use OpenRouter"
 sidebar-title: "Use OpenRouter"
 description: "Configure NemoClaw to route hosted inference through OpenRouter."
-description-agent: "Sets up OpenRouter as the NemoClaw inference provider. Use when onboarding with an OpenRouter API key or tracing the OpenRouter host adapter."
-keywords: ["NemoClaw OpenRouter", "OpenRouter API key", "OpenRouter adapter"]
+description-agent: "Sets up OpenRouter as the NemoClaw inference provider. Use when onboarding with an OpenRouter API key or checking native OpenRouter routing."
+keywords: ["NemoClaw OpenRouter", "OpenRouter API key", "OpenRouter native endpoint"]
 content:
   type: "how_to"
 ---
 OpenRouter provides an OpenAI-compatible Chat Completions route for OpenClaw, Hermes, and LangChain Deep Agents Code.
-NemoClaw keeps the sandbox on `https://inference.local/v1` and sends upstream traffic through a host adapter.
+The sandbox calls `https://openrouter.ai/api/v1` through its attached OpenShell provider.
 
 ## Credential
 
@@ -32,19 +32,12 @@ Run the onboarding wizard and select **OpenRouter**.
 $$nemoclaw onboard
 ```
 
-NemoClaw registers the `openrouter-api` provider through the OpenShell `openai` profile.
+NemoClaw installs its OpenRouter provider profile and attaches the provider to the selected sandbox.
 
-## Host Adapter
+## Request Headers
 
-NemoClaw starts or reuses a local host adapter on port `11437` by default.
-It registers OpenShell with `OPENAI_BASE_URL=http://host.openshell.internal:11437/v1`.
-
-The adapter accepts only the OpenShell bearer credential bound during setup and forwards requests to `https://openrouter.ai/api/v1`.
-It adds the default `HTTP-Referer` and `X-OpenRouter-Title` attribution headers.
-The adapter does not store the API key.
-
-The adapter exposes a host health endpoint and writes logs to `~/.nemoclaw/openrouter-runtime-adapter.log`.
-Set `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` before onboarding to use a different host port.
+NemoClaw configures the agent to send the `HTTP-Referer` and `X-OpenRouter-Title` attribution headers.
+OpenShell keeps the API key outside the sandbox and replaces the agent's credential placeholder for approved OpenRouter requests.
 
 ## Validation
 
@@ -53,5 +46,5 @@ NemoClaw skips the Responses API probe and uses managed Chat Completions at runt
 
 ## Related Topics
 
-- [About Inference Routing](../about-inference-routing) explains why the sandbox does not call the adapter directly.
+- [About Inference Routing](../about-inference-routing) explains the sandbox-attached provider and credential boundary.
 - [Understand Provider Validation](../validate-inference/understand-provider-validation) describes provider validation behavior.

@@ -18,9 +18,7 @@ import { NATIVE_HOSTED_PROFILES } from "./profiles";
 
 const target = { kind: "named", gatewayName: "nemoclaw" } as const;
 
-describe.each(
-  NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"),
-)("native $label OpenShell provider", (profile) => {
+describe.each(NATIVE_HOSTED_PROFILES)("native $label OpenShell provider", (profile) => {
   function metadata(overrides: Record<string, unknown> = {}) {
     return {
       name: profile.providerName,

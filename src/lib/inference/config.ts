@@ -33,9 +33,6 @@ export {
 } from "./native-hosted";
 export type { NativeHostedProviderAttachment } from "./native-hosted";
 export {
-  detachNativeNvidiaProvider,
-  ensureNativeNvidiaProvider,
-  ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,

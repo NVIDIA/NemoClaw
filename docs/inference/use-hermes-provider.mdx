@@ -15,7 +15,8 @@ This option is available only for Hermes Agent.
 
 ## Credential Boundary
 
-NemoClaw uses the host OpenShell provider registered during onboarding.
+NemoClaw attaches the hosted provider to the selected sandbox during onboarding.
+Hermes calls `https://inference-api.nousresearch.com/v1`, and OpenShell supplies the provider credential for approved requests.
 The sandbox does not receive raw provider credentials.
 
 ## Model Choices

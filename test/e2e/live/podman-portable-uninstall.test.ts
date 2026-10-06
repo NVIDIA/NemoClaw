@@ -119,7 +119,7 @@ function writePortableUninstallSummary(artifactDir: string | undefined, uid: num
 test(
   "runs full portable uninstall before a clean socket restart and reinstall start (#9189)",
   { meta: { e2ePhases: E2E_PHASES }, timeout: 300_000 },
-  async ({ progress, shellProbe }) => {
+  async ({ artifacts, progress, shellProbe }) => {
     progress.phase("pin the current-user Podman authority");
     expect(process.platform).toBe("linux");
     const uid = process.getuid?.() ?? -1;
@@ -177,11 +177,22 @@ test(
       );
 
       progress.phase("create receipt-owned and unrelated resources");
-      expect(
-        [...imageWasPresent.keys()].every((image) =>
-          Object.is(engine.capture(["pull", image]).status, 0),
-        ),
-      ).toBe(true);
+      const pullArtifacts: Array<Promise<string>> = [];
+      const imagesPulled = [...imageWasPresent.keys()].every((image, index) => {
+        const pull = engine.capture(["pull", image]);
+        pullArtifacts.push(
+          artifacts.writeJson(`podman-uninstall-image-pull-${index + 1}.json`, {
+            image,
+            status: pull.status,
+            stdout: pull.stdout,
+            stderr: pull.stderr,
+            error: pull.error?.message,
+          }),
+        );
+        return pull.status === 0;
+      });
+      await Promise.all(pullArtifacts);
+      expect(imagesPulled, "Pull fixture images; see image-pull artifacts").toBe(true);
       await runCommand(shellProbe, openshellBin, sandboxCreateArgs(), {
         artifactName: "podman-uninstall-create-sandbox",
         env: cliEnv,

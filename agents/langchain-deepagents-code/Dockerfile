@@ -155,7 +155,9 @@ RUN set -eu; \
 COPY agents/langchain-deepagents-code/generate-config-entrypoint.ts /opt/nemoclaw-deepagents-code/generate-config.ts
 COPY agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts
 COPY src/lib/inference/native-hosted/openrouter-headers.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/openrouter-headers.ts
-RUN chmod 444 /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/openrouter-headers.ts
+COPY src/lib/inference/native-hosted/profiles.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/profiles.ts
+RUN chmod 444 /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/profiles.ts \
+    /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/openrouter-headers.ts
 COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts
 COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts
 COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py

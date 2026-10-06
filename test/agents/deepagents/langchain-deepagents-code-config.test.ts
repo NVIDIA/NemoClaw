@@ -95,6 +95,23 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
+  it.each([
+    ["openai-api", "https://api.openai.com/v1"],
+    ["anthropic-prod", "https://api.anthropic.com"],
+    ["gemini-api", "https://generativelanguage.googleapis.com/v1beta/openai"],
+    ["openrouter-api", "https://openrouter.ai/api/v1"],
+    ["hermes-provider", "https://inference-api.nousresearch.com/v1"],
+  ])("uses the attached-provider placeholder for native %s (#12589)", (provider, endpoint) => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: provider,
+      NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+    });
+
+    expect(config).toContain(`base_url = "${endpoint}"`);
+    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+  });
+
   it("keeps the legacy provider key when the renamed route variables are absent", () => {
     const config = runGenerator({
       NEMOCLAW_PROVIDER_KEY: "legacy-route",

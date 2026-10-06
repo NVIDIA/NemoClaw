@@ -7,15 +7,21 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { parseCheckedInProviderProfileContract } from "../adapters/openshell/provider-profile";
 import {
-  ensureNativeNvidiaProvider,
-  ensureNativeNvidiaProviderAttached,
-  nativeNvidiaProviderProfilePath,
-  NativeNvidiaProviderError,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
-  verifyNativeNvidiaProviderAttachment,
 } from "./native-nvidia";
+
+import {
+  ensureNativeHostedProvider,
+  ensureNativeHostedProviderAttached,
+  nativeHostedProviderProfilePath,
+  NativeHostedProviderError,
+  verifyNativeHostedProviderAttachment,
+} from "./native-hosted";
+import { nativeHostedProfile } from "./native-hosted/profiles";
+
+const profile = nativeHostedProfile("nvidia-prod")!;
 
 const target = { kind: "named", gatewayName: "nemoclaw" } as const;
 
@@ -53,11 +59,11 @@ function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellPr
 
 describe("native NVIDIA OpenShell provider", () => {
   it("ships a profile limited to the native models and chat-completions operations (#12558)", () => {
-    const source = fs.readFileSync(nativeNvidiaProviderProfilePath(), "utf8");
-    const profile = parseCheckedInProviderProfileContract(source);
+    const source = fs.readFileSync(nativeHostedProviderProfilePath(profile), "utf8");
+    const contract = parseCheckedInProviderProfileContract(source);
 
-    expect(profile?.profileId).toBe(NVIDIA_HOSTED_NATIVE_PROFILE_ID);
-    expect(profile?.boundary.endpoints).toEqual([
+    expect(contract?.profileId).toBe(NVIDIA_HOSTED_NATIVE_PROFILE_ID);
+    expect(contract?.boundary.endpoints).toEqual([
       expect.objectContaining({
         host: "integrate.api.nvidia.com",
         port: 443,
@@ -68,7 +74,7 @@ describe("native NVIDIA OpenShell provider", () => {
         ],
       }),
     ]);
-    expect(profile?.boundary.binaries).not.toEqual(
+    expect(contract?.boundary.binaries).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/[?*]/u)]),
     );
   });
@@ -87,7 +93,8 @@ describe("native NVIDIA OpenShell provider", () => {
     const providerAdapter = adapter({ getProvider, createProvider });
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: providerAdapter,
         target,
         credentialValue: "opaque-test-secret",
@@ -122,7 +129,8 @@ describe("native NVIDIA OpenShell provider", () => {
     }));
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({ getProvider, createProvider }),
         target,
         credentialValue: "opaque-test-secret",
@@ -144,7 +152,8 @@ describe("native NVIDIA OpenShell provider", () => {
     }));
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({ getProvider, createProvider }),
         target,
         credentialValue: null,
@@ -164,7 +173,8 @@ describe("native NVIDIA OpenShell provider", () => {
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({
           getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
             ok: true,
@@ -190,7 +200,8 @@ describe("native NVIDIA OpenShell provider", () => {
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({ updateProvider, attachProvider }),
         target,
         credentialValue: "opaque-test-secret",
@@ -211,7 +222,8 @@ describe("native NVIDIA OpenShell provider", () => {
     }));
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({ getProvider, updateProvider }),
         target,
         credentialValue: "replacement-secret",
@@ -231,7 +243,8 @@ describe("native NVIDIA OpenShell provider", () => {
     const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: adapter({
           getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
             ok: false,
@@ -267,7 +280,8 @@ describe("native NVIDIA OpenShell provider", () => {
     });
 
     await expect(
-      ensureNativeNvidiaProvider({
+      ensureNativeHostedProvider({
+        profile,
         adapter: providerAdapter,
         target,
         credentialValue: "opaque-test-secret",
@@ -284,14 +298,16 @@ describe("native NVIDIA OpenShell provider", () => {
     });
 
     await expect(
-      verifyNativeNvidiaProviderAttachment({
+      verifyNativeHostedProviderAttachment({
+        profile,
         adapter: providerAdapter,
         target,
         sandboxName: "alpha",
       }),
-    ).rejects.toThrow(NativeNvidiaProviderError);
+    ).rejects.toThrow(NativeHostedProviderError);
     await expect(
-      verifyNativeNvidiaProviderAttachment({
+      verifyNativeHostedProviderAttachment({
+        profile,
         adapter: providerAdapter,
         target,
         sandboxName: "alpha",
@@ -312,7 +328,8 @@ describe("native NVIDIA OpenShell provider", () => {
     const providerAdapter = adapter({ listProviderAttachments, detachProvider });
 
     await expect(
-      ensureNativeNvidiaProviderAttached({
+      ensureNativeHostedProviderAttached({
+        profile,
         adapter: providerAdapter,
         target,
         sandboxName: "alpha",
@@ -342,7 +359,8 @@ describe("native NVIDIA OpenShell provider", () => {
       });
 
     await expect(
-      ensureNativeNvidiaProviderAttached({
+      ensureNativeHostedProviderAttached({
+        profile,
         adapter: adapter({ listProviderAttachments }),
         target,
         sandboxName: "alpha",

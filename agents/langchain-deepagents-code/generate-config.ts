@@ -15,7 +15,7 @@ import {
   normalizeManagedDcodeEndpointUrl,
   resolveManagedDcodeIdentity,
 } from "../../src/lib/inference/managed-dcode/identity.ts";
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
+import { NATIVE_HOSTED_PROFILES } from "../../src/lib/inference/native-hosted/profiles.ts";
 
 import { OPENROUTER_DEFAULT_HEADERS } from "../../src/lib/inference/native-hosted/openrouter-headers.ts";
 
@@ -163,10 +163,9 @@ function providerConfigLines(
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
 ): string[] {
-  const apiKeyEnv =
-    baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
-      ? ATTACHED_PROVIDER_API_KEY_ENV
-      : MANAGED_INFERENCE_API_KEY_ENV;
+  const apiKeyEnv = NATIVE_HOSTED_PROFILES.some((profile) => profile.endpoint === baseUrl)
+    ? ATTACHED_PROVIDER_API_KEY_ENV
+    : MANAGED_INFERENCE_API_KEY_ENV;
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,

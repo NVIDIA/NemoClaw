@@ -14,22 +14,22 @@ This design keeps provider credentials outside the sandbox.
 
 ## Request Path
 
-Most providers use the shared `inference.local` route inside the sandbox.
-OpenShell intercepts each request on the host and forwards it to the provider and model selected during onboarding.
+NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider use sandbox-attached OpenShell providers.
+The agent addresses the selected provider's native endpoint, and OpenShell supplies the credential for approved requests.
+
+```text
+Sandbox agent -> provider API hostname -> sandbox-attached OpenShell provider -> selected provider
+```
+
+Each sandbox receives its selected provider attachment.
+A failed native request does not fall back to `inference.local`.
+
+Custom endpoints, local providers, and Model Router retain the shared OpenShell route.
+The sandbox uses `inference.local` for those selections.
 
 ```text
 Sandbox agent -> inference.local -> shared OpenShell route -> selected provider and model
 ```
-
-NVIDIA Endpoints use a sandbox-attached OpenShell provider instead of the shared route.
-The agent addresses the NVIDIA API hostname, but OpenShell still intercepts the request and supplies the host-managed credential.
-
-```text
-Sandbox agent -> integrate.api.nvidia.com -> sandbox-attached OpenShell provider -> NVIDIA
-```
-
-Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
-The sandbox uses `inference.local` for those services instead of calling their host ports directly.
 
 ## Credential Boundary
 
@@ -45,7 +45,8 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Most providers use `https://inference.local/v1`. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox at `https://integrate.api.nvidia.com/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Fixed hosted providers use their native endpoints through sandbox-attached OpenShell providers.
+Custom and local selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

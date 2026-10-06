@@ -9,6 +9,7 @@ describe("native NVIDIA target ownership", () => {
   it.each([
     "src/lib/actions/inference-set.ts",
     "src/lib/inference/native-nvidia/index.ts",
+    "src/lib/inference/native-hosted/index.ts",
     "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
     "test/e2e/live/public-nvidia-switch-provider.ts",
   ])("selects both provider-switch targets when %s changes", (changedFile) => {
