@@ -134,7 +134,10 @@ const captureCommandLine: CommandLineCapture = (command, args) =>
   execFileSync(command, [...args], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1000,
+    // Cold Windows runners can take several seconds to start PowerShell and
+    // initialize CIM. Keep identity inspection bounded without failing closed
+    // on ordinary runner startup latency.
+    timeout: command === "powershell.exe" ? 10_000 : 1000,
   });
 
 /** Read a Windows process identity through the built-in CIM provider. */
