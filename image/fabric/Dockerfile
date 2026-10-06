@@ -21,11 +21,13 @@ FROM ${PYTHON_IMAGE} AS base
 USER root
 # Agents run as 10001:10001, the UID OpenShell's Kubernetes driver uses for
 # sandboxes; Docker and Podman use the image's own user, so one image fits all.
+# OpenShift instead runs sandboxes as the namespace's UID, which must be able
+# to read /sandbox: OpenShell copies it to a private workspace volume.
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 10001 -g 10001 /sandbox /sandbox/tmp
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
 
@@ -198,7 +200,7 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 FROM ${PYTHON_IMAGE} AS dummy
 RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 10001 -g 10001 /sandbox /sandbox/tmp
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent

@@ -243,6 +243,13 @@ class AgentImage(unittest.TestCase):
         self.assertTrue(temporary.is_relative_to("/sandbox"), temporary)
         self.assertTrue(temporary.is_dir(), temporary)
         self.assertEqual(temporary.stat().st_uid, 10001)
+        # On OpenShift, OpenShell copies that seed as the namespace's own UID,
+        # not 10001, so every directory in it must be readable by others.
+        # The copy itself is private: OpenShell creates each directory 0700.
+        for path in [Path("/sandbox"), *Path("/sandbox").rglob("*")]:
+            mode = path.lstat().st_mode
+            needed = 0o005 if path.is_dir() else 0o004
+            self.assertEqual(mode & needed, needed, f"{path} is not readable by another UID")
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 
