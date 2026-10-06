@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ipro
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 10001 -g 10001 /sandbox
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox /sandbox/tmp
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
 
@@ -192,7 +192,7 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 FROM ${PYTHON_IMAGE} AS dummy
 RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 10001 -g 10001 /sandbox
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox /sandbox/tmp
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
