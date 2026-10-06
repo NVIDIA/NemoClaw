@@ -57,7 +57,7 @@ function explicitOpenClawDefaultsSnapshot() {
 
 describe("effective v1alpha1 export defaults (#12132)", () => {
   it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
-    "records pending Gemini V1 validation at the pinned revision (#12035)",
+    "rejects the proposed Gemini contract at the pinned V1 revision (#12551)",
     testTimeoutOptions(12 * 60_000),
     () => {
       const fixture = readFileSync(

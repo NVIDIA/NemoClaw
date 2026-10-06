@@ -5,7 +5,6 @@ import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { verifyExportSource } from "./verify-export-source";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
-import { GEMINI_ENDPOINT_URL } from "../../inference/provider-models";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
   buildManagedStartupProfile,
@@ -231,6 +230,7 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
 
 export function geminiSnapshot(): ObservedExportSnapshot {
   const base = snapshot();
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/";
   const model = "gemini-3.6-flash";
   const route = resolveManagedStartupInferenceRoute(
     "openclaw",
@@ -244,7 +244,7 @@ export function geminiSnapshot(): ObservedExportSnapshot {
       provider: "gemini-api",
       model,
       preferredInferenceApi: "openai-completions",
-      endpointUrl: GEMINI_ENDPOINT_URL,
+      endpointUrl: endpoint,
       credentialEnv: "GEMINI_API_KEY",
       workload: managedWorkload(
         profileInput({
@@ -266,10 +266,10 @@ export function geminiSnapshot(): ObservedExportSnapshot {
       provider: "gemini-api",
       model,
       api: "openai-completions",
-      endpoint: GEMINI_ENDPOINT_URL,
+      endpoint,
       credentialEnv: "GEMINI_API_KEY",
       endpointEvidence: {
-        endpoint: GEMINI_ENDPOINT_URL,
+        endpoint,
         provider: {
           gatewayName: "nemoclaw",
           workspace: "default",

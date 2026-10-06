@@ -257,10 +257,9 @@ If the source changes during observation, the command retries the complete obser
 
 <AgentOnly variant="openclaw">
 
-Gemini exports preserve the V0 provider, API, endpoint, model, and `GEMINI_API_KEY` reference for later V1 implementation.
-V1 cannot yet parse or deploy these Gemini documents.
-The command reports that the V0 export is complete and V1 Gemini support is pending.
-The notice goes to standard error when YAML goes to standard output; JSON file results include `v1Support: "pending"`.
+Gemini config export stops with an unsupported-provider error because V1 cannot consume the Gemini document.
+The command writes no YAML and does not create or replace an output file, including with `--force`.
+Continue using the existing Gemini sandbox until V1 support is available.
 
 </AgentOnly>
 

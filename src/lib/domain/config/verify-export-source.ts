@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
-import { BUILD_ENDPOINT_URL, GEMINI_ENDPOINT_URL } from "../../inference/provider-models";
+import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import {
   buildManagedStartupProfile,
@@ -1141,37 +1141,6 @@ function validateOllamaRepresentation(snapshot: QualifiedExportSnapshot): Export
   return [];
 }
 
-function validateGeminiInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
-  const { inference, registry } = snapshot;
-  if (inference.provider !== "gemini-api") return [];
-  const findings: ExportFinding[] = [];
-  if (registry.agent !== "openclaw" || inference.api !== "openai-completions")
-    findings.push(
-      finding(
-        "spec.inferenceProviders[].api",
-        "unsupported",
-        "Gemini export requires an OpenClaw Chat Completions route.",
-      ),
-    );
-  if (inference.endpoint?.replace(/\/$/u, "") !== GEMINI_ENDPOINT_URL.replace(/\/$/u, ""))
-    findings.push(
-      finding(
-        "spec.inferenceProviders[].endpoint",
-        "drifted",
-        "The Gemini endpoint does not match the V0 provider endpoint.",
-      ),
-    );
-  if (inference.credentialEnv !== "GEMINI_API_KEY")
-    findings.push(
-      finding(
-        "spec.inferenceProviders[].credential.env",
-        "missing-provenance",
-        "Gemini export requires the GEMINI_API_KEY credential reference.",
-      ),
-    );
-  return findings;
-}
-
 function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
   const findings: ExportFinding[] = [];
@@ -1206,11 +1175,19 @@ function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot
         "The inference endpoint is not safe for export.",
       ),
     );
-  return [...findings, ...validateGeminiInferenceRepresentation(snapshot)];
+  return findings;
 }
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.provider === "gemini-api")
+    return [
+      finding(
+        "spec.inferenceProviders[].provider",
+        "unsupported",
+        "Gemini config export is unavailable because V1 cannot consume this provider. Continue using the existing sandbox.",
+      ),
+    ];
   if (inference.provider === "ollama-local" || inference.ollamaServing)
     return validateOllamaRepresentation(snapshot);
   if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);

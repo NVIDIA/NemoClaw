@@ -1,45 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { geminiSnapshot, verify } from "./export-source-test-fixture";
 
 describe("Gemini config export (#12035)", () => {
-  it("exports verified OpenClaw Gemini without a credential value", async () => {
+  it("refuses a complete Gemini source before writing YAML (#12551)", async () => {
     const result = await exportSnapshots([geminiSnapshot()]);
     expect(result.outcome).toMatchObject({
-      ok: true,
-      completion: { kind: "stdout", v1Support: "pending" },
-    });
-    const raw = String(result.writeStdout.mock.calls[0]?.[0]);
-    const fixture = readFileSync(
-      new URL("../../../../test/fixtures/v1-config-consumer/pending-gemini.yaml", import.meta.url),
-      "utf8",
-    );
-    expect(raw).toBe(fixture);
-    expect(YAML.parse(raw)).toMatchObject({
-      spec: {
-        inferenceProviders: [
-          {
-            provider: "google",
-            api: "openai-completions",
-            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/",
-            credential: { env: "GEMINI_API_KEY" },
-          },
-        ],
-        sandboxes: [
-          { agent: { inference: { routes: [{ overrides: { model: "gemini-3.6-flash" } }] } } },
-        ],
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            field: "spec.inferenceProviders[].provider",
+            category: "unsupported",
+            diagnostic: expect.stringContaining("V1 cannot consume this provider"),
+          }),
+        ]),
       },
     });
-    expect(raw).not.toContain("credential-canary-value");
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["credential reference", { credentialEnv: null }, "missing-provenance"],
+    ["credential reference", { credentialEnv: null }, "unsupported"],
     ["API", { api: "openai-responses" }, "unsupported"],
     ["endpoint", { endpoint: "https://other.example/v1" }, "drifted"],
   ])("rejects incorrect %s", (_name, change, category) => {

@@ -44,36 +44,6 @@ function dependencies(): ConfigExportDependencies {
 }
 
 describe("runConfigExport", () => {
-  it("marks Gemini stdout and file results as pending V1 support (#12035)", async () => {
-    const deps = dependencies();
-    vi.mocked(deps.observe).mockResolvedValue({
-      ok: true,
-      source: { sandboxName: "alpha", inference: { provider: "gemini-api" } } as never,
-      attempts: 1,
-    });
-    const stdout = await runConfigExport(
-      { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
-      deps,
-    );
-    const file = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: alphaDocumentName,
-        target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
-      },
-      deps,
-    );
-    expect(stdout).toEqual({ ok: true, completion: { kind: "stdout", v1Support: "pending" } });
-    expect(file).toMatchObject({
-      ok: true,
-      completion: { kind: "file", result: { v1Support: "pending" } },
-    });
-    expect(
-      file.ok &&
-        file.completion.kind === "file" &&
-        Check(ConfigExportResultSchema, file.completion.result),
-    ).toBe(true);
-  });
   it("writes canonical YAML for a stdout target", async () => {
     const deps = dependencies();
     await expect(
@@ -166,31 +136,37 @@ describe("runConfigExport", () => {
     expect(JSON.stringify(outcome)).not.toContain(canary);
   });
 
-  it("returns an observation failure without building or publishing", async () => {
-    const deps = dependencies();
-    const finding = {
-      field: "source.registry",
-      category: "not-found",
-      diagnostic: "The sandbox was not found.",
-    } as const;
-    vi.mocked(deps.observe).mockResolvedValue({
-      ok: false,
-      findings: [finding],
-      attempts: 1,
-    });
+  it.each([
+    { kind: "stdout" },
+    { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+    { kind: "file", outputPath: "/tmp/alpha.yaml", force: true },
+  ] as const)(
+    "returns an observation failure without rendering or writing $kind",
+    async (target) => {
+      const deps = dependencies();
+      const finding = {
+        field: "source.registry",
+        category: "not-found",
+        diagnostic: "The sandbox was not found.",
+      } as const;
+      vi.mocked(deps.observe).mockResolvedValue({
+        ok: false,
+        findings: [finding],
+        attempts: 1,
+      });
 
-    await expect(
-      runConfigExport(
-        { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
-        deps,
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      failure: { kind: "observation", findings: [finding], attempts: 1 },
-    });
-    expect(mocks.buildExportConfig).not.toHaveBeenCalled();
-    expect(deps.publish).not.toHaveBeenCalled();
-  });
+      await expect(
+        runConfigExport({ sandboxName: "alpha", documentName: alphaDocumentName, target }, deps),
+      ).resolves.toEqual({
+        ok: false,
+        failure: { kind: "observation", findings: [finding], attempts: 1 },
+      });
+      expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+      expect(mocks.renderCanonicalNemoClawConfig).not.toHaveBeenCalled();
+      expect(deps.writeStdout).not.toHaveBeenCalled();
+      expect(deps.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { publication: "not-published", stagingCleanup: "complete" },
