@@ -1293,6 +1293,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       const targetMatches = runningNamedTunnel
         ? true
         : quickTunnelTargetsDashboard(pidDir, commandLine, dashboardPort);
+      if (runningQuickTunnel && !targetMatches && !cloudflaredAvailable) {
+        throw new Error(
+          `The existing quick tunnel targets a different dashboard port and cloudflared is unavailable to replace it; restore cloudflared availability or stop the verified process, then retry for port ${String(dashboardPort)}. Its PID and target records were retained.`,
+        );
+      }
       const needsReplacement =
         cloudflaredAvailable && ((tunnelToken && !runningNamedTunnel) || !targetMatches);
       if (needsReplacement) {
