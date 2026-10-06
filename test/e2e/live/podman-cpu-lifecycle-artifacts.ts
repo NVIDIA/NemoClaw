@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ContainerEngine } from "../../../src/lib/adapters/container-engine.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -124,5 +126,21 @@ if (invokedPath && import.meta.url === pathToFileURL(path.resolve(invokedPath)).
   void sanitizeStdin().catch(() => {
     process.stderr.write("Podman inspect sanitization failed.\n");
     process.exitCode = 1;
+  });
+}
+
+/** Retain failed pull diagnostics through the canonical artifact redaction boundary. */
+export function writePodmanImagePullArtifact(
+  artifacts: ArtifactSink,
+  relativePath: string,
+  image: string,
+  result: ReturnType<ContainerEngine["capture"]>,
+): Promise<string> {
+  return artifacts.writeJson(relativePath, {
+    image,
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    error: result.error?.message,
   });
 }

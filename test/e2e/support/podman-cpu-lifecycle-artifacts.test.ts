@@ -18,7 +18,11 @@ import {
   PODMAN_SANDBOX_WORKSPACE,
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle.ts";
-import { sanitizePodmanInspectArtifact } from "../live/podman-cpu-lifecycle-artifacts.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import {
+  writePodmanImagePullArtifact,
+  sanitizePodmanInspectArtifact,
+} from "../live/podman-cpu-lifecycle-artifacts.ts";
 import { captureFailureContainerDiagnostics } from "../live/podman-cpu-lifecycle-helpers.ts";
 
 const SECRET = "nvapi-this-must-not-reach-artifacts";
@@ -132,4 +136,29 @@ describe("Podman CPU proof artifact sanitization", () => {
       fs.rmSync(artifactDir, { force: true, recursive: true });
     }
   });
+});
+
+it("retains failed image pull metadata without exposing credentials", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "podman-pull-artifact-"));
+  try {
+    const sink = new ArtifactSink(root);
+    const image = "docker.io/library/ubuntu@sha256:fixture";
+    const file = await writePodmanImagePullArtifact(sink, "failed-pull.json", image, {
+      status: 1,
+      stdout: `NVIDIA_API_KEY=${SECRET}`,
+      stderr: `download failed NVIDIA_API_KEY=${SECRET}`,
+      error: new Error(`NVIDIA_API_KEY=${SECRET}`),
+    });
+    const raw = fs.readFileSync(file, "utf8");
+    expect(JSON.parse(raw)).toMatchObject({
+      image,
+      status: 1,
+      stderr: expect.stringContaining("download failed"),
+      error: expect.any(String),
+    });
+    expect(raw).not.toContain(SECRET);
+    expect(raw).toContain("<REDACTED>");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

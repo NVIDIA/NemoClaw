@@ -11,6 +11,7 @@ import {
 } from "../../../src/lib/adapters/podman";
 import { portableDemoReceiptPath } from "../../../src/lib/onboard/experimental/portable-runtime-receipt-readiness";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { writePodmanImagePullArtifact } from "./podman-cpu-lifecycle-artifacts.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   cleanupPodmanLifecycle,
@@ -181,13 +182,12 @@ test(
       const imagesPulled = [...imageWasPresent.keys()].every((image, index) => {
         const pull = engine.capture(["pull", image]);
         pullArtifacts.push(
-          artifacts.writeJson(`podman-uninstall-image-pull-${index + 1}.json`, {
+          writePodmanImagePullArtifact(
+            artifacts,
+            `podman-uninstall-image-pull-${index + 1}.json`,
             image,
-            status: pull.status,
-            stdout: pull.stdout,
-            stderr: pull.stderr,
-            error: pull.error?.message,
-          }),
+            pull,
+          ),
         );
         return pull.status === 0;
       });
