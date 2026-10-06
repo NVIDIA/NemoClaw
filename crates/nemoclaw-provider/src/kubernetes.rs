@@ -173,7 +173,6 @@ mod tests {
                 "endpoint": "https://127.0.0.1:17671",
                 "kubernetes": {
                     "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
-                    "prerequisites": {"agentSandbox": {"management": "existing"}},
                     "authentication": {"profile": "development"}
                 }
             }

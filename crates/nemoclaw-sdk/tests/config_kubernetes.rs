@@ -22,7 +22,6 @@ fn managed_document() -> Value {
             "kubeconfig": {"env": "CLUSTER_KUBECONFIG"},
             "context": "explicit-context",
             "namespace": "owned-gateway",
-            "prerequisites": {"agentSandbox": {"management": "managed"}},
             "authentication": {"profile": "development"}
         }
     });
@@ -31,10 +30,8 @@ fn managed_document() -> Value {
 
 #[test]
 fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults() {
-    for management in ["existing", "managed"] {
-        let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["prerequisites"]["agentSandbox"]["management"] =
-            json!(management);
+    {
+        let input = managed_document();
         assert!(jsonschema::is_valid(&schema::input_schema(), &input));
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert!(document.has_runtime());
@@ -66,6 +63,17 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
 }
 
 #[test]
+fn agent_sandbox_is_a_platform_prerequisite_not_a_setting() {
+    // Agent Sandbox must already be installed; the deployment never
+    // installs it, so there is nothing to choose.
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["prerequisites"] =
+        json!({"agentSandbox": {"management": "existing"}});
+    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
+}
+
+#[test]
 fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for (parent, field) in [
@@ -74,12 +82,6 @@ fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
         ("/spec/gateway/kubernetes/kubeconfig", "env"),
         ("/spec/gateway/kubernetes", "context"),
         ("/spec/gateway/kubernetes", "namespace"),
-        ("/spec/gateway/kubernetes", "prerequisites"),
-        ("/spec/gateway/kubernetes/prerequisites", "agentSandbox"),
-        (
-            "/spec/gateway/kubernetes/prerequisites/agentSandbox",
-            "management",
-        ),
         ("/spec/gateway/kubernetes", "authentication"),
         ("/spec/gateway/kubernetes/authentication", "profile"),
     ] {
@@ -140,10 +142,6 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
         (
             "/spec/gateway/kubernetes/authentication/profile",
             json!("production"),
-        ),
-        (
-            "/spec/gateway/kubernetes/prerequisites/agentSandbox/management",
-            json!("auto"),
         ),
         ("/spec/gateway/runtime/provider", json!("docker")),
     ] {

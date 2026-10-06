@@ -65,7 +65,6 @@ fn spec(kind: &str, port: u16) -> Spec {
             "endpoint": format!("https://127.0.0.1:{port}"),
             "kubernetes": {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
-                "prerequisites": {"agentSandbox": {"management": "existing"}},
                 "authentication": {"profile": "development"}
             }
         }

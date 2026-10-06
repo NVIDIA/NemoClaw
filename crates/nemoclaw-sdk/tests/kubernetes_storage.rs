@@ -7,7 +7,7 @@ use nemoclaw_sdk::{
     ObservationError,
     kubernetes::{
         cluster::Cluster,
-        receipt::{Prerequisites, Receipt},
+        receipt::Receipt,
         storage::{Storage, ensure_storage},
     },
 };
@@ -41,7 +41,6 @@ fn storage(directory: &std::path::Path) -> Storage {
         namespace: "agents".into(),
         name: "nc-0123456789abcdef-gateway".into(),
         owner: OWNER.into(),
-        manage_prerequisites: false,
     }
 }
 
@@ -55,7 +54,6 @@ async fn storage_creates_the_namespace_and_key_and_records_them() {
         .await
         .unwrap();
     assert!(receipt.storage_ready);
-    assert_eq!(receipt.prerequisites, Some(Prerequisites::Existing));
     assert_eq!(receipt.cluster.as_ref().unwrap().system_uid, "system-1");
     let kinds: Vec<_> = receipt
         .objects
@@ -99,7 +97,7 @@ async fn an_existing_namespace_is_not_taken_over() {
 }
 
 #[tokio::test]
-async fn missing_prerequisites_fail_when_the_platform_owns_them() {
+async fn storage_requires_agent_sandbox_to_be_installed() {
     let fixture = cluster(false).serve().await;
     let directory = tempfile::tempdir().unwrap();
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");

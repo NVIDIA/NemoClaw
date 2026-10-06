@@ -9,7 +9,7 @@
 
 use super::{
     cluster::{Cluster, Owned},
-    receipt::{ClusterIdentity, Prerequisites, Receipt},
+    receipt::{ClusterIdentity, Receipt},
 };
 use crate::ObservationError;
 use k8s_openapi::api::{core::v1::Namespace, storage::v1::StorageClass};
@@ -27,8 +27,6 @@ pub struct Storage {
     /// Gateway resource name, `nc-<workspace>-gateway`.
     pub name: String,
     pub owner: String,
-    /// Install Agent Sandbox if absent, instead of requiring it.
-    pub manage_prerequisites: bool,
 }
 
 const MISSING_PREREQUISITE: ObservationError = ObservationError::Backend(
@@ -45,10 +43,7 @@ pub async fn ensure_storage(
         .unwrap_or_else(|| Receipt::new(&storage.owner, &storage.name));
     receipt.bind(identity(cluster, &storage.server).await?)?;
     receipt.save(&storage.directory)?;
-    if receipt.prerequisites.is_none() {
-        receipt.prerequisites = Some(prerequisites(cluster, storage.manage_prerequisites).await?);
-        receipt.save(&storage.directory)?;
-    }
+    agent_sandbox(cluster).await?;
     default_storage_class(cluster).await?;
     let namespace =
         json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": storage.namespace}});
@@ -81,8 +76,9 @@ async fn identity(cluster: &Cluster, server: &str) -> Result<ClusterIdentity, Ob
     })
 }
 
-/// Agent Sandbox must already run unless this deployment may install it.
-async fn prerequisites(cluster: &Cluster, manage: bool) -> Result<Prerequisites, ObservationError> {
+/// Agent Sandbox must already be installed and its controller available.
+/// The platform owns it; a deployment never installs or removes it.
+async fn agent_sandbox(cluster: &Cluster) -> Result<(), ObservationError> {
     let probe = |api_version: &str, kind: &str, namespace: &str, name: &str| Owned {
         api_version: api_version.into(),
         kind: kind.into(),
@@ -111,11 +107,10 @@ async fn prerequisites(cluster: &Cluster, manage: bool) -> Result<Prerequisites,
         .and_then(|deployment| deployment.data.pointer("/status/availableReplicas"))
         .and_then(Value::as_u64)
         .is_some_and(|replicas| replicas >= 1);
-    match (crd.is_some() && available, manage) {
-        (true, _) => Ok(Prerequisites::Existing),
-        // Installing the pinned Agent Sandbox release arrives with the
-        // managed-prerequisite commit; until then, require it.
-        (false, _) => Err(MISSING_PREREQUISITE),
+    if crd.is_some() && available {
+        Ok(())
+    } else {
+        Err(MISSING_PREREQUISITE)
     }
 }
 

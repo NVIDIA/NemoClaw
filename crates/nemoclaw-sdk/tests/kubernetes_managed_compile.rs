@@ -15,7 +15,6 @@ fn document() -> Document {
         "management": "managed", "endpoint": "https://127.0.0.1:17671",
         "kubernetes": {
             "kubeconfig": {"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
-            "prerequisites":{"agentSandbox":{"management":"existing"}},
             "authentication":{"profile":"development"}
         }
     });

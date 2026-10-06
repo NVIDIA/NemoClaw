@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 # One apply provisions a development gateway and three agents on an existing cluster.
-# Requires explicit access to an existing Kubernetes cluster.
+# Requires explicit access to an existing Kubernetes cluster with Agent Sandbox
+# and one default StorageClass installed.
 # Replace the deployment UID and every image digest before applying.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -20,9 +21,6 @@ spec:
       kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
       context: replace-with-explicit-context
       namespace: nemoclaw-development
-      prerequisites:
-        agentSandbox:
-          management: managed
       authentication:
         profile: development
   inferenceProviders:

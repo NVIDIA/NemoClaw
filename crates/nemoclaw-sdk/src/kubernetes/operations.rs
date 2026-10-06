@@ -66,8 +66,6 @@ impl Operations {
             namespace: target.namespace.clone(),
             name: spec.name.clone(),
             owner: spec.owner.clone(),
-            manage_prerequisites: target.prerequisites.agent_sandbox.management
-                == crate::config::KubernetesPrerequisiteManagement::Managed,
         })
     }
 

@@ -13,7 +13,6 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
         "management":"managed", "runtime":{"provider":"kubernetes"}, "endpoint":"https://127.0.0.1:17671",
         "kubernetes": {
             "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
-            "prerequisites":{"agentSandbox":{"management":"existing"}},
             "authentication":{"profile":"development"}
         }
     });

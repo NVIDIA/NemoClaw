@@ -4,7 +4,7 @@
 use super::Credential;
 use serde::{Deserialize, Serialize};
 
-/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context. `runtime.provider: openshift` selects the OpenShift profile.
+/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
@@ -22,37 +22,8 @@ pub struct ManagedKubernetes {
         regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])")
     )]
     pub namespace: String,
-    /// Explicit prerequisite ownership. Managed installation may create cluster-wide resources when the pinned prerequisite is absent.
-    pub prerequisites: KubernetesPrerequisites,
     /// Explicit generated development authentication profile; this is not a production identity service.
     pub authentication: KubernetesAuthentication,
-}
-
-/// Installation policy for the pinned Kubernetes prerequisites.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct KubernetesPrerequisites {
-    /// Whether to require an existing Agent Sandbox installation or install the pinned prerequisite when absent.
-    pub agent_sandbox: AgentSandboxPrerequisite,
-}
-
-/// Ownership policy for the pinned Agent Sandbox controller and custom resource definitions.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentSandboxPrerequisite {
-    /// Existing verifies a compatible installation; managed installs owned prerequisites when absent and does not adopt a foreign installation.
-    pub management: KubernetesPrerequisiteManagement,
-}
-
-/// Whether the platform or this deployment installs an absent prerequisite.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
-#[schemars(inline)]
-pub enum KubernetesPrerequisiteManagement {
-    /// Require the pinned prerequisite to exist without taking ownership.
-    Existing,
-    /// Install the pinned prerequisite when absent; preserve foreign ownership and retained resources.
-    Managed,
 }
 
 /// Authentication provisioned for a managed Kubernetes gateway.

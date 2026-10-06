@@ -19,7 +19,6 @@ fn input(managed: bool) -> Value {
             "kubernetes": {
                 "kubeconfig":{"env":"TEST_OPENSHIFT_CONFIG"},
                 "context":"explicit-openshift", "namespace":"owned-agents",
-                "prerequisites":{"agentSandbox":{"management":"existing"}},
                 "authentication":{"profile":"development"}
             }
         });

@@ -36,16 +36,6 @@ pub struct ClusterIdentity {
     pub system_uid: String,
 }
 
-/// How the Agent Sandbox prerequisite was found.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Prerequisites {
-    /// Already installed by the platform; never modified or removed.
-    Existing,
-    /// Installed by this deployment; its objects are in `objects`.
-    Owned,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Receipt {
@@ -53,12 +43,10 @@ pub struct Receipt {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterIdentity>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prerequisites: Option<Prerequisites>,
     /// Objects this deployment created, in creation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub objects: Vec<Owned>,
-    /// Set once the namespace, prerequisites and key exist.
+    /// Set once the namespace and key exist.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub storage_ready: bool,
     /// The development issuer's objects, created with the gateway release.

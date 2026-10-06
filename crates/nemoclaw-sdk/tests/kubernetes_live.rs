@@ -74,7 +74,6 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
                 "kubernetes": {
                     "kubeconfig": {"env": "NEMOCLAW_TEST_KUBECONFIG"},
                     "context": target.context, "namespace": namespace,
-                    "prerequisites": {"agentSandbox": {"management": "existing"}},
                     "authentication": {"profile": "development"}
                 }
             }
