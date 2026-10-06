@@ -221,40 +221,120 @@ fn a_read_that_failed_is_unknown_so_unverified_rather_than_unobserved() {
     assert_silent(&assessment, "not been observed");
 }
 
+/// Editing one part of the target leaves the observations recorded for the
+/// others in place and the edited part unobserved.
 #[test]
-fn changing_the_target_leaves_old_observations_behind() {
-    let document = document();
-    let mut observed = observed_target(&document);
-    observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
-    assert_eq!(
-        observed.assess(&document).status,
-        CompatibilityStatus::Conflict
-    );
-    let observations = observed.observations(&document);
-    let mut moved = document.clone();
-    let Gateway::Managed(gateway) = &mut moved.spec.gateway else {
-        panic!("the example uses a managed gateway")
-    };
-    gateway.engine = "unix:///another-target.sock".into();
-    let assessment = assess_target(&moved, &observations).unwrap();
-    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_says(&assessment, "The selected engine has not been observed");
+fn editing_the_target_leaves_only_the_edited_observation_unfound() {
+    struct Row {
+        edit: &'static str,
+        before: Document,
+        /// An external gateway's engine is never probed, so it has no engine observation.
+        engine_observed: bool,
+        change: fn(&mut Document),
+        engine_unobserved: bool,
+        image_unobserved: bool,
+    }
+    const ENGINE: &str = "The selected engine has not been observed";
+    const IMAGE: &str = "Fabric capabilities have not been observed";
+    let external = || external_document("ssh://images@example.com");
+    let rows = [
+        Row {
+            edit: "gateway engine",
+            before: document(),
+            engine_observed: true,
+            change: |document| {
+                let Gateway::Managed(gateway) = &mut document.spec.gateway else {
+                    panic!("the example uses a managed gateway")
+                };
+                gateway.engine = "unix:///another-target.sock".into();
+            },
+            engine_unobserved: true,
+            // The image is read from the gateway's engine.
+            image_unobserved: true,
+        },
+        Row {
+            edit: "sandbox image",
+            before: document(),
+            engine_observed: true,
+            change: |document| {
+                document.spec.sandboxes[0].image.ref_ =
+                    format!("another-image@sha256:{}", "0".repeat(64));
+            },
+            engine_unobserved: false,
+            image_unobserved: true,
+        },
+        Row {
+            edit: "compute driver",
+            before: document(),
+            engine_observed: true,
+            change: |document| {
+                document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+            },
+            engine_unobserved: true,
+            // The image is read through the same driver.
+            image_unobserved: true,
+        },
+        Row {
+            edit: "external gateway image engine",
+            before: external(),
+            engine_observed: false,
+            change: |document| {
+                *document = external_document("ssh://different-images@example.com");
+            },
+            engine_unobserved: false,
+            image_unobserved: true,
+        },
+        Row {
+            edit: "external gateway switched to managed",
+            before: external_document(&crate::support::target(&document()).engine),
+            engine_observed: false,
+            change: |document| document.spec.gateway = self::document().spec.gateway,
+            engine_unobserved: true,
+            // A managed gateway's image read is placed by its engine's platform.
+            image_unobserved: true,
+        },
+    ];
+    for row in rows {
+        let observed = Observed {
+            engine: row.engine_observed.then(crate::support::available_engine),
+            ..observed_target(&row.before)
+        };
+        let observations = observed.observations(&row.before);
+        // The unedited target is assessed from the same observations as a control.
+        let control = assess_target(&row.before, &observations).unwrap();
+        assert!(
+            !says(&control, "has not been observed"),
+            "{}: {:?}",
+            row.edit,
+            control.reasons
+        );
+        let mut edited = row.before.clone();
+        (row.change)(&mut edited);
+        let assessment = assess_target(&edited, &observations).unwrap();
+        assert_eq!(
+            assessment.status,
+            CompatibilityStatus::Unverified,
+            "{}: {:?}",
+            row.edit,
+            assessment.reasons
+        );
+        for (text, expected) in [
+            (ENGINE, row.engine_unobserved),
+            (IMAGE, row.image_unobserved),
+        ] {
+            assert_eq!(
+                says(&assessment, text),
+                expected,
+                "{}: {text:?} in {:?}",
+                row.edit,
+                assessment.reasons
+            );
+        }
+    }
 }
 
 #[test]
-fn changing_only_image_keeps_engine_observations_and_leaves_the_image_unobserved() {
-    let document = document();
-    let observations = observed_target(&document).observations(&document);
-    let mut changed = document.clone();
-    changed.spec.sandboxes[0].image.ref_ = format!("another-image@sha256:{}", "0".repeat(64));
-    let assessment = assess_target(&changed, &observations).unwrap();
-    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_says(&assessment, "Fabric capabilities have not been observed");
-    assert_silent(&assessment, "The selected engine has not been observed");
-}
-
-#[test]
-fn identity_edits_keep_observations_and_runtime_edits_recheck_engine() {
+fn renaming_the_target_keeps_it_compatible() {
     let capabilities = Capabilities::available();
     let original = document();
     let observations = observed_target(&original).observations(&original);
@@ -281,10 +361,6 @@ fn identity_edits_keep_observations_and_runtime_edits_recheck_engine() {
         assess_target(&renamed, &observations).unwrap().status,
         CompatibilityStatus::Compatible
     );
-    let mut changed_driver = renamed.clone();
-    changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
-    let assessment = assess_target(&changed_driver, &observations).unwrap();
-    assert_says(&assessment, "The selected engine has not been observed");
 }
 
 fn external_document(engine: &str) -> Document {
@@ -301,7 +377,7 @@ fn external_document(engine: &str) -> Document {
 }
 
 #[test]
-fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
+fn an_unobserved_external_gateway_target_is_unverified() {
     let document = external_document("ssh://images@example.com");
     assert_eq!(
         crate::support::target(&document).engine,
@@ -310,10 +386,12 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_says(&assessment, "Fabric capabilities have not been observed");
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+}
 
+#[test]
+fn a_managed_gateway_engine_probe_cannot_disqualify_or_place_an_external_gateway() {
+    let document = external_document("ssh://images@example.com");
     let mut observed = observed_target(&document);
-    // A managed-gateway probe against the image store cannot disqualify an
-    // external gateway, or supply its execution platform.
     let engine = observed.engine.as_mut().unwrap();
     engine.status = ObservationStatus::Unavailable;
     engine.architecture = Some("amd64".into());
@@ -321,10 +399,6 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         observed.assess(&document).status,
         CompatibilityStatus::Compatible
     );
-
-    let changed = external_document("ssh://different-images@example.com");
-    let assessment = assess_target(&changed, &observed.observations(&document)).unwrap();
-    assert_says(&assessment, "Fabric capabilities have not been observed");
 }
 
 #[test]
@@ -333,24 +407,4 @@ fn external_gateway_without_an_image_engine_stays_unverified_and_names_the_missi
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_says(&assessment, "spec.gateway.engine");
-}
-
-#[test]
-fn switching_to_a_managed_gateway_requires_an_engine_observation() {
-    let managed = document();
-    let mut document = managed.clone();
-    document.spec.gateway = serde_json::from_value(serde_json::json!({
-        "management": "external",
-        "endpoint": "https://gateway.example:8080",
-        "engine": crate::support::target(&managed).engine,
-    }))
-    .unwrap();
-    let external = document;
-    // An external gateway's engine is never probed, so its observations hold only the image.
-    let observed = Observed {
-        engine: None,
-        ..observed_target(&external)
-    };
-    let assessment = assess_target(&managed, &observed.observations(&external)).unwrap();
-    assert_says(&assessment, "The selected engine has not been observed");
 }

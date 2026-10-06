@@ -50,10 +50,11 @@ fn required_target_compatibility_stays_unverified_without_current_observations()
     );
 
     let document = unresolved.materialized_document().unwrap();
-    let engine = crate::support::available_engine();
-    let fabric = crate::support::installed_image(document);
-    let compatible =
-        crate::support::target_observations(document, Some(engine.clone()), Some(fabric.clone()));
+    let compatible = crate::support::target_observations(
+        document,
+        Some(crate::support::available_engine()),
+        Some(crate::support::installed_image(document)),
+    );
     let verified = state
         .resolve_with_observations(&capabilities, &compatible)
         .unwrap();
@@ -62,19 +63,6 @@ fn required_target_compatibility_stays_unverified_without_current_observations()
         CompatibilityStatus::Compatible
     );
     assert!(verified.ready_document().is_some());
-
-    // Observations read for another image say nothing about this one.
-    let mut other_image = document.clone();
-    other_image.spec.sandboxes[0].image.ref_ = format!("old-image@sha256:{}", "0".repeat(64));
-    let stale = crate::support::target_observations(&other_image, Some(engine), Some(fabric));
-    let unresolved = state
-        .resolve_with_observations(&capabilities, &stale)
-        .unwrap();
-    assert_eq!(
-        unresolved.target_assessment().unwrap().status,
-        CompatibilityStatus::Unverified
-    );
-    assert!(unresolved.ready_document().is_none());
 }
 
 #[test]
