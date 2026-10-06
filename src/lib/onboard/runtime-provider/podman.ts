@@ -459,12 +459,17 @@ export function createPodmanRuntimeProviderBundle(
             displayName: externalImagePreparation.displayName,
             inspectLocal: (reference, timeoutMs) => {
               const inspection = externalImagePreparation.capture(
-                ["image", "inspect", reference],
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
                 timeoutMs,
               );
               if (inspection.error) return { status: "failed", error: inspection.error };
               if (inspection.status === 0) return { status: "present", inspection };
-              return isEmptyJsonArray(inspection.stdout)
+              const absenceProbe = externalImagePreparation.capture(
+                ["image", "inspect", reference],
+                timeoutMs,
+              );
+              if (absenceProbe.error) return { status: "failed", error: absenceProbe.error };
+              return absenceProbe.status !== 0 && isEmptyJsonArray(absenceProbe.stdout)
                 ? { status: "absent" }
                 : { status: "failed" };
             },

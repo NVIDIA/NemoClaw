@@ -122,6 +122,18 @@ function supportedContainerEngine(provider: ReturnType<typeof createPodmanRuntim
   return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
 }
 
+function externalImageInspectArgs(reference: string) {
+  return [
+    "image",
+    "inspect",
+    "--format",
+    expect.stringMatching(
+      /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
+    ),
+    reference,
+  ];
+}
+
 function nvidiaContainer(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
   const capability = supportedContainerEngine(provider).nvidiaContainer;
   expect(capability).toBeDefined();
@@ -681,6 +693,11 @@ describe("managed Podman runtime provider", () => {
       .fn<PodmanBoundContainerEngine["capture"]>()
       .mockReturnValueOnce({
         status: 125,
+        stdout: "",
+        stderr: `unable to inspect ${reference}: failed to find image`,
+      })
+      .mockReturnValueOnce({
+        status: 125,
         stdout: "[]",
         stderr: `unable to inspect ${reference}: failed to find image`,
       })
@@ -738,18 +755,33 @@ describe("managed Podman runtime provider", () => {
       toolDisclosure: "progressive",
     });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      externalImageInspectArgs(reference),
       ["image", "inspect", reference],
       ["pull", "--retry=0", reference],
-      [
-        "image",
-        "inspect",
-        "--format",
-        expect.stringMatching(
-          /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
-        ),
-        reference,
-      ],
+      externalImageInspectArgs(reference),
     ]);
+  });
+
+  it("keeps local Podman image inspection bounded when the image is present", () => {
+    const reference = `ghcr.io/example/downstream-openclaw@sha256:${"d".repeat(64)}`;
+    const inspection = {
+      status: 0,
+      stdout: JSON.stringify([{ Id: "e".repeat(64) }]),
+      stderr: "",
+    };
+    const capture = vi.fn<PodmanBoundContainerEngine["capture"]>(() => inspection);
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: hostDoctorEngine(),
+        externalImagePreparation: externalImageEngine(capture),
+        sandboxLifecycle: lifecycleEngine("external-image-present"),
+      },
+    });
+
+    expect(
+      supportedContainerEngine(bundle).externalImagePreparation?.inspectLocal(reference, 1_000),
+    ).toEqual({ status: "present", inspection });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(externalImageInspectArgs(reference), 1_000);
   });
 
   it("fails closed when Podman cannot distinguish absence from an image-store error", () => {
@@ -784,10 +816,10 @@ describe("managed Podman runtime provider", () => {
 
     expect(String(thrown)).toContain("Podman could not inspect the requested image locally");
     expect(String(thrown)).not.toContain("registry-token=secret");
-    expect(capture).toHaveBeenCalledExactlyOnceWith(
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      externalImageInspectArgs(reference),
       ["image", "inspect", reference],
-      expect.any(Number),
-    );
+    ]);
   });
 
   it("retains shared external images during Podman cleanup", () => {
