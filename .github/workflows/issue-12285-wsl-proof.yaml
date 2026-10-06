@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  windows-arm:
-    runs-on: windows-11-arm
+  windows-x64:
+    runs-on: windows-2025
     timeout-minutes: 30
     steps:
       - name: Record Windows virtualization and WSL capabilities
@@ -31,9 +31,9 @@ jobs:
       - name: Install Ubuntu for WSL2
         shell: pwsh
         run: |
-          $installer = Join-Path $env:RUNNER_TEMP 'wsl.arm64.msi'
-          Invoke-WebRequest 'https://github.com/microsoft/WSL/releases/download/3.0.1/wsl.3.0.1.0.arm64.msi' -OutFile $installer
-          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '857ddbb335ec7d05ffa71d0fd2203750c0e8fc29bb164f8a95db92bd7bba4263') {
+          $installer = Join-Path $env:RUNNER_TEMP 'wsl.x64.msi'
+          Invoke-WebRequest 'https://github.com/microsoft/WSL/releases/download/3.0.1/wsl.3.0.1.0.x64.msi' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '28b1a0d013640a2ac95898ea705fa186e5b4ff767a1c1b49257161bc106599c6') {
             throw 'Microsoft WSL installer checksum mismatch'
           }
           $installation = Start-Process msiexec.exe -ArgumentList @('/i', $installer, '/quiet', '/norestart') -Wait -PassThru
