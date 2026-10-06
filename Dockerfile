@@ -89,6 +89,7 @@ FROM scratch AS openclaw-optional-plugin-archives
 
 ADD --chmod=0444 --checksum=sha256:fe5baa1d9bbe53b3cf616a13ff7dcb0f21d6ce7a7d6d9856b9909e81c53a884c https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz /diagnostics-otel-2026.9.2.tgz
 ADD --chmod=0444 --checksum=sha256:40c0cf23e8373f2285034b8f0a575cc51ec1ed53d081b0e1592d219dd411e54d https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz /brave-plugin-2026.9.2.tgz
+ADD --chmod=0444 --checksum=sha256:c5d65ff201a8178ec914736887802c38d33628c667be5b2453b890fe44086984 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz /tavily-plugin-2026.9.2.tgz
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
@@ -446,7 +447,7 @@ ADD --chmod=0444 --checksum=sha256:425bf8c725d23bc5ac76bcedd10d9cdbbd6354c7273dd
 ADD --chmod=0444 --checksum=sha256:9fe46ed2a75148c5a1a720b446f1a95ff7c67e984144a24a83e004a892258cd8 https://registry.npmjs.org/@clack/prompts/-/prompts-1.7.0.tgz /prompts-1.7.0.tgz
 ADD --chmod=0444 --checksum=sha256:df0241b3046b505d27396da6eef107f14dffb108f77aa89cfd9611a928eb6dfe https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz /protobufjs-7.6.6.tgz
 ADD --chmod=0444 --checksum=sha256:205de58fb0e9e9ce2e1d2903f634f9be1852f024883fa037eb6ab1cd0c0e6c6b https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.2.tgz /protobufjs-8.7.2.tgz
-ADD --chmod=0444 --checksum=sha256:a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz /proxy-addr-2.0.7.tgz
+ADD --chmod=0444 --checksum=sha256:ffcc8055b78b0852b2889a426ad3a3003b60bc79df704faca194157efa2b2587 https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz /proxy-addr-2.0.8.tgz
 ADD --chmod=0444 --checksum=sha256:e9c52dbf1e382319d5da00b8d964805859b7eb1424450e049d12743d7e19fc9a https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz /proxy-from-env-2.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:cf7d916cade644852293de603369f2f3ef13171e3f78cc3baf9a1bd6854190bd https://registry.npmjs.org/@openclaw/proxyline/-/proxyline-0.3.7.tgz /proxyline-0.3.7.tgz
 ADD --chmod=0444 --checksum=sha256:0c7274f0c299f39c2fddf54a2e0039b785977b0173c02d0b3f65fad68923e2b0 https://registry.npmjs.org/qrcode/-/qrcode-1.5.4.tgz /qrcode-1.5.4.tgz
@@ -839,6 +840,7 @@ ARG OPENCLAW_2026_9_2_INTEGRITY=sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRX
 ARG OPENCLAW_2026_9_2_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz
 ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==
 ARG OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==
+ARG OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY=sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
 # behavior. Production workflows reject the fixture flag, both legacy version
@@ -1786,37 +1788,28 @@ RUN set -eu; \
 RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
     export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
     managed_image_union="${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION:-0}"; \
-    verify_openclaw_plugin_integrity() { \
-        plugin_spec="$1"; \
-        expected_integrity=""; \
-        expected_tarball=""; \
-        archive_name=""; \
+    install_reviewed_openclaw_plugin() { \
+        plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         case "$plugin_spec" in \
-            "@openclaw/diagnostics-otel@2026.9.2") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz"; archive_name="diagnostics-otel-2026.9.2.tgz" ;; \
-            "@openclaw/brave-plugin@2026.9.2") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"; archive_name="brave-plugin-2026.9.2.tgz" ;; \
+            "@openclaw/diagnostics-otel@2026.9.2") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY" ;; \
+            "@openclaw/brave-plugin@2026.9.2") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY" ;; \
+            "@openclaw/tavily-plugin@2026.9.2") expected_integrity="$OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY" ;; \
+            *) echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1 ;; \
         esac; \
-        if [ -z "$expected_integrity" ]; then \
-            echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
-        fi; \
+        archive_name="${1#@openclaw/}-${OPENCLAW_VERSION}.tgz"; \
+        expected_tarball="https://registry.npmjs.org/$1/-/${archive_name}"; \
         if [ -n "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then \
             plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"; \
             node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if(actual!==process.argv[2]) { console.error(`integrity mismatch for ${process.argv[1]}`); process.exit(1); }' \
                 "$plugin_archive" "$expected_integrity"; \
-            printf '%s\n' "$plugin_archive"; \
         else \
-            node /scripts/lib/reviewed-npm-archive.mts \
+            plugin_archive="$(node /scripts/lib/reviewed-npm-archive.mts \
                 --package-spec "$plugin_spec" --integrity "$expected_integrity" \
-                --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
+                --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}")"; \
         fi; \
-    }; \
-    install_reviewed_openclaw_plugin() { \
-        plugin_spec="${1}@${OPENCLAW_VERSION}"; \
-        plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
-        plugin_source_root="$(dirname "$plugin_archive")"; \
-        plugin_install_archive="$plugin_archive"; \
         NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_install_archive}"; \
-        if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi; \
+            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"; \
+        if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$(dirname "$plugin_archive")"; fi; \
     }; \
     if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
@@ -1824,6 +1817,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     if [ "$managed_image_union" = "1" ]; then \
         install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
         install_reviewed_openclaw_plugin "@openclaw/brave-plugin"; \
+        install_reviewed_openclaw_plugin "@openclaw/tavily-plugin"; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
     fi; \
@@ -1834,7 +1828,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
                 BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
                 ;; \
             tavily) \
-                openclaw plugins inspect tavily --json > /dev/null; \
+                install_reviewed_openclaw_plugin "@openclaw/tavily-plugin"; \
                 TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
                 ;; \
             *) \
