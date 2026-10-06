@@ -101,6 +101,11 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         .join("kubernetes")
         .to_string_lossy()
         .into_owned();
+    // The SDK makes the kubeconfig path absolute; on Windows that adds a drive.
+    let kubeconfig = std::path::absolute("/private/kubeconfig")
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     for directory in [
         temporary.path().join("runtime"),
         temporary.path().join(".export-copy"),
@@ -109,12 +114,12 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
             .provider_environment(&document, &directory, true)
             .unwrap();
         assert_eq!(environment[crate::kubernetes::STATE_ENV], expected);
-        assert_eq!(environment["TEST_KUBECONFIG"], "/private/kubeconfig");
+        assert_eq!(environment["TEST_KUBECONFIG"], kubeconfig);
         assert_eq!(
             environment
                 .get(crate::kubernetes::gateway::KUBECONFIG_ENV)
                 .map(String::as_str),
-            Some("/private/kubeconfig")
+            Some(kubeconfig.as_str())
         );
         assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
         assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
