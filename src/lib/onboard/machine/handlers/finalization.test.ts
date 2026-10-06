@@ -615,73 +615,81 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
   });
 
-  it("verifies Deep Code OpenRouter inference before reporting the terminal ready", async () => {
-    const { deps, calls } = createDeps();
-    const agent = {
-      name: "langchain-deepagents-code",
-      displayName: "LangChain Deep Agents Code",
-      runtime: { kind: "terminal", interactive_command: "dcode" },
-    };
+  it.each([false, true])(
+    "verifies Deep Code OpenRouter inference before reporting the terminal ready (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps();
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
 
-    const result = await runFinalizationHandlers({
-      ...baseOptions(deps),
-      provider: "openrouter-api",
-      model: "moonshotai/kimi-k2.6",
-      preferredInferenceApi: "openai-completions",
-      agent,
-    });
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+        agent,
+        deferRuntimeVerification,
+      });
 
-    expect(calls.probeTerminalInference).toHaveBeenCalledExactlyOnceWith({
-      sandboxName: "my-assistant",
-      agentName: "langchain-deepagents-code",
-      provider: "openrouter-api",
-      model: "moonshotai/kimi-k2.6",
-      preferredInferenceApi: "openai-completions",
-    });
-    expect(calls.log).toHaveBeenCalledWith(
-      "  ✓ LangChain Deep Agents Code terminal runtime is ready",
-    );
-    expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
-    expect(result.deploymentHealthy).toBe(true);
-    expect(result.stateResult.type).toBe("complete");
-  });
+      expect(calls.probeTerminalInference).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "my-assistant",
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.log).toHaveBeenCalledWith(
+        "  ✓ LangChain Deep Agents Code terminal runtime is ready",
+      );
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+      expect(result.deploymentHealthy).toBe(true);
+      expect(result.stateResult.type).toBe("complete");
+    },
+  );
 
-  it("keeps Deep Code OpenRouter onboarding incomplete when inference is unavailable", async () => {
-    const { deps, calls } = createDeps({
-      probeTerminalInference: vi.fn(async () => ({
-        ok: false,
-        detail: "sandbox inference invocation probe returned HTTP 503",
-      })),
-    });
-    const agent = {
-      name: "langchain-deepagents-code",
-      displayName: "LangChain Deep Agents Code",
-      runtime: { kind: "terminal", interactive_command: "dcode" },
-    };
+  it.each([false, true])(
+    "keeps Deep Code OpenRouter onboarding incomplete when inference is unavailable (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps({
+        probeTerminalInference: vi.fn(async () => ({
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 503",
+        })),
+      });
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
 
-    const result = await runFinalizationHandlers({
-      ...baseOptions(deps),
-      provider: "openrouter-api",
-      model: "moonshotai/kimi-k2.6",
-      agent,
-    });
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        agent,
+        deferRuntimeVerification,
+      });
 
-    expect(result).toMatchObject({
-      deploymentHealthy: false,
-      stateResult: {
-        type: "pause",
-        metadata: { state: "post_verify", reason: "deployment_not_ready" },
-      },
-    });
-    expect(result.verificationDiagnostics).toEqual([
-      expect.stringContaining("sandbox inference invocation probe returned HTTP 503"),
-    ]);
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("Deep Code inference for 'my-assistant' is not ready"),
-    );
-    expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("runtime is ready"));
-    expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
-  });
+      expect(result).toMatchObject({
+        deploymentHealthy: false,
+        stateResult: {
+          type: "pause",
+          metadata: { state: "post_verify", reason: "deployment_not_ready" },
+        },
+      });
+      expect(result.verificationDiagnostics).toEqual([
+        expect.stringContaining("sandbox inference invocation probe returned HTTP 503"),
+      ]);
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("Deep Code inference for 'my-assistant' is not ready"),
+      );
+      expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("runtime is ready"));
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
+    },
+  );
 
   it("does not complete the session when deployment verification fails", async () => {
     const { deps, calls } = createDeps({

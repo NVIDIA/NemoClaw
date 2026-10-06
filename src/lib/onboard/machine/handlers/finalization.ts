@@ -355,7 +355,11 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   VerifyChain,
   VerificationResult
 >): Promise<PostVerifyStateResult> {
-  if (deferRuntimeVerification) {
+  const terminalInferenceVerificationRequired = requiresTerminalInferenceVerification(
+    agent,
+    provider,
+  );
+  if (deferRuntimeVerification && !terminalInferenceVerificationRequired) {
     return {
       stateResult: completeOnboardMachine({}, { state: "post_verify" }),
       verificationDiagnostics: [],
@@ -465,7 +469,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     for (const line of verificationDiagnostics) deps.log(line);
     await deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
     deps.reportDeploymentReadiness(deploymentHealthy);
-  } else if (requiresTerminalInferenceVerification(agent, provider)) {
+  } else if (terminalInferenceVerificationRequired) {
     const agentName = selectedAgentName(agent);
     if (!agentName) throw new Error("Terminal inference verification requires an agent name.");
     const inference = (await deps.probeTerminalInference?.({
