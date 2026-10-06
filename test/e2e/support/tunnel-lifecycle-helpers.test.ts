@@ -130,6 +130,26 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     ).toBe(false);
   });
 
+  it("rejects a cloudflared target whose port only has the expected port as a prefix", () => {
+    expect(
+      cloudflaredTargetsRegisteredPort(
+        4321,
+        shellResult({ stdout: "cloudflared tunnel --url http://localhost:187900" }),
+        "18790",
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts the exact registered dashboard URL", () => {
+    expect(
+      cloudflaredTargetsRegisteredPort(
+        4321,
+        shellResult({ stdout: "cloudflared tunnel --url http://localhost:18790" }),
+        "18790",
+      ),
+    ).toBe(true);
+  });
+
   it("does not override the registered dashboard port in tunnel commands", () => {
     expect(tunnelLifecycleCommandEnv({}, { NEMOCLAW_DASHBOARD_PORT: "18790" })).not.toHaveProperty(
       "NEMOCLAW_DASHBOARD_PORT",

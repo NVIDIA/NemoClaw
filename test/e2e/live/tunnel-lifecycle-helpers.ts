@@ -51,13 +51,27 @@ export function cloudflaredTargetsRegisteredPort(
   command: ShellProbeResult,
   dashboardPort: string,
 ): boolean {
-  const expectedTarget = `cloudflared tunnel --url http://localhost:${dashboardPort}`;
-  const targetMatches =
+  const targetArgument = command.stdout.match(/(?:^|\s)--url\s+["']?(https?:\/\/[^\s"']+)/i)?.[1];
+  if (!targetArgument) return false;
+
+  let target: URL;
+  try {
+    target = new URL(targetArgument);
+  } catch {
+    return false;
+  }
+
+  return (
     Number.isSafeInteger(pid) &&
     pid > 0 &&
     command.exitCode === 0 &&
-    command.stdout.includes(expectedTarget);
-  return targetMatches;
+    target.protocol === "http:" &&
+    target.hostname === "localhost" &&
+    target.port === dashboardPort &&
+    target.pathname === "/" &&
+    target.search === "" &&
+    target.hash === ""
+  );
 }
 
 function assertTestOwnedSandboxName(): void {
