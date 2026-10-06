@@ -42,8 +42,7 @@ jobs:
           wsl.exe --version
           wsl.exe --install --distribution Ubuntu-24.04 --web-download --no-launch
           if ($LASTEXITCODE -ne 0) { throw "WSL installation failed with exit $LASTEXITCODE" }
-          wsl.exe --set-version Ubuntu-24.04 2
-          if ($LASTEXITCODE -ne 0) { throw "WSL2 initialization failed with exit $LASTEXITCODE" }
-          wsl.exe --distribution Ubuntu-24.04 --user root -- uname -a
+          wsl.exe --list --verbose
+          wsl.exe --distribution Ubuntu-24.04 --user root -- sh -c 'uname -a; test -e /proc/sys/kernel/osrelease; uname -r | grep -i microsoft-standard-WSL2'
           if ($LASTEXITCODE -ne 0) { throw "WSL2 execution failed with exit $LASTEXITCODE" }
           wsl.exe --list --verbose
