@@ -679,7 +679,11 @@ describe("managed Podman runtime provider", () => {
     };
     const capture = vi
       .fn<PodmanBoundContainerEngine["capture"]>()
-      .mockReturnValueOnce({ status: 125, stdout: "", stderr: `${reference}: image not known` })
+      .mockReturnValueOnce({
+        status: 125,
+        stdout: "[]",
+        stderr: `unable to inspect ${reference}: failed to find image`,
+      })
       .mockReturnValueOnce({ status: 0, stdout: "pulled", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
@@ -734,15 +738,7 @@ describe("managed Podman runtime provider", () => {
       toolDisclosure: "progressive",
     });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
-      [
-        "image",
-        "inspect",
-        "--format",
-        expect.stringMatching(
-          /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
-        ),
-        reference,
-      ],
+      ["image", "inspect", reference],
       ["pull", "--retry=0", reference],
       [
         "image",
@@ -789,15 +785,7 @@ describe("managed Podman runtime provider", () => {
     expect(String(thrown)).toContain("Podman could not inspect the requested image locally");
     expect(String(thrown)).not.toContain("registry-token=secret");
     expect(capture).toHaveBeenCalledExactlyOnceWith(
-      [
-        "image",
-        "inspect",
-        "--format",
-        expect.stringMatching(
-          /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
-        ),
-        reference,
-      ],
+      ["image", "inspect", reference],
       expect.any(Number),
     );
   });

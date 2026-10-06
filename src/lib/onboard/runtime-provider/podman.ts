@@ -110,6 +110,15 @@ const QUALIFIED_EXTERNAL_IMAGE_SUPPORT = {
 const EXTERNAL_IMAGE_INSPECT_FORMAT =
   '[{"Id":{{json .Id}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
 
+function isEmptyJsonArray(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 function acceptsManagedWorkloadReceipt(
   receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
   externalImages: boolean,
@@ -450,12 +459,12 @@ export function createPodmanRuntimeProviderBundle(
             displayName: externalImagePreparation.displayName,
             inspectLocal: (reference, timeoutMs) => {
               const inspection = externalImagePreparation.capture(
-                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                ["image", "inspect", reference],
                 timeoutMs,
               );
               if (inspection.error) return { status: "failed", error: inspection.error };
               if (inspection.status === 0) return { status: "present", inspection };
-              return /: image not known(?:\s|$)/iu.test(inspection.stderr)
+              return isEmptyJsonArray(inspection.stdout)
                 ? { status: "absent" }
                 : { status: "failed" };
             },
