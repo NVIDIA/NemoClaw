@@ -36,6 +36,7 @@ import type { AgentSkillIntegration } from "../../agent/skill-integration";
 
 const roots: string[] = [];
 
+/** Create a temporary local skill tree with the given SKILL.md name. */
 function localSkill(name = "demo-skill"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-action-test-"));
   roots.push(root);
@@ -298,6 +299,15 @@ describe("stateless sandbox skill orchestration", () => {
       expect(process.exitCode).toBe(0);
     },
   );
+
+  it("passes the sandbox-scoped remove command to the stateless fallback (#12668)", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+
+    await installSandboxSkill("alpha", { command: "install", path: localSkill("code-review") });
+
+    const script = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command.at(-1) as string;
+    expect(script).toContain("nemoclaw alpha skill remove code-review");
+  });
 
   it("omits the Deep Agents digest and cleans staging when verified placement fails (#8470)", async () => {
     selectAgent("langchain-deepagents-code", "/usr/local/bin/dcode", DCODE);

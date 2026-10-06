@@ -28,16 +28,24 @@ function skill(name = "demo-skill"): string {
   return root;
 }
 
-function runCanonicalSkillAddWithMoveShim(moveShim: string): {
-  destination: string;
-  result: SpawnSyncReturns<string>;
-} {
+/** Stage demo-skill under a temporary stand-in for /sandbox. */
+function stageCanonicalSkill(): { root: string; sandboxRoot: string; source: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-publication-test-"));
   roots.push(root);
+  expect(root).not.toMatch(/['\n\r]/u);
   const sandboxRoot = path.join(root, "sandbox");
   const source = path.join(sandboxRoot, ".nemoclaw-skill-stage.receipt", "demo-skill");
   fs.mkdirSync(source, { recursive: true });
   fs.writeFileSync(path.join(source, "SKILL.md"), "---\nname: demo-skill\n---\n# Demo\n");
+  return { root, sandboxRoot, source };
+}
+
+/** Run the verified canonical add with `mv` replaced by the given shim. */
+function runCanonicalSkillAddWithMoveShim(moveShim: string): {
+  destination: string;
+  result: SpawnSyncReturns<string>;
+} {
+  const { root, sandboxRoot, source } = stageCanonicalSkill();
   const snapshot = createStatelessSkillSnapshot(source, "demo-skill", fs.lstatSync(source));
   expect(snapshot.success).toBe(true);
   assert(snapshot.success);
@@ -49,7 +57,6 @@ function runCanonicalSkillAddWithMoveShim(moveShim: string): {
     "/sandbox/.nemoclaw-skill-stage.receipt/demo-skill",
     snapshot.snapshot.contentDigest,
   );
-  expect(root).not.toMatch(/['\n\r]/u);
   const script = (command[2] ?? "").replaceAll("/sandbox", sandboxRoot);
   const shimDirectory = path.join(root, "bin");
   fs.mkdirSync(shimDirectory);
@@ -332,6 +339,35 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).not.toContain(".nemoclaw-skill-verify");
     expect(script).not.toContain("/sandbox/.openclaw");
   });
+
+  it.runIf(process.platform === "linux")(
+    "refuses a duplicate skill and names the remove command (#12668)",
+    () => {
+      const { sandboxRoot } = stageCanonicalSkill();
+      const existing = path.join(sandboxRoot, ".hermes/skills/demo-skill/SKILL.md");
+      fs.mkdirSync(path.dirname(existing), { recursive: true });
+      fs.writeFileSync(existing, "# Existing\n");
+      const command = buildCanonicalSkillAddCommand(
+        "/sandbox/.hermes/skills",
+        "demo-skill",
+        "/sandbox/.nemoclaw-skill-stage.receipt/demo-skill",
+        undefined,
+        "nemoclaw alpha skill remove demo-skill",
+      );
+
+      const result = spawnSync(
+        command[0],
+        [command[1], (command[2] ?? "").replaceAll("/sandbox", sandboxRoot)],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(
+        "Remove it first with: nemoclaw alpha skill remove demo-skill",
+      );
+      expect(fs.readFileSync(existing, "utf8")).toBe("# Existing\n");
+    },
+  );
 
   it("removes only the named canonical-root copy and makes no global-absence claim", () => {
     const command = buildCanonicalSkillRemoveCommand(
