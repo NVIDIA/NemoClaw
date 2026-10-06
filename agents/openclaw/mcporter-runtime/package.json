@@ -1,5 +1,4 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw-mcporter-runtime",
   "version": "0.0.0",
   "private": true,
@@ -17,5 +16,6 @@
   },
   "engines": {
     "node": ">=22.19.0"
-  }
+  },
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0"
 }

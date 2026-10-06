@@ -10,15 +10,17 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -1142,6 +1144,34 @@ function packReplacement(
   });
 }
 
+export function patchOpenClawSlackProxyPackageGraph(
+  packageDirectory: string,
+  replacementDirectory: string,
+): void {
+  requirePackageIdentity(
+    readJson(join(packageDirectory, "package.json")),
+    "@openclaw/slack",
+    "2026.9.2",
+    "OpenClaw Slack plugin",
+  );
+  const target = join(
+    packageDirectory,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  );
+  const original = readJson(join(target, "package.json"));
+  const replacement = readJson(join(replacementDirectory, "package.json"));
+  requirePackageIdentity(original, "proxy-addr", "2.0.7", "Bundled Slack proxy-addr");
+  requirePackageIdentity(replacement, "proxy-addr", PROXY_ADDR_VERSION, "proxy-addr replacement");
+  const dependencies = { forwarded: "0.2.0", "ipaddr.js": "1.9.1" };
+  requireDependencyShape(original, dependencies, "Bundled Slack proxy-addr");
+  requireDependencyShape(replacement, dependencies, "proxy-addr replacement");
+  copyReplacementPackage(replacementDirectory, target);
+}
+
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -1168,26 +1198,6 @@ export function buildRemediatedOpenClawPluginArchive(
     env,
   );
   if (remediation.kind === "slack-proxy-addr") {
-    requirePackageIdentity(
-      readJson(join(sourcePackage, "package.json")),
-      "@openclaw/slack",
-      remediation.version,
-      "Slack remediation package",
-    );
-    const target = join(
-      sourcePackage,
-      "node_modules",
-      "@slack",
-      "bolt",
-      "node_modules",
-      "proxy-addr",
-    );
-    requirePackageIdentity(
-      readJson(join(target, "package.json")),
-      "proxy-addr",
-      "2.0.7",
-      "Slack bundled proxy-addr package",
-    );
     const archive = packReplacement(
       `proxy-addr@${PROXY_ADDR_VERSION}`,
       PROXY_ADDR_INTEGRITY,
@@ -1201,19 +1211,7 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
-    const manifest = readJson(join(replacement, "package.json"));
-    requirePackageIdentity(
-      manifest,
-      "proxy-addr",
-      PROXY_ADDR_VERSION,
-      "proxy-addr remediation package",
-    );
-    requireDependencyShape(
-      manifest,
-      { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-      `proxy-addr@${PROXY_ADDR_VERSION}`,
-    );
-    copyReplacementPackage(replacement, target);
+    patchOpenClawSlackProxyPackageGraph(sourcePackage, replacement);
   } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
@@ -1690,6 +1688,74 @@ export function remediateReviewedOpenClawPluginArchive(
     expectedPatchedMetadataIntegrity: remediation.expectedPatchedMetadataIntegrity,
     expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
+}
+
+export function remediateInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
+): void {
+  if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
+  if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
+    throw new Error("Official plugin remediation requires its verified install path");
+  }
+  const trustedRoot = realpathSync(request.trustedStateRoot);
+  const packageDirectory = realpathSync(request.packageDirectory);
+  // OpenClaw 2026.9.2 owns npm plugins in package-specific managed projects,
+  // including artifact-generation projects. Accept only Slack's exact shape.
+  const projectName = `openclaw-slack-${createHash("sha256")
+    .update("@openclaw/slack")
+    .digest("hex")
+    .slice(0, 10)}`;
+  const installedParts = relative(trustedRoot, packageDirectory).split(sep);
+  const project = installedParts[2] ?? "";
+  if (
+    installedParts.length !== 6 ||
+    installedParts[0] !== "npm" ||
+    installedParts[1] !== "projects" ||
+    (project !== projectName &&
+      !new RegExp(`^${projectName}__openclaw-generation__g-[a-f0-9]{16}$`).test(project)) ||
+    installedParts.slice(3).join("/") !== "node_modules/@openclaw/slack" ||
+    relative(resolve(request.trustedStateRoot), resolve(request.packageDirectory)) !==
+      relative(trustedRoot, packageDirectory)
+  ) {
+    throw new Error("Official Slack install path is outside its trusted plugin root");
+  }
+  let installedDependency = trustedRoot;
+  for (const component of [
+    ...installedParts,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  ]) {
+    installedDependency = join(installedDependency, component);
+    const metadata = lstatSync(installedDependency);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Official plugin dependency directory must be a real directory");
+    }
+  }
+  // The existing no-follow tree walk also rejects unsafe installed members.
+  hashPackageTree(installedDependency);
+  const env = { ...process.env, ...request.env };
+  const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
+  try {
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
+      directory,
+      env,
+    );
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(directory, "proxy-addr"),
+      directory,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 }
 
 function isMainModule(): boolean {
