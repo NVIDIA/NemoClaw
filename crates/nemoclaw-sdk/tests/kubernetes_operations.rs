@@ -18,10 +18,15 @@ const OWNER: &str = "00000000-0000-4000-8000-000000000001";
 const NAME: &str = "nc-0123456789abcdef-gateway";
 
 fn spec(kind: &str) -> Spec {
+    spec_on(kind, "kubernetes")
+}
+
+fn spec_on(kind: &str, provider: &str) -> Spec {
     serde_json::from_value(json!({
         "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
+            "runtime": {"provider": provider},
             "endpoint": "https://127.0.0.1:17671",
             "kubernetes": {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
@@ -55,8 +60,9 @@ fn helm(directory: &Path) -> PathBuf {
     std::fs::write(
         &helm,
         format!(
-            "#!/bin/sh\necho \"$1\" >> {}/helm.log\n",
-            directory.display()
+            "#!/bin/sh\necho \"$1\" >> {log}/helm.log\n\
+             while [ $# -gt 0 ]; do [ \"$1\" = -f ] && cp \"$2\" {log}/values.json; shift; done\n",
+            log = directory.display()
         ),
     )
     .unwrap();
@@ -148,6 +154,58 @@ async fn ensuring_storage_then_gateway_reports_both_running() {
         .await
         .unwrap();
     assert_eq!(read.running, Some(true));
+}
+
+/// The namespace annotations OpenShift writes when it creates a project.
+fn assign_openshift_range(objects: &Objects) {
+    let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    namespace["metadata"]["annotations"] = json!({
+        "openshift.io/sa.scc.uid-range": "1000680000/10000",
+        "openshift.io/sa.scc.supplemental-groups": "1000690000/10000",
+    });
+    objects.insert(namespace);
+}
+
+#[tokio::test]
+async fn on_openshift_the_gateway_runs_as_the_namespace_identity() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    assign_openshift_range(&objects);
+    ready_gateway(&objects);
+    operations
+        .ensure(&spec_on(GATEWAY_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let values: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("values.json")).unwrap())
+            .unwrap();
+    assert_eq!(values["securityContext"]["runAsUser"], 1_000_680_000);
+    assert_eq!(values["podSecurityContext"]["fsGroup"], 1_000_690_000);
+}
+
+#[tokio::test(start_paused = true)]
+async fn on_a_cluster_without_openshift_ranges_the_gateway_is_not_installed() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&spec_on(STORAGE_KIND, "openshift"), None)
+        .await
+        .unwrap();
+    let error = operations
+        .ensure(&spec_on(GATEWAY_KIND, "openshift"), None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("UID range"), "{error}");
+    assert!(
+        !directory.path().join("helm.log").exists(),
+        "helm must not run"
+    );
 }
 
 #[tokio::test]

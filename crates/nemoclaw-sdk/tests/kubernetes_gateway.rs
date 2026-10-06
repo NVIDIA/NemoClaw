@@ -4,7 +4,7 @@
 //! the pinned chart and images, and none of the caller's Helm settings.
 #![cfg(unix)]
 
-use nemoclaw_sdk::kubernetes::gateway::{Release, install, uninstall};
+use nemoclaw_sdk::kubernetes::gateway::{Identity, Release, install, uninstall};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -37,7 +37,7 @@ fn release(directory: &Path, helm: PathBuf) -> Release {
             "issuer": "https://nc-0123456789abcdef-gateway-oidc.agents.svc.cluster.local:8443",
             "caConfigMapName": "nc-0123456789abcdef-gateway-oidc-ca",
         })),
-        openshift: false,
+        identity: None,
     }
 }
 
@@ -217,17 +217,68 @@ fn the_pinned_chart_renders_with_the_sdk_values() {
 }
 
 /// OpenShift admits only UIDs from the range it assigns each namespace, so
-/// the gateway must not ask for the chart's fixed user or group.
+/// the gateway runs as that range's first UID and group instead of the
+/// chart's fixed 1000.
 #[test]
 #[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
 fn on_openshift_the_gateway_takes_the_namespace_uid() {
     let directory = tempfile::tempdir().unwrap();
     let mut release = release(directory.path(), test_helm());
-    release.openshift = true;
+    release.identity = Some(Identity {
+        user: 1_000_680_000,
+        group: 1_000_690_000,
+    });
     let rendered = render(&release, directory.path());
-    assert!(!rendered.contains("runAsUser:"), "{rendered}");
-    assert!(!rendered.contains("fsGroup:"), "{rendered}");
-    assert!(rendered.contains("runAsNonRoot: true"));
+    assert!(rendered.contains("runAsUser: 1000680000"), "{rendered}");
+    assert!(rendered.contains("fsGroup: 1000690000"), "{rendered}");
+    assert!(!rendered.contains("runAsUser: 1000\n"));
+}
+
+#[test]
+fn the_namespace_identity_is_the_first_uid_and_group_of_its_ranges() {
+    let annotations = |uid: &str, groups: Option<&str>| {
+        let mut map = std::collections::BTreeMap::from([(
+            "openshift.io/sa.scc.uid-range".to_owned(),
+            uid.to_owned(),
+        )]);
+        if let Some(groups) = groups {
+            map.insert(
+                "openshift.io/sa.scc.supplemental-groups".into(),
+                groups.into(),
+            );
+        }
+        map
+    };
+    assert_eq!(
+        Identity::from_annotations(&annotations("1000680000/10000", Some("1000690000/10000"))),
+        Some(Identity {
+            user: 1_000_680_000,
+            group: 1_000_690_000
+        })
+    );
+    assert_eq!(
+        Identity::from_annotations(&annotations("1000680000/10000", None)),
+        Some(Identity {
+            user: 1_000_680_000,
+            group: 1_000_680_000
+        }),
+        "without supplemental groups, the group is the user's"
+    );
+    for bad in [
+        "",
+        "0/10000",
+        "1000680000",
+        "x/1",
+        "1000680000/0",
+        "4294967295/2",
+    ] {
+        assert_eq!(
+            Identity::from_annotations(&annotations(bad, None)),
+            None,
+            "{bad:?}"
+        );
+    }
+    assert_eq!(Identity::from_annotations(&Default::default()), None);
 }
 
 #[tokio::test]

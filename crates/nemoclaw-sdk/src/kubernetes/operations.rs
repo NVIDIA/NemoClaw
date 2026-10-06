@@ -87,7 +87,7 @@ impl Operations {
         let target = self.target(spec)?;
         Ok(Release {
             oidc: material.map(|material| issuer::oidc_values(material, &spec.name, &spec.owner)),
-            openshift: spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift,
+            identity: None,
             helm: self.helm.clone(),
             state: self.state.clone(),
             kubeconfig: self.kubeconfig.clone(),
@@ -216,7 +216,11 @@ impl Operations {
                         }
                     }
                 }
-                gateway::install(&self.release(spec, Some(&material))?).await?;
+                let mut release = self.release(spec, Some(&material))?;
+                if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+                    release.identity = Some(namespace_identity(&cluster, &namespace).await?);
+                }
+                gateway::install(&release).await?;
                 let statefulset = self
                     .cluster(spec)
                     .get(&self.statefulset(spec)?)
@@ -342,5 +346,38 @@ impl Operations {
             receipt.save(&self.state)?;
         }
         Ok(())
+    }
+}
+
+/// OpenShift writes a namespace's UID and group ranges shortly after
+/// creating it. Wait a bounded time for them, so the gateway runs as an
+/// identity OpenShift admits; absent ranges mean this is not OpenShift.
+async fn namespace_identity(
+    cluster: &Cluster,
+    namespace: &str,
+) -> Result<gateway::Identity, ObservationError> {
+    let address = Owned {
+        api_version: "v1".into(),
+        kind: "Namespace".into(),
+        namespace: String::new(),
+        name: namespace.into(),
+        uid: String::new(),
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let annotations = cluster
+            .get(&address)
+            .await?
+            .and_then(|object| object.metadata.annotations)
+            .unwrap_or_default();
+        if let Some(identity) = gateway::Identity::from_annotations(&annotations) {
+            return Ok(identity);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ObservationError::Backend(
+                "OpenShift did not assign the namespace a UID range; check that this is an OpenShift cluster; resources retained",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }

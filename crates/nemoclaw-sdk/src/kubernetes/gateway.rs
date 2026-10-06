@@ -27,9 +27,37 @@ pub struct Release {
     pub name: String,
     /// `server.oidc` chart values for the development issuer, if any.
     pub oidc: Option<Value>,
-    /// OpenShift assigns each namespace's pods a UID from its own range, so
-    /// the gateway must not ask for the chart's fixed user and group.
-    pub openshift: bool,
+    /// On OpenShift, the UID and group the namespace assigns; the chart's
+    /// fixed 1000 would be refused there.
+    pub identity: Option<Identity>,
+}
+
+/// The user and group OpenShift assigns a namespace's pods.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub user: u32,
+    pub group: u32,
+}
+
+impl Identity {
+    /// The first UID of `openshift.io/sa.scc.uid-range` and the first group
+    /// of `openshift.io/sa.scc.supplemental-groups`, falling back to the UID,
+    /// as OpenShell itself chooses for sandboxes. Both read `START/SIZE`.
+    pub fn from_annotations(
+        annotations: &std::collections::BTreeMap<String, String>,
+    ) -> Option<Self> {
+        let first = |key: &str| {
+            let (start, size) = annotations.get(key)?.split_once('/')?;
+            let (start, size) = (start.parse::<u32>().ok()?, size.parse::<u32>().ok()?);
+            (start > 0 && size > 0 && start.checked_add(size).is_some()).then_some(start)
+        };
+        let user = first("openshift.io/sa.scc.uid-range")?;
+        let group = match annotations.get("openshift.io/sa.scc.supplemental-groups") {
+            Some(_) => first("openshift.io/sa.scc.supplemental-groups")?,
+            None => user,
+        };
+        Some(Self { user, group })
+    }
 }
 
 const FAILED: ObservationError = ObservationError::Backend(
@@ -74,10 +102,9 @@ pub fn values(release: &Release) -> Value {
     if let Some(oidc) = &release.oidc {
         values["server"]["oidc"] = oidc.clone();
     }
-    if release.openshift {
-        // Helm removes a chart default that a values file sets to null.
-        values["securityContext"] = json!({"runAsUser": null});
-        values["podSecurityContext"] = json!({"fsGroup": null});
+    if let Some(identity) = release.identity {
+        values["securityContext"] = json!({"runAsUser": identity.user});
+        values["podSecurityContext"] = json!({"fsGroup": identity.group});
     }
     values
 }
