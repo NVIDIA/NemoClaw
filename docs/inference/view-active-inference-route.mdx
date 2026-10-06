@@ -1,8 +1,8 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "View the Active Inference Route"
-sidebar-title: "View the Active Route"
+title: "View the Selected Inference Path"
+sidebar-title: "View the Inference Path"
 description: "Inspect a sandbox-attached NVIDIA provider or the live NemoClaw-managed OpenShell inference route."
 description-agent: "Shows the selected sandbox's native NVIDIA provider path or the live shared route for another provider. Use when checking the active inference path."
 keywords:
@@ -107,7 +107,7 @@ When the named sandbox has a valid native NVIDIA provider attachment, the comman
 Otherwise, when that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
 For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
-OpenShell exposes one inference route to every sandbox registered on the same gateway.
+For other providers, OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
 ## Include Sandbox Health
 

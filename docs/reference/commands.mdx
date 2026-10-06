@@ -3476,7 +3476,10 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the recorded provider-and-model output. Other managed providers keep the provider-and-model output. Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information. Refer to [View the Active Inference Route](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
+A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the recorded provider-and-model output.
+Other managed providers keep the provider-and-model output.
+Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
+Refer to [View the Selected Inference Path](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When `<name>` has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
@@ -3487,7 +3490,7 @@ JSON reports this value as `llamaCpp.kind`.
 An attached route also reports the fixed loopback URL as `llamaCpp.endpointUrl`; NemoClaw does not report a stored arbitrary endpoint.
 When the ownership receipt is unreadable, `llamaCpp.kind` is `unavailable` and the output includes diagnostic and recovery text.
 The command omits `llamaCpp` when the recorded and live routes differ.
-For a shared-route lookup, the global form reports only the live provider and model.
+For a shared-route lookup, the global form omits `llamaCpp` details.
 Shared-route lookup failures include timeouts, nonzero exits, no exit status, and output NemoClaw cannot interpret after a command exits successfully.
 The error names the gateway without rendering command output.
 It directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
