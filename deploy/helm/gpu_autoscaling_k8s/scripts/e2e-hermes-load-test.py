@@ -91,6 +91,11 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     return current, desired
 
 
+def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
+    """Stop load when HPA wants or has target GPUs. 0/0 means the poll failed."""
+    return max(current, desired) >= target
+
+
 def hpa_motion(current: int, desired: int) -> str:
     if current < desired:
         return "scale-up"
@@ -334,6 +339,8 @@ async def run_test(args: argparse.Namespace) -> int:
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, hold_started
+        last_line = ""
+        zero_polls = 0
         while not stop_load.is_set():
             current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
             max_replicas = max(max_replicas, current, desired)
@@ -344,14 +351,27 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            if current >= args.target_pods:
+            line = format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired)
+            if line != last_line:
+                print(line, flush=True)
+                last_line = line
+            if current == 0 and desired == 0:
+                zero_polls += 1
+                if zero_polls == 1 or zero_polls % 15 == 0:
+                    print(
+                        "[hpa] replica counts are 0 (kubectl failed); "
+                        "workload will not stop at 8 GPUs",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            if hpa_replicas_reached_target(current, desired, args.target_pods):
                 if hold_started is None:
                     hold_started = time.monotonic()
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     print(
-                        f"[load] {current} GPUs reached; stopping new chats "
-                        "(in-flight replies will finish)",
+                        f"[load] HPA current={current} desired={desired} "
+                        f"(target {args.target_pods}); stopping workload",
                         file=sys.stderr,
                         flush=True,
                     )

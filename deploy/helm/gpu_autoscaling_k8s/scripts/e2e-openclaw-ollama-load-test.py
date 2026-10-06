@@ -159,21 +159,41 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     return current, desired
 
 
-def read_hpa_http(host: str, port: int) -> tuple[int, int]:
+def _hpa_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0
+
+
+def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
+    """Stop load when HPA wants or has target GPUs. 0/0 means the poll failed."""
+    return max(current, desired) >= target
+
+
+def read_hpa_http_status(host: str, port: int) -> tuple[int, int, str]:
     url = f"http://{host}:{port}/hpa"
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return 0, 0
+        return 0, 0, ""
     if not isinstance(data, dict):
-        return 0, 0
-    current = data.get("current")
-    desired = data.get("desired")
+        return 0, 0, ""
+    metric = data.get("metric")
     return (
-        int(current) if isinstance(current, int) or (isinstance(current, str) and str(current).isdigit()) else 0,
-        int(desired) if isinstance(desired, int) or (isinstance(desired, str) and str(desired).isdigit()) else 0,
+        _hpa_int(data.get("current")),
+        _hpa_int(data.get("desired")),
+        metric if isinstance(metric, str) else "",
     )
+
+
+def read_hpa_http(host: str, port: int) -> tuple[int, int]:
+    current, desired, _metric = read_hpa_http_status(host, port)
+    return current, desired
 
 
 def hpa_motion(current: int, desired: int) -> str:
@@ -389,7 +409,7 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
         return
     proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=60)
+        await asyncio.wait_for(proc.wait(), timeout=15)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -427,6 +447,7 @@ async def simulate_user_http(
     env["E2E_SESSION_KEY"] = f"agent:main:{sandbox}"
     env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
     env["E2E_ESCALATE_FACTOR"] = "0.35"
+    env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
     env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -515,7 +536,7 @@ async def simulate_user(
         "unset OPENCLAW_GATEWAY_TOKEN || true; "
         "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
-        "MAX_TOKENS=\"$8\" "
+        "MAX_TOKENS=\"$8\" E2E_DRAIN_SEC=\"${9:-8}\" "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
         "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
         "bash -c 'exec -a e2e-openclaw-load python3 -'"
@@ -541,6 +562,7 @@ async def simulate_user(
         str(timeout_sec),
         f"agent:main:{sandbox}",
         str(os.environ.get("MAX_TOKENS") or "1024"),
+        str(os.environ.get("E2E_DRAIN_SEC") or "8"),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -635,9 +657,27 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
 
     skip_hpa = bool(args.chat_only and not args.host)
+    if args.host:
+        current, desired, metric = read_hpa_http_status(args.host, args.discovery_port)
+        if max(current, desired) < 1:
+            print(
+                f"ERROR: http://{args.host}:{args.discovery_port}/hpa did not report replicas "
+                f"(current={current} desired={desired}). The laptop client cannot stop at "
+                f"{args.target_pods} GPUs.",
+                file=sys.stderr,
+            )
+            return 2
+        if (
+            not os.environ.get("MAX_TOKENS_FROM_USER", "").strip()
+            and "latency" in metric.lower()
+        ):
+            os.environ["MAX_TOKENS"] = "64"
+            print("[load] latency HPA on laptop: MAX_TOKENS=64", flush=True)
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, hold_started
+        last_line = ""
+        zero_polls = 0
         while not stop_load.is_set():
             if args.host:
                 current, desired = await asyncio.to_thread(
@@ -653,14 +693,27 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            if current >= args.target_pods:
+            line = format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired)
+            if line != last_line:
+                print(line, flush=True)
+                last_line = line
+            if current == 0 and desired == 0:
+                zero_polls += 1
+                if zero_polls == 1 or zero_polls % 15 == 0:
+                    print(
+                        "[hpa] replica counts are 0 (kubectl or /hpa failed); "
+                        "workload will not stop at 8 GPUs",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            if hpa_replicas_reached_target(current, desired, args.target_pods):
                 if hold_started is None:
                     hold_started = time.monotonic()
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     print(
-                        f"[load] {current} GPUs reached; stopping new chats "
-                        "(in-flight replies will finish)",
+                        f"[load] HPA current={current} desired={desired} "
+                        f"(target {args.target_pods}); stopping workload",
                         file=sys.stderr,
                         flush=True,
                     )

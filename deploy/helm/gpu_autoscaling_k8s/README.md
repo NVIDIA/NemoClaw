@@ -50,7 +50,7 @@ HPA (GPU util >40% or latency >3000 ms)
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
-`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. Clients stop **new** chats once HPA current replicas = 8; in-flight chats still finish. After 15s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
+`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. Clients stop the workload once HPA current or desired replicas = 8. After 15s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
 
 ## Prerequisites
 
@@ -206,7 +206,7 @@ E2E_USERS=5 ./scripts/client.sh
 ```
 
 
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps **current** GPUs at **1** replica (`maxReplicas=8`). OpenClaw start must not scale. `client.sh` then sends chats; users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps **current** GPUs at **1** replica (`maxReplicas=8`). OpenClaw start must not scale. `client.sh` then sends chats; users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). The client stops the workload once HPA current or desired replicas = 8, then GPUs scale back to 1. Do not pass `DURATION_SEC=180` — that stopped an earlier run at 5 GPUs.
 
 ```bash
 # Terminal A 
@@ -219,6 +219,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
+# Stops when HPA current or desired replicas reach 8.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=64 ./scripts/client.sh
 
 
@@ -330,6 +331,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
+# Stops when HPA current or desired replicas reach 8.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=64 ./scripts/client_hermes.sh
 
 
@@ -426,6 +428,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 
 ```bash
 # Terminal C — from the same DGX in another terminal
+# Stops when HPA current or desired replicas reach 8.
 E2E_USERS=5 MAX_TOKENS=64 ./scripts/client_deepagents.sh
 ```
 
@@ -791,7 +794,7 @@ See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/gr
 
 ### How is LLM latency calculated for HPA?
 
-The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. Every completed chat on that pod is included in `nemoclaw_llm_latency_avg_milliseconds` (no 128-sample cap, no age cutoff). Clients stop **new** chats at 8 GPUs; already-started chats still complete. After 15s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
+The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. Every completed chat on that pod is included in `nemoclaw_llm_latency_avg_milliseconds` (no 128-sample cap, no age cutoff). Clients stop the workload when HPA current or desired replicas = 8. After 15s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 ### What port numbers are used?
 

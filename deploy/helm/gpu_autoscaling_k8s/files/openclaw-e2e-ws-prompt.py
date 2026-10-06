@@ -365,7 +365,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     stop.set()
     # Finish the current chat.send instead of dying on SIGTERM (client stops
     # load when HPA hits 8). That last in-flight used to increment err.
-    drain = float(os.environ.get("E2E_DRAIN_SEC", "45"))
+    drain = float(os.environ.get("E2E_DRAIN_SEC", "8"))
     join_deadline = time.monotonic() + max(1.0, drain)
     for worker_thread in workers:
         remaining = join_deadline - time.monotonic()

@@ -6,7 +6,7 @@
 
 // After this many ms with no new samples, clear the HPA average so it reports 0
 // (below target) instead of retaining the last high latency. 0 disables idle
-// expiration. Clients stop *new* chats at max GPUs; this only affects the HPA
+// expiration. Clients stop the workload at max GPUs; this only affects the HPA
 // gauge after those in-flight replies finish. It does not drop in-flight chats.
 const configuredIdleExpireMs = Number(process.env.LLM_LATENCY_IDLE_EXPIRE_MS ?? "15000");
 const LLM_LATENCY_IDLE_EXPIRE_MS =

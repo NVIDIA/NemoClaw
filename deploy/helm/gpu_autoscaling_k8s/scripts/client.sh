@@ -44,11 +44,13 @@ export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
+MAX_TOKENS_FROM_USER="${MAX_TOKENS-}"
+export MAX_TOKENS_FROM_USER
 export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
-# Stop *new* chats once current replicas = TARGET_PODS. In-flight chats still finish.
+# Stop the workload once current or desired replicas = TARGET_PODS.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
@@ -60,9 +62,10 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:18789 … $((18789 + E2E_USERS - 1))"
-  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" <<'PY'
-import sys, urllib.error, urllib.request
-host, users = sys.argv[1], int(sys.argv[2])
+  echo "Stops the workload when HPA current or desired replicas reach ${TARGET_PODS}."
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${E2E_DISCOVERY_PORT:-18788}" <<'PY'
+import json, sys, urllib.error, urllib.request
+host, users, discovery = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 failed = 0
 for i in range(users):
     url = f"http://{host}:{18789 + i}/health"
@@ -81,6 +84,24 @@ for i in range(users):
     print(f"  user {i} → {url}")
 if failed:
     raise SystemExit("client will not send chat until every http://dgx-ip:18789+i/health answers")
+hpa_url = f"http://{host}:{discovery}/hpa"
+try:
+    data = json.loads(urllib.request.urlopen(hpa_url, timeout=5).read().decode())
+except Exception as exc:
+    raise SystemExit(
+        f"ERROR: {hpa_url}: {exc}. The laptop client cannot stop at 8 GPUs without HPA."
+    )
+if not isinstance(data, dict):
+    raise SystemExit(f"ERROR: {hpa_url} did not return JSON object")
+current = int(data.get("current") or 0)
+desired = int(data.get("desired") or 0)
+metric = str(data.get("metric") or "")
+if max(current, desired) < 1:
+    raise SystemExit(
+        f"ERROR: {hpa_url} reported current={current} desired={desired}. "
+        "The laptop client cannot stop at 8 GPUs."
+    )
+print(f"  HPA {hpa_url} current={current} desired={desired} metric={metric or '?'}")
 print(f"UI (one port per user): http://{host}:18789/u/0 … :{18789 + users - 1}/u/0")
 PY
   mkdir -p "${E2E_OUTPUT_DIR}"
@@ -113,6 +134,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1)."
+echo "Stops the workload when HPA current or desired replicas reach ${TARGET_PODS}."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

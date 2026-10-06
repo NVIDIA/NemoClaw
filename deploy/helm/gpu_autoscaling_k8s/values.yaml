@@ -352,7 +352,7 @@ metrics:
   # in Grafana out of the box. Default true so install/load-test/reset re-runs (plain
   # `helm upgrade`, not --reuse-values) don't silently disable this on every re-apply.
   # Clear latency_avg after this idle period so latency HPA can scale down.
-  # Does not cancel in-flight chats; clients stop *new* queries at max GPUs.
+  # Does not cancel in-flight inference. Clients stop the workload at max GPUs.
   # The HPA gauge averages every sample until this idle reset (no 128-sample cap).
   llmLatencyIdleExpireMs: 15000
   serviceMonitor:

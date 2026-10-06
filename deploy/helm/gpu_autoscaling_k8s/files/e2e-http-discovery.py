@@ -52,6 +52,7 @@ def main() -> int:
                 ns = os.environ.get("NAMESPACE", "nemoclaw-gpu")
                 name = os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy")
                 current, desired = 0, 0
+                metric = ""
                 try:
                     raw = subprocess.check_output(
                         [
@@ -62,7 +63,7 @@ def main() -> int:
                             "-n",
                             ns,
                             "-o",
-                            "jsonpath={.status.currentReplicas} {.status.desiredReplicas}",
+                            "jsonpath={.status.currentReplicas} {.status.desiredReplicas} {.spec.metrics[0].pods.metric.name}",
                         ],
                         text=True,
                         timeout=5,
@@ -73,9 +74,13 @@ def main() -> int:
                         current = int(parts[0])
                     if len(parts) > 1 and parts[1].isdigit():
                         desired = int(parts[1])
+                    if len(parts) > 2:
+                        metric = parts[2]
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
                     pass
-                body = json.dumps({"current": current, "desired": desired}).encode()
+                body = json.dumps(
+                    {"current": current, "desired": desired, "metric": metric}
+                ).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
