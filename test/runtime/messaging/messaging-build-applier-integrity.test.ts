@@ -191,7 +191,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     testTimeout(15_000),
   );
 
-  it.each([
+  it.each<{ name: string; overrides: Record<string, string>; root: string }>([
     { name: "HOME", overrides: {}, root: ".openclaw" },
     { name: "state override", overrides: { OPENCLAW_STATE_DIR: "~/state" }, root: "state" },
     {
