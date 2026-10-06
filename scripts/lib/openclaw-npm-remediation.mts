@@ -20,7 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -1691,19 +1691,43 @@ export function remediateReviewedOpenClawPluginArchive(
 }
 
 export function remediateInstalledOfficialOpenClawPlugin(
-  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedPluginRoot: string }>,
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
   if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
   if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
     throw new Error("Official plugin remediation requires its verified install path");
   }
-  const trustedRoot = realpathSync(request.trustedPluginRoot);
+  const trustedRoot = realpathSync(request.trustedStateRoot);
   const packageDirectory = realpathSync(request.packageDirectory);
-  if (packageDirectory !== join(trustedRoot, "slack")) {
+  // OpenClaw 2026.9.2 owns npm plugins in package-specific managed projects,
+  // including artifact-generation projects. Accept only Slack's exact shape.
+  const projectName = `openclaw-slack-${createHash("sha256")
+    .update("@openclaw/slack")
+    .digest("hex")
+    .slice(0, 10)}`;
+  const installedParts = relative(trustedRoot, packageDirectory).split(sep);
+  const project = installedParts[2] ?? "";
+  if (
+    installedParts.length !== 6 ||
+    installedParts[0] !== "npm" ||
+    installedParts[1] !== "projects" ||
+    (project !== projectName &&
+      !new RegExp(`^${projectName}__openclaw-generation__g-[a-f0-9]{16}$`).test(project)) ||
+    installedParts.slice(3).join("/") !== "node_modules/@openclaw/slack" ||
+    relative(resolve(request.trustedStateRoot), resolve(request.packageDirectory)) !==
+      relative(trustedRoot, packageDirectory)
+  ) {
     throw new Error("Official Slack install path is outside its trusted plugin root");
   }
-  let installedDependency = packageDirectory;
-  for (const component of ["", "node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]) {
+  let installedDependency = trustedRoot;
+  for (const component of [
+    ...installedParts,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  ]) {
     installedDependency = join(installedDependency, component);
     const metadata = lstatSync(installedDependency);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) {

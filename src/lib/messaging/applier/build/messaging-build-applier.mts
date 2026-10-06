@@ -837,7 +837,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           env: installEnv as NodeJS.ProcessEnv,
           packageSpec: install.npmPackageSpec!,
           packageDirectory,
-          trustedPluginRoot: join(resolve(stateRoot), "extensions"),
+          trustedStateRoot: resolve(stateRoot),
           workingDirectory: packed.rootDir,
         });
       }

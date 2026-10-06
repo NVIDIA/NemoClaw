@@ -206,8 +206,16 @@ it("bounds a hung official-plugin inspection and removes its packed archive", ()
 
 it("patches the installed official Slack bundle only after registry provenance is verified", async () => {
   const fixture = officialPluginFixture("slack", "2026.9.2");
-  const pluginRoot = path.join(fixture.tmp, ".openclaw", "extensions");
-  const installed = path.join(pluginRoot, "slack");
+  const installed = path.join(
+    fixture.tmp,
+    ".openclaw",
+    "npm",
+    "projects",
+    "openclaw-slack-b25c10c1bd",
+    "node_modules",
+    "@openclaw",
+    "slack",
+  );
   const target = path.join(installed, "node_modules/@slack/bolt/node_modules/proxy-addr");
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(
@@ -265,6 +273,14 @@ it("patches the installed official Slack bundle only after registry provenance i
       applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
         ...env,
         OPENCLAW_PLUGIN_INSTALL_PATH: outside,
+      }),
+    ).toThrow("outside its trusted plugin root");
+    const alias = path.join(path.dirname(installed), "slack-alias");
+    fs.symlinkSync(installed, alias, "dir");
+    expect(() =>
+      applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
+        ...env,
+        OPENCLAW_PLUGIN_INSTALL_PATH: alias,
       }),
     ).toThrow("outside its trusted plugin root");
     const outsideDependency = path.join(
