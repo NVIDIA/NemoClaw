@@ -1122,7 +1122,7 @@ During that lease, another `launch` still verifies these conditions:
 
 <AgentOnly variant="openclaw,hermes">
 
-- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+- The recorded inference selection matches the live route, and every configured route serves a valid response to a bounded request for the recorded model. The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`. A failed model request rejects readiness before the agent starts. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -4345,6 +4345,10 @@ NemoCUA does not currently support host-local inference.
 Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that combination exits with `Unsupported host-local inference application 'nemocua'`.
 Choose a non-host-local inference provider instead.
 </Warning>
+
+When NemoCUA uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
+NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
+If that request fails, the expected catalog response does not make the route ready.
 
 | Variable | Format | Effect |
 | --- | --- | --- |

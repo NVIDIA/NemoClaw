@@ -7,15 +7,20 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { accessSync, constants } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { spawnExitCode } from "../../core/process-exit";
 import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { createTempSshConfig, type TempSshConfig } from "../../sandbox/temp-ssh-config";
+import {
+  createTempSshConfig,
+  runWithTempSshConfigCleanupAsync,
+  TempSshConfigCleanupError,
+  type TempSshConfig,
+} from "../../sandbox/temp-ssh-config";
 import { isValidName } from "../../sandbox-name-contract";
 import { isSshTransportFailure } from "../../state/ssh-transport";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
@@ -35,6 +40,9 @@ const ACP_SETUP_TIMEOUT_MS = 30_000;
 const SSH_CONFIG_MAX_BYTES = 1024 * 1024;
 const PROBE_MAX_BYTES = 4 * 1024;
 const SSH_KILL_GRACE_MS = 1_000;
+const SESSION_STATUS_NONCE_BYTES = 16;
+const SESSION_STATUS_TAG = "nemoclaw-acp-status-v1";
+const SESSION_STATUS_SEPARATOR = "\x1e";
 const SUPPORTED_HOST_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux"]);
 
 const HERMES_ACP_COMPATIBILITY_PROBE = [
@@ -91,6 +99,7 @@ export type CliHermesAcpSshTransportDeps = Readonly<{
   access?: (file: string) => void;
   captureOpenShell?: CaptureOpenShell;
   createTempConfig?: (contents: string, prefix: string) => TempSshConfig;
+  createSessionStatusNonce?: () => string;
   openshellVersion?: OpenShellVersionProbe;
   platform?: NodeJS.Platform;
   resolveOpenshell?: () => string | null;
@@ -198,8 +207,51 @@ export function buildHermesAcpProbeSshArgs(configFile: string, host: string): st
   return sshArgs(configFile, host, HERMES_ACP_COMPATIBILITY_PROBE);
 }
 
-export function buildHermesAcpSessionSshArgs(configFile: string, host: string): string[] {
-  return sshArgs(configFile, host, HERMES_ACP_EXECUTABLE);
+function assertSessionStatusNonce(nonce: string): void {
+  if (!/^[0-9a-f]{32}$/u.test(nonce)) {
+    throw new Error("Hermes ACP session status nonce is invalid");
+  }
+}
+
+function sessionStatusFrame(nonce: string, status: number): string {
+  return `${SESSION_STATUS_SEPARATOR}${SESSION_STATUS_TAG}:${nonce}:${String(status)}${SESSION_STATUS_SEPARATOR}`;
+}
+
+function sessionCommand(nonce: string): string {
+  assertSessionStatusNonce(nonce);
+  const script = [
+    HERMES_ACP_EXECUTABLE,
+    "status=$?",
+    `printf '\\036${SESSION_STATUS_TAG}:%s:%s\\036' "$1" "$status" >&2`,
+    "exit 0",
+  ].join("; ");
+  return `/bin/sh -c ${shellEscape(script)} nemoclaw-acp ${nonce}`;
+}
+
+export function buildHermesAcpSessionSshArgs(
+  configFile: string,
+  host: string,
+  statusNonce: string,
+): string[] {
+  return sshArgs(configFile, host, sessionCommand(statusNonce));
+}
+
+function parseSessionStatusFrame(
+  tail: Buffer,
+  nonce: string,
+): Readonly<{ exitCode: number; frameBytes: number }> | null {
+  const prefix = `${SESSION_STATUS_SEPARATOR}${SESSION_STATUS_TAG}:${nonce}:`;
+  const text = tail.toString("utf8");
+  const frameStart = text.lastIndexOf(prefix);
+  if (frameStart < 0 || !text.endsWith(SESSION_STATUS_SEPARATOR)) return null;
+  const statusText = text.slice(frameStart + prefix.length, -SESSION_STATUS_SEPARATOR.length);
+  if (!/^(?:0|[1-9][0-9]{0,2})$/u.test(statusText)) return null;
+  const exitCode = Number(statusText);
+  if (exitCode > 255) return null;
+  return {
+    exitCode,
+    frameBytes: Buffer.byteLength(text.slice(frameStart), "utf8"),
+  };
 }
 
 function signalChildTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -321,12 +373,15 @@ async function runSession(
   child: ChildProcessWithoutNullStreams,
   request: HermesAcpSshRequest,
   signalSource: ProcessSignalSource,
+  statusNonce: string,
 ): Promise<HermesAcpSshOutcome> {
   let stopKind: HermesAcpSshFailureKind | null = null;
   let requestedSignal: NodeJS.Signals | null = null;
   let killTimer: NodeJS.Timeout | undefined;
   let timeout: NodeJS.Timeout | undefined;
-  let hadDiagnostics = false;
+  let stderrBytes = 0;
+  let stderrTail = Buffer.alloc(0);
+  const maxStatusFrameBytes = Buffer.byteLength(sessionStatusFrame(statusNonce, 255), "utf8");
 
   const terminate = (kind: HermesAcpSshFailureKind, signal: NodeJS.Signals = "SIGTERM") => {
     if (child.exitCode !== null || child.signalCode !== null || stopKind) return;
@@ -354,8 +409,13 @@ async function runSession(
   if (request.signal?.aborted) onAbort();
   request.streams.input.once("aborted", onInputAborted);
   request.streams.output.once("close", onOutputClose);
-  child.stderr.on("data", () => {
-    hadDiagnostics = true;
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    const bytes = Buffer.from(chunk);
+    stderrBytes += bytes.length;
+    stderrTail = Buffer.concat([stderrTail, bytes]);
+    if (stderrTail.length > maxStatusFrameBytes) {
+      stderrTail = stderrTail.subarray(stderrTail.length - maxStatusFrameBytes);
+    }
   });
   child.stderr.resume();
   if (request.timeoutMs !== undefined) {
@@ -379,7 +439,10 @@ async function runSession(
   request.streams.input.off("aborted", onInputAborted);
   request.streams.output.off("close", onOutputClose);
 
-  if (hadDiagnostics && (result.status !== 0 || result.error)) {
+  const remoteStatus =
+    result.status === 0 && !result.error ? parseSessionStatusFrame(stderrTail, statusNonce) : null;
+  const hadDiagnostics = stderrBytes > (remoteStatus?.frameBytes ?? 0);
+  if (hadDiagnostics && (remoteStatus?.exitCode !== 0 || result.status !== 0 || result.error)) {
     await safeDiagnosticWrite(
       request.streams.diagnostics,
       "nemoclaw-acp: the remote adapter reported diagnostic output.\n",
@@ -400,10 +463,32 @@ async function runSession(
     return failure("transport", "The OpenShell SSH session failed.", 255);
   }
   if (result.error) return failure("invocation", "The SSH client could not start.", 1);
+  if (!remoteStatus) {
+    return failure(
+      "transport",
+      "The OpenShell SSH session did not report a remote exit status.",
+      255,
+    );
+  }
   return {
     kind: "completed",
-    exitCode: spawnExitCode(result),
+    exitCode: remoteStatus.exitCode,
     ...(result.signal ? { signal: result.signal } : {}),
+  };
+}
+
+function cleanupFailure(dir: string): HermesAcpSshOutcome {
+  return failure(
+    "cleanup",
+    `NemoClaw could not remove the temporary SSH configuration at ${JSON.stringify(dir)}. Remove that directory before running nemoclaw-acp again.`,
+    1,
+  );
+}
+
+function cleanupError(dir: string) {
+  return {
+    kind: "cleanup" as const,
+    message: `NemoClaw could not remove the temporary SSH configuration at ${JSON.stringify(dir)}. Remove that directory before running nemoclaw-acp again.`,
   };
 }
 
@@ -572,13 +657,19 @@ export function createCliHermesAcpSshTransport(
         return failure("transport", "OpenShell returned an invalid SSH target.", 255);
       }
 
-      const temporary = (deps.createTempConfig ?? createTempSshConfig)(config, "nemoclaw-acp-ssh-");
+      let temporary: TempSshConfig;
+      try {
+        temporary = (deps.createTempConfig ?? createTempSshConfig)(config, "nemoclaw-acp-ssh-");
+      } catch (error) {
+        if (error instanceof TempSshConfigCleanupError) return cleanupFailure(error.dir);
+        throw error;
+      }
       const spawnChild = deps.spawnSsh ?? defaultSshSpawner;
       const spawnOptions: SpawnOptionsWithoutStdio = {
         detached: (deps.platform ?? process.platform) !== "win32",
         env: environment,
       };
-      try {
+      const sshPhase = await runWithTempSshConfigCleanupAsync(temporary, async () => {
         let probe: ChildProcessWithoutNullStreams;
         try {
           probe = spawnChild(
@@ -598,21 +689,27 @@ export function createCliHermesAcpSshTransport(
         );
         if (probeFailure) return probeFailure;
 
+        const statusNonce = (
+          deps.createSessionStatusNonce ??
+          (() => randomBytes(SESSION_STATUS_NONCE_BYTES).toString("hex"))
+        )();
+        assertSessionStatusNonce(statusNonce);
         let session: ChildProcessWithoutNullStreams;
         try {
           session = spawnChild(
             binaries.ssh,
-            buildHermesAcpSessionSshArgs(temporary.file, host),
+            buildHermesAcpSessionSshArgs(temporary.file, host, statusNonce),
             spawnOptions,
           );
         } catch {
           return failure("invocation", "The SSH client could not start.", 1);
         }
         request.onSessionStarted?.();
-        return await runSession(session, request, deps.signalSource ?? processSignals);
-      } finally {
-        temporary.cleanup();
-      }
+        return await runSession(session, request, deps.signalSource ?? processSignals, statusNonce);
+      });
+      return sshPhase.cleanupError
+        ? { ...sshPhase.result, cleanupError: cleanupError(sshPhase.cleanupError.dir) }
+        : sshPhase.result;
     },
   };
 }
