@@ -191,9 +191,8 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
     )
 
 
-# argv from exec -a. Also kill leftover python3 - that still has
-# NEMOCLAW_E2E_LOAD=1 (Ctrl-C used to pkill only the bash wrapper).
-KILL_SANDBOX_HELPERS = r"""
+# argv from exec -a. Also TERM leftover python3 that still has NEMOCLAW_E2E_LOAD=1.
+TERM_SANDBOX_HELPERS = r"""
 pkill -TERM -f '[e]2e-openclaw-load' || true
 pkill -TERM -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
 for env in /proc/[0-9]*/environ; do
@@ -202,6 +201,8 @@ for env in /proc/[0-9]*/environ; do
     kill -TERM "$pid" 2>/dev/null || true
   fi
 done
+"""
+KILL_SANDBOX_HELPERS = TERM_SANDBOX_HELPERS + r"""
 sleep 1
 pkill -KILL -f '[e]2e-openclaw-load' || true
 pkill -KILL -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
@@ -214,12 +215,11 @@ done
 """
 
 
-def stop_sandbox_chats(prefix: str, users: int) -> None:
-    """SIGTERM leftover OpenClaw load helpers inside sandboxes."""
+def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str) -> None:
     kubectl = shutil.which("kubectl")
     if not kubectl or users < 1:
         return
-    print("Client finished: stopping in-sandbox chat helpers")
+    print(note)
     for user_id in range(users):
         name = sandbox_name(prefix, user_id)
         try:
@@ -235,7 +235,7 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
                     "--",
                     "bash",
                     "-c",
-                    KILL_SANDBOX_HELPERS,
+                    script,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -244,6 +244,23 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             continue
+
+
+def stop_new_sandbox_chats(prefix: str, users: int) -> None:
+    """SIGTERM in-sandbox helpers so they start no new chats. In-flight chat.send still finishes."""
+    _exec_sandbox_helper_signal(
+        prefix,
+        users,
+        TERM_SANDBOX_HELPERS,
+        "8 GPUs: SIGTERM in-sandbox helpers (no new chats; in-flight replies finish)",
+    )
+
+
+def stop_sandbox_chats(prefix: str, users: int) -> None:
+    """SIGTERM then SIGKILL leftover OpenClaw load helpers inside sandboxes."""
+    _exec_sandbox_helper_signal(
+        prefix, users, KILL_SANDBOX_HELPERS, "Client finished: stopping in-sandbox chat helpers"
+    )
 
 
 def parse_load_counts(log_path: Path) -> tuple[int, int, int]:
@@ -648,6 +665,8 @@ async def run_test(args: argparse.Namespace) -> int:
                         flush=True,
                     )
                     stop_load.set()
+                    if not args.host:
+                        await asyncio.to_thread(stop_new_sandbox_chats, args.prefix, args.users)
                     return
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
