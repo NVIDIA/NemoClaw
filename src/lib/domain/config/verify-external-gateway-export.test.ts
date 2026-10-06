@@ -7,6 +7,7 @@ import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { qualifyEffectivePolicy } from "../../actions/config/observe-export-source";
 import { validateExportGateway } from "./export-gateway";
+import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "./v1alpha1-runtime-defaults";
 import { snapshot, verify, hermesSnapshot } from "./export-source-test-fixture";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
@@ -154,7 +155,7 @@ describe("external gateway config export", () => {
       expect(
         validateConfigExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0]),
       ).toMatchObject({
-        revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
+        revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
       });
     },
   );
@@ -170,10 +171,15 @@ describe("external gateway config export", () => {
       const section = reference
         .split("### `$$nemoclaw config export <sandbox>`")[1]!
         .split("### `$$nemoclaw resources`")[0]!;
+      const documentedRevision = section.match(
+        /\[v1 revision `([a-f0-9]+)`\]\(https:\/\/github\.com\/NVIDIA\/NemoClaw\/commit\/([a-f0-9]{40})\)/u,
+      );
+      expect(documentedRevision?.[1]).toBe(V1ALPHA1_RUNTIME_DEFAULTS_REVISION.slice(0, 12));
+      expect(documentedRevision?.[2]).toBe(V1ALPHA1_RUNTIME_DEFAULTS_REVISION);
       const example = section.match(/```yaml\n([\s\S]*?)\n```/u)?.[1];
       expect(example).toBeTypeOf("string");
       expect(validateConfigExportWithPinnedV1(example!)).toMatchObject({
-        revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
+        revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
         compiledSandboxes: 1,
       });
     },
