@@ -746,7 +746,6 @@ export async function collectSandboxStatusSnapshot(
       invocation = null;
     }
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
-      agentName: sb?.agent ?? null,
       provider: invocationRoute.provider ?? null,
     });
   }
