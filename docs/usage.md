@@ -56,7 +56,7 @@ See [service constraints](inference.md#combine-local-and-hosted-providers) for m
 ## Use a Managed Podman Gateway
 
 Use a local rootless Linux Podman engine through its Unix API socket.
-Rootful operation, remote Podman engines, and other operating systems remain unqualified.
+Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 Select `runtime.provider: podman` for every sandbox and set `gateway.engine` to the local Podman API service's Unix socket.
 See [the Podman example](../examples/managed-podman.yaml).

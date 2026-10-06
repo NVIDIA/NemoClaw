@@ -1,9 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Accepted Scope and Invariants
+# Scope and Invariants
 
-Accepted by maintainer cvillela on 2026-09-14.
 This page defines implementation requirements; the [architecture guide](architecture.md) explains them.
 
 ## Responsibilities

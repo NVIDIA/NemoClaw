@@ -66,16 +66,14 @@ See [connections and identity](#connections-and-identity).
 OpenShell calls remain bounded without automatic mutation retries.
 Sandbox deletion has a longer deadline than reads to allow the native driver's graceful stop; a lost response retains state for explicit reconciliation.
 
-## Accepted Scope and Qualification
+## Scope and Qualification
 
-cvillela accepted execution-target preparation and independent inference placement, retaining ownership of their validation gates.
-The preparation preserved existing YAML, resource addresses, and binding encodings; optional service placement and publication subsequently extended configuration.
-These changes introduce neither a generic provider framework nor a remote observation agent.
+Execution targets add no generic provider framework and no remote observation agent.
 
 The [SSH service fixtures](../contributing/integration-tests.md#ssh-service-fixtures) and [live SSH transport tests](../contributing/live-tests.md#ssh-engine-transport) cover SSH identity, observation failures, recovery, export, and retained teardown.
-Separate-host capacity, WAN behavior, and other operating systems are unqualified; a separate-host GPU apply and agent response remain required before claiming that qualification.
+Separate-host capacity, WAN behavior, and other operating systems are untested; a separate-host GPU apply and agent response are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
-Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are unqualified.
+Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 
 ## Implementation Constraints
