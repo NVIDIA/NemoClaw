@@ -19,7 +19,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  remediateInstalledOfficialOpenClawPlugin,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -820,7 +823,23 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
               : "inspection failed",
           );
         }
-        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
+        const packageDirectory = verifyTrustedOfficialNpmInstall(
+          install,
+          officialPluginId,
+          inspection,
+        );
+        const home = sanitizeOptionalString(env.HOME) || homedir();
+        const stateRoot = (
+          sanitizeOptionalString(env.OPENCLAW_STATE_DIR) || join(home, ".openclaw")
+        ).replace(/^~(?=$|[/\\])/, () => home);
+        remediateInstalledOfficialOpenClawPlugin({
+          archivePath: packed.archivePath,
+          env: installEnv as NodeJS.ProcessEnv,
+          packageSpec: install.npmPackageSpec!,
+          packageDirectory,
+          trustedStateRoot: resolve(stateRoot),
+          workingDirectory: packed.rootDir,
+        });
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -1444,7 +1463,7 @@ function verifyTrustedOfficialNpmInstall(
   install: OpenClawPluginInstall,
   pluginId: string,
   inspectOutput: string,
-): void {
+): string | undefined {
   let inspected: unknown;
   try {
     inspected = JSON.parse(inspectOutput);
@@ -1468,6 +1487,7 @@ function verifyTrustedOfficialNpmInstall(
       "did not retain trusted exact registry provenance",
     );
   }
+  return sanitizeOptionalString(record.installPath);
 }
 
 function packVerifiedOpenClawPluginArchive(

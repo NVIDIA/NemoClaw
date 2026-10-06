@@ -32,7 +32,7 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
-const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
+const reviewedAuditSha = "e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -522,6 +522,13 @@ describe("complete managed-image publication workflow", () => {
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
     expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
     expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/reviewed-npm-audit.mts"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/npm-audit-receipt.mts"');
+    expect(prepareAuditEvidence.run).toContain('"audit", "signatures"');
+    expect(prepareAuditEvidence.run).toContain("$RUNNER_TEMP/trusted-mcporter-audit-report/");
+    expect(prBuilder.steps?.map((candidate) => candidate.name)).not.toContain(
+      "Download same-run npm audit evidence",
+    );
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
