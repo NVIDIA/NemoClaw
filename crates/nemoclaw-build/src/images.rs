@@ -27,6 +27,10 @@ fn docker() -> Command {
     command
 }
 
+fn output_of(command: &mut Command, what: &str) -> Result<Vec<u8>> {
+    output(command, what)
+}
+
 fn output(command: &mut Command, what: &str) -> Result<Vec<u8>> {
     let output = command
         .stderr(Stdio::inherit())
@@ -48,6 +52,117 @@ fn status(command: &mut Command, what: &str) -> Result<()> {
     succeeded
         .then_some(())
         .ok_or_else(|| format!("docker failed to {what}"))
+}
+
+/// The metadata bundle a Kubernetes sandbox names in `image.metadata`, from
+/// a `docker image save` archive of one image: its index, the manifest for
+/// `platform`, and that manifest's config, each kept as its exact bytes.
+/// Layers and attestations are left out, so the bundle stays small.
+pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+    use std::{collections::BTreeMap, io::Read};
+    let (os, architecture) = platform
+        .split_once('/')
+        .ok_or("platform must be os/architecture")?;
+    let mut files = BTreeMap::new();
+    let mut tar = tar::Archive::new(archive);
+    for entry in tar.entries().map_err(|_| "invalid image archive")? {
+        let mut entry = entry.map_err(|_| "invalid image archive entry")?;
+        let path = entry
+            .path()
+            .map_err(|_| "invalid image archive path")?
+            .to_string_lossy()
+            .into_owned();
+        // Only small JSON documents are needed; skip layer contents.
+        if path == "index.json" || (path.starts_with("blobs/sha256/") && entry.size() <= 1 << 20) {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|_| "incomplete image archive entry")?;
+            files.insert(path, bytes);
+        }
+    }
+    let blob = |digest: &str| -> Result<String> {
+        let hex = digest
+            .strip_prefix("sha256:")
+            .ok_or("image digest is not SHA-256")?;
+        let bytes = files
+            .get(&format!("blobs/sha256/{hex}"))
+            .ok_or("image archive lacks a metadata blob")?;
+        if crate::hex(&Sha256::digest(bytes)) != hex {
+            return Err("image metadata blob does not match its digest".into());
+        }
+        String::from_utf8(bytes.clone()).map_err(|_| "image metadata is not UTF-8".into())
+    };
+    let json = |raw: &str| -> Result<Value> {
+        serde_json::from_str(raw).map_err(|_| "invalid image metadata".into())
+    };
+    let outer = json(&String::from_utf8_lossy(
+        files
+            .get("index.json")
+            .ok_or("image archive lacks index.json")?,
+    ))?;
+    let [entry] = outer["manifests"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err("image archive must hold exactly one image".into());
+    };
+    let root = entry["digest"]
+        .as_str()
+        .ok_or("image archive entry has no digest")?
+        .to_owned();
+    let root_raw = blob(&root)?;
+    let index = json(&root_raw)?;
+    let mut blobs = BTreeMap::from([(root.clone(), root_raw)]);
+    let manifest = if index["manifests"].is_array() {
+        let matching: Vec<_> = index["manifests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|child| {
+                child["platform"]["os"] == os && child["platform"]["architecture"] == architecture
+            })
+            .collect();
+        let [child] = matching.as_slice() else {
+            return Err(format!("image has no single manifest for {platform}"));
+        };
+        let digest = child["digest"]
+            .as_str()
+            .ok_or("image manifest has no digest")?
+            .to_owned();
+        blobs.insert(digest.clone(), blob(&digest)?);
+        digest
+    } else {
+        root.clone()
+    };
+    let config = json(&blobs[&manifest])?["config"]["digest"]
+        .as_str()
+        .ok_or("image manifest has no config")?
+        .to_owned();
+    blobs.insert(config.clone(), blob(&config)?);
+    serde_json::to_vec(
+        &serde_json::json!({"schema_version": 1, "manifest_digest": manifest, "blobs": blobs}),
+    )
+    .map_err(|_| "cannot encode the image metadata bundle".into())
+}
+
+/// Save `image` from the local Docker engine and write its metadata bundle
+/// to `output`, a new file. Returns the image's digest reference.
+pub fn export_metadata(image: &str, platform: &str, output: &Path) -> Result<()> {
+    let archive = output_of(docker().args(["image", "save", image]), "save the image")?;
+    let bundle = metadata_bundle(&archive, platform)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|_| {
+            "cannot create the metadata bundle; the output must be a new file".to_owned()
+        })?;
+    std::io::Write::write_all(&mut file, &bundle)
+        .map_err(|_| "cannot write the metadata bundle".to_owned())?;
+    Ok(())
 }
 
 /// Bake targets for `selection`, each with the tags it should publish locally.
@@ -220,7 +335,7 @@ pub fn qualify(root: &Path, image: &str) -> Result<()> {
             "--network=none",
             "--read-only",
             "--tmpfs",
-            "/sandbox:rw,uid=1000,gid=1000,mode=0700",
+            "/sandbox:rw,uid=10001,gid=10001,mode=0700",
             "--tmpfs",
             "/tmp:rw,mode=1777",
             "-e",

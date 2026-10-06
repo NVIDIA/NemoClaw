@@ -18,6 +18,9 @@ mod fabric_cache;
 #[cfg(feature = "sdk")]
 #[path = "fern.rs"]
 mod fern;
+#[cfg(feature = "sdk")]
+#[path = "image_metadata.rs"]
+mod image_metadata;
 #[path = "images.rs"]
 mod images;
 #[path = "runtime_engine.rs"]

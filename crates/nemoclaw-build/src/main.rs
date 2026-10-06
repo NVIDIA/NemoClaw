@@ -122,6 +122,17 @@ enum ImageAction {
         #[arg(required = true)]
         images: Vec<String>,
     },
+    /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
+    ExportMetadata {
+        /// A local image, by tag or digest.
+        image: String,
+        /// linux/arm64 or linux/amd64.
+        #[arg(long)]
+        platform: String,
+        /// Where to write the bundle; refuses an existing file.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -404,6 +415,11 @@ async fn main() -> Result<()> {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(root, image)
             }),
+            ImageAction::ExportMetadata {
+                image,
+                platform,
+                output,
+            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
         }
         .map_err(Into::into);
     }

@@ -66,6 +66,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
     engine: unix:///var/run/docker.sock
     endpoint: http://127.0.0.1:{port}
     networkCIDR: {subnet}
@@ -77,8 +79,6 @@ spec:
     - name: assistant
       image:
         ref: {image}
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

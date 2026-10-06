@@ -19,11 +19,13 @@ RUN mkdir -p /node/usr/local/bin /node/usr/local/lib \
 
 FROM ${PYTHON_IMAGE} AS base
 USER root
+# Agents run as 10001:10001, the UID OpenShell's Kubernetes driver uses for
+# sandboxes; Docker and Podman use the image's own user, so one image fits all.
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+    && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
 
@@ -188,9 +190,9 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 
 # A small executable specification with no native agent or model dependencies.
 FROM ${PYTHON_IMAGE} AS dummy
-RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
