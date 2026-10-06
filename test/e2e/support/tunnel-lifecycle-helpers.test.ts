@@ -134,8 +134,8 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     expect(
       cloudflaredTargetsRegisteredPort(
         4321,
-        shellResult({ stdout: "cloudflared tunnel --url http://localhost:187900" }),
-        "18790",
+        shellResult({ stdout: "cloudflared tunnel --url http://localhost:18790" }),
+        "1879",
       ),
     ).toBe(false);
   });
