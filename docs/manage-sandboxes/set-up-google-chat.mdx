@@ -36,7 +36,8 @@ Prepare the Google Cloud resources before you enable the channel.
 - Enable the Google Chat API and configure the Chat app that the sandbox will run.
 - Create a service account and download a JSON key. The JSON must contain
   non-empty `client_email` and `private_key` string fields.
-- Minify the service-account JSON to one line before you paste it at the `GOOGLECHAT_SERVICE_ACCOUNT` prompt.
+- Minify the service-account JSON to one line before you paste it at the interactive prompt.
+  `GOOGLECHAT_SERVICE_ACCOUNT` accepts the downloaded JSON with LF or CRLF line breaks when you set it in the host environment.
 
 Keep the JSON key available on the trusted host during enrollment.
 Do not copy it into the sandbox or the agent configuration.
@@ -64,6 +65,7 @@ nemoclaw my-assistant channels remove googlechat
 Replace `my-assistant` with your sandbox name.
 The command attempts endpoint teardown even when interrupted enrollment left no Google Chat registry record.
 If the command reports that it could not stop the tunnel, correct the host service and run the command again before retrying enrollment.
+On any host where NemoClaw cannot inspect the recorded cloudflared process or signal it through an identity-bound operating-system API, independently verify and stop that process with the host process manager, keep the PID record until that process exits, then rerun the removal command.
 A removal that completes without cleanup warnings stops the dedicated tunnel and webhook proxy, removes any partial bridge provider and policy preset, and removes Google Chat from the durable messaging plan.
 
 If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses it and does not start or change cloudflared.

@@ -76,6 +76,37 @@ sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
 }
 
+sandbox_skill_digest() {
+  # The variables in this command expand only inside the sandbox shell.
+  # shellcheck disable=SC2016
+  openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c '
+    set -euo pipefail
+    name="$1"
+    case "$name" in "" | *[!A-Za-z0-9._-]*) exit 64 ;; esac
+    root="/sandbox/.deepagents/agent/skills/$name"
+    [ -d "$root" ] && [ ! -L "$root" ]
+    [ -z "$(find "$root" -mindepth 1 ! -type d ! -type f -print -quit)" ]
+    verification="$(mktemp -d /sandbox/.nemoclaw-e2e-skill-digest.XXXXXX)"
+    trap '\''rm -rf -- "$verification"'\'' EXIT HUP INT TERM
+    find "$root" -type f -printf "%P\n" | LC_ALL=C sort >"$verification/files"
+    : >"$verification/manifest"
+    while IFS= read -r relative; do
+      candidate="$root/$relative"
+      [ -f "$candidate" ] && [ ! -L "$candidate" ]
+      if [ -n "$(find "$candidate" -maxdepth 0 -perm /111 -print -quit)" ]; then
+        mode=755
+      else
+        mode=644
+      fi
+      hash="$(sha256sum -- "$candidate")"
+      hash="${hash%% *}"
+      printf "%s %s  %s\n" "$mode" "$hash" "$relative" >>"$verification/manifest"
+    done <"$verification/files"
+    digest="$(sha256sum -- "$verification/manifest")"
+    printf "%s\n" "${digest%% *}"
+  ' -- "$1" 2>&1
+}
+
 bounded_skill_cli() {
   timeout --signal=TERM --kill-after=5s "${SKILL_CLI_TIMEOUT_SECONDS}s" \
     "$cli_bin" "$SANDBOX_NAME" skill "$@"
@@ -623,6 +654,22 @@ main() {
     pass "public install and native list reported the DCode canonical-root skill"
   else
     fail_test "public install and native list did not complete through DCode"
+  fi
+  skill_digest_line_count="$(
+    printf '%s\n' "$skill_install_output" \
+      | grep -Ec '^[[:space:]]*Content digest \(SHA-256\): [a-f0-9]{64}$' || true
+  )"
+  skill_reported_digest="$(
+    printf '%s\n' "$skill_install_output" \
+      | sed -n 's/^[[:space:]]*Content digest (SHA-256): \([a-f0-9]\{64\}\)$/\1/p'
+  )"
+  skill_placed_digest="$(sandbox_skill_digest "$skill_name" || true)"
+  if [ "$skill_digest_line_count" -eq 1 ] \
+    && [ -n "$skill_reported_digest" ] \
+    && [ "$skill_reported_digest" = "$skill_placed_digest" ]; then
+    pass "public DCode skill install digest matches the placed canonical-root skill"
+  else
+    fail_test "public DCode skill install digest does not match the placed canonical-root skill"
   fi
   skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
   printf '%s\n' \

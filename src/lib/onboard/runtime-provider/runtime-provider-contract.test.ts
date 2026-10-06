@@ -1215,7 +1215,6 @@ describe("socket-free MXC action contract", () => {
           stopInferenceResources: vi.fn(),
           runtimeProviders: providers,
           deps: {
-            wipeSandboxState: vi.fn(),
             deleteConvergence: {
               now: () => deleteConvergenceMs,
               sleep: (milliseconds) => {

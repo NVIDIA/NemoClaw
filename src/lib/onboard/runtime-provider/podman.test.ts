@@ -480,8 +480,10 @@ describe("managed Podman runtime provider", () => {
         registeredSandboxNames: [runtime.sandboxName],
         sandbox: runtime.entry,
         sandboxName: runtime.sandboxName,
+        timeoutMs: 1_250,
       }),
     ).toThrow(DirectSandboxContainerNotFoundError);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(expect.any(Array), 1_250);
   });
 
   it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
@@ -526,7 +528,8 @@ describe("managed Podman runtime provider", () => {
         paths: ["/sandbox/.openclaw/openclaw-weixin"],
       }),
     ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
-    expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      1,
       [
         "image",
         "inspect",
@@ -535,6 +538,11 @@ describe("managed Podman runtime provider", () => {
         expect.stringContaining("node:24.18.1-trixie-slim"),
       ],
       30_000,
+    );
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      2,
+      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      120_000,
     );
   });
 

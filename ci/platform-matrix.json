@@ -57,7 +57,7 @@
       "ci_tested": false,
       "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
       "prerequisites_notes": "Requires WSL2 with either the Docker Desktop backend or the qualification-backed rootless Podman provider. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
-      "notes": "Windows Express acceptance or the required non-interactive third-party software acceptance is the explicit opt-in to this Experimental surface. Windows Express and non-interactive onboarding automatically select managed llama.cpp when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible explicit recipe selects that managed recipe. Selection requires a bounded CUDA proof to validate one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)` on Linux ARM64 WSL, the local-default Docker authority to be active, and the 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks to pass. The Windows chassis model does not participate in managed llama.cpp selection. Ordinary interactive onboarding can select another listed provider. Other Windows WSL Express installs use WSL-local Ollama, which can use Docker Desktop or the qualified rootless Podman provider. On a Windows WSL N1x, the selected provider runs the same bounded CUDA workload and capacity query before the installed-model ranking can select qwen3.6:35b. Windows-host Ollama remains Docker Desktop-only. Dedicated N1x WSL CI and physical end-to-end validation are pending."
+      "notes": "Windows Express acceptance or the required non-interactive third-party software acceptance is the explicit opt-in to this Experimental surface. Windows Express and non-interactive onboarding automatically select managed llama.cpp when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible explicit recipe selects that managed recipe. Selection requires a bounded CUDA proof to validate one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)` on Linux ARM64 WSL, the local-default Docker authority to be active, and the 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks to pass. The Windows chassis model does not participate in managed llama.cpp selection. Ordinary interactive onboarding can select another listed provider. Other Windows WSL Express installs use WSL-local Ollama, which can use Docker Desktop or the qualified rootless Podman provider. On a Windows WSL N1x, the selected provider runs the same bounded CUDA workload and capacity query before the installed-model ranking can select qwen3.6:35b. A Station GB300 Windows chassis can select the same model through Docker Desktop when the proof verifies every reported GPU, includes an NVIDIA GB300 device, and reports at least 30,000 MiB available. Generic multi-GPU and Podman Station hosts remain compute-constrained. Windows-host Ollama remains Docker Desktop-only. Dedicated N1x and Station GB300 WSL CI and physical end-to-end validation are pending."
     },
     {
       "name": "DGX OS (Station)",
@@ -216,9 +216,9 @@
       "notes": "YAML-defined egress with policy presets. Presets include `slack`, `discord`, `telegram`, `weather`, `openclaw-pricing`, `huggingface`, `npm`, `pypi`, `brew`, and others. Hot-reloadable at runtime with `$$nemoclaw <name> policy add`."
     },
     {
-      "name": "Snapshot and restore",
+      "name": "State persistence and rebuild transfer",
       "status": "tested",
-      "notes": "Create, list, and restore named snapshots of sandbox state with the `$$nemoclaw <name> snapshot` subcommands (`create`, `list`, `restore`). Credential stripping is enforced on capture. Unsafe symlinks are rejected on restore."
+      "notes": "OpenShell preserves the native agent home during routine lifecycle operations. Before destructive replacement, NemoClaw archives and integrity-checks the complete native home/workspace, then restores it into the replacement sandbox."
     },
     {
       "name": "Agent skills",
@@ -243,7 +243,7 @@
     {
       "name": "State migration",
       "status": "tested",
-      "notes": "Sandbox state migrates across rebuilds with credentials intentionally excluded. Hermes excludes `auth.json` and restores its SQLite session DB through the backup API. OpenClaw restores its complete credential-sanitized native configuration."
+      "notes": "The complete native agent home/workspace migrates across rebuilds. OpenShell-owned credentials remain outside that tree and are not copied into it."
     },
     {
       "name": "Blueprint versioning",

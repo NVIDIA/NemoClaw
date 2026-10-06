@@ -59,18 +59,18 @@ import {
 } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
-function exactTestFileIdentity(metadata: fs.BigIntStats): string {
-  return [
-    metadata.dev,
-    metadata.ino,
-    metadata.mode,
-    metadata.nlink,
-    metadata.uid,
-    metadata.gid,
-    metadata.size,
-    metadata.mtimeNs,
-    metadata.ctimeNs,
-  ].join(":");
+function exactTestFileIdentity(metadata: fs.BigIntStats) {
+  return {
+    dev: metadata.dev,
+    ino: metadata.ino,
+    mode: metadata.mode,
+    nlink: metadata.nlink,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    size: metadata.size,
+    mtimeNs: metadata.mtimeNs,
+    ctimeNs: metadata.ctimeNs,
+  };
 }
 
 function snapshotExactTestFile(filePath: string) {
@@ -86,9 +86,9 @@ function snapshotExactTestFile(filePath: string) {
     const contents = fs.readFileSync(descriptor, "utf8");
     const after = fs.fstatSync(descriptor, { bigint: true });
     const named = fs.lstatSync(filePath, { bigint: true });
-    expect(exactTestFileIdentity(after)).toBe(exactTestFileIdentity(before));
-    expect(exactTestFileIdentity(named)).toBe(exactTestFileIdentity(after));
-    return { contents, metadata: after };
+    expect(exactTestFileIdentity(after)).toEqual(exactTestFileIdentity(before));
+    expect(exactTestFileIdentity(named)).toEqual(exactTestFileIdentity(after));
+    return { contents, metadata: exactTestFileIdentity(after) };
   } finally {
     fs.closeSync(descriptor);
   }

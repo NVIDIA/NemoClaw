@@ -214,6 +214,8 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
