@@ -15,7 +15,7 @@ use std::{
 };
 
 #[derive(Clone, Default)]
-pub struct Objects(Arc<Mutex<BTreeMap<String, Value>>>);
+pub struct Objects(pub Arc<Mutex<BTreeMap<String, Value>>>);
 
 fn plural(kind: &str) -> String {
     let kind = kind.to_ascii_lowercase();

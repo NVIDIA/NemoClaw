@@ -11,6 +11,21 @@ use crate::{ObservationError, state::save_json};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Create `directory` readable only by its owner. The receipt and the
+/// gateway's client credentials live here.
+pub(crate) fn private_directory(directory: &Path) -> Result<(), ObservationError> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(directory)
+        .map_err(|_| ObservationError::Incomplete)
+}
+
 /// The cluster a deployment was first applied to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -85,6 +100,7 @@ impl Receipt {
     }
 
     pub fn save(&self, directory: &Path) -> Result<(), ObservationError> {
+        private_directory(directory)?;
         save_json(&Self::path(directory), self).map_err(|_| ObservationError::Incomplete)
     }
 

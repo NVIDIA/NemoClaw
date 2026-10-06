@@ -9,6 +9,7 @@
 
 pub mod cluster;
 pub mod gateway;
+pub mod operations;
 pub mod receipt;
 pub mod storage;
 

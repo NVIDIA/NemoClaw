@@ -84,6 +84,8 @@ mod kubernetes_connection;
 mod kubernetes_gateway;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
+#[path = "kubernetes_operations.rs"]
+mod kubernetes_operations;
 #[path = "kubernetes_receipt.rs"]
 mod kubernetes_receipt;
 #[path = "kubernetes_storage.rs"]
