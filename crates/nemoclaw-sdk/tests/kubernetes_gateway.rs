@@ -5,6 +5,7 @@
 
 use nemoclaw_sdk::{
     bundle::Bundle,
+    config::ComputeDriver,
     kubernetes::{GATEWAY_KIND, Spec, gateway},
 };
 use serde_json::{Value, json};
@@ -110,9 +111,7 @@ async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::pro
 
 /// Pull and render the exact OCI digest with the actual bundled provider.
 /// A data source performs no installation and needs no cluster access.
-#[tokio::test]
-#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
-async fn the_pinned_chart_renders_with_the_sdk_values() {
+async fn render(spec: &Spec, chart: &str) -> Option<String> {
     let input = std::env::var_os("NEMOCLAW_TEST_BUNDLE")
         .expect("NEMOCLAW_TEST_BUNDLE names a verified bundle");
     let bundle = Bundle::open(Path::new(&input)).unwrap();
@@ -133,34 +132,41 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
         format!("provider_installation {{ filesystem_mirror {{ path = {mirror} }} }}\n"),
     )
     .unwrap();
-    let spec = spec();
-    let mut values = gateway::values(&spec).unwrap();
+    let mut values = gateway::values(spec).unwrap();
     // Rendering has no cluster from which to observe this existing prerequisite.
     values["agentSandbox"]["preflight"]["enabled"] = json!(false);
-    let mut graph = json!({
+    let graph = json!({
         "terraform": {"required_providers": {"helm": {
             "source": gateway::PROVIDER_ADDRESS,
             "version": format!("= {}", gateway::PROVIDER_VERSION)
         }}},
         "provider": {"helm": {}},
         "data": {"helm_template": {"gateway": {
-            "name": spec.name, "namespace": "agents", "chart": gateway::CHART,
+            "name": spec.name, "namespace": "agents", "chart": chart,
             "validate": false, "values": [values.to_string()]
         }}},
         "output": {"manifest": {"value": "${data.helm_template.gateway.manifest}"}}
     });
     let config = directory.path().join("main.tf.json");
     fs::write(&config, serde_json::to_vec(&graph).unwrap()).unwrap();
-    for arguments in [
-        vec!["init", "-input=false", "-no-color"],
-        vec!["plan", "-input=false", "-no-color", "-out=render.tfplan"],
-    ] {
-        let output = tofu(&bundle, directory.path(), &arguments).await;
-        assert!(
-            output.status.success(),
-            "OpenTofu {} failed; raw output suppressed",
-            arguments[0]
-        );
+    let initialized = tofu(
+        &bundle,
+        directory.path(),
+        &["init", "-input=false", "-no-color"],
+    )
+    .await;
+    assert!(
+        initialized.status.success(),
+        "cannot initialize the chart renderer"
+    );
+    let planned = tofu(
+        &bundle,
+        directory.path(),
+        &["plan", "-input=false", "-no-color", "-out=render.tfplan"],
+    )
+    .await;
+    if !planned.status.success() {
+        return None;
     }
     let output = tofu(
         &bundle,
@@ -173,9 +179,26 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
         "cannot inspect the chart-render plan"
     );
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let rendered = plan["planned_values"]["outputs"]["manifest"]["value"]
-        .as_str()
-        .unwrap();
+    Some(
+        plan["planned_values"]["outputs"]["manifest"]["value"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    )
+}
+
+#[tokio::test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
+async fn the_pinned_chart_renders_with_the_sdk_values() {
+    let spec = spec();
+    let values = gateway::values(&spec).unwrap();
+    let rendered = render(&spec, gateway::CHART)
+        .await
+        .expect("the pinned chart renders");
+    assert!(
+        rendered.contains("runAsUser: 1000"),
+        "Kubernetes keeps the chart's gateway UID"
+    );
     let pinned = format!(
         "{}@{}",
         values["gateway"]["image"]["repository"].as_str().unwrap(),
@@ -189,19 +212,26 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
     assert!(rendered.contains("nc-0123456789abcdef-gateway-kek"));
 
     // A wrong digest must fail; the provider cannot silently select a tag.
-    graph["data"]["helm_template"]["gateway"]["chart"] = json!(format!(
+    let unavailable = format!(
         "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:{}",
         "0".repeat(64)
-    ));
-    fs::write(&config, serde_json::to_vec(&graph).unwrap()).unwrap();
-    let rejected = tofu(
-        &bundle,
-        directory.path(),
-        &["plan", "-input=false", "-no-color"],
-    )
-    .await;
+    );
     assert!(
-        !rejected.status.success(),
+        render(&spec, &unavailable).await.is_none(),
         "the provider refuses an unavailable chart digest"
     );
+}
+
+/// OpenShift assigns the gateway a UID from its namespace's range.
+#[tokio::test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
+async fn on_openshift_the_gateway_takes_the_namespace_uid() {
+    let mut spec = spec();
+    spec.settings.runtime.provider = ComputeDriver::OpenShift;
+    let rendered = render(&spec, gateway::CHART)
+        .await
+        .expect("the pinned chart renders");
+    assert!(!rendered.contains("runAsUser:"), "{rendered}");
+    assert!(!rendered.contains("fsGroup:"), "{rendered}");
+    assert!(rendered.contains("runAsNonRoot: true"));
 }

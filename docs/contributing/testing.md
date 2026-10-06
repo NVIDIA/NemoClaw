@@ -31,7 +31,8 @@ On native Linux with Docker Buildx and the [containerd image store](../build.md#
 Run `cargo ci build` and `cargo ci bundle` first.
 The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
 It builds an agent image from this checkout (Pi on ARM64, OpenClaw on AMD64), exports its metadata bundle, and loads the image into the cluster by digest.
-It then runs the two tests in the `live-kind` nextest profile with the verified native bundle; no Helm CLI is required.
+It then runs the two live tests and both chart-render tests in the `live-kind` nextest profile with the verified native bundle; no Helm CLI is required.
+The render tests check that Kubernetes keeps the chart's gateway UID and OpenShift leaves UID and group assignment to the namespace while retaining `runAsNonRoot`.
 The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
 It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
 The agent test applies through the public SDK, creates a sandbox, and requires apply to stop only at the agent health check, which the pinned Fabric reports as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).

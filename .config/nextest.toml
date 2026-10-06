@@ -55,7 +55,7 @@ inherits = "ci"
 test-threads = 1
 slow-timeout = { period = "120s", terminate-after = 10 }
 default-filter = '''
-package(nemoclaw-sdk) & test(/^kubernetes_live::/)
+package(nemoclaw-sdk) & (test(/^kubernetes_live::/) | test(/^kubernetes_gateway::/))
 '''
 
 [profile.live-kind.junit]

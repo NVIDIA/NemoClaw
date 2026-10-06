@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
-On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run both Kubernetes tests on a fresh kind cluster:
+On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run both Kubernetes live tests and the chart-render tests with a fresh kind cluster:
 
 ```sh
 cargo ci build
@@ -24,6 +24,8 @@ The gateway test checks authentication, forged-token rejection, repeated install
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
 It expects apply to fail only at `data.nemoclaw_sandbox_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)); destroy then retains gateway storage.
 Neither test requests inference or needs a GPU or credentials.
+The render tests check the Kubernetes gateway UID and OpenShift namespace-assigned UID and group, with `runAsNonRoot` retained.
+Rendering does not establish OpenShift runtime compatibility.
 
 The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
 Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` to retain the cluster on either outcome, then delete it with the printed kind command after inspection.

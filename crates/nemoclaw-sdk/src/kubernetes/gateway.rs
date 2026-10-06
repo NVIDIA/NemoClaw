@@ -26,7 +26,7 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         json!({"registry": "", "repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"})
     };
     let name = &spec.name;
-    Ok(json!({
+    let mut values = json!({
         "fullnameOverride": name,
         "global": {"image": {"registry": ""}},
         "gateway": {"image": image(pins::DEFAULT_GATEWAY_IMAGE)},
@@ -53,7 +53,14 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "requests": {"cpu": "250m", "memory": "256Mi"},
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
-    }))
+    });
+    if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+        // OpenShift assigns a namespace UID. Null removes the chart's fixed
+        // user and group while retaining its other security settings.
+        values["securityContext"] = json!({"runAsUser": null});
+        values["podSecurityContext"] = json!({"fsGroup": null});
+    }
+    Ok(values)
 }
 
 pub(crate) fn literal(value: &str) -> String {
