@@ -196,6 +196,8 @@ pub use deployment::{
 
 pub mod managed;
 
+pub mod kubernetes;
+
 pub mod hardware_discovery;
 
 mod tofu_ui;
