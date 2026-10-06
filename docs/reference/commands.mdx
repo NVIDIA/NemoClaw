@@ -2037,7 +2037,9 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Model traffic uses the OpenShell-managed `inference.local` route configured by NemoClaw.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token.
+NVIDIA Endpoints sends model requests to `https://integrate.api.nvidia.com/v1` through the OpenShell provider attached to the sandbox.
+Provider selections that use the managed route send requests through `inference.local`.
 
 </AgentOnly>
 

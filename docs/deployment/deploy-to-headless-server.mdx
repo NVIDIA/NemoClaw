@@ -269,7 +269,9 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token. Model traffic uses the OpenShell-managed `inference.local` route.
+Deep Agents Code does not expose a dashboard URL or gateway token.
+NVIDIA Endpoints sends model requests to `https://integrate.api.nvidia.com/v1` through the OpenShell provider attached to the sandbox.
+Provider selections that use the managed route send requests through `inference.local`.
 
 </AgentOnly>
 
