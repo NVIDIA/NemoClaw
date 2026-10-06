@@ -95,6 +95,7 @@ describe("OpenClaw managed messaging offline image build", () => {
           ),
         },
       },
+      "proxy-addr": "2.0.8",
     });
     expect(nestedOverrideLocations).toHaveLength(3);
     nestedOverrideLocations.forEach((location) => {
@@ -119,6 +120,10 @@ describe("OpenClaw managed messaging offline image build", () => {
     });
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",
+    });
+    expect(runtimeLock.packages["node_modules/proxy-addr"]).toMatchObject({
+      version: "2.0.8",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
     });
   });
 
