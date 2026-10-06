@@ -220,7 +220,7 @@ pub fn qualify(root: &Path, image: &str) -> Result<()> {
             "--network=none",
             "--read-only",
             "--tmpfs",
-            "/sandbox:rw,uid=1000,gid=1000,mode=0700",
+            "/sandbox:rw,uid=10001,gid=10001,mode=0700",
             "--tmpfs",
             "/tmp:rw,mode=1777",
             "-e",

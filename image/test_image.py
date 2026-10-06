@@ -228,8 +228,10 @@ class AgentImage(unittest.TestCase):
         )
         for path in root.glob("*.py"):
             self.assertEqual(path.read_bytes(), (sources / "local" / path.name).read_bytes())
-        self.assertEqual(os.getuid(), 1000)
-        self.assertEqual(Path("/sandbox").stat().st_uid, 1000)
+        # OpenShell's Kubernetes driver runs sandboxes as 10001:10001, and
+        # Docker and Podman use the image's own user, so one ID fits all three.
+        self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))
+        self.assertEqual(Path("/sandbox").stat().st_uid, 10001)
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 
