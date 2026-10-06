@@ -27,6 +27,9 @@ pub struct Release {
     pub name: String,
     /// `server.oidc` chart values for the development issuer, if any.
     pub oidc: Option<Value>,
+    /// OpenShift assigns each namespace's pods a UID from its own range, so
+    /// the gateway must not ask for the chart's fixed user and group.
+    pub openshift: bool,
 }
 
 const FAILED: ObservationError = ObservationError::Backend(
@@ -70,6 +73,11 @@ pub fn values(release: &Release) -> Value {
     });
     if let Some(oidc) = &release.oidc {
         values["server"]["oidc"] = oidc.clone();
+    }
+    if release.openshift {
+        // Helm removes a chart default that a values file sets to null.
+        values["securityContext"] = json!({"runAsUser": null});
+        values["podSecurityContext"] = json!({"fsGroup": null});
     }
     values
 }

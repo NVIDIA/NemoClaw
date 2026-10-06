@@ -37,6 +37,7 @@ fn release(directory: &Path, helm: PathBuf) -> Release {
             "issuer": "https://nc-0123456789abcdef-gateway-oidc.agents.svc.cluster.local:8443",
             "caConfigMapName": "nc-0123456789abcdef-gateway-oidc-ca",
         })),
+        openshift: false,
     }
 }
 
@@ -154,18 +155,13 @@ async fn helm_sees_none_of_the_callers_helm_or_cluster_settings() {
     }
 }
 
-/// Renders the pinned chart with the SDK's values using a real helm.
-#[test]
-#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
-fn the_pinned_chart_renders_with_the_sdk_values() {
-    let helm =
-        std::env::var_os("NEMOCLAW_TEST_HELM").expect("NEMOCLAW_TEST_HELM names a helm executable");
-    let directory = tempfile::tempdir().unwrap();
-    let release = release(directory.path(), helm.clone().into());
-    let values = directory.path().join("values.json");
+/// The pinned chart rendered by a real helm with the SDK's values.
+fn render(release: &Release, directory: &Path) -> String {
+    let helm = release.helm.clone();
+    let values = directory.join("values.json");
     std::fs::write(
         &values,
-        nemoclaw_sdk::kubernetes::gateway::values(&release).to_string(),
+        nemoclaw_sdk::kubernetes::gateway::values(release).to_string(),
     )
     .unwrap();
     let output = std::process::Command::new(helm)
@@ -178,9 +174,9 @@ fn the_pinned_chart_renders_with_the_sdk_values() {
         ])
         .args(["--set", "agentSandbox.preflight.enabled=false", "-f"])
         .arg(&values)
-        .env("HELM_CACHE_HOME", directory.path().join("cache"))
-        .env("HELM_CONFIG_HOME", directory.path().join("config"))
-        .env("HELM_DATA_HOME", directory.path().join("data"))
+        .env("HELM_CACHE_HOME", directory.join("cache"))
+        .env("HELM_CONFIG_HOME", directory.join("config"))
+        .env("HELM_DATA_HOME", directory.join("data"))
         .output()
         .unwrap();
     assert!(
@@ -188,7 +184,25 @@ fn the_pinned_chart_renders_with_the_sdk_values() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let rendered = String::from_utf8(output.stdout).unwrap();
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn test_helm() -> PathBuf {
+    std::env::var_os("NEMOCLAW_TEST_HELM")
+        .expect("NEMOCLAW_TEST_HELM names a helm executable")
+        .into()
+}
+
+#[test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
+fn the_pinned_chart_renders_with_the_sdk_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let release = release(directory.path(), test_helm());
+    let rendered = render(&release, directory.path());
+    assert!(
+        rendered.contains("runAsUser: 1000"),
+        "Kubernetes keeps the chart's gateway UID"
+    );
     let gateway = nemoclaw_sdk::kubernetes::gateway::values(&release)["gateway"]["image"].clone();
     let pinned = format!(
         "{}@{}",
@@ -200,6 +214,20 @@ fn the_pinned_chart_renders_with_the_sdk_values() {
         "gateway image {pinned} not rendered"
     );
     assert!(rendered.contains("name: nc-0123456789abcdef-gateway"));
+}
+
+/// OpenShift admits only UIDs from the range it assigns each namespace, so
+/// the gateway must not ask for the chart's fixed user or group.
+#[test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_HELM"]
+fn on_openshift_the_gateway_takes_the_namespace_uid() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut release = release(directory.path(), test_helm());
+    release.openshift = true;
+    let rendered = render(&release, directory.path());
+    assert!(!rendered.contains("runAsUser:"), "{rendered}");
+    assert!(!rendered.contains("fsGroup:"), "{rendered}");
+    assert!(rendered.contains("runAsNonRoot: true"));
 }
 
 #[tokio::test]

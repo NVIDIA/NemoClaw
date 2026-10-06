@@ -87,6 +87,7 @@ impl Operations {
         let target = self.target(spec)?;
         Ok(Release {
             oidc: material.map(|material| issuer::oidc_values(material, &spec.name, &spec.owner)),
+            openshift: spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift,
             helm: self.helm.clone(),
             state: self.state.clone(),
             kubeconfig: self.kubeconfig.clone(),
