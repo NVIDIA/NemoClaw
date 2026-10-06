@@ -5,6 +5,8 @@
 
 #[path = "support/examples.rs"]
 mod examples;
+#[path = "support/kube_api.rs"]
+mod kube_api;
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
 #[path = "support/config.rs"]
@@ -82,6 +84,8 @@ mod kubernetes_connection;
 mod kubernetes_managed_compile;
 #[path = "kubernetes_receipt.rs"]
 mod kubernetes_receipt;
+#[path = "kubernetes_storage.rs"]
+mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
 #[path = "managed_hermes.rs"]

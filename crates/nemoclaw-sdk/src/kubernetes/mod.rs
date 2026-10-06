@@ -9,6 +9,7 @@
 
 pub mod cluster;
 pub mod receipt;
+pub mod storage;
 
 use crate::{Error, ObservationError, config::ManagedGateway};
 use kube::config::{KubeConfigOptions, Kubeconfig};
