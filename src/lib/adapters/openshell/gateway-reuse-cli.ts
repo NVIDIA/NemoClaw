@@ -31,6 +31,7 @@ function failed(error: OpenShellSandboxError): OpenShellGatewayReuseObservation 
     shouldSelect: false,
     endpoints: [],
     namedEndpoint: null,
+    namedActive: null,
     endpointBinding: "unknown",
     error,
   };
@@ -194,6 +195,7 @@ export function createCliOpenShellGatewayReuseObserver(
           ),
           endpoints,
           namedEndpoint: namedEntry ? normalizeGatewayEndpoint(namedEntry.endpoint) : null,
+          namedActive: namedEntry?.active ?? null,
           endpointBinding:
             request.expectedGatewayPort === undefined
               ? "unknown"

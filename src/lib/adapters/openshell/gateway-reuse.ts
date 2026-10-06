@@ -12,6 +12,7 @@ export type OpenShellGatewayReuseObservation = Readonly<{
   shouldSelect: boolean;
   endpoints: readonly (string | null)[];
   namedEndpoint?: string | null;
+  namedActive?: boolean | null;
   endpointBinding: "match" | "mismatch" | "unknown";
   error?: OpenShellSandboxError;
 }>;

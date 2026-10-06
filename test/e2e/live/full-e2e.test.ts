@@ -71,6 +71,8 @@ import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
+import { createCliOpenShellGatewayReuseObserver } from "../../../src/lib/adapters/openshell/gateway-reuse-cli.ts";
+import type { OpenShellGatewayReuseObservation } from "../../../src/lib/adapters/openshell/gateway-reuse.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -138,56 +140,51 @@ type GatewayRegistrationCapture = Readonly<{
   registration: string | null;
 }>;
 
-function canonicalGatewayRegistrationEntry(entry: {
-  name: string;
-  endpoint: string;
-  active: boolean;
-}): string | null {
-  try {
-    const endpoint = new URL(entry.endpoint);
-    return ["http:", "https:"].includes(endpoint.protocol) &&
-      !endpoint.username &&
-      !endpoint.password &&
-      endpoint.pathname === "/" &&
-      !endpoint.search &&
-      !endpoint.hash
-      ? JSON.stringify({ name: entry.name, endpoint: endpoint.origin, active: entry.active })
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function canonicalNamedGatewayRegistration(output: string, gatewayName: string): string | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(output);
-  } catch {
-    return null;
-  }
-  const matches = (Array.isArray(value) ? value : []).filter(
-    (entry): entry is { name: string; endpoint: string; active: boolean } =>
-      Boolean(entry) &&
-      typeof entry === "object" &&
-      (entry as { name?: unknown }).name === gatewayName &&
-      typeof (entry as { endpoint?: unknown }).endpoint === "string" &&
-      typeof (entry as { active?: unknown }).active === "boolean",
-  );
-  return matches.length === 1 ? canonicalGatewayRegistrationEntry(matches[0]) : null;
+function canonicalObservedGatewayRegistration(
+  observation: OpenShellGatewayReuseObservation,
+  gatewayName: string,
+): string | null {
+  return observation.namedMetadata &&
+    observation.namedEndpoint &&
+    typeof observation.namedActive === "boolean"
+    ? JSON.stringify({
+        name: gatewayName,
+        endpoint: observation.namedEndpoint,
+        active: observation.namedActive,
+      })
+    : null;
 }
 
 async function captureGatewayRegistration(
   host: HostCliClient,
   artifactName: string,
 ): Promise<GatewayRegistrationCapture> {
-  const result = await host.command(host.openshellCommandPath, ["gateway", "list", "-o", "json"], {
-    artifactName,
-    env: env(),
-    timeoutMs: 60_000,
+  let latestResult: ShellProbeResult | null = null;
+  const childEnv = env();
+  const observation = await createCliOpenShellGatewayReuseObserver(async (args, options) => {
+    const result = await host.command(host.openshellCommandPath, args, {
+      artifactName: args[0] === "gateway" ? artifactName : `${artifactName}-status`,
+      env: options.env ?? childEnv,
+      timeoutMs: options.timeout,
+    });
+    latestResult = result;
+    return {
+      status: result.exitCode,
+      output: resultText(result),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      signal: result.signal,
+      ...(result.timedOut
+        ? { error: Object.assign(new Error("Gateway probe timed out"), { code: "ETIMEDOUT" }) }
+        : {}),
+    };
+  }, childEnv).observeGatewayReuse({
+    target: { kind: "named", gatewayName: gateway.env.OPENSHELL_GATEWAY },
   });
+  const result = latestResult!;
   return {
     result,
-    registration: canonicalNamedGatewayRegistration(result.stdout, gateway.env.OPENSHELL_GATEWAY),
+    registration: canonicalObservedGatewayRegistration(observation, gateway.env.OPENSHELL_GATEWAY),
   };
 }
 
