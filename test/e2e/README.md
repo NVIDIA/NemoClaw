@@ -509,8 +509,8 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. Observability turns register unique prompts before execution. Cleanup identifies
-only the exact matching native conversation and requires confirmation of its deletion, including when
-turn output is malformed or the command fails after persisting state. Conversation listing and deletion
+only the exact matching native conversation from the complete listing and requires confirmation of its
+deletion, including when turn output is malformed or the command fails after persisting state. Listing and deletion
 each have a 45-second host and remote limit, with a five-second host kill grace. A timeout fails cleanup
 and preserves the failure diagnostic while allowing capture cleanup to continue.
 The TUI check then runs without changing that registry baseline. The installed

@@ -87,9 +87,16 @@ describe("observability conversation cleanup", () => {
     expect(() => observabilityThreadForPrompt(JSON.stringify(invalid), prompt)).toThrow();
   });
 
-  it.each(["direct", "login", "command-failure", "list-timeout", "delete-timeout"])(
+  it.each([
+    ["direct", 0],
+    ["login", 0],
+    ["command-failure", 0],
+    ["older-owned", 25],
+    ["list-timeout", 0],
+    ["delete-timeout", 0],
+  ] as const)(
     "cleans up only its own conversations after %s turn evidence fails",
-    (failure) => {
+    (failure, newerCount) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-cleanup-"));
       const benign = {
         thread_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -129,7 +136,10 @@ if (args[0] === "threads" && process.env.FAILURE === args[1] + "-timeout") {
   setTimeout(() => process.exit(124), 1500);
   return;
 }
-if (args[0] === "threads" && args[1] === "list") emit("threads list", threads);
+if (args[0] === "threads" && args[1] === "list") {
+  const limit = Number(args[args.indexOf("--limit") + 1]);
+  emit("threads list", threads.slice().reverse().slice(0, Math.max(1, limit)));
+}
 else if (args[0] === "threads" && args[1] === "delete") {
   const found = threads.some(t => t.thread_id === args[2]);
   threads = threads.filter(t => t.thread_id !== args[2]);
@@ -140,9 +150,10 @@ else if (args[0] === "threads" && args[1] === "delete") {
   const prompt = args[args.indexOf("-n") + 1], direct = prompt.includes("DIRECT_RESPONSE");
   const thread_id = direct ? "11111111-1111-1111-1111-111111111111" : "22222222-2222-2222-2222-222222222222";
   threads.push({ thread_id, initial_prompt: prompt });
+  for (let i = 0; i < Number(process.env.NEWER_THREADS); i++) threads.push({ thread_id: "newer-" + i, initial_prompt: "newer unrelated " + i });
   fs.writeFileSync(process.env.THREADS_FILE, JSON.stringify(threads));
   if (process.env.FAILURE === "command-failure") process.exit(1);
-  if (process.env.FAILURE.endsWith("-timeout") || process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
+  if (process.env.FAILURE.endsWith("-timeout") || process.env.FAILURE === "older-owned" || process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
   else emit("non-interactive", { status: "success", exit_code: 0, completion: { thread_id }, response: direct ? "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL" : "NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL" });
 } else process.exit(9);
 `;
@@ -179,6 +190,7 @@ else if (args[0] === "threads" && args[1] === "delete") {
             THREADS_FILE: statePath,
             DELETED_FILE: path.join(root, "deleted"),
             FAILURE: failure,
+            NEWER_THREADS: String(newerCount),
           },
         });
         expect(result.error).toBeUndefined();
@@ -192,7 +204,17 @@ else if (args[0] === "threads" && args[1] === "delete") {
             (thread: { initial_prompt: string }) => thread.initial_prompt === "unrelated",
           ),
         ).toEqual([benign]);
-        expect(remaining.length).toBe(failure.endsWith("-timeout") ? 2 : 1);
+        expect(remaining.length).toBe(failure.endsWith("-timeout") ? 2 : 1 + newerCount);
+        expect(
+          remaining.filter((thread: { thread_id: string }) =>
+            thread.thread_id.startsWith("newer-"),
+          ),
+        ).toEqual(
+          Array.from({ length: newerCount }, (_, i) => ({
+            thread_id: `newer-${i}`,
+            initial_prompt: `newer unrelated ${i}`,
+          })),
+        );
         expect(result.stderr.includes("could not remove an observability test conversation")).toBe(
           failure.endsWith("-timeout"),
         );
