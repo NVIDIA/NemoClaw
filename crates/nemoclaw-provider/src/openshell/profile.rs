@@ -6,10 +6,10 @@ use nemoclaw_sdk::config::SearchProvider;
 const PROFILE_METADATA: &str = "nemoclaw.nvidia.com/profile-v1";
 
 fn annotations(fields: Row) -> std::collections::HashMap<String, String> {
-    // OpenShell v0.1.2 hashes protobuf map iteration order when computing profile
-    // revisions. One annotation containing canonical JSON keeps those bytes stable
-    // while retaining all ownership and definition fields. Revisit when the pinned
-    // gateway canonicalizes profile hashes: NVIDIA/NemoClaw#12458.
+    // OpenShell v0.1.2 hashed protobuf map iteration order when computing profile
+    // revisions (NVIDIA/NemoClaw#12458), so one annotation holds canonical JSON.
+    // The pinned gateway sorts annotations before hashing (NVIDIA/OpenShell#4122),
+    // so this single-annotation encoding is no longer required.
     [(
         PROFILE_METADATA.into(),
         serde_json::to_string(&fields).expect("string map"),

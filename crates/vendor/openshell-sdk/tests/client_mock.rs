@@ -13,8 +13,8 @@ use openshell_core::proto::open_shell_server::{OpenShell, OpenShellServer};
 use openshell_sdk::{
     AuthConfig, ClientConfig, ExecOptions, ListOptions, OpenShellClient, Refresh, RefreshError,
     RefreshedToken, SandboxPhase, SandboxSpec, SandboxTemplateCreateSpec,
-    SandboxTemplateListOptions, ServiceExposure, ServiceStatus as SdkServiceStatus, WatchEvent,
-    WatchOptions,
+    SandboxTemplateListOptions, ServiceAuthorizationMode, ServiceExposure,
+    ServiceStatus as SdkServiceStatus, WatchEvent, WatchOptions,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1139,6 +1139,7 @@ async fn create_sandbox_passes_spec_through() {
         service_exposures: vec![ServiceExposure {
             service: "web".to_string(),
             target_port: 8080,
+            authorization_mode: ServiceAuthorizationMode::BearerPassthrough,
         }],
         ..Default::default()
     };
@@ -1158,6 +1159,10 @@ async fn create_sandbox_passes_spec_through() {
     assert_eq!(observed.service_exposures.len(), 1);
     assert_eq!(observed.service_exposures[0].service, "web");
     assert_eq!(observed.service_exposures[0].target_port, 8080);
+    assert_eq!(
+        observed.service_exposures[0].authorization_mode(),
+        proto::ServiceAuthorizationMode::BearerPassthrough
+    );
     let observed_spec = observed.spec.unwrap();
     assert!(
         observed_spec

@@ -240,6 +240,25 @@ impl From<i32> for SandboxPhase {
     }
 }
 
+/// Gateway policy for replacing the canonical main process after it exits.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SandboxRestartPolicy {
+    #[default]
+    Never,
+    OnFailure,
+    Always,
+}
+
+impl From<SandboxRestartPolicy> for proto::SandboxRestartPolicy {
+    fn from(value: SandboxRestartPolicy) -> Self {
+        match value {
+            SandboxRestartPolicy::Never => Self::Never,
+            SandboxRestartPolicy::OnFailure => Self::OnFailure,
+            SandboxRestartPolicy::Always => Self::Always,
+        }
+    }
+}
+
 /// Caller intent for a new sandbox.
 ///
 /// Only the most commonly used fields are exposed. Callers that need the
@@ -266,6 +285,8 @@ pub struct SandboxSpec {
     pub tty: bool,
     /// Loopback HTTP services to expose when the sandbox is created.
     pub service_exposures: Vec<ServiceExposure>,
+    /// Restart behavior after the canonical main process exits.
+    pub restart_policy: SandboxRestartPolicy,
 }
 
 /// A loopback HTTP service to expose during sandbox creation.
@@ -275,6 +296,27 @@ pub struct ServiceExposure {
     pub service: String,
     /// Loopback TCP port inside the sandbox.
     pub target_port: u16,
+    /// Whether the gateway strips or forwards an application bearer credential.
+    pub authorization_mode: ServiceAuthorizationMode,
+}
+
+/// Handling for an incoming application `Authorization` header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ServiceAuthorizationMode {
+    /// Remove the header before proxying to the sandbox service.
+    #[default]
+    Strip,
+    /// Forward one syntactically valid bearer credential unchanged.
+    BearerPassthrough,
+}
+
+impl From<ServiceAuthorizationMode> for proto::ServiceAuthorizationMode {
+    fn from(value: ServiceAuthorizationMode) -> Self {
+        match value {
+            ServiceAuthorizationMode::Strip => Self::Strip,
+            ServiceAuthorizationMode::BearerPassthrough => Self::BearerPassthrough,
+        }
+    }
 }
 
 /// Caller intent for creating a sandbox from a named workload template.
@@ -346,6 +388,9 @@ pub struct SandboxRef {
     /// Service URLs returned by sandbox creation, keyed by service name. The
     /// empty key identifies the unnamed service. Non-create reads leave this empty.
     pub service_urls: HashMap<String, String>,
+    pub restart_count: u32,
+    pub next_restart_at_ms: Option<i64>,
+    pub main_process_started_at_ms: Option<i64>,
 }
 
 /// Reusable workload template revision used to create a sandbox.
@@ -359,7 +404,6 @@ pub struct SandboxWorkloadTemplateProvenance {
 impl SandboxRef {
     pub(crate) fn from_proto(sandbox: proto::Sandbox) -> Self {
         let phase = sandbox.phase().into();
-        let exit_code = sandbox.status.as_ref().and_then(|status| status.exit_code);
         let created_from_workload_template =
             sandbox
                 .created_from_workload_template
@@ -367,6 +411,23 @@ impl SandboxRef {
                     name: p.name,
                     resource_version: p.resource_version,
                 });
+        let (exit_code, restart_count, next_restart_at_ms, main_process_started_at_ms) = sandbox
+            .status
+            .as_ref()
+            .map_or((None, 0, None, None), |status| {
+                (
+                    status.exit_code,
+                    status.restart_count,
+                    status
+                        .next_restart_time
+                        .as_ref()
+                        .and_then(|time| openshell_core::time::timestamp_to_millis(time).ok()),
+                    status
+                        .main_process_started_time
+                        .as_ref()
+                        .and_then(|time| openshell_core::time::timestamp_to_millis(time).ok()),
+                )
+            });
         let meta = sandbox.metadata.unwrap_or_default();
         Self {
             id: meta.id,
@@ -378,6 +439,9 @@ impl SandboxRef {
             exit_code,
             created_from_workload_template,
             service_urls: HashMap::new(),
+            restart_count,
+            next_restart_at_ms,
+            main_process_started_at_ms,
         }
     }
 }

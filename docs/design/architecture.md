@@ -43,7 +43,7 @@ The connected implementation retains the SDK's raw API only for operations or fi
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
 NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
 
-At the pinned OpenShell revision `6648bd0c290efbc41ba131ee9831ee45cd431f94`, the SDK has these integration limits:
+At the pinned OpenShell revision `e7fdd6beef98f7f92d86271a169fdd4d3be44cf3` (v0.1.3-pre.4), the SDK has these integration limits:
 
 | Requirement | SDK limit | Consequence |
 |---|---|---|
@@ -57,7 +57,7 @@ At the pinned OpenShell revision `6648bd0c290efbc41ba131ee9831ee45cd431f94`, the
 | Bounded exec against a verified identity | High-level exec addresses the sandbox by name, buffers output without a size cap, and does not reject every malformed event sequence | Verify identity before workspace-scoped exec; retain the local deadline, output limits, and event validation |
 | Secret-safe diagnostics | SDK bearer construction does not mark metadata sensitive; SDK errors can retain upstream diagnostic text | Preserve sensitive metadata and NemoClaw's redacted error mapping |
 
-These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/auth.rs).
+These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/e7fdd6beef98f7f92d86271a169fdd4d3be44cf3/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/e7fdd6beef98f7f92d86271a169fdd4d3be44cf3/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/e7fdd6beef98f7f92d86271a169fdd4d3be44cf3/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/e7fdd6beef98f7f92d86271a169fdd4d3be44cf3/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/e7fdd6beef98f7f92d86271a169fdd4d3be44cf3/crates/openshell-sdk/src/auth.rs).
 The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
 NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
 A [telemetry test](../../crates/nemoclaw-sdk/tests/telemetry.rs) proves telemetry remains disabled even when the process environment requests it.

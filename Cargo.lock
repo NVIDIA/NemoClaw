@@ -2499,7 +2499,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e7fdd6beef98f7f92d86271a169fdd4d3be44cf3#e7fdd6beef98f7f92d86271a169fdd4d3be44cf3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2533,7 +2533,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e7fdd6beef98f7f92d86271a169fdd4d3be44cf3#e7fdd6beef98f7f92d86271a169fdd4d3be44cf3"
 dependencies = [
  "hyper-util",
  "serde",
@@ -2546,7 +2546,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e7fdd6beef98f7f92d86271a169fdd4d3be44cf3#e7fdd6beef98f7f92d86271a169fdd4d3be44cf3"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -2560,12 +2560,13 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e7fdd6beef98f7f92d86271a169fdd4d3be44cf3#e7fdd6beef98f7f92d86271a169fdd4d3be44cf3"
 dependencies = [
  "miette",
  "noyalib",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3979,7 +3980,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
