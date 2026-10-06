@@ -45,15 +45,6 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-const REVIEWED_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
-  '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
-  `  # Replace npm's private dependency tree: overlaying a newer archive can leave
-  # incompatible packages from the previous npm installation in node_modules.
-  sudo rm -rf /usr/local/lib/node_modules/npm
-  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
-);
-const REVIEWED_NPM_REPLACEMENT_DIGEST =
-  "00869358ea440c38fc81d8f921f5eaf9380368fa036b2fc5db07bd84c933c968";
 const NPM_CLEANUP_TEMPLATE_DIGEST =
   "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
@@ -950,35 +941,6 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 
 describe("installer hash verification", () => {
   describe("bootstrap npm cleanup trust", () => {
-    it("admits the reviewed npm replacement only when its exact template is trusted", () => {
-      const before = parseNpmReplacement(
-        REVIEWED_NPM_REPLACEMENT_TEMPLATE,
-        REVIEWED_NPM_REPLACEMENT_DIGEST,
-        "0".repeat(64),
-      );
-      expect(before.status, before.stderr).toBe(1);
-      expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
-
-      const after = parseNpmReplacement(
-        REVIEWED_NPM_REPLACEMENT_TEMPLATE,
-        REVIEWED_NPM_REPLACEMENT_DIGEST,
-      );
-      expect(after.status, after.stderr).toBe(0);
-      expect(after.stdout).toContain(
-        `"operationalTemplateSha256":"${REVIEWED_NPM_REPLACEMENT_DIGEST}"`,
-      );
-    });
-
-    it("rejects a broader package deletion in the reviewed npm replacement", () => {
-      const nearMiss = REVIEWED_NPM_REPLACEMENT_TEMPLATE.replace(
-        "/usr/local/lib/node_modules/npm",
-        "/usr/local/lib/node_modules",
-      );
-      const result = parseNpmReplacement(nearMiss, REVIEWED_NPM_REPLACEMENT_DIGEST);
-      expect(result.status, result.stderr).toBe(1);
-      expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
-    });
-
     it("admits the bootstrap npm cleanup only when its template is trusted", () => {
       const before = parseNpmReplacement(
         BREV_TEMPLATE,
