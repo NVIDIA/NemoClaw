@@ -728,8 +728,8 @@ function isManagedInferenceLocalRoute(
 
 // Managed inference sessions other than Local Ollama use OpenClaw's safeguard
 // compaction rather than its plain runtime compactor. A two-minute timeout
-// bounds each standard attempt. The N1x managed-vLLM profile needs five minutes
-// because its compaction request can exceed two minutes (#11805). OpenClaw
+// bounds each standard summarization request. The N1x managed-vLLM profile
+// retains its five-minute request timeout (#11805). OpenClaw
 // 2026.9.1 retired the configurable reserve fields, so its runtime owns prompt
 // headroom while NemoClaw retains the profile-specific timeout. Lifecycle notices
 // expose compaction progress, and successful compaction rotates the active transcript.
@@ -759,7 +759,12 @@ export function buildManagedInferenceSafeguardCompaction(
           timeoutSeconds: N1X_COMPACTION_TIMEOUT_SECONDS,
         }
       : {}),
-    qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
+    qualityGuard: {
+      ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard,
+      // Give N1x summaries one corrective attempt with audit feedback (#12297).
+      // Keep the audit enabled so failed summaries cannot replace conversation history.
+      ...(isN1xManagedVllm ? { maxRetries: 1 } : {}),
+    },
   };
 }
 
