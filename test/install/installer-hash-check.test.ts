@@ -45,6 +45,15 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+const OBSOLETE_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
+  '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
+  `  # Replace npm's private dependency tree: overlaying a newer archive can leave
+  # incompatible packages from the previous npm installation in node_modules.
+  sudo rm -rf /usr/local/lib/node_modules/npm
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
+);
+const OBSOLETE_NPM_REPLACEMENT_DIGEST =
+  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 const NPM_CLEANUP_TEMPLATE_DIGEST =
   "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
@@ -940,6 +949,16 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
+  it("rejects the obsolete Brev npm replacement template", () => {
+    const result = parseNpmReplacement(
+      OBSOLETE_NPM_REPLACEMENT_TEMPLATE,
+      OBSOLETE_NPM_REPLACEMENT_DIGEST,
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+  });
+
   describe("bootstrap npm cleanup trust", () => {
     it("admits the bootstrap npm cleanup only when its template is trusted", () => {
       const before = parseNpmReplacement(
