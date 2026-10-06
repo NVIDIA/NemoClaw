@@ -1057,6 +1057,28 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
   });
 
+  it("clears native NVIDIA authority when the provider is already absent", async () => {
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const adapter = providerAdapter({
+      deleteProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "not_found" as const,
+          message: "provider not found",
+        },
+      })),
+    });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      { providerAdapter: adapter, clearNativeNvidiaProviderAuthority },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+  });
+
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()

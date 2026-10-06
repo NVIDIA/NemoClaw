@@ -22,12 +22,12 @@ import {
 } from "./contract";
 
 export {
-  normalizeNativeNvidiaProviderAttachment,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "./contract";
 
@@ -50,33 +50,10 @@ export function resolveGatewayNativeNvidiaProviderAuthority(input: {
   gatewayName: string;
   gatewayAuthority?: NativeNvidiaProviderAttachment | null;
   recordedAttachment?: NativeNvidiaProviderAttachment | null;
-  recordedAuthority?: NativeNvidiaProviderAttachment | null;
-  sandboxes: ReadonlyArray<{
-    gatewayName?: string | null;
-    provider?: string | null;
-    nativeNvidiaProviderAttachment?: unknown;
-    nativeNvidiaProviderAuthority?: unknown;
-  }>;
 }): NativeNvidiaProviderAttachment | undefined {
   const authorities = new Map<string, NativeNvidiaProviderAttachment>();
-  for (const receipt of [
-    input.gatewayAuthority,
-    input.recordedAttachment,
-    input.recordedAuthority,
-  ]) {
+  for (const receipt of [input.gatewayAuthority, input.recordedAttachment]) {
     if (receipt) authorities.set(receipt.providerId, receipt);
-  }
-  for (const sandbox of input.sandboxes) {
-    if (sandbox.gatewayName !== input.gatewayName) continue;
-    const authority = normalizeNativeNvidiaProviderAttachment(
-      sandbox.nativeNvidiaProviderAuthority,
-    );
-    const attachment = isNativeNvidiaProvider(sandbox.provider)
-      ? normalizeNativeNvidiaProviderAttachment(sandbox.nativeNvidiaProviderAttachment)
-      : undefined;
-    for (const receipt of [authority, attachment]) {
-      if (receipt) authorities.set(receipt.providerId, receipt);
-    }
   }
   if (authorities.size > 1) {
     throw new NativeNvidiaProviderError(

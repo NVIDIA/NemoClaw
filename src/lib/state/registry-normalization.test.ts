@@ -48,7 +48,30 @@ describe("sandbox registry normalization", () => {
     };
     const { registry } = await loadRegistryDocument({
       defaultSandbox: null,
-      sandboxes: {},
+      sandboxes: {
+        alpha: {
+          name: "alpha",
+          gatewayName: "nemoclaw-19080",
+          provider: "openai-api",
+          nativeNvidiaProviderAuthority: receipt,
+        },
+        beta: {
+          name: "beta",
+          gatewayName: "nemoclaw-19080",
+          provider: "nvidia-prod",
+          nativeNvidiaProviderAttachment: receipt,
+          nativeNvidiaProviderAuthority: receipt,
+        },
+        gamma: {
+          name: "gamma",
+          gatewayName: "nemoclaw-19081",
+          provider: "openai-api",
+          nativeNvidiaProviderAuthority: {
+            ...receipt,
+            providerId: "22222222-3333-4444-8555-666666666666",
+          },
+        },
+      },
       nativeNvidiaProviderAuthorities: {
         broken: { ...receipt, providerId: "" },
         "nemoclaw-19080": receipt,
@@ -67,6 +90,10 @@ describe("sandbox registry normalization", () => {
     });
     registry.clearNativeNvidiaProviderAuthority("nemoclaw-19080");
     expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toBeUndefined();
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("nativeNvidiaProviderAuthority");
+    expect(registry.getSandbox("beta")).not.toHaveProperty("nativeNvidiaProviderAuthority");
+    expect(registry.getSandbox("beta")?.nativeNvidiaProviderAttachment).toEqual(receipt);
+    expect(registry.getSandbox("gamma")).not.toHaveProperty("nativeNvidiaProviderAuthority");
   });
 
   it("persists incomplete OpenClaw synchronization until explicit completion", async () => {

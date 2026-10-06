@@ -1072,7 +1072,6 @@ export function createSetupInference(
               gatewayName,
               gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
               recordedAttachment,
-              sandboxes: deps.listSandboxes?.().sandboxes ?? [],
             });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,

@@ -27,7 +27,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
-  it("reuses a same-gateway native NVIDIA provider authority from a peer sandbox", async () => {
+  it("does not infer native NVIDIA provider authority from a peer sandbox", async () => {
     const peerAttachment = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1" as const,
@@ -57,15 +57,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       resolveCredentialValue: () => "",
     });
 
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
-      deps,
-    );
-
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ nativeNvidiaProviderAttachment: peerAttachment }),
-    );
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true }, deps),
+    ).rejects.toThrow(/without a matching NemoClaw ownership receipt/u);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("selects a native NVIDIA provider registered before any sandbox used it", async () => {
@@ -120,8 +115,90 @@ describe("runInferenceSet OpenClaw routing", () => {
       "alpha",
       expect.objectContaining({
         nativeNvidiaProviderAttachment: gatewayAuthority,
-        nativeNvidiaProviderAuthority: gatewayAuthority,
       }),
+    );
+    expect(deps.calls.setNativeNvidiaProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      gatewayAuthority,
+    );
+  });
+
+  it("creates a new native NVIDIA provider after reset removes retained authority", async () => {
+    const providerId = "22222222-3333-4444-8555-666666666666";
+    let providerPresent = false;
+    let attached = false;
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => {
+      providerPresent = true;
+      return { ok: true };
+    });
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider: vi.fn(async () =>
+        providerPresent
+          ? {
+              ok: true as const,
+              value: {
+                name: "nemoclaw-nvidia-prod-v1",
+                type: "nemoclaw-nvidia-inference-v1",
+                credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+                configKeys: [],
+                revision: { id: providerId, resourceVersion: 1 },
+              },
+            }
+          : {
+              ok: false as const,
+              error: {
+                kind: "command" as const,
+                reason: "not_found" as const,
+                message: "provider not found",
+              },
+            },
+      ),
+      createProvider,
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? ["nemoclaw-nvidia-prod-v1"] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+      providerAdapter,
+      resolveCredentialValue: () => "replacement-credential",
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect(createProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "nemoclaw-nvidia-prod-v1",
+      type: "nemoclaw-nvidia-inference-v1",
+      credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "replacement-credential" }],
+      config: [],
+      fromExisting: false,
+    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId }),
+      }),
+    );
+    expect(deps.calls.setNativeNvidiaProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({ providerId }),
     );
   });
 
@@ -183,21 +260,18 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(detachProvider.mock.invocationCallOrder[0]).toBeLessThan(
       deps.calls.restartSandboxGateway.mock.invocationCallOrder[0],
     );
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        nativeNvidiaProviderAttachment: undefined,
-        nativeNvidiaProviderAuthority: {
-          schemaVersion: 1,
-          profileId: "nemoclaw-nvidia-inference-v1",
-          providerName: "nemoclaw-nvidia-prod-v1",
-          providerId: "11111111-2222-4333-8444-555555555555",
-        },
-      }),
+    const departureUpdate = deps.calls.updateSandbox.mock.calls.find(
+      ([name, updates]) =>
+        name === "alpha" &&
+        Object.prototype.hasOwnProperty.call(updates, "nativeNvidiaProviderAttachment"),
+    )?.[1];
+    expect(departureUpdate).toEqual(
+      expect.objectContaining({ nativeNvidiaProviderAttachment: undefined }),
     );
+    expect(departureUpdate).not.toHaveProperty("nativeNvidiaProviderAuthority");
   });
 
-  it("verifies retained NVIDIA authority across a single-sandbox round trip", async () => {
+  it("retains gateway authority as the sole durable receipt across a round trip", async () => {
     const attachment = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1" as const,
@@ -211,8 +285,8 @@ describe("runInferenceSet OpenClaw routing", () => {
       provider: "nvidia-prod",
       model: "nvidia/old-model",
       nativeNvidiaProviderAttachment: attachment,
-      nativeNvidiaProviderAuthority: attachment,
     };
+    let gatewayAuthority = attachment;
     const updateSandbox = vi.fn((name: string, updates: Record<string, unknown>) => {
       expect(name).toBe(entry.name);
       Object.assign(entry, updates);
@@ -225,6 +299,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
       entry,
       updateSandbox,
+      getNativeNvidiaProviderAuthority: () => gatewayAuthority,
+      setNativeNvidiaProviderAuthority: (_gatewayName, receipt) => {
+        gatewayAuthority = receipt;
+      },
       resolveCredentialValue: () => "",
     });
 
@@ -232,9 +310,10 @@ describe("runInferenceSet OpenClaw routing", () => {
 
     expect(entry).toMatchObject({
       provider: "openai-api",
-      nativeNvidiaProviderAuthority: attachment,
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
+    expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
+    expect(gatewayAuthority).toEqual(attachment);
 
     await runInferenceSet(
       { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
@@ -244,8 +323,9 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(entry).toMatchObject({
       provider: "nvidia-prod",
       nativeNvidiaProviderAttachment: attachment,
-      nativeNvidiaProviderAuthority: attachment,
     });
+    expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
+    expect(gatewayAuthority).toEqual(attachment);
   });
 
   it("rejects a replaced NVIDIA provider before restoring detached access", async () => {
@@ -278,13 +358,13 @@ describe("runInferenceSet OpenClaw routing", () => {
         gatewayName: "nemoclaw",
         provider: "openai-api",
         model: "gpt-5.4",
-        nativeNvidiaProviderAuthority: {
-          schemaVersion: 1,
-          profileId: "nemoclaw-nvidia-inference-v1",
-          providerName: "nemoclaw-nvidia-prod-v1",
-          providerId: "recorded-provider-id",
-        },
       },
+      getNativeNvidiaProviderAuthority: () => ({
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "recorded-provider-id",
+      }),
       providerAdapter,
       resolveCredentialValue: () => "",
     });

@@ -910,6 +910,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/actions/inference-set.ts",
       "src/lib/inference/native-nvidia/index.ts",
       "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
+      "test/e2e/live/public-nvidia-switch-provider.ts",
     ],
     environment: {
       ...nonInteractive,
@@ -1205,6 +1206,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/openclaw/initial-inference-route.ts",
       "src/lib/onboard/sandbox-recreate-transaction.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/public-nvidia-switch-provider.ts",
       "scripts/patch-openclaw-device-self-approval.mts",
       "test/e2e/live/openclaw-admin-scope.ts",
       "test/e2e/fixtures/admin-approval-connect.ts",
