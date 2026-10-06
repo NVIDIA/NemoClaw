@@ -135,12 +135,12 @@ export const ManagedBraveProfileResponseSchema = Type.Object({
   }),
 });
 
-function tavilyRule(path: "/search" | "/extract") {
+function managedRestRule(method: "GET" | "POST", path: string) {
   return Type.Object({
     ...NoUnknownProfileFields,
     allow: Type.Object({
       ...NoUnknownProfileFields,
-      method: Type.Literal("POST"),
+      method: Type.Literal(method),
       path: Type.Literal(path),
       command: Type.Literal(""),
       query: Type.Object({}, { additionalProperties: false }),
@@ -162,7 +162,10 @@ function tavilyProfile(id: "tavily" | "tavily-hermes-v1", binaries: readonly str
           ...ManagedRestEndpointFields,
           host: Type.Literal("api.tavily.com"),
           access: Type.Literal(""),
-          rules: Type.Tuple([tavilyRule("/search"), tavilyRule("/extract")]),
+          rules: Type.Tuple([
+            managedRestRule("POST", "/search"),
+            managedRestRule("POST", "/extract"),
+          ]),
           requestBodyCredentialRewrite: Type.Literal(true),
         }),
       ]),
@@ -187,6 +190,43 @@ export const ManagedHermesTavilyProfileResponseSchema = tavilyProfile("tavily-he
   "/usr/local/bin/curl",
   "/usr/bin/curl",
 ]);
+export const ManagedNvidiaProfileResponseSchema = Type.Object({
+  profile: Type.Object({
+    ...ManagedProfileIdentity,
+    id: Type.Literal("nemoclaw-nvidia-inference-v1"),
+    source: Type.Literal("user"),
+    scope: Type.Literal("workspace"),
+    resourceVersion: Type.Refine(VersionSchema, (value) => BigInt(value) > 0n),
+    inferenceCapable: Type.Literal(true),
+    endpoints: Type.Tuple([
+      Type.Object({
+        ...ManagedRestEndpointFields,
+        host: Type.Literal("integrate.api.nvidia.com"),
+        access: Type.Literal(""),
+        rules: Type.Tuple([
+          managedRestRule("GET", "/v1/models"),
+          managedRestRule("POST", "/v1/chat/completions"),
+        ]),
+        requestBodyCredentialRewrite: Type.Literal(false),
+      }),
+    ]),
+    credentials: Type.Tuple([
+      Type.Object({
+        ...ManagedSearchCredentialFields,
+        envVars: Type.Tuple([Type.Literal("NVIDIA_INFERENCE_API_KEY")]),
+        authStyle: Type.Literal("bearer"),
+        headerName: Type.Literal("authorization"),
+      }),
+    ]),
+    binaries: profileBinaries([
+      ...WebClientBinaries.slice(0, 2),
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/venv/bin/python3",
+      ...WebClientBinaries.slice(2),
+    ]),
+  }),
+});
 export const ManagedOpenAiProfileResponseSchema = Type.Object({
   profile: Type.Object({
     ...ManagedProfileIdentity,

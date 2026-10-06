@@ -3,10 +3,17 @@
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  verifyNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../inference/openrouter";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
@@ -25,6 +32,30 @@ import {
 
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
+
+export type VerifyNativeNvidiaStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeNvidiaStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+  verify?: VerifyNativeNvidiaStatusAttachment;
+}): Promise<void> {
+  if (input.verify) {
+    await input.verify(input);
+    return;
+  }
+  await verifyNativeNvidiaProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
@@ -239,6 +270,7 @@ function buildInvokedRouteHealth(
 
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
+  nativeNvidia?: boolean;
 };
 
 // A models route that answers but is credential-gated (401/403) stays
@@ -271,6 +303,32 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
+  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+    const endpoint =
+      invocation && !invocation.ok && invocation.endpoint
+        ? invocation.endpoint
+        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+    const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
+    const nativeHealth: ProviderHealthStatus = invocation?.ok
+      ? {
+          ok: true,
+          probed: true,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+        }
+      : {
+          ok: false,
+          probed: invocation !== null,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: invocation
+            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
+            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+          failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+        };
+    return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
+  }
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
   const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
   const accepted =

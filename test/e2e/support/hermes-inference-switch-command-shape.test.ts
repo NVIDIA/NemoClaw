@@ -26,10 +26,13 @@ import {
   openAiSurfaceEndpointUrl,
   openshellGatewayName,
   parseInferenceRoute,
+  prepareProxyResolutionRoute,
+  PROXY_RESOLUTION_PROVIDER,
   runHermesInferenceSetWithRetry,
   runHermesCliPongWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
+  sandboxInferenceCommand,
 } from "../live/hermes-inference-switch-helpers.ts";
 
 describe("Hermes inference switch command shape", () => {
@@ -48,6 +51,14 @@ describe("Hermes inference switch command shape", () => {
     expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
       "openai-completions",
     );
+  });
+
+  it("probes native NVIDIA through its sandbox-attached provider route (#12558)", () => {
+    const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
+
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).not.toContain("inference.local");
   });
 
   it("omits the conflicting Anthropic frontend flag from Hermes switch metadata (#6289)", () => {
@@ -101,6 +112,40 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MODEL: "target-switch-model",
       }),
     ).toBe("initial-hosted-model");
+  });
+
+  it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "created" })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
+
+    await prepareProxyResolutionRoute({
+      apiKey: "hosted-key",
+      host: { command } as unknown as HostCliClient,
+      mockBaseline: undefined,
+      redactionValues: ["hosted-key"],
+    });
+
+    expect(PROXY_RESOLUTION_PROVIDER).not.toBe("nvidia-prod");
+    expect(command.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining([
+        "--name",
+        PROXY_RESOLUTION_PROVIDER,
+        "--type",
+        "openai",
+        "--credential",
+        "NVIDIA_INFERENCE_API_KEY",
+      ]),
+    );
+    expect(command.mock.calls[2]?.[1]).toEqual(
+      expect.arrayContaining(["--provider", PROXY_RESOLUTION_PROVIDER]),
+    );
   });
 
   it("uses authenticated model inventory as baseline readiness evidence", () => {
@@ -539,5 +584,25 @@ describe("Hermes inference switch command shape", () => {
       "inference-switch-retry-evidence.json",
       expect.objectContaining({ outcome: "passed-after-retry" }),
     );
+  });
+
+  it("passes the public NVIDIA credential only to the native provider switch", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
+
+    await runHermesInferenceSetWithRetry(
+      { command } as unknown as HostCliClient,
+      ["nvapi-hosted-key"],
+      [],
+      {
+        attempts: 1,
+        publicNvidiaApiKey: "nvapi-hosted-key",
+      },
+    );
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: { NVIDIA_INFERENCE_API_KEY: "nvapi-hosted-key" },
+      redactionValues: ["nvapi-hosted-key"],
+    });
   });
 });

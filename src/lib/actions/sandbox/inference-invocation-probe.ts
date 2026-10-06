@@ -13,6 +13,7 @@ import {
 } from "../../adapters/openshell/sandbox-observer";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
+import { isNativeNvidiaProvider } from "../../inference/native-nvidia";
 import { validateInferenceResponseBody } from "../../inference/health";
 import {
   MIN_PROBE_REPLY_TOKENS,
@@ -81,9 +82,11 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.provider,
     input.preferredInferenceApi,
   );
+  const baseUrl = config.inferenceBaseUrl.replace(/\/+$/u, "");
+  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
   if (config.inferenceApi === "anthropic-messages") {
     return {
-      endpoint: "https://inference.local/v1/messages",
+      endpoint: `${apiBaseUrl}/messages`,
       headers: ["anthropic-version: 2023-06-01"],
       payload: {
         model: input.model,
@@ -94,7 +97,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   if (config.inferenceApi === "openai-responses" || config.inferenceApi === "responses") {
     return {
-      endpoint: "https://inference.local/v1/responses",
+      endpoint: `${apiBaseUrl}/responses`,
       headers: [],
       payload: {
         model: input.model,
@@ -104,8 +107,10 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     };
   }
   return {
-    endpoint: "https://inference.local/v1/chat/completions",
-    headers: [],
+    endpoint: `${apiBaseUrl}/chat/completions`,
+    headers: isNativeNvidiaProvider(input.provider)
+      ? ["Authorization: Bearer nemoclaw-openshell-provider"]
+      : [],
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
@@ -196,8 +201,8 @@ async function executeDcodeSandboxInferenceInvocation(
 /**
  * Send one minimal agent request over the configured gateway route from the
  * still-running sandbox. The request uses OpenShell's stored provider
- * credential through inference.local; no host credential is placed in the
- * command or its output.
+ * credential through the attached OpenShell provider or managed route; no host
+ * credential is placed in the command or its output.
  */
 export async function probeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,

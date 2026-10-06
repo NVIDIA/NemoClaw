@@ -190,7 +190,7 @@
       "name": "LangChain Deep Agents Code",
       "status": "tested",
       "default": false,
-      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. Inference routes through OpenShell's `inference.local` endpoint through the Deep Agents Code OpenAI-compatible provider. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
+      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. Most inference uses OpenShell's `inference.local` endpoint through the Deep Agents Code OpenAI-compatible provider. NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
     }
   ],
 
@@ -206,9 +206,9 @@
       "notes": "Landlock, seccomp, network namespace isolation, no-new-privileges, privilege dropping, and process limits (nproc 512 at `scripts/lib/sandbox-rlimits.sh:8`) are tested and on by default. OpenShell owns capability enforcement for managed entrypoints, exec processes, and connect shells; those paths do not call NemoClaw capability handling. Direct container runtimes that explicitly override the image user to root retain the existing compatibility drop and required `setpriv` transition. Direct container launches must configure capabilities at the container runtime."
     },
     {
-      "name": "Routed inference",
+      "name": "Managed inference",
       "status": "tested",
-      "notes": "Provider-routed model calls through the OpenShell gateway, transparent to the agent. The agent uses `inference.local` inside the sandbox; provider credentials stay on the host. Supports every entry in the Providers table."
+      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. Most providers use `inference.local` inside the sandbox; NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
     },
     {
       "name": "Declarative network policy",

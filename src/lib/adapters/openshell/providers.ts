@@ -21,15 +21,21 @@ import {
   ManagedTavilyProfileResponseSchema,
   ManagedHermesTavilyProfileResponseSchema,
   ManagedOpenAiProfileResponseSchema,
+  ManagedNvidiaProfileResponseSchema,
   BuiltinNvidiaProfileResponseSchema,
   ProviderResponseSchema,
 } from "./sdk-read-schema";
 
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
+import {
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+} from "../../inference/native-nvidia/contract";
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
 
 const managedProfileSchemas = {
+  [NVIDIA_HOSTED_NATIVE_PROFILE_ID]: ManagedNvidiaProfileResponseSchema,
   brave: ManagedBraveProfileResponseSchema,
   openai: ManagedOpenAiProfileResponseSchema,
   tavily: ManagedTavilyProfileResponseSchema,
@@ -44,6 +50,7 @@ export type Provider = Readonly<
     resourceVersion: string;
     config: Readonly<Record<string, string>>;
     builtinInferenceEndpoint?: string;
+    managedInferenceEndpoint?: string;
     profileWorkspace?: string;
     // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
@@ -133,11 +140,24 @@ function validateManagedProfileResponse(
   };
 }
 
+function managedInferenceEndpointFor(
+  managedProfile: Provider["managedProfile"],
+): string | undefined {
+  return managedProfile?.id === NVIDIA_HOSTED_NATIVE_PROFILE_ID
+    ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+    : undefined;
+}
+
 async function readProfileEvidence(
   client: OpenShellReadClient,
   request: Parameters<Providers["get"]>[0],
   provider: Readonly<{ type: string; profileWorkspace?: string; config: Record<string, unknown> }>,
-): Promise<Pick<Provider, "builtinInferenceEndpoint" | "profileWorkspace" | "managedProfile">> {
+): Promise<
+  Pick<
+    Provider,
+    "builtinInferenceEndpoint" | "managedInferenceEndpoint" | "profileWorkspace" | "managedProfile"
+  >
+> {
   let builtinInferenceEndpoint: string | undefined;
   if (
     provider.type === "nvidia" &&
@@ -160,12 +180,14 @@ async function readProfileEvidence(
           provider.type,
           provider.profileWorkspace,
         );
+  const managedInferenceEndpoint = managedInferenceEndpointFor(managedProfile);
   return {
     ...(builtinInferenceEndpoint === undefined ? {} : { builtinInferenceEndpoint }),
     ...(provider.profileWorkspace === undefined
       ? {}
       : { profileWorkspace: provider.profileWorkspace }),
     ...(managedProfile === undefined ? {} : { managedProfile }),
+    ...(managedInferenceEndpoint === undefined ? {} : { managedInferenceEndpoint }),
   };
 }
 

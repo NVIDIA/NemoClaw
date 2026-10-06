@@ -15,10 +15,16 @@ import {
 } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
 import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia";
+import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
+import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -34,6 +40,7 @@ export type CredentialsResetResult = {
 
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -90,6 +97,10 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
+  const nativeNvidiaProvider =
+    key === NVIDIA_HOSTED_LOGICAL_PROVIDER || key === NVIDIA_HOSTED_NATIVE_PROVIDER;
+  const providerName = nativeNvidiaProvider ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
+  const publicKey = nativeNvidiaProvider ? NVIDIA_HOSTED_LOGICAL_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
     return fail([
       "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
@@ -120,7 +131,9 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(key, target, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+    detachAttached: !nativeNvidiaProvider,
+  });
 
   if (
     !recovery.ok &&
@@ -128,6 +141,11 @@ export async function runCredentialsResetAction(
     recovery.error?.kind === "command" &&
     recovery.error.reason === "not_found"
   ) {
+    if (nativeNvidiaProvider) {
+      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+        target.gatewayName,
+      );
+    }
     const removedLocal = forgetExtraProvider(key);
     return ok([
       removedLocal
@@ -138,10 +156,15 @@ export async function runCredentialsResetAction(
     ]);
   }
 
-  const outcome = formatResetOutcome(key, recovery, target.gatewayName);
+  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
-  forgetExtraProvider(key);
+  forgetExtraProvider(publicKey);
+  if (nativeNvidiaProvider) {
+    (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+      target.gatewayName,
+    );
+  }
   return ok(outcome.lines);
 }
 
@@ -179,6 +202,19 @@ export function formatResetOutcome(
       ...validatedAttachedSandboxes(recovery.error),
     ]),
   ];
+  if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER && stuckSandboxes.length > 0) {
+    lines.push(
+      "",
+      `  '${key}' remains attached to sandbox(es): ${stuckSandboxes.join(", ")}.`,
+      "  No provider attachment was changed.",
+      `  To rotate the credential in place, set ${NVIDIA_HOSTED_CREDENTIAL_ENV} and rerun '${CLI_NAME} onboard --name <sandbox>'.`,
+      "  To remove the provider completely, preserve any required sandbox state, destroy every attached sandbox,",
+      `  then rerun '${CLI_NAME} credentials reset ${key}'.`,
+      ...stuckSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} destroy`),
+    );
+    if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
+    return { ok: false, lines };
+  }
   if (stuckSandboxes.length > 0) {
     const stuck = stuckSandboxes.join(", ");
     lines.push(
@@ -213,6 +249,7 @@ async function deleteProviderWithRecovery(
   providerName: string,
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
+  options: Readonly<{ detachAttached: boolean }> = { detachAttached: true },
 ): Promise<CredentialsProviderDeleteWithRecoveryResult> {
   const request = {
     target,
@@ -230,6 +267,9 @@ async function deleteProviderWithRecovery(
 
   const attachedSandboxes = validatedAttachedSandboxes(result.error);
   if (attachedSandboxes.length === 0) {
+    return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
+  }
+  if (!options.detachAttached) {
     return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 

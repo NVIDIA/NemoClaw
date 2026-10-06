@@ -204,6 +204,8 @@ function send(mod, options, body) {
 process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
 send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', hostname: 'integrate.api.nvidia.com', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', hostname: 'other.example.com', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-4-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
@@ -242,14 +244,21 @@ console.log(JSON.stringify(records));
     const ultraBool = JSON.parse(records[1].writes[0]);
     expect(ultraBool).toEqual(ultraObj);
 
+    // The attached OpenShell provider sends the request to NVIDIA Build's
+    // public hostname, while unrelated direct hosts remain outside the strip.
+    const nativeProvider = JSON.parse(records[2].writes[0]);
+    expect(nativeProvider).toEqual(ultraObj);
+    const unrelatedDirectHost = JSON.parse(records[3].writes[0]);
+    expect(unrelatedDirectHost.thinking).toBe(true);
+
     // Ultra without a thinking field → nothing to strip; still nemotron, so
     // force_nonempty_content is injected by the kwargs rule.
-    const ultraNone = JSON.parse(records[2].writes[0]);
+    const ultraNone = JSON.parse(records[4].writes[0]);
     expect(ultraNone).toEqual(ultraObj);
 
     // Adjacent Nemotron families remain outside the accepted strip scope. Their
     // pre-existing force_nonempty_content rewrite remains.
-    const otherFamily = JSON.parse(records[3].writes[0]);
+    const otherFamily = JSON.parse(records[5].writes[0]);
     expect(otherFamily).toEqual({
       model: "nvidia/nemotron-4-ultra-550b-a55b",
       messages: [{ role: "system", content: "x" }],
@@ -257,14 +266,14 @@ console.log(JSON.stringify(records));
       chat_template_kwargs: { force_nonempty_content: true },
     });
 
-    const superObj = JSON.parse(records[4].writes[0]);
+    const superObj = JSON.parse(records[6].writes[0]);
     expect(superObj).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "system", content: "x" }],
       chat_template_kwargs: { force_nonempty_content: true },
     });
 
-    const nanoBool = JSON.parse(records[5].writes[0]);
+    const nanoBool = JSON.parse(records[7].writes[0]);
     expect(nanoBool).toEqual({
       model: "nvidia/nemotron-3-nano-30b-a3b",
       messages: [{ role: "system", content: "x" }],
@@ -273,7 +282,7 @@ console.log(JSON.stringify(records));
 
     // deepseek-v4-pro is out of the strip scope → top-level thinking preserved;
     // it gets the chat_template_kwargs.thinking rewrite instead.
-    const deepSeek = JSON.parse(records[6].writes[0]);
+    const deepSeek = JSON.parse(records[8].writes[0]);
     expect(deepSeek).toEqual({
       model: "deepseek-ai/deepseek-v4-pro",
       messages: [],
@@ -284,26 +293,26 @@ console.log(JSON.stringify(records));
     // gpt-oss-120b accepts top-level thinking on the endpoint, so no rule
     // matches it and the request passes through completely untouched — proving
     // the strip is not a blanket rewrite.
-    const gptOss = JSON.parse(records[7].writes[0]);
+    const gptOss = JSON.parse(records[9].writes[0]);
     expect(gptOss).toEqual({
       model: "openai/gpt-oss-120b",
       messages: [],
       thinking: { type: "enabled" },
     });
 
-    const compatibleEndpoint = JSON.parse(records[8].writes[0]);
+    const compatibleEndpoint = JSON.parse(records[10].writes[0]);
     expect(compatibleEndpoint.thinking).toEqual({ type: "enabled" });
-    expect(records[8].removed).toContain("x-nemoclaw-upstream-provider");
-
-    const localNim = JSON.parse(records[9].writes[0]);
-    expect(localNim.thinking).toBe(true);
-    expect(records[9].removed).toContain("x-nemoclaw-upstream-provider");
-
-    const switchedToBuild = JSON.parse(records[10].writes[0]);
-    expect(switchedToBuild.thinking).toBeUndefined();
     expect(records[10].removed).toContain("x-nemoclaw-upstream-provider");
 
-    const missingProvider = JSON.parse(records[11].writes[0]);
+    const localNim = JSON.parse(records[11].writes[0]);
+    expect(localNim.thinking).toBe(true);
+    expect(records[11].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const switchedToBuild = JSON.parse(records[12].writes[0]);
+    expect(switchedToBuild.thinking).toBeUndefined();
+    expect(records[12].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const missingProvider = JSON.parse(records[13].writes[0]);
     expect(missingProvider.thinking).toBe(false);
   });
 

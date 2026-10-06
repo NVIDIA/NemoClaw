@@ -126,6 +126,44 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     detail: `probe returned ${httpStatus}`,
   });
 
+  it("uses the native NVIDIA invocation instead of the legacy gateway route", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(503, false),
+      null,
+      { ok: true },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      probed: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
+  });
+
+  it("does not let a healthy legacy gateway mask a failed native NVIDIA request", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      probed: true,
+      failureLabel: "unauthorized",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
+  });
+
   it.each([
     ["openai-completions", "https://inference.local/v1/chat/completions"],
     ["openai-responses", "https://inference.local/v1/responses"],
