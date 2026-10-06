@@ -81,6 +81,15 @@ restore_observability_policy() {
   OBSERVABILITY_POLICY_DIRTY=0
 }
 
+cleanup_sandbox_exec() {
+  local timeout_command
+  timeout_command="$(command -v timeout || command -v gtimeout)" || return 127
+  # Bound the client as well as remote execution: a stalled gateway may never
+  # deliver the remote timeout result. Match the adjacent TUI check's bounds.
+  "$timeout_command" --signal=TERM --kill-after=5s 45s \
+    openshell sandbox exec --name "$SANDBOX_NAME" --timeout 45 -- "$@" </dev/null
+}
+
 cleanup() {
   local exit_status="$?"
   trap - EXIT
@@ -93,10 +102,10 @@ cleanup() {
   # only conversations with our unique exact prompts, even if turn JSON failed.
   local prompt thread deletion_output
   for prompt in ${OBSERVABILITY_PROMPTS[@]+"${OBSERVABILITY_PROMPTS[@]}"}; do
-    if ! thread="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    if ! thread="$(cleanup_sandbox_exec \
       dcode threads list --verbose --limit 20 --json \
       | "$TSX" "$CONTRACT_HELPER" thread-for-prompt "$prompt")" \
-      || ! deletion_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      || ! deletion_output="$(cleanup_sandbox_exec \
         dcode threads delete "$thread" --json)" \
       || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread"; then
       printf '%s: could not remove an observability test conversation\n' "$PREFIX" >&2

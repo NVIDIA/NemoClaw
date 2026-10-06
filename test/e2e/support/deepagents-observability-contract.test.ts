@@ -87,7 +87,7 @@ describe("observability conversation cleanup", () => {
     expect(() => observabilityThreadForPrompt(JSON.stringify(invalid), prompt)).toThrow();
   });
 
-  it.each(["direct", "login", "command-failure"])(
+  it.each(["direct", "login", "command-failure", "list-timeout", "delete-timeout"])(
     "cleans up only its own conversations after %s turn evidence fails",
     (failure) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-cleanup-"));
@@ -98,9 +98,24 @@ describe("observability conversation cleanup", () => {
       try {
         const statePath = path.join(root, "threads.json");
         fs.writeFileSync(statePath, JSON.stringify([benign]));
+        fs.writeFileSync(path.join(root, "deleted"), "");
+        // Exercise the host process boundary with a short fixture clock, without
+        // requiring GNU coreutils on hosts that only run deterministic tests.
+        fs.writeFileSync(
+          path.join(root, "timeout"),
+          `#!${process.execPath}
+const cp = require("node:child_process");
+const [signal, grace, duration, command, ...args] = process.argv.slice(2);
+if (signal !== "--signal=TERM" || grace !== "--kill-after=5s" || duration !== "45s") process.exit(9);
+const result = cp.spawnSync(command, args, { stdio: "inherit", timeout: 200, killSignal: "SIGKILL" });
+process.exit(result.error?.code === "ETIMEDOUT" ? 124 : result.status ?? 1);
+`,
+          { mode: 0o755 },
+        );
         const stub = `#!${process.execPath}
 const fs = require("node:fs"), cp = require("node:child_process");
 let args = process.argv.slice(2);
+if (args[0] === "sandbox" && args.includes("threads") && args.includes("--timeout") && args[args.indexOf("--timeout") + 1] !== "45") process.exit(9);
 if (args[0] === "sandbox") args = args.slice(args.indexOf("--") + 1);
 if (args[0] === "bash") {
   const r = cp.spawnSync("bash", ["--noprofile", "--norc", "-c", args.at(-1)], { env: process.env, stdio: "inherit" });
@@ -110,6 +125,10 @@ if (args[0] === "env") args = args.slice(args.indexOf("dcode"));
 if (args[0] === "dcode") args.shift();
 let threads = JSON.parse(fs.readFileSync(process.env.THREADS_FILE, "utf8"));
 const emit = (command, data) => console.log(JSON.stringify({ schema_version: 1, command, data }));
+if (args[0] === "threads" && process.env.FAILURE === args[1] + "-timeout") {
+  setTimeout(() => process.exit(124), 1500);
+  return;
+}
 if (args[0] === "threads" && args[1] === "list") emit("threads list", threads);
 else if (args[0] === "threads" && args[1] === "delete") {
   const found = threads.some(t => t.thread_id === args[2]);
@@ -123,7 +142,7 @@ else if (args[0] === "threads" && args[1] === "delete") {
   threads.push({ thread_id, initial_prompt: prompt });
   fs.writeFileSync(process.env.THREADS_FILE, JSON.stringify(threads));
   if (process.env.FAILURE === "command-failure") process.exit(1);
-  if (process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
+  if (process.env.FAILURE.endsWith("-timeout") || process.env.FAILURE === (direct ? "direct" : "login")) console.log("malformed turn JSON");
   else emit("non-interactive", { status: "success", exit_code: 0, completion: { thread_id }, response: direct ? "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL" : "NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL" });
 } else process.exit(9);
 `;
@@ -149,8 +168,10 @@ else if (args[0] === "threads" && args[1] === "delete") {
             script.indexOf(ready) + ready.length,
             script.indexOf('tool_trace_output="$(run_deterministic_tool_trace)"'),
           );
+        const started = performance.now();
         const result = spawnSync("bash", ["-c", driver], {
           encoding: "utf8",
+          timeout: 3000,
           env: {
             PATH: `${root}:${process.env.PATH}`,
             REPO: process.cwd(),
@@ -160,12 +181,29 @@ else if (args[0] === "threads" && args[1] === "delete") {
             FAILURE: failure,
           },
         });
+        expect(result.error).toBeUndefined();
+        expect(performance.now() - started).toBeLessThan(
+          failure.endsWith("-timeout") ? 1200 : 3000,
+        );
         expect(result.status, result.stdout + result.stderr).toBe(1);
-        expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toEqual([benign]);
-        expect(fs.readFileSync(path.join(root, "deleted"), "utf8").trim().split("\n")).toEqual(
-          failure === "login"
-            ? ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
-            : ["11111111-1111-1111-1111-111111111111"],
+        const remaining = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        expect(
+          remaining.filter(
+            (thread: { initial_prompt: string }) => thread.initial_prompt === "unrelated",
+          ),
+        ).toEqual([benign]);
+        expect(remaining.length).toBe(failure.endsWith("-timeout") ? 2 : 1);
+        expect(result.stderr.includes("could not remove an observability test conversation")).toBe(
+          failure.endsWith("-timeout"),
+        );
+        expect(
+          fs.readFileSync(path.join(root, "deleted"), "utf8").trim().split("\n").filter(Boolean),
+        ).toEqual(
+          failure.endsWith("-timeout")
+            ? []
+            : failure === "login"
+              ? ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+              : ["11111111-1111-1111-1111-111111111111"],
         );
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
