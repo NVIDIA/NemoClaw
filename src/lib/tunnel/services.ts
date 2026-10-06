@@ -153,16 +153,27 @@ export function readWindowsProcessCommandLine(
   }
 }
 
+/** Read a process identity through `ps` where `/proc` is unavailable, such as macOS. */
+export function readPsProcessCommandLine(
+  pid: number,
+  capture: CommandLineCapture = captureCommandLine,
+): string | null {
+  // BSD ps truncates comm to 16 characters unless it is the last column.
+  try {
+    const executable = capture("ps", ["-p", String(pid), "-o", "comm="]).trim();
+    const args = capture("ps", ["-p", String(pid), "-o", "args="]).trim();
+    return executable && args ? `${executable} ${args}` : null;
+  } catch {
+    return null;
+  }
+}
+
 function readProcessCommandLine(pid: number): string | null {
   if (process.platform === "win32") return readWindowsProcessCommandLine(pid);
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
-    try {
-      return captureCommandLine("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="]);
-    } catch {
-      return null;
-    }
+    return readPsProcessCommandLine(pid);
   }
 }
 

@@ -28,6 +28,7 @@ import {
   getTunnelUrl,
   type ProcessControl,
   readCloudflaredState,
+  readPsProcessCommandLine,
   readWindowsProcessCommandLine,
   signalCloudflaredForPlatform,
   showStatus,
@@ -656,6 +657,48 @@ describe("readCloudflaredState", () => {
       }),
     ).toBeNull();
   });
+
+  // BSD ps cuts comm to 16 characters unless it is the last column.
+  const bsdPs =
+    (executable: string, args: string) =>
+    (_command: string, psArgs: readonly string[]): string => {
+      const columns = psArgs.filter((arg) => arg.endsWith("="));
+      const values = columns.map((column, index) =>
+        column !== "comm="
+          ? args
+          : index < columns.length - 1
+            ? executable.slice(0, 16)
+            : executable,
+      );
+      return `${values.join(" ")}\n`;
+    };
+
+  it.each([
+    ["cloudflared at a long path", "/opt/homebrew/bin/cloudflared", "running"],
+    ["another program at a long path", "/opt/homebrew/bin/limactl", "stale-pid-process"],
+  ])("identifies %s through BSD ps", (_label, executable, kind) => {
+    const commandLine = readPsProcessCommandLine(
+      4242,
+      bsdPs(executable, `${executable} tunnel --url http://127.0.0.1:18789`),
+    );
+
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => commandLine,
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(state).toEqual({ kind, pid: 4242 });
+  });
+
+  it("fails closed when ps cannot inspect the process", () => {
+    expect(
+      readPsProcessCommandLine(4242, () => {
+        throw new Error("no such process");
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("stopAll", () => {
@@ -980,14 +1023,20 @@ describe("stopAll", () => {
     "signals a verified cloudflared process through a macOS audit token",
     () => {
       const executable = join(pidDir, "cloudflared");
-      copyFileSync("/bin/sleep", executable);
+      // Recent macOS kills a copied system binary at launch, so copy Node instead.
+      copyFileSync(process.execPath, executable);
       chmodSync(executable, 0o700);
-      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
-      const pid =
-        subprocess.pid ??
-        (() => {
-          throw new Error("cloudflared test process has no PID");
-        })();
+      // Start it detached like `tunnel start`, so launchd rather than this
+      // synchronous test process reaps it after the signal.
+      const pid = Number(
+        childProcess
+          .execFileSync(
+            "/bin/sh",
+            ["-c", `"$0" -e 'setTimeout(() => {}, 20000)' >/dev/null 2>&1 & echo $!`, executable],
+            { encoding: "utf-8" },
+          )
+          .trim(),
+      );
       writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
