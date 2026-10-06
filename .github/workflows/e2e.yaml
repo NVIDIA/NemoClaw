@@ -128,6 +128,7 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
@@ -906,6 +907,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
@@ -1418,6 +1420,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
@@ -2637,6 +2640,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
@@ -4107,6 +4111,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             scripts/install-openshell.sh
             tools/e2e/openshell-dev-artifact.mts
