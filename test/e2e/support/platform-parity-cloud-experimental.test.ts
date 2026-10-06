@@ -111,7 +111,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     }
   });
 
-  it("keeps live DCode config inspection and mutation-boundary coverage in the fresh re-onboard check", () => {
+  it("keeps complete native DCode config and mutation-boundary coverage in the fresh re-onboard check", () => {
     const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
 
     expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
@@ -121,6 +121,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
+    expect(script).toContain('NEMOCLAW_COMPAT_MODEL="$model_a"');
+    expect(script).toContain('NEMOCLAW_MODEL="$model_a"');
+    expect(script).toContain('config_sha_restored" = "$config_sha_before');
+    expect(script).toContain('config["agents"] == {"startup_command": "discard"}');
+    expect(script).toContain('config["hooks"] == {"post_start": "discard"}');
+    expect(script).not.toContain("select-authorized-chat-model.mts");
     expect(script).toContain("executePrivilegedSandboxCommand");
     expect(script).toContain("resolvePrivilegedSandboxTarget");
     expect(script).not.toMatch(/\bdocker (?:exec|ps)\b/u);
@@ -490,6 +496,83 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
     const result = spawnSync("bash", ["-n", dcodeApprovalCheck], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
+    const script = fs.readFileSync(dcodeApprovalCheck, "utf8");
+    expect(script).toContain("trap restore_export_baseline_on_exit EXIT");
+    expect(script).toContain("rebuild_named_sandbox disabled --no-observability");
+    expect(script).toContain('export_baseline_registry_state)" = "disabled:disabled"');
+  });
+
+  it("restores the DCode export baseline and preserves the triggering failure status", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-baseline-recovery-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const testDriver = path.join(tempDir, "restore-export-baseline");
+    const callLog = path.join(tempDir, "calls.log");
+    const registryPath = path.join(tempDir, ".nemoclaw", "sandboxes.json");
+    const disabledRegistry = JSON.stringify({
+      sandboxes: {
+        "deepagents-sandbox": {
+          agent: "langchain-deepagents-code",
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        },
+      },
+    });
+    try {
+      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+      fs.writeFileSync(
+        registryPath,
+        JSON.stringify({
+          sandboxes: {
+            "deepagents-sandbox": {
+              agent: "langchain-deepagents-code",
+              dcodeAutoApprovalMode: "thread-opt-in",
+              observabilityEnabled: true,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          'printf \'%s\\n\' "$*" >>"$MOCK_CALL_LOG"',
+          `printf '%s\\n' '${disabledRegistry}' >"$MOCK_REGISTRY_FILE"`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeDcodeApprovalTestDriver(
+        testDriver,
+        `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+EXPORT_BASELINE_RECOVERY_ARMED=1
+cleanup_probe_files() { :; }
+trap restore_export_baseline_on_exit EXIT
+exit 37
+`,
+      );
+
+      const result = spawnSync("bash", [testDriver, mockCli], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: tempDir,
+          MOCK_CALL_LOG: callLog,
+          MOCK_REGISTRY_FILE: registryPath,
+        },
+      });
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(37);
+      expect(fs.readFileSync(callLog, "utf8").trim()).toBe(
+        "deepagents-sandbox rebuild --yes --dcode-auto-approval disabled --no-observability",
+      );
+      expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual(
+        JSON.parse(disabledRegistry),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
   });
 
   it.each([
@@ -523,6 +606,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
           { mode: 0o755 },
         );
 
+        // The shell program is a fixed literal; repository and temporary-file paths are
+        // positional arguments and are expanded only inside double quotes.
+        // lgtm[js/shell-command-injection-from-environment]
         const result = spawnSync(
           "/bin/bash",
           [
@@ -715,9 +801,9 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
         "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
         "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
         "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       ]);
 
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
@@ -736,6 +822,11 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       ),
     ).toBe(180_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+      ),
+    ).toBe(25 * 60_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",

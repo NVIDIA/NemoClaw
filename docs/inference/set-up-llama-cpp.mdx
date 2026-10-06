@@ -31,10 +31,17 @@ Use this path when you operate `llama-server` and want NemoClaw to register its 
 The server must satisfy all of these requirements:
 
 - Listen over HTTP on `127.0.0.1:8081` and expose its OpenAI-compatible API under `/v1`.
+- Make that authenticated API reachable from the sandbox network at `host.openshell.internal:8081`.
 - Require the same native bearer key supplied through `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`.
 - Expose bounded native llama.cpp evidence through `/v1/models`, `/health`, `/props`, and either `/metrics` or the native metrics-not-supported response.
 - Report a stable, non-path served model alias.
 - Return native llama.cpp model metadata without conflicting model entries.
+
+On native Docker, publishing only `-p 127.0.0.1:8081:8081` can leave the sandbox route unreachable.
+Keep the loopback publication and also publish `-p <Docker-gateway-IP>:8081:8081` for the OpenShell network.
+For a host process, configure its listener or forwarding so both addresses work.
+Retain native API-key authentication and restrict non-loopback access to the sandbox network.
+Onboarding stops when the existing network probe confirms that the attached server cannot be reached.
 
 Configure the server with its own supported mechanism before you run NemoClaw.
 Start the server with an explicit served model alias.
@@ -123,7 +130,7 @@ Before you start, confirm these prerequisites:
 
 For Windows WSL N1x, also confirm these requirements:
 
-- Use Arm64 WSL with one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
+- Use Arm64 WSL with one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
 - Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of GPU memory.
@@ -303,7 +310,8 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 
 Use the same subnet and gateway IP address that appeared in the original command.
 
-If onboarding stops, rerun the same provider and recipe selection.
+If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
+Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.

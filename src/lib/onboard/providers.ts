@@ -22,6 +22,7 @@ const {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
+const { isProviderKeyCredentialCandidate } = require("../inference/provider-key/contract");
 const {
   matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
@@ -31,6 +32,7 @@ const {
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   NON_INTERACTIVE_PROVIDER_VALID_VALUES,
+  getRemoteProviderConfigForName,
   normalizeNonInteractiveProviderKey,
 } = require("./inference-providers/provider-selection-keys");
 const { HERMES_PROVIDER_NAME } = require("./inference-providers/hermes-provider-identity");
@@ -54,14 +56,6 @@ const PROVIDER_MODEL_ENV = "NEMOCLAW_PROVIDER_MODEL";
 // provider/namespace/model convention. This endpoint is staged as a custom
 // OpenAI-compatible provider, not as the public build.nvidia.com provider.
 const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const PROVIDER_KEY_ROUTE_VALUES = new Set(
-  [
-    "inference",
-    ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
-    ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
-  ].map((value) => value.toLowerCase()),
-);
-
 const REMOTE_PROVIDER_CONFIG = {
   build: {
     label: "NVIDIA Endpoints",
@@ -184,6 +178,27 @@ const OLLAMA_PROXY_CREDENTIAL_ENV = OLLAMA_LOCAL_CREDENTIAL_ENV;
 
 const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
+/** Return the OpenShell provider type owned by onboarding metadata. */
+function resolveInferenceProviderType(
+  providerName,
+  preferredInferenceApi = null,
+  remoteProviderConfig = REMOTE_PROVIDER_CONFIG,
+) {
+  const config = getRemoteProviderConfigForName(providerName, remoteProviderConfig);
+  // An OpenAI-only agent can intentionally use the OpenAI surface of a custom
+  // Anthropic endpoint. This is the one onboarding path where the persisted
+  // API family overrides the provider's default metadata.
+  if (
+    providerName === "compatible-anthropic-endpoint" &&
+    preferredInferenceApi === "openai-completions"
+  ) {
+    return "openai";
+  }
+  if (config) return config.providerType;
+  if (preferredInferenceApi === "anthropic-messages") return "anthropic";
+  return "openai";
+}
+
 // ── Provider label ───────────────────────────────────────────────
 
 /**
@@ -262,7 +277,7 @@ function stageHostedInferenceSourceSecretEnv() {
     // the hosted credential through the provider-key slot; selector-like
     // values remain source-of-truth provider choices and are rejected by the
     // invariant tied to NON_INTERACTIVE_PROVIDER_* below.
-    providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
+    providerKeySource = isProviderKeyCredentialCandidate(rawProviderKeySource)
       ? rawProviderKeySource
       : "";
   }
@@ -306,13 +321,6 @@ function stageHostedInferenceSourceSecretEnv() {
   process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
   return true;
 }
-
-function isHostedInferenceProviderKeyCredentialCandidate(value) {
-  if (!value) return false;
-  return !PROVIDER_KEY_ROUTE_VALUES.has(value.trim().toLowerCase());
-}
-
-const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialCandidate;
 
 /**
  * Resolve the requested model from the preferred env var or its compatibility fallback.
@@ -573,6 +581,9 @@ module.exports = {
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
+  getRemoteProviderConfigForName: (providerName, remoteProviderConfig = REMOTE_PROVIDER_CONFIG) =>
+    getRemoteProviderConfigForName(providerName, remoteProviderConfig),
+  resolveInferenceProviderType,
   getProviderLabel,
   getEffectiveProviderName,
   stageHostedInferenceSourceSecretEnv,

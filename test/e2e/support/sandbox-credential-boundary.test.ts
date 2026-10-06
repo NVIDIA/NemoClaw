@@ -88,6 +88,17 @@ describe("sandbox credential scan", () => {
     expect(scan(root)).toBe("");
   });
 
+  it("scans OpenClaw authentication state without a claimed cross-principal exemption", () => {
+    const root = createScanRoot();
+    const leakedFile = writeFixture(
+      root,
+      "openclaw-state/state/openclaw.sqlite",
+      "nvapi-nemoclaw-auth-state-credential-canary\n",
+    );
+
+    expect(scan(root).trim()).toBe(leakedFile);
+  });
+
   it("skips a sandbox state root that does not exist", () => {
     const root = createScanRoot();
 

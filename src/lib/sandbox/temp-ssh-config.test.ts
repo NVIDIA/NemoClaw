@@ -6,7 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTempSshConfig } from "./temp-ssh-config.js";
+import {
+  createTempSshConfig,
+  runWithTempSshConfigCleanup,
+  runWithTempSshConfigCleanupAsync,
+  TempSshConfigCleanupError,
+  TempSshConfigOperationCleanupError,
+} from "./temp-ssh-config.js";
 
 describe("createTempSshConfig", () => {
   let tmpRoot: string;
@@ -46,5 +52,79 @@ describe("createTempSshConfig", () => {
     );
 
     expect(fs.readdirSync(tmpRoot)).toEqual([]);
+  });
+
+  it("surfaces a failed temporary SSH configuration cleanup (#10947)", () => {
+    const temp = createTempSshConfig("Host openshell-alpha\n", "nemoclaw-ssh-cleanup-");
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("remove failed");
+    });
+
+    expect(() => temp.cleanup()).toThrow(/failed to remove temporary OpenShell SSH configuration/u);
+    expect(fs.existsSync(temp.file)).toBe(true);
+
+    remove.mockRestore();
+    temp.cleanup();
+  });
+
+  it("reports a retained directory when creation and cleanup both fail (#10947)", () => {
+    vi.spyOn(fs, "writeFileSync").mockImplementationOnce(() => {
+      throw new Error("write failed");
+    });
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("remove failed");
+    });
+
+    let failure: unknown;
+    try {
+      createTempSshConfig("Host openshell-alpha\n", "nemoclaw-ssh-create-cleanup-");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(TempSshConfigCleanupError);
+    expect(failure).toMatchObject({ dir: expect.stringContaining("nemoclaw-ssh-create-cleanup-") });
+    expect((failure as Error).message).toMatch(
+      /failed to remove temporary OpenShell SSH configuration/u,
+    );
+
+    remove.mockRestore();
+  });
+
+  it.each([
+    {
+      variant: "synchronous",
+      run: (temp: ReturnType<typeof createTempSshConfig>, operation: () => never) =>
+        runWithTempSshConfigCleanup(temp, operation),
+    },
+    {
+      variant: "asynchronous",
+      run: (temp: ReturnType<typeof createTempSshConfig>, operation: () => never) =>
+        runWithTempSshConfigCleanupAsync(temp, async () => operation()),
+    },
+  ])("preserves $variant operation and cleanup failures in order (#10947)", async ({ run }) => {
+    const temp = createTempSshConfig("Host openshell-alpha\n", "nemoclaw-ssh-combined-");
+    const operationError = new Error("operation failed");
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("remove failed");
+    });
+
+    let failure: unknown;
+    try {
+      await run(temp, () => {
+        throw operationError;
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(TempSshConfigOperationCleanupError);
+    expect((failure as AggregateError).errors).toEqual([
+      operationError,
+      expect.objectContaining({ name: "TempSshConfigCleanupError", dir: temp.dir }),
+    ]);
+
+    remove.mockRestore();
+    temp.cleanup();
   });
 });

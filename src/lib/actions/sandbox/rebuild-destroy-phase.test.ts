@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
   waitUntilAsync: vi.fn(),
-  warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
       _args: string[],
@@ -65,10 +64,6 @@ vi.mock("../../state/registry", async (importOriginal) => ({
 
 vi.mock("./destroy", () => ({
   removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
-}));
-
-vi.mock("./rebuild-flow-helpers", () => ({
-  warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
 }));
 
 vi.mock("./forward-recovery", () => ({
@@ -150,6 +145,39 @@ describe("rebuild destroy phase", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
+
+  it.each([null, "MCP attachment could not be restored"])(
+    "stops before sandbox deletion on a messaging conflict and reports MCP recovery failure %j",
+    async (recoveryFailure) => {
+      mocks.reattachMcpAfterDeleteFailure.mockResolvedValue(recoveryFailure);
+      const recheck = vi.fn().mockRejectedValue(new Error("Teams webhook port became occupied"));
+      const recreateJournal = stubRecreateJournal();
+      const onDeleted = vi.fn();
+      const input = {
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        recheckMessagingConflicts: recheck,
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: (message: string): never => {
+          throw new Error(message);
+        },
+        onDeleted,
+      };
+
+      await expect(runRebuildDestroyPhase(input)).rejects.toThrow(
+        "Failed to revalidate rebuild before sandbox deletion: Teams webhook port became occupied" +
+          (recoveryFailure ? ` MCP provider recovery also failed: ${recoveryFailure}` : ""),
+      );
+      expect(recheck).toHaveBeenCalledWith(undefined, expect.any(Function));
+      expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+      expect(recreateJournal.beginDelete).not.toHaveBeenCalled();
+      expectNoSandboxDelete(mocks.runOpenshell);
+      expect(onDeleted).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
     const secret = `nvapi-${"a".repeat(32)}`;
@@ -324,7 +352,7 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("pins deletion and the delete-edge user-file probe when ambient selection changes (#10514)", async () => {
+  it("pins deletion when ambient selection changes without probing a file allowlist (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
@@ -378,11 +406,6 @@ describe("rebuild destroy phase", () => {
           OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
         }),
       }),
-    );
-    expect(mocks.warnUnpreservedUserManagedFiles).toHaveBeenCalledWith(
-      "alpha",
-      expect.any(Function),
-      runtimeSelection,
     );
     const deleteOptions = mocks.runOpenshell.mock.calls.find(
       ([args]) => args[0] === "sandbox" && args[1] === "delete",
@@ -515,9 +538,7 @@ describe("rebuild destroy phase", () => {
         bail,
         onDeleted: vi.fn(),
       }),
-    ).rejects.toThrow(
-      "Failed to revalidate MCP recovery before sandbox deletion: live policy drifted",
-    );
+    ).rejects.toThrow("Failed to revalidate rebuild before sandbox deletion: live policy drifted");
 
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
@@ -864,7 +885,7 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Object),
     );
     expect(onDeleted).not.toHaveBeenCalled();
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
@@ -1114,10 +1135,14 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
+      prepareSourceForDelete: vi.fn(async () => {
+        order.push("source:retired");
+        return { ok: true } as const;
+      }),
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+    expect(order).toEqual(["journal:deleting", "source:retired", "openshell:delete"]);
   });
 
   it("preserves recovery state when ForwardTcp ports remain after deletion", async () => {

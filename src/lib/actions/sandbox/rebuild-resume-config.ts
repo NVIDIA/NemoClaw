@@ -21,6 +21,7 @@ import {
   assessRebuildAmbientEnv,
   assessRebuildInferencePreflight,
   canonicalCustomEndpointUrl,
+  getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
 } from "./rebuild-resume-preflight";
 
@@ -155,7 +156,7 @@ export function prepareRebuildResumeConfig(
   }
   const compatibleEndpointReasoning = trustedSelection.compatibleEndpointReasoning;
   const compatibleEndpointReasoningEffort = trustedSelection.compatibleEndpointReasoningEffort;
-  const { credentialEnv, rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
+  const { rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
     assessRebuildInferencePreflight({
       sandboxName,
       sessionMatchesSandbox,
@@ -230,6 +231,11 @@ export function prepareRebuildResumeConfig(
     );
     return null;
   }
+  const credentialEnv = getRebuildCredentialEnvFromRegistry(
+    trustedSelection.provider,
+    trustedSelection.credentialEnv,
+    endpointUrl,
+  );
 
   return {
     agent: rebuildAgent,

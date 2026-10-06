@@ -27,9 +27,13 @@ const PREVIOUS_ACTION_DECLARATION_MAP = "dist/lib/actions/deploy.d.ts.map";
 const PREVIOUS_IMPLEMENTATION_ARTIFACT = "dist/lib/deploy/index.js";
 const PREVIOUS_SHIELDS_ROOT_ARTIFACT = "dist/lib/shields/index.js";
 const PREVIOUS_SHIELDS_PLUGIN_ARTIFACT = "dist/commands/shields-status.js";
+const RETIRED_ROUTE_HELPER_ARTIFACT = "dist/lib/inference/gateway/command-args.js";
+const RETIRED_ROUTE_HELPER_SOURCE_MAP = "dist/lib/inference/gateway/command-args.js.map";
+const RETIRED_ROUTE_HELPER_DECLARATION = "dist/lib/inference/gateway/command-args.d.ts";
+const RETIRED_ROUTE_HELPER_DECLARATION_MAP = "dist/lib/inference/gateway/command-args.d.ts.map";
 
 describe("CLI source-checkout upgrade build", () => {
-  it("prunes compiled deploy and Shields artifacts before the normal build (#10572, #10696)", () => {
+  it("prunes retired CLI artifacts before the normal build (#9809, #10572, #10696)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-cli-upgrade-build-"));
     try {
       copyFileSync(
@@ -115,10 +119,24 @@ describe("CLI source-checkout upgrade build", () => {
       );
       const previousImplementationPath = path.join(fixtureRoot, PREVIOUS_IMPLEMENTATION_ARTIFACT);
       const previousShieldsRootPath = path.join(fixtureRoot, PREVIOUS_SHIELDS_ROOT_ARTIFACT);
+      const retiredRouteHelperArtifactPath = path.join(fixtureRoot, RETIRED_ROUTE_HELPER_ARTIFACT);
+      const retiredRouteHelperSourceMapPath = path.join(
+        fixtureRoot,
+        RETIRED_ROUTE_HELPER_SOURCE_MAP,
+      );
+      const retiredRouteHelperDeclarationPath = path.join(
+        fixtureRoot,
+        RETIRED_ROUTE_HELPER_DECLARATION,
+      );
+      const retiredRouteHelperDeclarationMapPath = path.join(
+        fixtureRoot,
+        RETIRED_ROUTE_HELPER_DECLARATION_MAP,
+      );
       mkdirSync(path.dirname(previousCommandPath), { recursive: true });
       mkdirSync(path.dirname(previousActionPath), { recursive: true });
       mkdirSync(path.dirname(previousImplementationPath), { recursive: true });
       mkdirSync(path.dirname(previousShieldsRootPath), { recursive: true });
+      mkdirSync(path.dirname(retiredRouteHelperArtifactPath), { recursive: true });
       writeFileSync(previousCommandPath, "module.exports = {};\n");
       writeFileSync(previousCommandDeclarationPath, "export {};\n");
       writeFileSync(previousCommandSourceMapPath, "{}\n");
@@ -126,6 +144,10 @@ describe("CLI source-checkout upgrade build", () => {
       writeFileSync(previousActionDeclarationMapPath, "{}\n");
       writeFileSync(previousImplementationPath, "module.exports = {};\n");
       writeFileSync(previousShieldsRootPath, "module.exports = {};\n");
+      writeFileSync(retiredRouteHelperArtifactPath, "stale route helper\n");
+      writeFileSync(retiredRouteHelperSourceMapPath, "stale route helper\n");
+      writeFileSync(retiredRouteHelperDeclarationPath, "stale route helper\n");
+      writeFileSync(retiredRouteHelperDeclarationMapPath, "stale route helper\n");
 
       const staleMetadataPath = path.join(
         fixtureRoot,
@@ -166,6 +188,17 @@ describe("CLI source-checkout upgrade build", () => {
       );
       expect(existsSync(previousImplementationPath), PREVIOUS_IMPLEMENTATION_ARTIFACT).toBe(false);
       expect(existsSync(previousShieldsRootPath), PREVIOUS_SHIELDS_ROOT_ARTIFACT).toBe(false);
+      expect(existsSync(retiredRouteHelperArtifactPath), RETIRED_ROUTE_HELPER_ARTIFACT).toBe(false);
+      expect(existsSync(retiredRouteHelperSourceMapPath), RETIRED_ROUTE_HELPER_SOURCE_MAP).toBe(
+        false,
+      );
+      expect(existsSync(retiredRouteHelperDeclarationPath), RETIRED_ROUTE_HELPER_DECLARATION).toBe(
+        false,
+      );
+      expect(
+        existsSync(retiredRouteHelperDeclarationMapPath),
+        RETIRED_ROUTE_HELPER_DECLARATION_MAP,
+      ).toBe(false);
       const routing = spawnSync(
         process.execPath,
         [

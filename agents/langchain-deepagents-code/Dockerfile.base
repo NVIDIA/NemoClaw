@@ -23,7 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u5 \
         git=1:2.47.3-0+deb13u1 \
-        libssl-dev=3.5.7-1~deb13u2 \
+        libssl-dev=3.5.7-1~deb13u3 \
+        libssl3t64=3.5.7-1~deb13u3 \
         openssh-server=1:10.0p1-7+deb13u4 \
         xz-utils=5.8.1-1+deb13u1 \
         zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
@@ -97,7 +98,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b3 \
-        libssl3t64=3.5.7-1~deb13u2 \
+        libssl3t64=3.5.7-1~deb13u3 \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b12 \
@@ -193,7 +194,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
-    && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2" \
+    && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3" \
     && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
@@ -228,7 +229,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u2" \
+        "libssl3t64=3.5.7-1~deb13u3" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -344,13 +345,18 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 444 /etc/bash.bashrc
 
 COPY agents/langchain-deepagents-code/requirements.lock /tmp/deepagents-code-requirements.lock
+COPY agents/langchain-deepagents-code/validate-runtime-contract.py /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py
 
 RUN python3 -m venv --copies "$VIRTUAL_ENV" \
     && "$VIRTUAL_ENV/bin/pip3" install --no-cache-dir --require-hashes \
         -r /tmp/deepagents-code-requirements.lock \
     && "$VIRTUAL_ENV/bin/pip3" check \
     && "$VIRTUAL_ENV/bin/python3" -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.55', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+    && chown root:root /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
+    && chmod 0444 /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
+    && "$VIRTUAL_ENV/bin/python3" -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
+        --requirements-lock /tmp/deepagents-code-requirements.lock \
     && ln -sf "$VIRTUAL_ENV/bin/dcode" /usr/local/bin/dcode \
     && ln -sf "$VIRTUAL_ENV/bin/deepagents-code" /usr/local/bin/deepagents-code \
     && rm -f /tmp/deepagents-code-requirements.lock \

@@ -23,6 +23,7 @@ export const PREPARE_COMPILED_ARTIFACT_ACTION =
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
 const PREINSTALLED_E2E_JOBS = new Set([
+  "dgx-station-express",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
 ]);
@@ -224,7 +225,14 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} must check out the repository before prepare-e2e`);
     }
     const authIndex = jobSteps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-    if (authIndex >= 0 && prepareIndex <= authIndex) {
+    // The protected multiarch job intentionally installs with --ignore-scripts,
+    // builds its candidate boundary, and only then receives Docker credentials.
+    // Its exact post-build auth position is owned by the managed-image validator.
+    if (
+      jobName !== "managed-image-multiarch-startup" &&
+      authIndex >= 0 &&
+      prepareIndex <= authIndex
+    ) {
       errors.push(`${jobName} must authenticate to Docker Hub before prepare-e2e`);
     }
   }

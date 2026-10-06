@@ -60,8 +60,93 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install verified Docker Buildx
+      id: verified-buildx
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+        BUILDX_VERSION: 0.37.1
+        BUILDX_LINUX_AMD64_SHA256: 9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b
+        BUILDX_LINUX_ARM64_SHA256: e5cc9fe3bbff5cbc91230981f7860e06076110730a2db997082652199042a1f2
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS:-}:${RUNNER_ARCH:-}:$ARCH" in
+          Linux:X64:amd64)
+            buildx_arch="amd64"
+            expected_sha="$BUILDX_LINUX_AMD64_SHA256"
+            ;;
+          Linux:ARM64:arm64)
+            buildx_arch="arm64"
+            expected_sha="$BUILDX_LINUX_ARM64_SHA256"
+            ;;
+          *)
+            echo "ERROR: Docker Buildx has no reviewed artifact for this runner and target architecture." >&2
+            exit 1
+            ;;
+        esac
+        if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Docker Buildx artifact integrity pin is missing or invalid." >&2
+          exit 1
+        fi
+        asset="buildx-v${BUILDX_VERSION}.linux-${buildx_arch}"
+        download="$(mktemp "$RUNNER_TEMP/${asset}.XXXXXX")"
+        trap 'rm -f "$download"' EXIT
+        curl \
+          --proto '=https' \
+          --tlsv1.2 \
+          --location \
+          --fail \
+          --silent \
+          --show-error \
+          --output "$download" \
+          "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/${asset}"
+        if ! printf '%s  %s\n' "$expected_sha" "$download" | sha256sum --check --strict; then
+          echo "ERROR: Docker Buildx artifact checksum does not match the reviewed release." >&2
+          exit 1
+        fi
+        docker_config="${DOCKER_CONFIG:-$HOME/.docker}"
+        install -d -m 0700 "$docker_config/cli-plugins"
+        install -m 0755 "$download" "$docker_config/cli-plugins/docker-buildx"
+        installed_version="$(docker buildx version)"
+        read -r installed_product installed_release _ <<<"$installed_version"
+        if [ "$installed_product" != "github.com/docker/buildx" ] || \
+          [ "$installed_release" != "v${BUILDX_VERSION}" ]; then
+          echo "ERROR: Docker Buildx did not select the reviewed v${BUILDX_VERSION} artifact." >&2
+          exit 1
+        fi
+        printf 'sha256=%s\n' "$expected_sha" >> "$GITHUB_OUTPUT"
+        printf 'version=%s\n' "$BUILDX_VERSION" >> "$GITHUB_OUTPUT"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+    - name: Revalidate selected Docker Buildx
+      shell: bash
+      env:
+        BUILDX_VERSION: ${{ steps.verified-buildx.outputs.version }}
+        EXPECTED_SHA: ${{ steps.verified-buildx.outputs.sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Docker Buildx post-setup integrity pin is missing or invalid." >&2
+          exit 1
+        fi
+        plugin="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
+        if [ ! -f "$plugin" ] || [ -L "$plugin" ]; then
+          echo "ERROR: Docker Buildx post-setup plugin is missing or unsafe." >&2
+          exit 1
+        fi
+        if ! printf '%s  %s\n' "$EXPECTED_SHA" "$plugin" | sha256sum --check --strict; then
+          echo "ERROR: Docker Buildx post-setup checksum differs from the reviewed release." >&2
+          exit 1
+        fi
+        installed_version="$(docker buildx version)"
+        read -r installed_product installed_release _ <<<"$installed_version"
+        if [ "$installed_product" != "github.com/docker/buildx" ] || \
+          [ "$installed_release" != "v${BUILDX_VERSION}" ]; then
+          echo "ERROR: Docker Buildx post-setup selection differs from the reviewed release." >&2
+          exit 1
+        fi
 
     - name: Log in to GHCR
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -115,8 +200,314 @@ runs:
           printf 'audit_build_args<<EOF\n%s\nEOF\n' "$audit_build_args" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Build Deep Agents Code platform candidate
+      id: dcode-candidate
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platform }}
+        provenance: mode=min
+        sbom: false
+        tags: nemoclaw-dcode-base-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        outputs: type=oci,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
+        cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
+
+    - name: Bind Deep Agents Code local candidate to OCI layout
+      id: dcode-candidate-identity
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+        OCI_ARCHIVE: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
+        OCI_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-oci
+        VALIDATION_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-validation
+      run: |
+        set -euo pipefail
+        install -d -m 0700 "$OCI_LAYOUT" "$VALIDATION_LAYOUT"
+        tar --extract --file "$OCI_ARCHIVE" --directory "$OCI_LAYOUT"
+        root_index="$OCI_LAYOUT/index.json"
+        if [ ! -f "$root_index" ] || [ -L "$root_index" ]; then
+          echo "ERROR: Deep Agents Code candidate OCI root index is missing or unsafe." >&2
+          exit 1
+        fi
+        source_descriptor="$(
+          jq -cer '
+            if .schemaVersion == 2
+              and .mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests | type == "array" and length == 1)
+              and .manifests[0].mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests[0].digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.manifests[0].size | type == "number" and . > 0 and floor == .)
+            then .manifests[0]
+            else error("expected one provenance-wrapped source index")
+            end
+          ' "$root_index"
+        )"
+        source_digest="$(jq -r '.digest' <<<"$source_descriptor")"
+        source_size="$(jq -r '.size' <<<"$source_descriptor")"
+        source_index="$OCI_LAYOUT/blobs/sha256/${source_digest#sha256:}"
+        if [ ! -f "$source_index" ] || [ -L "$source_index" ]; then
+          echo "ERROR: Deep Agents Code candidate source index is missing or unsafe." >&2
+          exit 1
+        fi
+        actual_source_digest="sha256:$(sha256sum "$source_index" | cut -d' ' -f1)"
+        actual_source_size="$(wc -c < "$source_index" | tr -d '[:space:]')"
+        if [ "$actual_source_digest" != "$source_digest" ] || [ "$actual_source_size" != "$source_size" ]; then
+          echo "ERROR: Deep Agents Code candidate source index descriptor does not match its blob." >&2
+          exit 1
+        fi
+        if ! jq -e --arg arch "$ARCH" '
+          (.manifests | map(select(
+            .platform.os == "linux"
+            and .platform.architecture == $arch
+            and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+            and (.digest | test("^sha256:[0-9a-f]{64}$"))
+            and (.size | type == "number" and . > 0 and floor == .)
+          ))) as $workloads
+          | .schemaVersion == 2
+          and .mediaType == "application/vnd.oci.image.index.v1+json"
+          and (.manifests | type == "array" and length == 2)
+          and ($workloads | length) == 1
+          and ([
+            .manifests[]
+            | select(
+                .platform.os == "unknown"
+                and .platform.architecture == "unknown"
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.digest | test("^sha256:[0-9a-f]{64}$"))
+                and (.size | type == "number" and . > 0 and floor == .)
+                and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                and .annotations["vnd.docker.reference.digest"] == $workloads[0].digest
+              )
+          ] | length) == 1
+        ' "$source_index" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate source index is not one workload plus linked provenance." >&2
+          exit 1
+        fi
+        workload_descriptor="$(
+          jq -cer --arg arch "$ARCH" '
+            .manifests[]
+            | select(.platform.os == "linux" and .platform.architecture == $arch)
+          ' "$source_index"
+        )"
+        workload_digest="$(jq -r '.digest' <<<"$workload_descriptor")"
+        workload_size="$(jq -r '.size' <<<"$workload_descriptor")"
+        workload_manifest="$OCI_LAYOUT/blobs/sha256/${workload_digest#sha256:}"
+        if [ ! -f "$workload_manifest" ] || [ -L "$workload_manifest" ]; then
+          echo "ERROR: Deep Agents Code candidate workload manifest is missing or unsafe." >&2
+          exit 1
+        fi
+        actual_workload_digest="sha256:$(sha256sum "$workload_manifest" | cut -d' ' -f1)"
+        actual_workload_size="$(wc -c < "$workload_manifest" | tr -d '[:space:]')"
+        if [ "$actual_workload_digest" != "$workload_digest" ] || [ "$actual_workload_size" != "$workload_size" ]; then
+          echo "ERROR: Deep Agents Code candidate workload descriptor does not match its blob." >&2
+          exit 1
+        fi
+        attestation_descriptor="$(
+          jq -cer '
+            .manifests[]
+            | select(
+                .platform.os == "unknown"
+                and .platform.architecture == "unknown"
+                and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+              )
+          ' "$source_index"
+        )"
+        attestation_digest="$(jq -r '.digest' <<<"$attestation_descriptor")"
+        attestation_size="$(jq -r '.size' <<<"$attestation_descriptor")"
+        attestation_manifest="$OCI_LAYOUT/blobs/sha256/${attestation_digest#sha256:}"
+        if [ ! -f "$attestation_manifest" ] || [ -L "$attestation_manifest" ]; then
+          echo "ERROR: Deep Agents Code candidate provenance manifest is missing or unsafe." >&2
+          exit 1
+        fi
+        actual_attestation_digest="sha256:$(sha256sum "$attestation_manifest" | cut -d' ' -f1)"
+        actual_attestation_size="$(wc -c < "$attestation_manifest" | tr -d '[:space:]')"
+        if [ "$actual_attestation_digest" != "$attestation_digest" ] || \
+          [ "$actual_attestation_size" != "$attestation_size" ]; then
+          echo "ERROR: Deep Agents Code candidate provenance descriptor does not match its blob." >&2
+          exit 1
+        fi
+        if ! jq -e '
+          .schemaVersion == 2
+          and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+          and (.config | type == "object")
+          and (.layers | type == "array" and length > 0)
+        ' "$workload_manifest" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate workload manifest is invalid." >&2
+          exit 1
+        fi
+        install -d -m 0700 "$VALIDATION_LAYOUT/blobs/sha256"
+        validation_image_name="nemoclaw-dcode-base-candidate-${ARCH}:latest"
+
+        link_runtime_blob() {
+          local descriptor="$1"
+          local digest size blob actual_digest actual_size
+          digest="$(jq -er '
+            if (.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.size | type == "number" and . > 0 and floor == .)
+              and (.mediaType | type == "string" and length > 0)
+            then .digest
+            else error("invalid runtime descriptor")
+            end
+          ' <<<"$descriptor")"
+          size="$(jq -r '.size' <<<"$descriptor")"
+          blob="$OCI_LAYOUT/blobs/sha256/${digest#sha256:}"
+          if [ ! -f "$blob" ] || [ -L "$blob" ]; then
+            echo "ERROR: Deep Agents Code candidate runtime blob is missing or unsafe." >&2
+            exit 1
+          fi
+          actual_digest="sha256:$(sha256sum "$blob" | cut -d' ' -f1)"
+          actual_size="$(wc -c < "$blob" | tr -d '[:space:]')"
+          if [ "$actual_digest" != "$digest" ] || [ "$actual_size" != "$size" ]; then
+            echo "ERROR: Deep Agents Code candidate runtime descriptor does not match its blob." >&2
+            exit 1
+          fi
+          cp -Pl -- \
+            "$blob" \
+            "$VALIDATION_LAYOUT/blobs/sha256/${digest#sha256:}"
+        }
+
+        config_descriptor="$(jq -cer '.config' "$workload_manifest")"
+        config_digest="$(jq -r '.digest' <<<"$config_descriptor")"
+        link_runtime_blob "$config_descriptor"
+        layer_paths='[]'
+        mapfile -t layer_descriptors < <(jq -cer '.layers[]' "$workload_manifest")
+        for layer_descriptor in "${layer_descriptors[@]}"; do
+          link_runtime_blob "$layer_descriptor"
+          layer_digest="$(jq -r '.digest' <<<"$layer_descriptor")"
+          layer_path="blobs/sha256/${layer_digest#sha256:}"
+          layer_paths="$(
+            jq -cn \
+              --argjson paths "$layer_paths" \
+              --arg path "$layer_path" \
+              '$paths + [$path]'
+          )"
+        done
+        config_blob="$OCI_LAYOUT/blobs/sha256/${config_digest#sha256:}"
+        if ! jq -e --arg arch "$ARCH" \
+          '.os == "linux" and .architecture == $arch' \
+          "$config_blob" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate config platform does not match the build." >&2
+          exit 1
+        fi
+
+        config_path="blobs/sha256/${config_digest#sha256:}"
+        jq -cn \
+          --arg config "$config_path" \
+          --arg tag "$validation_image_name" \
+          --argjson layers "$layer_paths" \
+          '[{Config: $config, RepoTags: [$tag], Layers: $layers}]' \
+          > "$VALIDATION_LAYOUT/manifest.json"
+        if ! jq -e \
+          --arg config "$config_path" \
+          --arg tag "$validation_image_name" \
+          --argjson layers "$layer_paths" '
+            type == "array"
+            and length == 1
+            and .[0] == {Config: $config, RepoTags: [$tag], Layers: $layers}
+          ' "$VALIDATION_LAYOUT/manifest.json" >/dev/null; then
+          echo "ERROR: Deep Agents Code Docker-save manifest does not match the workload." >&2
+          exit 1
+        fi
+
+        tar --create --file=- --directory "$VALIDATION_LAYOUT" manifest.json blobs \
+          | docker load >/dev/null
+        loaded_manifest="$(
+          docker image save "$validation_image_name" \
+            | tar --extract --to-stdout --file=- manifest.json
+        )"
+        loaded_config_path="$(
+          jq -er --arg tag "$validation_image_name" '
+            if type == "array"
+              and length == 1
+              and (.[0].RepoTags | type == "array" and index($tag) != null)
+              and (.[0].Config | type == "string")
+            then .[0].Config
+            else error("invalid Docker-save receipt")
+            end
+          ' <<<"$loaded_manifest"
+        )"
+        if [[ ! "$loaded_config_path" =~ ^([0-9a-f]{64}[.]json|blobs/sha256/[0-9a-f]{64})$ ]]; then
+          echo "ERROR: loaded Deep Agents Code image returned an invalid config receipt." >&2
+          exit 1
+        fi
+        loaded_config_name="${loaded_config_path##*/}"
+        loaded_config_digest="sha256:${loaded_config_name%.json}"
+        if [ "$loaded_config_digest" != "$config_digest" ]; then
+          echo "ERROR: loaded Deep Agents Code image config differs from the validated candidate." >&2
+          exit 1
+        fi
+        read -r local_image_id local_os local_arch < <(
+          docker image inspect \
+            --format '{{.Id}} {{.Os}} {{.Architecture}}' \
+            "$validation_image_name"
+        )
+        if [[ ! "$local_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+          [ "$local_os" != "linux" ] || [ "$local_arch" != "$ARCH" ]; then
+          echo "ERROR: Deep Agents Code Docker candidate does not match its OCI layout." >&2
+          exit 1
+        fi
+        printf 'digest=%s\n' "$source_digest" >> "$GITHUB_OUTPUT"
+        printf 'reference=%s\n' "$local_image_id" >> "$GITHUB_OUTPUT"
+
+    - name: Validate Deep Agents Code base runtime
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        REFERENCE: ${{ steps.dcode-candidate-identity.outputs.reference }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$REFERENCE" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Deep Agents Code base image build did not return a valid image ID." >&2
+          exit 1
+        fi
+        docker run --rm --platform "$PLATFORM" \
+          --network none \
+          --cap-drop ALL \
+          --security-opt no-new-privileges \
+          --read-only \
+          --user 999:999 \
+          --entrypoint /bin/sh \
+          "$REFERENCE" -eu -c \
+          'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
+        node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+          --reference "$REFERENCE" \
+          --platform "$PLATFORM"
+
+    - name: Push validated Deep Agents Code platform digest
+      id: dcode-publish
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+        DIGEST: ${{ steps.dcode-candidate-identity.outputs.digest }}
+        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+        OCI_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-oci
+      run: |
+        set -euo pipefail
+        metadata="$RUNNER_TEMP/dcode-base-${ARCH}-publication.json"
+        docker buildx imagetools create \
+          --tag "${IMAGE}@${DIGEST}" \
+          --metadata-file "$metadata" \
+          "oci-layout://${OCI_LAYOUT}@${DIGEST}"
+        published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$metadata")"
+        published_media_type="$(jq -er '.["containerimage.descriptor"].mediaType' "$metadata")"
+        if [ "$published_digest" != "$DIGEST" ] || \
+          [ "$published_media_type" != "application/vnd.oci.image.index.v1+json" ]; then
+          echo "ERROR: published Deep Agents Code source index differs from the validated candidate." >&2
+          exit 1
+        fi
+        printf 'digest=%s\n' "$DIGEST" >> "$GITHUB_OUTPUT"
+
     - name: Build and push platform digest
-      id: build
+      id: registry-build
+      if: ${{ inputs.agent != 'langchain-deepagents-code' }}
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
       with:
         context: .
@@ -136,29 +527,25 @@ runs:
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', inputs.mcporter-audit-raw-report) || '' }}
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', inputs.mcporter-audit-policy-result) || '' }}
 
-    - name: Validate Deep Agents Code dos2unix executable
-      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+    - name: Select platform digest
+      id: build
       shell: bash
       env:
-        DIGEST: ${{ steps.build.outputs.digest }}
-        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
-        PLATFORM: ${{ inputs.platform }}
+        AGENT: ${{ inputs.agent }}
+        DCODE_DIGEST: ${{ steps.dcode-publish.outputs.digest }}
+        REGISTRY_DIGEST: ${{ steps.registry-build.outputs.digest }}
       run: |
         set -euo pipefail
-        if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-          echo "ERROR: Deep Agents Code base image build did not return a valid digest: $DIGEST" >&2
+        if [ "$AGENT" = "langchain-deepagents-code" ]; then
+          digest="$DCODE_DIGEST"
+        else
+          digest="$REGISTRY_DIGEST"
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: platform build did not return a valid digest." >&2
           exit 1
         fi
-        reference="${IMAGE}@${DIGEST}"
-        docker run --rm --platform "$PLATFORM" \
-          --network none \
-          --cap-drop ALL \
-          --security-opt no-new-privileges \
-          --read-only \
-          --user 999:999 \
-          --entrypoint /bin/sh \
-          "$reference" -eu -c \
-          'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
+        printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
     - name: Export platform digest
       id: job-output

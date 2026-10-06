@@ -212,8 +212,7 @@ runDashboardRemoteBindTest(
     expect(auditResult.suppressedFindings ?? []).toEqual([]);
     expect(auditResult.findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ checkId: "gateway.control_ui.insecure_auth" }),
-        expect.objectContaining({ checkId: "gateway.control_ui.device_auth_disabled" }),
+        expect.objectContaining({ checkId: "gateway.control_ui.host_header_origin_fallback" }),
         expect.objectContaining({
           checkId: "config.insecure_or_dangerous_flags",
           detail: expect.stringContaining(

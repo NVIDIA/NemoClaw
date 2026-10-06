@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,28 +80,6 @@ class FakeRunner implements CommandRunner {
       },
     };
   }
-}
-
-const LOCAL_CLI_DEVICE = {
-  deviceId: "device-local",
-  clientId: "cli",
-  clientMode: "cli",
-  tokens: { operator: { token: "operator-token-local" } },
-};
-
-function writePairingFile(stateDir: string, relativePath: string, value: unknown): void {
-  const file = path.join(stateDir, relativePath);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value));
-}
-
-/** The `node -e <program>` argv the sandbox client sends, captured through the fake runner. */
-async function recordedPairingWait(): Promise<string[]> {
-  const runner = new FakeRunner();
-  await new SandboxClient(runner, { openshellPath: "openshell" }).waitForInitialOpenClawPairing(
-    "assistant",
-  );
-  return runner.calls[0].args.slice(5, 8);
 }
 
 describe("E2E fixture clients", () => {
@@ -362,7 +338,7 @@ describe("E2E fixture clients", () => {
       expect(runner.calls.map(({ args }) => args)).toEqual([
         ["install.sh", "--non-interactive", "--fresh"],
         ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
-        ["-lc", LAUNCH_TURN_SCRIPT],
+        ["-c", LAUNCH_TURN_SCRIPT],
       ]);
       expect(runner.calls[2]?.options?.env?.NEMOCLAW_OPENSHELL_COMMAND).toBe(
         "/home/runner/.local/bin/openshell",
@@ -733,12 +709,16 @@ describe("E2E fixture clients", () => {
     const pidRunner = new FakeRunner();
     pidRunner.stdout = "12345\n";
     const pidHost = new HostCliClient(pidRunner, { cliPath: "nemoclaw" });
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     await expect(
-      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime(),
+      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime({
+        env: privateRuntimeEnv,
+      }),
     ).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
+    expect(pidRunner.calls[0]?.options?.env?.HOME).toBe(privateRuntimeEnv.HOME);
 
     const containerRunner = new FakeRunner();
     containerRunner.exitCode = 1;
@@ -762,6 +742,7 @@ describe("E2E fixture clients", () => {
 
   it("gateway client proves registration, listener, and host runtime are removed", async () => {
     const runner = new FakeRunner();
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
     runner.enqueue({ exitCode: 1 });
     runner.enqueue({ exitCode: 1 });
@@ -773,6 +754,7 @@ describe("E2E fixture clients", () => {
 
     await gateway.expectRemoved("nemoclaw", {
       artifactName: "final-gateway",
+      env: privateRuntimeEnv,
       gatewayPort: 18_080,
     });
 
@@ -790,6 +772,9 @@ describe("E2E fixture clients", () => {
     expect(runner.calls[1].options).toMatchObject({
       artifactName: "final-gateway-listener",
     });
+    expect(
+      runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
+    ).toBe(true);
   });
 
   it("gateway client rejects an inconclusive listener absence probe", async () => {
@@ -816,103 +801,6 @@ describe("E2E fixture clients", () => {
 
     await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
       "openshell status did not prove gateway 'nemoclaw' disconnected",
-    );
-  });
-
-  it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {
-    const runner = new FakeRunner();
-    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
-
-    await sandbox.waitForInitialOpenClawPairing("assistant");
-
-    expect(runner.calls[0]).toEqual({
-      command: "openshell",
-      args: [
-        "sandbox",
-        "exec",
-        "-n",
-        "assistant",
-        "--",
-        "node",
-        "-e",
-        expect.stringContaining("identity/device-auth.json"),
-        "60000",
-        "/sandbox/.openclaw",
-      ],
-      options: {
-        artifactName: "wait-for-initial-openclaw-pairing",
-        timeoutMs: 70_000,
-      },
-    });
-  });
-
-  it("initial pairing wait exits 0 once the local CLI device is paired with the stored token (#11085)", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-wait-"));
-    try {
-      writePairingFile(stateDir, "identity/device.json", { deviceId: LOCAL_CLI_DEVICE.deviceId });
-      const [command, ...args] = await recordedPairingWait();
-      const child = spawn(command, [...args, "3000", stateDir], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      let output = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        output += chunk.toString();
-      });
-      setTimeout(() => {
-        writePairingFile(stateDir, "devices/paired.json", {
-          [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE,
-        });
-        writePairingFile(stateDir, "identity/device-auth.json", {
-          tokens: LOCAL_CLI_DEVICE.tokens,
-        });
-      }, 400);
-
-      const [status] = await once(child, "exit");
-      expect(status).toBe(0);
-      expect(output).toBe("");
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("initial pairing wait exits 1 at the deadline without a matching CLI record (#11085)", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-wait-"));
-    try {
-      const [command, ...args] = await recordedPairingWait();
-      const attempt = (paired: Record<string, unknown>) => {
-        writePairingFile(stateDir, "devices/paired.json", paired);
-        return spawnSync(command, [...args, "200", stateDir], { encoding: "utf8" });
-      };
-      writePairingFile(stateDir, "identity/device.json", { deviceId: LOCAL_CLI_DEVICE.deviceId });
-      const authMissing = attempt({ [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE });
-      writePairingFile(stateDir, "identity/device-auth.json", {
-        tokens: { operator: { token: "operator-token-stale" } },
-      });
-      const staleToken = attempt({ [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE });
-      writePairingFile(stateDir, "identity/device-auth.json", { tokens: LOCAL_CLI_DEVICE.tokens });
-      const foreignDevice = attempt({
-        "device-other": { ...LOCAL_CLI_DEVICE, deviceId: "device-other" },
-      });
-      const nonCli = attempt({
-        [LOCAL_CLI_DEVICE.deviceId]: { ...LOCAL_CLI_DEVICE, clientMode: "ui" },
-      });
-
-      const results = [authMissing, staleToken, foreignDevice, nonCli];
-      expect(results.map((result) => result.status)).toEqual([1, 1, 1, 1]);
-      expect(results.map((result) => result.stdout)).toEqual(["", "", "", ""]);
-      expect(results.some((result) => result.stderr.includes("operator-token"))).toBe(false);
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  }, 15_000);
-
-  it("sandbox client rejects a nonzero initial pairing wait (#11085)", async () => {
-    const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1 });
-    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
-
-    await expect(sandbox.waitForInitialOpenClawPairing("assistant")).rejects.toThrow(
-      "wait for initial OpenClaw CLI pairing in assistant failed: exit=1",
     );
   });
 
@@ -1053,14 +941,16 @@ describe("E2E fixture clients", () => {
     await expect(sandbox.cleanupSandbox("assistant")).resolves.toBeUndefined();
   });
 
-  it("sandbox client surfaces unexpected cleanup failures", async () => {
+  it.each([
+    "permission denied",
+    "Error:   × Unknown gateway 'nemoclaw'.",
+    "Error:   × No active gateway.",
+  ])("sandbox client surfaces cleanup failures that do not prove absence: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    runner.enqueue({ exitCode: 1, stderr });
     const sandbox = new SandboxClient(runner);
 
-    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup OpenShell sandbox assistant failed: permission denied",
-    );
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(stderr);
   });
 
   it("sandbox client validates list output using the OpenShell gateway env", async () => {
@@ -1132,23 +1022,67 @@ describe("E2E fixture clients", () => {
     expect(runner.calls).toEqual([]);
   });
 
-  it("sandbox client preserves shell-looking payloads as argv after --", async () => {
+  it("sandbox client preserves exec options and shell-looking payloads after --", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"]);
+    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"], {
+      artifactName: "baseline-sandbox-exec-alive",
+      timeoutMs: 60_000,
+    });
 
-    expect(runner.calls[0]?.args).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "assistant",
-      "--",
-      "sh",
-      "-c",
-      "echo '$TOKEN' && rm -rf /tmp/not-real",
-    ]);
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "sh",
+        "-c",
+        "echo '$TOKEN' && rm -rf /tmp/not-real",
+      ],
+      options: {
+        artifactName: "baseline-sandbox-exec-alive",
+        timeoutMs: 60_000,
+      },
+    });
   });
+
+  it.each([
+    { exitCode: 0, timedOut: false },
+    { exitCode: 1, timedOut: false },
+    { exitCode: null, timedOut: true },
+  ])(
+    "sandbox client forwards native patch stdin and preserves its outcome ($exitCode, $timedOut)",
+    async (outcome) => {
+      const runner = new FakeRunner();
+      runner.enqueue(outcome);
+      const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+      const patch = JSON.stringify({ model: 'vendor/model"; $(not-a-command)' });
+      const result = await sandbox.exec("assistant", ["openclaw", "config", "patch", "--stdin"], {
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(runner.calls[0]?.args).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "openclaw",
+        "config",
+        "patch",
+        "--stdin",
+      ]);
+      expect(runner.calls[0]?.options).toMatchObject({
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(result).toMatchObject(outcome);
+    },
+  );
 
   it("sandbox client passes trusted shell scripts through the named sandbox exec form", async () => {
     const runner = new FakeRunner();

@@ -3,10 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  renderCompatibilityFallbackCreateArgs,
-  type SelectedDockerGpuRoute,
-} from "./docker-gpu-route";
+import { type SelectedDockerGpuRoute } from "./docker-gpu-route";
 import {
   executeSandboxGpuCreatePlan,
   type NativeGpuFallbackCleanupResult,
@@ -139,33 +136,27 @@ describe("executeSandboxGpuCreatePlan", () => {
     },
   );
 
-  it("prepares and renders the built image before the single compatibility retry", async () => {
+  it("prepares the built image before the single compatibility retry", async () => {
     const imageRef = `sha256:${"a".repeat(64)}`;
-    let compatibilityArgs: string[] | null = null;
+    let compatibilitySource: string | null = null;
     const runAttempt = vi.fn(async (route: SelectedDockerGpuRoute) =>
       route === "native"
         ? nativeFailure("create")
-        : { ok: true as const, route, value: compatibilityArgs },
+        : { ok: true as const, route, value: compatibilitySource },
     );
 
     await expect(
       execute(
         planDeps(runAttempt, {
           prepareCompatibilityAttempt: () => {
-            compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-              ["--from", "/tmp/build/Dockerfile", "--policy", "/tmp/native.yaml", "--gpu"],
-              {
-                imageRef,
-                compatibilityPolicyPath: "/tmp/compatibility.yaml",
-              },
-            );
+            compatibilitySource = imageRef;
           },
         }),
       ),
     ).resolves.toEqual({
       ok: true,
       route: "compatibility",
-      value: ["--from", imageRef, "--policy", "/tmp/compatibility.yaml"],
+      value: imageRef,
     });
     expect(attemptedRoutes(runAttempt)).toEqual(["native", "compatibility"]);
   });

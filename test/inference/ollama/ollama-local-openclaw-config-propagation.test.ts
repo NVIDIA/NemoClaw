@@ -6,10 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildConfig,
-  buildLocalOllamaSmallContextCompaction,
   buildManagedInferenceSafeguardCompaction,
 } from "../../../scripts/generate-openclaw-config.mts";
 import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch";
@@ -135,7 +134,36 @@ describe("ollama-local OpenClaw config propagation", () => {
 });
 
 describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
-  it("emits a lowered compaction reserve for a small Local Ollama window", () => {
+  it("carries the selected N1x preset through a legacy Dockerfile build and clears a removed selection (#12297)", () => {
+    const dockerfilePath = dockerfileWith(
+      fs.readFileSync(path.resolve(import.meta.dirname, "../../../Dockerfile"), "utf8"),
+    );
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+    vi.stubEnv("NEMOCLAW_MAX_TOKENS", "4096");
+    const patchArgs = [
+      dockerfilePath,
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "http://127.0.0.1:18789",
+      "n1x-legacy",
+      "vllm-local",
+    ] as const;
+
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4");
+    patchStagedDockerfile(...patchArgs);
+    expect(buildConfig(readDockerArgs(dockerfilePath)).agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 300,
+      qualityGuard: { enabled: true, maxRetries: 1 },
+    });
+
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", undefined);
+    patchStagedDockerfile(...patchArgs);
+    expect(buildConfig(readDockerArgs(dockerfilePath)).agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 120,
+      qualityGuard: { enabled: true, maxRetries: 0 },
+    });
+  });
+
+  it("delegates small Local Ollama reserve clamping to OpenClaw 2026.9.1", () => {
     const config = buildConfig({
       NEMOCLAW_MODEL: "qwen2.5:0.5b",
       NEMOCLAW_PROVIDER_KEY: "inference",
@@ -147,12 +175,7 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
       NEMOCLAW_MAX_TOKENS: "4096",
       NEMOCLAW_AGENT_TIMEOUT: "600",
     });
-    // Reserve exactly the reply budget so the first-turn prompt budget grows
-    // from ~8k (OpenClaw default) to contextWindow - maxTokens = 12288.
-    expect(config.agents.defaults.compaction).toEqual({
-      reserveTokens: 4096,
-      reserveTokensFloor: 4096,
-    });
+    expect(config.agents.defaults.compaction).toBeUndefined();
   });
 
   it("uses safeguard compaction for remote managed inference (#4781)", () => {
@@ -170,15 +193,13 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     expect(config.agents.defaults.compaction).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 
-  it("gives the N1x managed-vLLM profile enough prompt and compaction time (#11805)", () => {
+  it("allows one N1x summary retry while retaining the audit and extended timeout (#12297)", () => {
     const config = buildConfig({
       NEMOCLAW_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4",
       NEMOCLAW_PROVIDER_KEY: "inference",
@@ -195,17 +216,13 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     expect(config.agents.defaults.compaction).toEqual({
       mode: "safeguard",
       timeoutSeconds: 300,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
-      qualityGuard: { enabled: true, maxRetries: 0 },
+      qualityGuard: { enabled: true, maxRetries: 1 },
       notifyUser: true,
-      truncateAfterCompaction: true,
-      reserveTokens: 4096,
-      reserveTokensFloor: 4096,
     });
   });
 
-  it("carries the N1x preset through managed startup into generated config (#11805)", () => {
+  it("carries the N1x summary retry through managed startup (#12297)", () => {
     const built = buildManagedStartupOnboardProfile({
       agentName: "openclaw",
       inference: {
@@ -245,9 +262,10 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     );
     expect(config.agents.defaults.compaction).toMatchObject({
       timeoutSeconds: 300,
-      reserveTokens: 4096,
-      reserveTokensFloor: 4096,
+      qualityGuard: { enabled: true, maxRetries: 1 },
     });
+    expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokens");
+    expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokensFloor");
   });
 
   it("keeps the standard safeguard for the same vLLM model with a larger window (#11805)", () => {
@@ -263,11 +281,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     ).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 
@@ -284,11 +300,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     ).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 
@@ -305,11 +319,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     ).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 
@@ -368,20 +380,5 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
         4096,
       ),
     ).toBeUndefined();
-  });
-
-  it("clamps the reserve so the prompt budget never drops below OpenClaw's 8k minimum", () => {
-    // A pathological maxTokens must not make the window worse than the default.
-    const compaction = buildLocalOllamaSmallContextCompaction("ollama-local", 16384, 99999);
-    expect(compaction).toEqual({ reserveTokens: 8384, reserveTokensFloor: 8384 });
-    expect(16384 - 8384).toBe(8000);
-  });
-
-  it("applies at the 28k threshold boundary and not just above it", () => {
-    expect(buildLocalOllamaSmallContextCompaction("ollama-local", 28000, 4096)).toEqual({
-      reserveTokens: 4096,
-      reserveTokensFloor: 4096,
-    });
-    expect(buildLocalOllamaSmallContextCompaction("ollama-local", 28001, 4096)).toBeUndefined();
   });
 });

@@ -11,11 +11,15 @@ import {
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
-import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
+import type {
+  DockerGpuDiagnosticDeps,
+  DockerGpuPatchDeps,
+  DockerGpuPatchMode,
+  SandboxCreateRuntimePatch,
+} from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import { attachManagedBootstrapRollbackError } from "./managed-bootstrap/adapter";
-import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
+import { attachRuntimeRollbackError } from "./diagnostics/runtime-rollback-error";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -388,7 +392,9 @@ export type GpuSandboxAfterReadyOptions = {
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
   ) => Promise<SandboxGpuProofResult>;
   reportGpuProofFailure?: boolean;
-  selectedMode: ManagedBootstrapRuntimePatch["selectedMode"];
+  selectedMode: SandboxCreateRuntimePatch["selectedMode"];
+  openShellGpuDiagnostics?: DockerGpuPatchDeps["openShellGpuDiagnostics"];
+  dockerCapture?: DockerGpuDiagnosticDeps["dockerCapture"];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -397,8 +403,24 @@ export type GpuSandboxAfterReadyOptions = {
   deps?: DockerGpuSandboxInferenceVerifyDeps;
 };
 
+function gpuFailureDiagnosticDeps(
+  options: Pick<
+    GpuSandboxAfterReadyOptions,
+    "openShellGpuDiagnostics" | "runCaptureOpenshell" | "dockerCapture"
+  >,
+): Pick<
+  DockerGpuDiagnosticDeps,
+  "openShellGpuDiagnostics" | "runCaptureOpenshell" | "dockerCapture"
+> {
+  return {
+    openShellGpuDiagnostics: options.openShellGpuDiagnostics,
+    runCaptureOpenshell: options.runCaptureOpenshell,
+    dockerCapture: options.dockerCapture,
+  };
+}
+
 function asDockerGpuPatchMode(
-  selected: ReturnType<ManagedBootstrapRuntimePatch["selectedMode"]>,
+  selected: ReturnType<SandboxCreateRuntimePatch["selectedMode"]>,
 ): DockerGpuPatchMode | null {
   if (!selected || !["gpus", "nvidia-runtime", "cdi", "startup-command"].includes(selected.kind)) {
     return null;
@@ -451,7 +473,7 @@ export async function verifyGpuSandboxAccessAfterReady(
         error,
         asDockerGpuPatchMode(options.selectedMode()),
         {
-          runCaptureOpenshell: options.runCaptureOpenshell,
+          ...gpuFailureDiagnosticDeps(options),
           additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
             .additionalSummaryLines,
         },
@@ -509,7 +531,7 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
   provider: string | null | undefined,
   options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode">,
   runtimePatch: Pick<
-    ManagedBootstrapRuntimePatch,
+    SandboxCreateRuntimePatch,
     "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
   >,
   revalidateBeforeCommit?: () => void,
@@ -526,7 +548,7 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     try {
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
     } catch (rollbackError) {
-      attachManagedBootstrapRollbackError(failure, rollbackError);
+      attachRuntimeRollbackError(failure, rollbackError);
     }
     throw failure;
   }

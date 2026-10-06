@@ -5,14 +5,25 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
+import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "../actions/sandbox/snapshot-hermes-gateway-hint";
+import {
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
+  finishUnregisteredOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
+import { resolveExternalDashboardUrl } from "../dashboard/url";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
-  MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+  MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
@@ -67,6 +78,9 @@ export type CreatedSandboxFinalizationDeps = {
     options: RecreatedSandboxRestoreOptions,
     resolveTarget?: () => SandboxEntry | Promise<SandboxEntry>,
   ): RestoreResult | Promise<RestoreResult>;
+  migrateHermesLegacyDashboardState?(
+    sandboxName: string,
+  ): ReturnType<typeof migrateHermesLegacyDashboardState>;
   getDcodeSelectionDrift(
     sandboxName: string,
     provider: string,
@@ -91,6 +105,7 @@ type RegistrationSeed = Omit<
   | "workload"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardExternalUrl"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -115,6 +130,13 @@ export interface CreatedSandboxCompletionOptions {
     readonly provider: string;
     readonly dockerDriverGateway: boolean;
     readonly verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+    readonly resolveOpenShellGpuDiagnostics: () =>
+      | NonNullable<
+          Parameters<
+            typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+          >[2]["openShellGpuDiagnostics"]
+        >
+      | undefined;
     readonly runCaptureOpenshell: NonNullable<
       Parameters<
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
@@ -344,6 +366,7 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -354,6 +377,7 @@ export function createCreatedSandboxCompletionActions(
         dockerDriverGateway: options.gpu.dockerDriverGateway,
         selectedRoute: created.route,
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+        openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
         log: console.log,
       },
@@ -366,10 +390,16 @@ export function createCreatedSandboxCompletionActions(
       () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
-  function recordHermesGpuProof(): void {
-    options.gpu.config.sandboxGpuProof = options.gpu.verifyDirectSandboxGpu(
-      options.finalization.sandboxName,
-    );
+  async function recordHermesGpuProof(): Promise<void> {
+    await dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(options.gpu.config, {
+      sandboxName: options.finalization.sandboxName,
+      dockerDriverGateway: options.gpu.dockerDriverGateway,
+      selectedRoute: "native",
+      verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+      selectedMode: () => null,
+      openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
+      runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+    });
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
@@ -383,6 +413,7 @@ export function createCreatedSandboxCompletionActions(
       );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
+    dashboardExternalUrl = resolveExternalDashboardUrl(chatUiUrl);
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
@@ -421,7 +452,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
-        recordHermesGpuProof();
+        await recordHermesGpuProof();
       }
       if (manageDashboard) {
         deps.revalidateSandboxIdentity?.(
@@ -487,6 +518,7 @@ export function createCreatedSandboxCompletionActions(
           workload: resolved.workloadReceipt,
           hermesDashboardState,
           dashboardPort,
+          dashboardExternalUrl,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,
@@ -574,6 +606,7 @@ type OnboardCreateContext = {
 type OnboardAgentFlags = {
   readonly customOpenClawImage: boolean;
   readonly isManagedDcodeAgent: boolean;
+  readonly externalImage?: boolean;
 };
 type OnboardInferenceSelection = {
   readonly provider: string;
@@ -596,6 +629,7 @@ type OnboardSandboxRegistrationOptions = {
 type OnboardGatewayBinding = {
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  readonly openshellGatewayStateDir?: string | null;
 };
 type OnboardPreparedPolicy = Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
@@ -684,6 +718,7 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  resolveOpenShellGpuDiagnostics: CreatedSandboxCompletionOptions["gpu"]["resolveOpenShellGpuDiagnostics"],
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -702,7 +737,7 @@ export function createOnboardCreatedSandboxCompletion(
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
-        customImage: Boolean(fromDockerfile),
+        customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -723,7 +758,7 @@ export function createOnboardCreatedSandboxCompletion(
           : {}),
         runtimeFields,
         agent,
-        agentVersionKnown: !fromDockerfile,
+        agentVersionKnown: !fromDockerfile && agentFlags.externalImage !== true,
         portableLifecycle,
         toolDisclosure: sandboxRegistrationOptions.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
@@ -755,6 +790,7 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         dockerDriverGateway,
         verifyDirectSandboxGpu,
+        resolveOpenShellGpuDiagnostics,
         runCaptureOpenshell,
         persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
         persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
@@ -782,6 +818,11 @@ export function createOnboardCreatedSandboxCompletion(
         commandExecutor,
         () => gateway.gatewayName,
       ),
+      migrateHermesLegacyDashboardState: (name) =>
+        migrateHermesLegacyDashboardState(name, undefined, {
+          commandExecutor,
+          gatewayName: gateway.gatewayName,
+        }),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -804,6 +845,17 @@ export async function finalizeCreatedSandbox(
     );
   };
   let preparedRegistration: SandboxEntry | undefined;
+  let openClawRestoreWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  const abortOpenClawRestoreWindow = async (): Promise<void> => {
+    if (!openClawRestoreWindow) return;
+    const aborted = await abortUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+    if (!aborted.ok) {
+      deps.error(
+        `  OpenClaw offline restore cleanup did not converge (${aborted.stage}: ${aborted.detail}).`,
+      );
+    }
+    openClawRestoreWindow = null;
+  };
   if (options.restoreBackupPath) {
     deps.note(
       options.preUpgradeBackup
@@ -813,7 +865,7 @@ export async function finalizeCreatedSandbox(
     deps.revalidateSandboxIdentity?.(`restoring files for sandbox '${options.sandboxName}'`);
     if (!deps.prepareRegistration || !deps.revalidatePreparedRegistration) {
       deps.error(
-        `  Managed snapshot restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
+        `  Managed rebuild restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
       );
       deps.error("  State was not restored and registry metadata was not updated.");
       reportUnregisteredSandboxRecovery();
@@ -821,31 +873,81 @@ export async function finalizeCreatedSandbox(
       return deps.exitProcess(1);
     }
     preparedRegistration = await deps.prepareRegistration();
+    if (options.targetAgentType === "openclaw") {
+      deps.revalidateSandboxIdentity?.(
+        `entering offline state restore for sandbox '${options.sandboxName}'`,
+      );
+      const maintenanceWindow = await beginUnregisteredOpenClawBackupQuiesce(options.sandboxName);
+      if (!maintenanceWindow.ok) {
+        deps.error(
+          `  OpenClaw state restore could not enter its gateway-down maintenance window (${maintenanceWindow.stage}: ${maintenanceWindow.detail}).`,
+        );
+        deps.error("  State was not restored and registry metadata was not updated.");
+        reportUnregisteredSandboxRecovery();
+        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+        return deps.exitProcess(1);
+      }
+      openClawRestoreWindow = maintenanceWindow.window;
+    }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
-      ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
       return preparedRegistration;
     };
-    const restore = await deps.restoreRecreatedSandboxState(
-      options.sandboxName,
-      options.restoreBackupPath,
-      restoreOptions,
-      resolveTarget,
-    );
+    let restore: RestoreResult;
+    try {
+      restore = await deps.restoreRecreatedSandboxState(
+        options.sandboxName,
+        options.restoreBackupPath,
+        restoreOptions,
+        resolveTarget,
+      );
+    } catch (error) {
+      await abortOpenClawRestoreWindow();
+      throw error;
+    }
     deps.revalidateSandboxIdentity?.(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
     if (restore.success) {
+      if (options.targetAgentType === "hermes") {
+        deps.revalidateSandboxIdentity?.(
+          `migrating restored Hermes dashboard state for sandbox '${options.sandboxName}'`,
+        );
+        const migrate = deps.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+        let migration: Awaited<ReturnType<typeof migrateHermesLegacyDashboardState>> = null;
+        try {
+          migration = await migrate(options.sandboxName);
+        } catch (error) {
+          deps.error(
+            `  Hermes legacy dashboard-state migration transport failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        if (migration?.status !== 0) {
+          deps.error(
+            "  Restored state could not be published because Hermes legacy dashboard-state migration did not complete.",
+          );
+          deps.error("  Registry metadata was not updated.");
+          const detail = migration?.stderr.trim();
+          if (detail) deps.error(`  ${detail.slice(0, 500)}`);
+          deps.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(options.sandboxName)}`);
+          reportUnregisteredSandboxRecovery();
+          deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+          return deps.exitProcess(1);
+        }
+      }
       deps.note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      if (restore.error === MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR) {
+      if (restore.error === MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR) {
+        await abortOpenClawRestoreWindow();
         deps.error(
-          `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
+          `  Managed rebuild restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
@@ -871,9 +973,27 @@ export async function finalizeCreatedSandbox(
       deps.error(
         "  Workspace state restoration did not complete. Registry metadata was not updated.",
       );
+      await abortOpenClawRestoreWindow();
       reportUnregisteredSandboxRecovery();
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
+    }
+    if (openClawRestoreWindow) {
+      deps.revalidateSandboxIdentity?.(
+        `releasing offline state restore for sandbox '${options.sandboxName}'`,
+      );
+      const resumed = await finishUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+      if (!resumed.ok) {
+        await abortOpenClawRestoreWindow();
+        deps.error(
+          `  Restored OpenClaw state, but the replacement gateway did not return healthy (${resumed.stage}: ${resumed.detail}).`,
+        );
+        deps.error("  Registry metadata was not updated.");
+        reportUnregisteredSandboxRecovery();
+        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+        return deps.exitProcess(1);
+      }
+      openClawRestoreWindow = null;
     }
   }
 

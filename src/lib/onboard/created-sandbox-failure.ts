@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redact } from "../security/redact";
+import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
 import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
 
@@ -40,14 +41,46 @@ export type SandboxCreateFailureReportOptions = {
   createOutput: string;
   /** Pre-recreate/pre-upgrade state backup path to surface in diagnostics, if any. */
   restoreBackupPath: string | null;
-  /** Resolved `openshell sandbox create` args, so recovery hints stay aligned with --from. */
-  createArgs: readonly string[];
+  /** Deferred Portable create args, when the caller still owns a raw create representation. */
+  createArgs?: readonly string[];
+  /** Safe ordinary create context. Runtime environment and startup values are excluded. */
+  createContext?: SandboxCreateRecoveryContext;
 };
+
+export type SandboxCreateRecoveryContext = {
+  readonly sourceReference: string;
+  readonly policyAttached: boolean;
+  readonly providers: readonly string[];
+  readonly gpuRequested: boolean;
+  readonly gpuDevice: string | null;
+  readonly cpu: string | null;
+  readonly memory: string | null;
+};
+
+export function createSandboxRecoveryContext(
+  request: CreateOpenShellSandboxRequest,
+): SandboxCreateRecoveryContext {
+  return Object.freeze({
+    sourceReference: request.source.reference,
+    policyAttached: Boolean(request.policyPath),
+    providers: Object.freeze([...(request.providers ?? [])]),
+    gpuRequested: request.gpu !== undefined,
+    gpuDevice: request.gpu?.device ?? null,
+    cpu: request.resources?.cpu ?? null,
+    memory: request.resources?.memory ?? null,
+  });
+}
 
 export type SandboxCreateFailureReportDeps = {
   classifyCreateFailure(output: string): { kind: string };
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
-  printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
+  printRecoveryHints(
+    output: string,
+    options: {
+      createArgs?: readonly string[];
+      createContext?: SandboxCreateRecoveryContext;
+    },
+  ): void;
   warn(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -86,7 +119,12 @@ export function reportSandboxCreateFailure(
     backupPath: options.restoreBackupPath,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
-  deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
+  if (options.createArgs || options.createContext) {
+    deps.printRecoveryHints(redactedCreateOutput, {
+      ...(options.createArgs ? { createArgs: options.createArgs } : {}),
+      ...(options.createContext ? { createContext: options.createContext } : {}),
+    });
+  }
   return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 

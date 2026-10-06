@@ -8,6 +8,23 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  EXPECTED_NATIVE_SETTINGS,
+  PINNED_CONSUMER_EVIDENCE,
+  IMAGE_REF,
+  POLICY,
+  document,
+  instance,
+  manifest,
+  searchConsumerEvidence,
+  sourceProfile,
+  SECRET,
+  ENCODED_SECRET,
+  DIAGNOSTIC_SECRET_REPRESENTATIONS,
+  INTERNAL_TRANSPORT,
+  ENCODED_INTERNAL_TRANSPORT,
+  INTERNAL_TRANSPORT_REPRESENTATIONS,
+} from "./config-export-consumer-evidence-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
@@ -19,66 +36,13 @@ import {
   ConfigExportValidationPhaseFixture,
   parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
-import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
-import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
+import type { TargetDefinition } from "../registry/types.ts";
 
-const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
-const SECRET = "fixture-secret-value";
-const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
-const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
-  { name: "literal", value: SECRET },
-  { name: "wrapped-literal", value: `${SECRET.slice(0, 7)}\n# ${SECRET.slice(7)}` },
-  {
-    name: "escaped-literal",
-    value: `\\u${SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${SECRET.slice(1)}`,
-  },
-  { name: "base64", value: ENCODED_SECRET },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_SECRET.slice(0, 12)}\n# ${ENCODED_SECRET.slice(12)}`,
-  },
-  {
-    name: "escaped-base64",
-    value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
-  },
-] as const;
-const INTERNAL_TRANSPORT = "openshell:resolve:env:KEY";
-const ENCODED_INTERNAL_TRANSPORT = Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64");
-const INTERNAL_TRANSPORT_REPRESENTATIONS = [
-  {
-    name: "escaped",
-    value: [...INTERNAL_TRANSPORT]
-      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
-      .join(""),
-  },
-  { name: "base64", value: ENCODED_INTERNAL_TRANSPORT },
-  {
-    name: "base64url",
-    value: Buffer.from("openshell:resolve:env:ÿ", "utf8")
-      .toString("base64")
-      .replace(/\+/gu, "-")
-      .replace(/\//gu, "_"),
-  },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
-  },
-] as const;
-const POLICY = {
-  version: 1,
-  network_policies: {
-    inference: {
-      name: "inference",
-      endpoints: [{ host: "inference.example", port: 443 }],
-      binaries: [{ path: "/usr/bin/openclaw" }],
-    },
-  },
-};
 const createdDirectories: string[] = [];
 const artifactDirectories: string[] = [];
 
@@ -96,110 +60,10 @@ function target(expectation: TargetDefinition["configExport"]["expectation"]): T
   };
 }
 
-function manifest(
-  features?: Record<string, unknown>,
-  credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
-): NemoClawInstanceManifest {
-  return {
-    apiVersion: "nemoclaw.io/v1",
-    kind: "NemoClawInstance",
-    metadata: { name: "openclaw" },
-    spec: {
-      setup: { install: {}, runtime: {}, platform: {} },
-      onboarding: {
-        agent: "openclaw",
-        provider: "nvidia",
-        modelRoute: "inference-local",
-        policyTier: "personal",
-        messaging: [],
-        ...(features ? { features } : {}),
-      },
-      state: { credentialRefs },
-    },
-  };
-}
-
-function document(
-  overrides: { model?: string; observability?: boolean; credentialReference?: string } = {},
-): ConfigExportDocument {
-  return {
-    apiVersion: "nemoclaw.nvidia.com/v1",
-    kind: "NemoClawConfig",
-    metadata: {
-      name: "export",
-      uid: "123e4567-e89b-42d3-a456-426614174000",
-    },
-    spec: {
-      gateway: { management: "nemoclaw", name: "nemoclaw", port: 8080 },
-      inferenceProviders: [
-        {
-          name: "hosted-compatible-endpoint",
-          provider: "compatible-endpoint",
-          api: "openai-completions",
-          endpoint: "https://inference.example/v1",
-          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
-        },
-      ],
-      sandboxes: [
-        {
-          name: "sandbox",
-          runtime: { provider: "docker", image: { ref: IMAGE_REF } },
-          network: { policy: { explicit: POLICY } },
-          agents: [
-            {
-              name: "primary",
-              type: "openclaw",
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: "hosted-compatible-endpoint",
-                    overrides: { model: overrides.model ?? "nvidia/model" },
-                  },
-                ],
-              },
-              ...(overrides.observability
-                ? {
-                    observability: {
-                      otlp: {
-                        enabled: true,
-                        endpoint: "http://host.openshell.internal:4318",
-                        serviceName: "openclaw",
-                        sampleRate: 1,
-                      },
-                    },
-                  }
-                : {}),
-            },
-          ],
-        },
-      ],
-    },
-  } as unknown as ConfigExportDocument;
-}
-
-function instance(expectedFailure = false): NemoClawInstance {
-  return {
-    onboarding: "cloud-openclaw",
-    sandboxName: "sandbox",
-    agent: "openclaw",
-    provider: "nvidia",
-    providerEnv: "cloud",
-    gatewayUrl: "http://127.0.0.1:18789",
-    result: {} as NemoClawInstance["result"],
-    ...(expectedFailure
-      ? {
-          expectedFailure: {
-            phase: "onboarding" as const,
-            errorClass: "policy-presets-required" as const,
-          },
-        }
-      : {}),
-  };
-}
-
 function dependencies(
   options: {
+    agent?: "openclaw" | "hermes";
+    searchProvider?: "brave" | "tavily";
     credentialRefs?: string[];
     features?: Record<string, unknown>;
     parsedDocument?: ConfigExportDocument;
@@ -230,14 +94,16 @@ function dependencies(
     },
     loadManifest: (filePath) => ({
       filePath,
-      document: manifest(options.features, options.credentialRefs),
+      document: manifest(options.features, options.credentialRefs, options.agent),
     }),
     loadRegistry: () => ({
       defaultSandbox: "sandbox",
       sandboxes: {
         sandbox: {
           name: "sandbox",
-          agent: "openclaw",
+          agent: options.agent ?? "openclaw",
+          webSearchEnabled: Boolean(options.searchProvider),
+          webSearchProvider: options.searchProvider ?? null,
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
           provider: "compatible-endpoint",
@@ -255,7 +121,7 @@ function dependencies(
             sourceCohort: "test",
             capabilityContractVersion: 1,
             startupProfileContractVersion: 1,
-            encodedProfile: "profile",
+            encodedProfile: sourceProfile(options.agent ?? "openclaw", options.searchProvider),
             startupProfileSha256: `sha256:${"c".repeat(64)}`,
             credentialProxyReplayRequired: true,
             shared: true,
@@ -285,10 +151,11 @@ function dependencies(
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateWithPinnedV1: () => PINNED_CONSUMER_EVIDENCE,
   };
 }
 
-function successfulHost(raw: string) {
+function successfulHost(raw: string, effectivePolicy: unknown = POLICY) {
   return {
     command: vi.fn(
       async (): Promise<
@@ -297,7 +164,7 @@ function successfulHost(raw: string) {
         exitCode: 0,
         signal: null,
         timedOut: false,
-        stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+        stdout: `Version: 1\n---\n${JSON.stringify(effectivePolicy)}`,
         stderr: "",
       }),
     ),
@@ -311,7 +178,7 @@ function successfulHost(raw: string) {
 }
 
 function refusalHost(
-  message = "Config export failed (unsupported).\nV1 export requires OpenClaw or Hermes.",
+  message = "Config export failed (unsupported).\nThe source cannot be exported.",
 ) {
   return {
     command: vi.fn(async () => ({
@@ -348,6 +215,8 @@ function fixture(
         writes.push(value);
         return "evidence.json";
       }),
+      writeText: vi.fn(async () => "config-export.yaml"),
+      redact: (text: string) => text,
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
@@ -440,7 +309,6 @@ describe("automatic config export validation phase", () => {
       }
     },
   );
-
   it.each(["required", "expected-refusal"] as const)(
     "preserves the isolated runtime environment for %s subprocesses (#11485)",
     async (expectation) => {
@@ -503,9 +371,17 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-
-  it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
-    const raw = `${JSON.stringify(document())}\n`;
+  it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
+    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
+      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    });
+    const raw = `${JSON.stringify(exported)}\n`;
+    const publishedExport = {
+      bytes: raw,
+      byteLength: Buffer.byteLength(raw, "utf8"),
+      sha256: sha256(raw),
+    };
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
     artifactDirectories.push(artifactRoot);
     const independentDependencies = dependencies();
@@ -513,29 +389,28 @@ if (process.argv.includes("--output")) {
     const test = fixture({
       artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
-      host: successfulHost(raw),
+      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
     });
-
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
     ) as ConfigExportEvidenceEnvelope;
-
     expect(evidence).toMatchObject({
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
       classification: "success",
       passed: true,
       command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
       cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: { bytes: raw, byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
+      export: publishedExport,
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
+      consumer: {
+        passed: true,
+        expected: PINNED_CONSUMER_EVIDENCE,
+        actual: PINNED_CONSUMER_EVIDENCE,
+      },
     });
-    expect(sha256(evidence.export!.bytes)).toBe(evidence.export!.sha256);
-    expect(persistedEvidence.export).toEqual({
-      bytes: raw,
-      byteLength: Buffer.byteLength(raw, "utf8"),
-      sha256: sha256(raw),
-    });
+    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
+    expect(persistedEvidence.export).toEqual(publishedExport);
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
         "sandboxName",
@@ -551,6 +426,7 @@ if (process.argv.includes("--output")) {
         "policySha256",
         "enabledFeatures",
         "routeProviderReference",
+        "sourceRegistryUnchanged",
       ]),
     );
     expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
@@ -562,13 +438,32 @@ if (process.argv.includes("--output")) {
     expect(evidence.elapsedMs).toBe(25);
     expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
     expect((await test.cleanup.runAll()).failures).toEqual([]);
+    const mismatched = dependencies();
+    mismatched.validateWithPinnedV1 = () => ({
+      ...PINNED_CONSUMER_EVIDENCE,
+      compiledSandboxes: 2,
+      openclawNativeSettings: {
+        sandbox: {
+          ...EXPECTED_NATIVE_SETTINGS,
+          model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
+        },
+      },
+      openclawNativeSettingsVerified: 0,
+    });
+    const rejected = fixture({ dependencies: mismatched });
+    await captureFailure(rejected.phase.from(target("required"), instance()));
+    expect(rejected.writes.at(-1)).toMatchObject({
+      failureStage: "verification",
+      consumer: { passed: false },
+    });
+    expect(rejected.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
+    );
+    expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
     const test = fixture();
-
     const evidence = await test.phase.from(target("required"), instance());
-
     expect(test.host.command).toHaveBeenCalledWith(
       "openshell",
       ["policy", "get", "-g", "nemoclaw", "--full", "sandbox"],
@@ -583,7 +478,6 @@ if (process.argv.includes("--output")) {
     );
     expect(evidence).toMatchObject({ classification: "success", passed: true });
   });
-
   it("fails before export when the effective policy cannot be observed (#11485)", async () => {
     const host = successfulHost(JSON.stringify(document()));
     host.command.mockResolvedValueOnce({
@@ -594,9 +488,7 @@ if (process.argv.includes("--output")) {
       stderr: "policy unavailable",
     });
     const test = fixture({ host });
-
     await captureFailure(test.phase.from(target("required"), instance()));
-
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "observation",
@@ -605,7 +497,6 @@ if (process.argv.includes("--output")) {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
-
   it("rejects truncated policy output even when its tail contains a complete policy (#11485)", async () => {
     const policySuffix = `\n---\n${JSON.stringify(POLICY)}`;
     const retainedTail =
@@ -631,7 +522,6 @@ if (process.argv.includes("--output")) {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
-
   it("rejects a truncated policy after redaction shrinks the captured tail (#11485)", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-policy-capture-"));
     createdDirectories.push(directory);
@@ -687,7 +577,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       progress.stop();
     }
   });
-
   it("rejects unsafe registry endpoints without retaining credential material (#11485)", async () => {
     const credentialCanary = "credential-canary-value";
     const unsafeDependencies = dependencies();
@@ -718,7 +607,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.host.command).not.toHaveBeenCalled();
     expect(test.host.nemoclaw).not.toHaveBeenCalled();
   });
-
   it("fails when export omits an enabled scenario feature (#11485)", async () => {
     const test = fixture({ dependencies: dependencies({ features: { observability: true } }) });
 
@@ -729,7 +617,127 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
+  it.each([
+    ["openclaw", "brave", "BRAVE_API_KEY"],
+    ["openclaw", "tavily", "TAVILY_API_KEY"],
+    ["hermes", "tavily", "TAVILY_API_KEY"],
+  ] as const)(
+    "validates the raw %s %s export and native search binding (#12138)",
+    async (agent, provider, credentialReference) => {
+      const raw = JSON.stringify(document({ agent, searchProvider: provider }));
+      const search = {
+        provider,
+        credentialReference,
+        agentRefs: ["primary"],
+        nativeProvider: provider,
+      };
+      const inputs = dependencies({
+        agent,
+        searchProvider: provider,
+        features: { webSearch: true },
+        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", credentialReference],
+      });
+      inputs.parseConfig = parseConfigExport;
+      inputs.validateWithPinnedV1 = vi.fn(() => searchConsumerEvidence(agent, search));
+      const test = fixture({ dependencies: inputs, host: successfulHost(raw) });
 
+      const evidence = await test.phase.from(target("required"), { ...instance(), agent });
+
+      expect(inputs.validateWithPinnedV1).toHaveBeenCalledWith(raw);
+      expect(evidence).toMatchObject({
+        passed: true,
+        observed: { enabledFeatures: ["webSearch"] },
+        consumer: {
+          passed: true,
+          expected: { webSearch: { sandbox: search } },
+          actual: { webSearch: { sandbox: search } },
+        },
+        export: { bytes: raw },
+      });
+    },
+  );
+  it.each([
+    ["provider", { provider: "brave" }, true],
+    ["credential", { credentialReference: "OTHER_API_KEY" }, true],
+    ["grant", { agentRefs: ["secondary"] }, true],
+    ["native provider", { nativeProvider: "brave" }, true],
+    ["unexpected search on a disabled source", {}, false],
+  ] as const)(
+    "withholds export evidence for mismatched search settings: %s (#12138)",
+    async (_name, change, enabled) => {
+      const provider = enabled ? "tavily" : undefined;
+      const inputs = dependencies({ searchProvider: provider, features: { webSearch: enabled } });
+      inputs.parseConfig = parseConfigExport;
+      inputs.validateWithPinnedV1 = () =>
+        searchConsumerEvidence("openclaw", {
+          provider: "tavily",
+          credentialReference: "TAVILY_API_KEY",
+          agentRefs: ["primary"],
+          nativeProvider: "tavily",
+          ...change,
+        });
+      const test = fixture({
+        dependencies: inputs,
+        host: successfulHost(JSON.stringify(document({ searchProvider: provider }))),
+      });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)).toMatchObject({
+        failureStage: "verification",
+        consumer: { passed: false },
+      });
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
+  it.each([undefined, ["brave-search"]] as const)(
+    "rejects Tavily export without its selected grant %j (#12138)",
+    async (integrationRefs) => {
+      const candidate = document({ searchProvider: "tavily" });
+      Object.assign(candidate.spec.sandboxes[0]!.agent, { integrationRefs });
+      const inputs = dependencies({ searchProvider: "tavily", features: { webSearch: true } });
+      inputs.parseConfig = parseConfigExport;
+      const test = fixture({
+        dependencies: inputs,
+        host: successfulHost(JSON.stringify(candidate)),
+      });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)?.verifications).toContainEqual(
+        expect.objectContaining({ id: "enabledFeatures", passed: false }),
+      );
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
+  it.each([undefined, "unsupported"])(
+    "refuses an enabled source with invalid search provider %s (#12138)",
+    async (provider) => {
+      const inputs = dependencies({ searchProvider: "tavily" });
+      const registry = inputs.loadRegistry();
+      Object.assign(registry.sandboxes.sandbox!, { webSearchProvider: provider });
+      inputs.loadRegistry = () => registry;
+      const test = fixture({ dependencies: inputs });
+      await captureFailure(test.phase.from(target("required"), instance()));
+      expect(test.writes.at(-1)).toMatchObject({
+        failureStage: "observation",
+        diagnostic: "the live web-search provider is missing or unsupported",
+      });
+      expect(test.host.nemoclaw).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["brave", "tavily"] as const)(
+    "rejects a %s integration whose name and provider disagree (#12138)",
+    (provider) => {
+      const candidate = document({ searchProvider: provider });
+      Object.assign(candidate.spec.sandboxes[0]!.integrations![`${provider}-search`]!, {
+        provider: provider === "brave" ? "tavily" : "brave",
+      });
+      expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+        "complete v1alpha1 export contract",
+      );
+    },
+  );
   it("compares exports with deployment state captured before the exporter runs (#11485)", async () => {
     const mutableDependencies = dependencies();
     const loadRegistry = mutableDependencies.loadRegistry;
@@ -740,7 +748,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
         ...registry,
         sandboxes: {
           ...registry.sandboxes,
-          sandbox: { ...registry.sandboxes.sandbox!, model: registryModel },
+          other: { ...registry.sandboxes.sandbox!, name: "other", model: registryModel },
         },
       };
     };
@@ -768,8 +776,35 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.writes.at(-1)?.verifications).toContainEqual(
       expect.objectContaining({ id: "model", passed: false }),
     );
+    expect(test.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "sourceRegistryUnchanged", passed: false }),
+    );
   });
-
+  it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
+    const candidate = structuredClone(document());
+    const sandbox = candidate.spec.sandboxes[0]!;
+    const image = { ref: IMAGE_REF };
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
+    expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
+      image: { ref: IMAGE_REF },
+      harness: { kind: "deepagents" },
+      agent: { name: "primary" },
+    });
+    const missingImage = structuredClone(candidate);
+    Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
+    expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    const missingEndpoint = structuredClone(candidate);
+    Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
+    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+  });
   it("rejects an export that violates the canonical config schema (#11485)", async () => {
     const valid = document();
     const raw = JSON.stringify({
@@ -791,7 +826,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("fails when live credentials are not declared by the target manifest (#11485)", async () => {
     const test = fixture({ dependencies: dependencies({ credentialRefs: [] }) });
 
@@ -802,7 +836,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("withholds export metadata when a known fixture secret leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# ${SECRET}\n`),
@@ -817,7 +850,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
   });
-
   it("withholds export metadata when YAML escapes a known fixture secret (#11485)", async () => {
     const escapedSecret = [...SECRET]
       .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
@@ -836,7 +868,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
   });
-
   it("withholds export metadata when a comment contains a base64 fixture secret (#11485)", async () => {
     const encodedSecret = Buffer.from(SECRET, "utf8").toString("base64");
     const raw = `${JSON.stringify(document())}\n# ${encodedSecret}\n`;
@@ -854,7 +885,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
   });
-
   it("withholds export metadata when a comment contains a percent-encoded fixture secret (#11485)", async () => {
     const encodedSecret = [...Buffer.from(SECRET, "utf8")]
       .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
@@ -874,7 +904,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
   });
-
   it("withholds export metadata when a comment contains a doubly encoded fixture secret (#11485)", async () => {
     const encodedSecret = [...Buffer.from(SECRET, "utf8")]
       .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
@@ -898,7 +927,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(serializedEvidence).not.toContain(encodedSecret);
     expect(serializedEvidence).not.toContain(doublyEncodedSecret);
   });
-
   it.each(["wrapped", "escaped"] as const)(
     "withholds export metadata when a comment contains %s base64 fixture-secret text (#11485)",
     async (representation) => {
@@ -923,7 +951,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     },
   );
-
   it("withholds export metadata when an internal credential transport leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# openshell:resolve:env:KEY\n`),
@@ -937,7 +964,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("withholds export metadata when YAML escapes an internal credential transport (#11485)", async () => {
     const escapedTransport = [..."openshell:resolve:env:KEY"]
       .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
@@ -955,7 +981,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it.each(INTERNAL_TRANSPORT_REPRESENTATIONS)(
     "withholds export metadata when a comment contains an $name internal credential transport (#11485)",
     async ({ value }) => {
@@ -973,14 +998,12 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       expect(test.writes.at(-1)).not.toHaveProperty("export");
     },
   );
-
   it("classifies invalid exported configuration as verification failure (#11485)", async () => {
     const invalid = dependencies();
     invalid.parseConfig = () => {
       throw new Error("invalid exported configuration");
     };
     const test = fixture({ dependencies: invalid });
-
     await captureFailure(test.phase.from(target("required"), instance()));
 
     expect(test.writes.at(-1)).toMatchObject({
@@ -990,7 +1013,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("classifies a command launch failure after observation as transport failure (#11485)", async () => {
     const host = {
       ...successfulHost(JSON.stringify(document())),
@@ -1007,7 +1029,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("distinguishes a command timeout from an exporter refusal (#11485)", async () => {
     const host = {
       nemoclaw: vi.fn(async () => ({
@@ -1035,11 +1056,9 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)).not.toHaveProperty("observedRefusalCategory");
   });
-
   it("accepts an expected refusal only when no file is published (#11485)", async () => {
     const host = refusalHost();
     const test = fixture({ host: host as ReturnType<typeof successfulHost> });
-
     const evidence = await test.phase.from(target("expected-refusal"), instance());
 
     expect(evidence).toMatchObject({
@@ -1052,7 +1071,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(evidence).not.toHaveProperty("export");
   });
-
   it.each([
     {
       outputKind: "file",
@@ -1089,7 +1107,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       cleanup: { succeeded: true },
     });
   });
-
   it("rejects an unrelated command failure as expected-refusal coverage (#11485)", async () => {
     const host = refusalHost("gateway transport timed out");
     const test = fixture({ host: host as ReturnType<typeof successfulHost> });
@@ -1102,7 +1119,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       observedRefusalCategory: "unclassified",
     });
   });
-
   it.each([
     { stream: "stdout", tail: "stdout end" },
     { stream: "stderr", tail: "Config export failed (unsupported)." },
@@ -1178,7 +1194,6 @@ process.exitCode = 1;
       }
     },
   );
-
   it("rejects and removes an oversized export file without retaining its bytes (#11485)", async () => {
     const oversizedDirectory = { path: "" };
     const base = dependencies();
@@ -1207,7 +1222,6 @@ process.exitCode = 1;
     expect(test.writes.at(-1)?.diagnostic?.length).toBeLessThanOrEqual(2_048);
     expect(fs.existsSync(oversizedDirectory.path)).toBe(false);
   });
-
   it("rejects a hard-linked output before reading or publishing its bytes (#11485)", async () => {
     const exportDirectory = { path: "" };
     const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-hard-link-"));
@@ -1250,7 +1264,6 @@ process.exitCode = 1;
     expect(fs.existsSync(exportDirectory.path)).toBe(false);
     expect(fs.readFileSync(outsidePath, "utf8")).toBe(raw);
   });
-
   it("withholds export evidence when a hard link is added during the read (#11485)", async () => {
     const exportDirectory = { path: "" };
     const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-link-race-"));
@@ -1288,7 +1301,6 @@ process.exitCode = 1;
     expect(fs.existsSync(exportDirectory.path)).toBe(false);
     expect(fs.readFileSync(outsidePath, "utf8")).toBe(raw);
   });
-
   it("rejects a path replaced after the no-follow file is inspected (#11485)", async () => {
     const exportDirectory = { path: "" };
     const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-race-"));
@@ -1329,17 +1341,14 @@ process.exitCode = 1;
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(fs.existsSync(exportDirectory.path)).toBe(false);
   });
-
   it("records no usable sandbox without invoking export (#11485)", async () => {
     const host = refusalHost();
     const test = fixture({ host: host as ReturnType<typeof successfulHost> });
-
     const evidence = await test.phase.from(target("no-usable-sandbox"), instance(true));
 
     expect(evidence).toMatchObject({ classification: "no-usable-sandbox", passed: true });
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
-
   it("classifies cleanup failure and withholds passing export metadata (#11485)", async () => {
     const test = fixture({
       dependencies: dependencies({
@@ -1358,7 +1367,6 @@ process.exitCode = 1;
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
-
   it("preserves the primary failure when cleanup also fails (#11485)", async () => {
     const invalid = dependencies({
       removeDirectory: () => {
@@ -1379,7 +1387,6 @@ process.exitCode = 1;
       cleanup: { succeeded: false, diagnostic: "owned cleanup failed" },
     });
   });
-
   it.each(DIAGNOSTIC_SECRET_REPRESENTATIONS)(
     "redacts $name secrets from refusal diagnostics before evidence publication (#11485)",
     async ({ value: representedSecret }) => {
@@ -1404,7 +1411,6 @@ process.exitCode = 1;
       expect(stored).not.toContain(ENCODED_SECRET);
     },
   );
-
   it("redacts encoded secrets from required-export failure diagnostics (#11485)", async () => {
     const host = refusalHost(`export failed: ${ENCODED_SECRET}`);
     const test = fixture({
@@ -1425,7 +1431,6 @@ process.exitCode = 1;
     });
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(ENCODED_SECRET);
   });
-
   it.each([{ name: "literal", value: INTERNAL_TRANSPORT }, ...INTERNAL_TRANSPORT_REPRESENTATIONS])(
     "redacts $name internal credential transports from refusal diagnostics (#11485)",
     async ({ value }) => {
@@ -1449,7 +1454,6 @@ process.exitCode = 1;
       expect(stored).not.toContain(ENCODED_INTERNAL_TRANSPORT);
     },
   );
-
   it("redacts encoded internal credential transports from required-export failures (#11485)", async () => {
     const host = refusalHost(`export failed: ${ENCODED_INTERNAL_TRANSPORT}`);
     const test = fixture({ host: host as ReturnType<typeof successfulHost> });

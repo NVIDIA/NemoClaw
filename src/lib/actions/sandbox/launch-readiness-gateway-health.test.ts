@@ -14,9 +14,31 @@ import {
   requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  waitForStartedHermesGatewayProcess,
+} from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each([
+    ["becomes observable", [null, null, null, null, null, true], true],
+    ["remains unavailable", [null, null, null, null, null, null], false],
+  ] as const)(
+    "bounds a managed Hermes startup observation that %s",
+    async (_case, results, expected) => {
+      const observations = [...results];
+      const probe = vi.fn(async () => observations.shift() ?? null);
+      const sleep = vi.fn(async () => {});
+
+      await expect(
+        waitForStartedHermesGatewayProcess("alpha", "nemoclaw-19080", { probe, sleep }),
+      ).resolves.toBe(expected);
+
+      expect(probe).toHaveBeenCalledTimes(6);
+      expect(sleep.mock.calls).toEqual([[2_000], [2_000], [2_000], [2_000], [2_000]]);
+    },
+  );
+
   it("pins the semantic gateway probe to the owning OpenShell gateway (#8942)", async () => {
     const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
       outcome: { kind: "completed", exitCode: 0 },
@@ -37,7 +59,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-8091" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
@@ -57,8 +83,8 @@ describe("launch-readiness gateway health scope", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).not.toContain("echo STOPPED");
   });
 
   it.each([
@@ -75,7 +101,7 @@ describe("launch-readiness gateway health scope", () => {
           outcome: { kind: "completed", exitCode: 0 },
           stdout: execFileSync(
             "sh",
-            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command[2]}`],
+            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command.at(-1)}`],
             { encoding: "utf8" },
           ),
           stderr: "",
@@ -115,29 +141,30 @@ describe("launch-readiness gateway health scope", () => {
     ).resolves.toBeNull();
   });
 
-  it.each([
-    ["managed completion", { status: 0, stdout: "GATEWAY_PID=42", stderr: "" }, true],
-    ["SUPERVISOR_NOT_RUNNING", { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" }, false],
-    ["GATEWAY_HEALTH_TIMEOUT", { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" }, null],
-    [
-      "PRIVILEGED_CONTROL_UNAVAILABLE",
-      { status: 1, stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
-      null,
-    ],
-  ] as const)("classifies the Hermes managed probe result %s", async (_label, result, expected) => {
-    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
-
+  it("observes Hermes through its native gateway instead of the retired lifecycle controller", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    }));
     await expect(
       isSandboxGatewayRunningForStatus("alpha", "nemoclaw-19080", {
         getSessionAgent: () => loadAgent("hermes"),
-        requestGatewaySupervisorActionImpl,
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
       }),
-    ).resolves.toBe(expected);
+    ).resolves.toBe(true);
 
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledWith(
-      "alpha",
-      "probe",
-      expect.any(Number),
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
+      }),
     );
   });
 
@@ -179,6 +206,7 @@ const SANDBOX = "alpha";
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
+const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
@@ -198,6 +226,8 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    gatewayHealth: vi.fn(async () => true),
+    forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
@@ -284,4 +314,69 @@ describe("Deep Agents Code launch readiness", () => {
       }),
     );
   });
+});
+
+describe("OpenRouter launch readiness", () => {
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "accepts the %s catalog 404 after the recorded inference request succeeds (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({ ok: true });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).resolves.toBeUndefined();
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
+
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "rejects the %s catalog 404 when the recorded inference request fails (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<LaunchReadinessObservationError>>({
+          category: "health",
+          failedCheck: "inference request",
+        }),
+      );
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
 });

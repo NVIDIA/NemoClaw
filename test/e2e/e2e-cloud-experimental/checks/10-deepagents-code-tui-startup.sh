@@ -86,20 +86,6 @@ sandbox_quickjs_memfd_probe() {
   sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
 }
 
-sandbox_is_ready() {
-  openshell sandbox list 2>&1 \
-    | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }'
-}
-
-wait_for_sandbox_ready() {
-  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  while :; do
-    sandbox_is_ready && return 0
-    [ "$SECONDS" -ge "$deadline" ] && return 1
-    sleep 1
-  done
-}
-
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
@@ -420,10 +406,10 @@ expect {
   }
 }
 
-# Idle dcode arms quit on the first Ctrl-C and exits on the second.
-send -- "\003"
-after 250
-catch {send -- "\003"}
+# DCode 0.1.55 binds Ctrl-D to its dedicated quit action. At the empty main
+# composer this starts graceful shutdown without passing through Ctrl-C's
+# interrupt/copy/quit-arm state machine.
+send -- "\004"
 
 set timeout 20
 expect {
@@ -433,10 +419,32 @@ expect {
     exit 0
   }
   timeout {
-    append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
-    puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
-    send -- "\003"
-    exit 22
+    # Graceful teardown may still be draining background work. DCode treats a
+    # second Ctrl-D while exit is underway as a force-exit request, so retry it
+    # once and retain the same bounded failure if no exit status follows.
+    append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"
+    puts "\nNEMOCLAW_TUI_EXIT_RETRY"
+    catch {send -- "\004"}
+
+    set timeout 20
+    expect {
+      -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+        append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
+        puts "\nNEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
+        exit 0
+      }
+      timeout {
+        append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
+        puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
+        catch {send -- "\004"}
+        exit 22
+      }
+      eof {
+        append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
+        puts "\nNEMOCLAW_TUI_EOF_BEFORE_EXIT"
+        exit 23
+      }
+    }
   }
   eof {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
@@ -472,7 +480,7 @@ assert_clean_exit_code() {
     return
   fi
   case "$exit_code" in
-    0 | 130) pass "dcode TUI exited cleanly after Ctrl-C (exit ${exit_code})" ;;
+    0 | 130) pass "dcode TUI exited cleanly after quit request (exit ${exit_code})" ;;
     *) fail_test "dcode TUI exited with unexpected status ${exit_code}" ;;
   esac
 }

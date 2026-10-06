@@ -10,6 +10,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
 
+/** Use a nondefault authority to detect hard-coded probe and publication addresses. */
+vi.mock("./experimental/portable-profile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./experimental/portable-profile")>()),
+  PORTABLE_LOCAL_REGISTRY: "127.0.0.1:54321",
+}));
+
 vi.mock("../adapters/docker/exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/docker/exec")>()),
   dockerSpawn: mocks.dockerSpawn,
@@ -33,6 +39,7 @@ const BUILD_ID = "1234567890";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
+/** Stage a generated context and register it for cleanup even when a test rejects. */
 function createBuildContext(
   parent = os.tmpdir(),
   prefix = SANDBOX_BUILD_CONTEXT_PREFIX,
@@ -45,7 +52,11 @@ function createBuildContext(
   temporaryDirectories.push(buildCtx);
   const dockerfile = path.join(buildCtx, "Dockerfile");
   fs.writeFileSync(dockerfile, "FROM scratch\n");
-  return { buildCtx, createArgs: ["--from", dockerfile, "--name", "alpha"], dockerfile };
+  return {
+    buildCtx,
+    createArgs: ["--from", dockerfile, "--name", "alpha"],
+    dockerfile,
+  };
 }
 
 describe("sandbox BuildKit prebuild", () => {
@@ -84,12 +95,17 @@ describe("sandbox BuildKit prebuild", () => {
     },
   );
 
-  it("lets an explicit context override DOCKER_HOST", () => {
-    const env = { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" };
+  it("lets an explicit DOCKER_HOST override a context (#12223)", () => {
+    const env = {
+      DOCKER_HOST: "unix:///alternate.sock",
+      DOCKER_CONTEXT: "default",
+    };
 
-    expect(dockerContextIsDefaultFromBuild(env)).toBe(true);
-    expect(dockerBuildSubprocessEnv(env)).toMatchObject({ DOCKER_CONTEXT: "default" });
-    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_HOST");
+    expect(dockerContextIsDefaultFromBuild(env)).toBe(false);
+    expect(dockerBuildSubprocessEnv(env)).toMatchObject({
+      DOCKER_HOST: "unix:///alternate.sock",
+    });
+    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_CONTEXT");
   });
 
   afterEach(() => {
@@ -141,17 +157,17 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
   });
 
-  it("keeps Docker context precedence over an ambient Docker host", () => {
+  it("keeps Docker host precedence over an ambient context (#12223)", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///selected-docker.sock");
     vi.stubEnv("DOCKER_CONTEXT", "ambient-remote");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ambient");
 
     const env = dockerBuildSubprocessEnv();
     expect(env).toMatchObject({
-      DOCKER_CONTEXT: "ambient-remote",
+      DOCKER_HOST: "unix:///selected-docker.sock",
       DOCKER_CONFIG: "/home/user/.docker-ambient",
     });
-    expect(env).not.toHaveProperty("DOCKER_HOST");
+    expect(env).not.toHaveProperty("DOCKER_CONTEXT");
   });
 
   it("never enables a local-image handoff for a remote gateway", () => {
@@ -423,6 +439,29 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("rebinds the typed ordinary source without constructing create arguments", async () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      sourceReference: dockerfile,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage: vi.fn(async () => 0),
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(result).toEqual({
+      createArgs: [],
+      sourceReference: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
+    });
+  });
+
   it("isolates a generated BuildKit build from an unavailable WSL Docker Desktop helper (#9748)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
@@ -467,7 +506,9 @@ describe("sandbox BuildKit prebuild", () => {
         inspectImageId: () => IMAGE_ID,
         log,
       }),
-    ).resolves.toMatchObject({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" });
+    ).resolves.toMatchObject({
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+    });
 
     expect(credentialHelperResponds).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("isolated credential-free config"));
@@ -527,7 +568,10 @@ describe("sandbox BuildKit prebuild", () => {
     temporaryDirectories.push(dockerConfig);
     fs.writeFileSync(
       path.join(dockerConfig, "config.json"),
-      JSON.stringify({ credsStore: "desktop.exe", currentContext: "remote-builder" }),
+      JSON.stringify({
+        credsStore: "desktop.exe",
+        currentContext: "remote-builder",
+      }),
     );
     const prepared = prepareDockerBuildEnvironment({
       env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
@@ -666,10 +710,15 @@ describe("sandbox BuildKit prebuild", () => {
     expect(fs.existsSync(dockerConfig)).toBe(true);
   });
 
+  /** Keep publication credentials isolated after a successful registry readiness probe. */
   it("publishes portable-profile builds to the managed loopback registry", async () => {
+    const fetchRegistry = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async () => 0);
+    const buildImage = vi.fn().mockResolvedValue(0);
     let credentialConfig = "";
+    /** Inspect the temporary credential boundary before publication removes it. */
     const publishImage = vi.fn(async (_args, options) => {
       credentialConfig = String(options.env.DOCKER_CONFIG);
       expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
@@ -697,15 +746,61 @@ describe("sandbox BuildKit prebuild", () => {
     });
 
     expect(publishImage).toHaveBeenCalledWith(
-      ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
+      ["push", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"],
       expect.objectContaining({ stdio: "inherit" }),
     );
-    expect(buildImage).toHaveBeenCalledWith(
-      expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
+    expect(fetchRegistry.mock.invocationCallOrder[0]).toBeLessThan(
+      buildImage.mock.invocationCallOrder[0],
     );
-    expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({
+        env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }),
+      }),
+    );
+    expect(result.imageRef).toBe("127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890");
     expect(fs.existsSync(credentialConfig)).toBe(false);
+  });
+
+  /** Failed probes must leave both image construction and publication untouched. */
+  it.each([
+    ["connection refusal", new Error("connection refused")],
+    ["timeout", new DOMException("timed out", "TimeoutError")],
+    ["HTTP failure", new Response(null, { status: 503 })],
+    ["authentication required", new Response(null, { status: 401 })],
+    ["redirect", new Response(null, { status: 302 })],
+  ] as const)("refuses a Portable build after registry %s (#11724)", async (_condition, probe) => {
+    const fetchRegistry = vi
+      .spyOn(globalThis, "fetch")
+      .mockReturnValue(probe instanceof Response ? Promise.resolve(probe) : Promise.reject(probe));
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn().mockResolvedValue(0);
+    const publishImage = vi.fn().mockResolvedValue(125);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: "registry-reachability",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        origin: "generated",
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable", NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        publishImage,
+        log: vi.fn(),
+      }),
+    ).rejects.toThrow(/registry/i);
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(publishImage).not.toHaveBeenCalled();
+    expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {
@@ -729,7 +824,9 @@ describe("sandbox BuildKit prebuild", () => {
       });
 
     await expect(build()).resolves.toEqual(
-      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+      expect.objectContaining({
+        imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      }),
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
@@ -738,11 +835,16 @@ describe("sandbox BuildKit prebuild", () => {
 
     mocks.dockerSpawn.mockClear();
     await expect(withStdoutRedirectedToStderr(build)).resolves.toEqual(
-      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+      expect.objectContaining({
+        imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      }),
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ shell: false, stdio: ["inherit", process.stderr, "inherit"] }),
+      expect.objectContaining({
+        shell: false,
+        stdio: ["inherit", process.stderr, "inherit"],
+      }),
     );
   });
 

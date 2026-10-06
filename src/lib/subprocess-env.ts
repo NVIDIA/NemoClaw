@@ -135,11 +135,12 @@ export function buildDockerSubprocessEnv(
     if (dockerContext !== undefined) env.DOCKER_CONTEXT = dockerContext;
   } else {
     env.DOCKER_HOST = dockerHost;
-    // A context-resolved host still depends on the config directory that owns
-    // the context and its registry credential helpers. Keep that directory
-    // only when the caller proves this host came from the selected context.
-    if (options.preserveDockerConfig && source.DOCKER_CONFIG !== undefined) {
-      env.DOCKER_CONFIG = source.DOCKER_CONFIG;
+    // A selected host can still depend on its client configuration for registry
+    // credentials, certificate paths, or credential helpers. Keep the exact
+    // caller-selected directory only when the caller opts into that authority.
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    if (options.preserveDockerConfig && dockerConfig !== undefined) {
+      env.DOCKER_CONFIG = dockerConfig;
     }
   }
   return env;

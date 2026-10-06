@@ -15,14 +15,13 @@ export const INSTALLER_PAYLOAD = path.join(
 );
 
 /**
- * Build an isolated TEST_SYSTEM_PATH that mirrors /usr/bin and /bin while
- * excluding node/npm/npx, so runtime preflight tests exercise missing-tool
- * branches consistently across developer hosts and CI. Tests that need those
- * tools prepend stubs from fakeBin; the tiny temp dir is left for OS cleanup.
+ * Build a private PATH mirroring /usr/bin and /bin, excluding node/npm/npx
+ * and any requested commands. Tests prepend their own command stubs to exercise
+ * missing-tool branches consistently. Each call owns an independent directory.
  */
-export function buildIsolatedSystemPath() {
+export function buildIsolatedSystemPath(additionalExclusions: readonly string[] = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-sysbin-"));
-  const EXCLUDE = new Set(["node", "npm", "npx"]);
+  const EXCLUDE = new Set(["node", "npm", "npx", ...additionalExclusions]);
   for (const sysDir of ["/usr/bin", "/bin"]) {
     if (!fs.existsSync(sysDir)) continue;
     for (const name of fs.readdirSync(sysDir)) {
@@ -45,6 +44,7 @@ export function buildIsolatedSystemPath() {
   return dir;
 }
 
+/** Shared default command path; use a new path for fixture-specific exclusions. */
 export const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 
 export function readShellConstant(file: string, name: string) {

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Patch pinned Hermes v0.20.6 session lists to show the latest user turn.
+"""Patch pinned Hermes v0.21.3 session lists to show the latest user turn.
 
 Source-of-truth note for this localized Hermes runtime patch:
-  - Invalid state: Hermes v0.20.6 computes `sessions list` preview text from
+  - Invalid state: Hermes v0.21.3 computes `sessions list` preview text from
     the first user message. Its workspace-aware titled table then hides the
     preview behind an automatic seed title, so #5254's resumed/continued
     one-shot UX keeps displaying the seed turn instead of the latest appended
     turn. User-authored titles remain authoritative.
-  - Values being patched: pinned/prebuilt `/opt/hermes/hermes_state.py`
-    occurrences of `ORDER BY m.timestamp, m.id LIMIT 1` inside
-    `SessionDB.list_sessions_rich()`, plus the workspace-aware title cell in
+  - Values being patched: pinned/prebuilt `/opt/hermes/hermes_state_common.py`,
+    `/opt/hermes/hermes_state_sessions.py`, and
+    `/opt/hermes/hermes_state_telegram.py` preview queries, plus the title cell in
     `/opt/hermes/hermes_cli/sessions_cmd.py`.
   - Source-fix constraint: NemoClaw layers a sandbox image on top of the
     published Hermes runtime; the source fix belongs upstream in Hermes, not in
@@ -32,18 +32,19 @@ from pathlib import Path
 
 STATE_OLD = "ORDER BY m.timestamp, m.id LIMIT 1"
 STATE_NEW = "ORDER BY m.timestamp DESC, m.id DESC LIMIT 1"
-STATE_EXPECTED_OCCURRENCES = 5
-COMMAND_OLD = '''                if has_titles:
-                    title = (s.get("title") or "—")[:26]
-                    print(f"{title:<28} {ws:<18} {last_active:<13} {s['id']}")'''
-COMMAND_NEW = '''                if has_titles:
-                    title = (
-                        s.get("preview")
-                        if s.get("title_source") in ("derived", "llm")
-                        else s.get("title")
-                    ) or s.get("preview") or "—"
-                    title = title[:26]
-                    print(f"{title:<28} {ws:<18} {last_active:<13} {s['id']}")'''
+STATE_EXPECTED_OCCURRENCES = (1, 2, 1)
+COMMAND_OLD = '''    _title = lambda s, n: (s.get("title") or "—")[:n]  # noqa: E731
+'''
+COMMAND_NEW = '''    _title = lambda s, n: (  # noqa: E731
+        (
+            s.get("preview")
+            if s.get("title_source") in ("derived", "llm")
+            else s.get("title")
+        )
+        or s.get("preview")
+        or "—"
+    )[:n]
+'''
 
 
 def patched_source(path: Path, old: str, new: str, expected: int, label: str) -> str:
@@ -61,14 +62,11 @@ def patched_source(path: Path, old: str, new: str, expected: int, label: str) ->
     return source.replace(old, new)
 
 
-def patch_files(state_path: Path, command_path: Path) -> None:
-    state_source = patched_source(
-        state_path,
-        STATE_OLD,
-        STATE_NEW,
-        STATE_EXPECTED_OCCURRENCES,
-        "preview query",
-    )
+def patch_files(state_paths: tuple[Path, Path, Path], command_path: Path) -> None:
+    state_sources = [
+        patched_source(path, STATE_OLD, STATE_NEW, expected, "preview query")
+        for path, expected in zip(state_paths, STATE_EXPECTED_OCCURRENCES, strict=True)
+    ]
     command_source = patched_source(
         command_path,
         COMMAND_OLD,
@@ -76,17 +74,27 @@ def patch_files(state_path: Path, command_path: Path) -> None:
         1,
         "list renderer",
     )
-    state_path.write_text(state_source, encoding="utf-8")
+    for path, source in zip(state_paths, state_sources, strict=True):
+        path.write_text(source, encoding="utf-8")
     command_path.write_text(command_source, encoding="utf-8")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "state_path",
-        nargs="?",
-        default="/opt/hermes/hermes_state.py",
-        help="Hermes state module to patch",
+        "--state-common-path",
+        default="/opt/hermes/hermes_state_common.py",
+        help="Hermes shared state module to patch",
+    )
+    parser.add_argument(
+        "--state-sessions-path",
+        default="/opt/hermes/hermes_state_sessions.py",
+        help="Hermes session state module to patch",
+    )
+    parser.add_argument(
+        "--state-telegram-path",
+        default="/opt/hermes/hermes_state_telegram.py",
+        help="Hermes Telegram state module to patch",
     )
     parser.add_argument(
         "--sessions-command-path",
@@ -94,7 +102,14 @@ def main() -> int:
         help="Hermes sessions command module to patch",
     )
     args = parser.parse_args()
-    patch_files(Path(args.state_path), Path(args.sessions_command_path))
+    patch_files(
+        (
+            Path(args.state_common_path),
+            Path(args.state_sessions_path),
+            Path(args.state_telegram_path),
+        ),
+        Path(args.sessions_command_path),
+    )
     return 0
 
 

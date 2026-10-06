@@ -30,7 +30,7 @@ flowchart LR
     GATEWAY["OpenShell gateway<br/><small>lifecycle, credentials, policy, routing</small>"]:::gateway
     SANDBOX["OpenShell sandbox<br/><small>agent runtime and integration layer</small>"]:::sandbox
     INTERFACE["Agent interface<br/><small>runtime-specific interaction path</small>"]:::users
-    STATE["Managed state and artifacts<br/><small>registry, workspace, logs, snapshots</small>"]:::state
+    STATE["Managed state and artifacts<br/><small>registry, native home, logs, backups</small>"]:::state
     INFERENCE["Inference providers<br/><small>supported hosted or local inference</small>"]:::inference
     INTEGRATIONS["Approved integrations<br/><small>MCP servers and package services</small>"]:::integrations
 
@@ -43,7 +43,7 @@ flowchart LR
     USERS -->|"interact"| INTERFACE
     INTERFACE --> SANDBOX
     CLI -->|"record lifecycle"| STATE
-    SANDBOX -.->|"persist declared state"| STATE
+    SANDBOX -.->|"persist native home"| STATE
 
     classDef users fill:#d9ecf7,stroke:#6aa6c8,color:#1a1a1a,stroke-width:2px
     classDef control fill:#d7f0dc,stroke:#5a9f70,color:#1a1a1a,stroke-width:2px
@@ -65,7 +65,7 @@ The diagram has the following components:
 | Agent interface | Provides the interaction path exposed by the selected agent runtime. |
 | Inference providers | Receive managed inference requests through the OpenShell gateway. |
 | Approved integrations | Receive policy-approved requests to MCP servers, package indexes, and other configured services. |
-| Managed state and artifacts | Preserve non-policy registry records, workspace files, logs, and manifest-declared snapshot content; OpenShell alone stores sandbox policy. |
+| Managed state and artifacts | Preserve non-policy registry records and the complete OpenShell-provided native home/workspace during replacement; OpenShell alone stores sandbox policy and credentials. |
 
 For repository layout, file paths, and deeper diagrams, refer to [Architecture](../reference/architecture).
 
@@ -81,7 +81,7 @@ Agent-specific integration : Each supported agent runtime receives the configura
 
 Resumable lifecycle : NemoClaw records lifecycle progress and reconciles managed resources after supported interruptions or partial operations.
 
-Manifest-declared state : Rebuild, snapshot, and restore operations preserve only the state declared for the selected agent runtime. Each agent manifest and operation defines which credential-bearing files to exclude.
+OpenShell-native state : Routine lifecycle operations keep the native home/workspace in OpenShell storage. Rebuild and recreation transfer that complete tree without a NemoClaw path allowlist; OpenShell-owned credential stores remain outside it.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -195,7 +195,7 @@ After the sandbox starts, the selected agent uses its managed configuration and 
 
 ## Lifecycle and State
 
-NemoClaw operates the sandbox and its manifest-declared state through host-side commands.
+NemoClaw operates the sandbox through host-side commands while OpenShell owns its persistent native home and workspace.
 
 | Operation | Result |
 | --- | --- |
@@ -203,10 +203,10 @@ NemoClaw operates the sandbox and its manifest-declared state through host-side 
 | Configure | Inference, policy, managed MCP, and supported agent-runtime integration commands update the applicable managed resources. |
 | Rebuild | Recreates the sandbox from the recorded configuration and restores supported agent state through a recorded transaction. |
 | Recover | Repairs a stopped or degraded agent runtime and its sandbox-scoped forwards when the recorded identities still match. |
-| Snapshot and restore | Captures manifest-declared state with the agent- and operation-specific credential exclusions, then applies that state to an eligible sandbox. |
+| Rebuild migration | Transfers the complete native home and workspace to a replacement sandbox; OpenShell-owned credential storage remains outside the transfer. |
 | Destroy and uninstall | Removes the selected sandbox or host installation according to the command scope and preservation choices. |
 
-Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for lifecycle details.
+Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Persist Sandbox State](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for lifecycle details.
 
 ## Inference Routing
 

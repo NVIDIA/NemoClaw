@@ -234,8 +234,12 @@ proc exit {{code 0}} {
 const tuiModelPrompt = "What is 731 + 206? Reply only with the number.";
 
 function expectedTuiSendTrace(
-  options: { ctrlCCount?: number; includeNamePrompt?: boolean } = {},
+  options: { ctrlCCount?: number; includeNamePrompt?: boolean; quitKeyCount?: number } = {},
 ): string {
+  const quitKeys =
+    options.ctrlCCount === undefined
+      ? Array.from({ length: options.quitKeyCount ?? 1 }, () => "\u0004")
+      : Array.from({ length: options.ctrlCCount }, () => "\u0003");
   const sends = [
     ...(options.includeNamePrompt ? ["\r"] : []),
     ..."/agents",
@@ -243,7 +247,7 @@ function expectedTuiSendTrace(
     "\u001b",
     ...tuiModelPrompt,
     "\r",
-    ...Array.from({ length: options.ctrlCCount ?? 1 }, () => "\u0003"),
+    ...quitKeys,
   ];
   return sends.map((value) => Buffer.from(value).toString("hex")).join(",");
 }
@@ -430,7 +434,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
-  itWithTclsh("captures a clean exit when dcode closes after the first Ctrl-C (tclsh)", () => {
+  itWithTclsh("captures a clean exit when dcode closes after Ctrl+D (tclsh)", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(
       ["composer", "ready", "response", "exit"],
       {
@@ -445,6 +449,20 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+  });
+
+  itWithTclsh("retries DCode's dedicated quit key while graceful exit is still draining", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(
+      ["composer", "ready", "response", "timeout", "exit"],
+      { expectNamePrompt: false },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(traceText).toBe(expectedTuiSendTrace({ quitKeyCount: 2 }));
+    expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
+    expect(markerText).toContain("NEMOCLAW_TUI_EXIT_RETRY");
+    expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_EXIT_TIMEOUT");
   });
 
   itWithTclsh(
@@ -493,7 +511,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).not.toContain("NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED");
   });
 
-  it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
+  it("does not treat generic TUI exit status 1 as a clean quit", () => {
     const assertExit = (exitCode: string) =>
       runTuiStartupCheckHelper(
         [
@@ -509,10 +527,10 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
 
     expect(assertExit("0")).toBe(
-      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after Ctrl-C (exit 0))\npassed=1 failed=0",
+      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after quit request (exit 0))\npassed=1 failed=0",
     );
     expect(assertExit("130")).toBe(
-      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after Ctrl-C (exit 130))\npassed=1 failed=0",
+      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after quit request (exit 130))\npassed=1 failed=0",
     );
     expect(assertExit("1")).toBe("passed=0 failed=1");
   });
@@ -563,7 +581,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.stdout).toContain(
         "dcode TUI reached the main composer and opened Select Agent",
       );
-      expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
+      expect(result.stdout).toContain("dcode TUI exited cleanly after quit request (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");

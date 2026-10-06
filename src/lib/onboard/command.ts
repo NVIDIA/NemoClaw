@@ -31,6 +31,7 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { handleOnboardCommandError, reportOnboardCommandError } from "./command/error-reporting";
 import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
@@ -39,10 +40,7 @@ import {
   loadPortableInferenceDescriptor,
   PORTABLE_INFERENCE_CREDENTIAL_ENV,
   type PortableInferenceActivation,
-  PortableInferenceDescriptorError,
 } from "./experimental/portable-inference-descriptor";
-import { GatewayManagementDeclarationError } from "./gateway-management";
-import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
@@ -52,17 +50,15 @@ import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
+import { parseExactExternalImageReference } from "./workload/external-image";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
-  OnboardRestoreSnapshotDriftError,
   OnboardResumeIntentError,
   resolveOnboardResumeIntent,
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
   isTrustedOnboardError,
-  redactOnboardErrorText,
   redactOnboardDiagnosticText,
-  sanitizeOnboardFailure,
 } from "./session-bootstrap";
 
 export interface OnboardCommandOptions {
@@ -74,6 +70,7 @@ export interface OnboardCommandOptions {
   recreateSandbox: boolean;
   apfInterceptorRequested: boolean | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
@@ -471,6 +468,18 @@ function resolveOnboardToolDisclosure(
   }
 }
 
+function resolveExternalImageReference(
+  value: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  if (value === undefined) return null;
+  try {
+    return parseExactExternalImageReference(value);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -483,6 +492,13 @@ export function resolveOnboardOptions(
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
+  if (flags.from !== undefined && flags["from-image"] !== undefined) {
+    fail(deps, "  --from and --from-image cannot both be set.");
+  }
+  const fromImage = resolveExternalImageReference(flags["from-image"], deps);
+  if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
+    fail(deps, "  --from-image cannot be used with the Portable profile.");
+  }
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -497,6 +513,7 @@ export function resolveOnboardOptions(
     recreateSandbox: flags["recreate-sandbox"] === true,
     apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
+    ...(fromImage ? { fromImage } : {}),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
@@ -554,59 +571,6 @@ function safeDeferredExitCode(error: unknown): number | null {
   if (ownErrorData(error, "name") !== "OnboardDeferredExitError") return null;
   const code = ownErrorData(error, "code");
   return typeof code === "number" && Number.isInteger(code) ? code : null;
-}
-
-/** Report operator errors without exposing multiline secrets or truncating later recovery lines. */
-function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  const redacted = redactOnboardErrorText(message);
-  (deps.error ?? console.error)(redacted);
-  return 1;
-}
-
-/** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
-function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
-  const cancellationCode = promptCancellationCode(error);
-  const sanitizedError = sanitizeOnboardFailure(error);
-  if (cancellationCode === "SIGINT") {
-    // The prompt has already restored terminal state and re-raised SIGINT.
-    // Let the onboard signal handler print resumable-step guidance and
-    // preserve status 130 without leaking this rejected prompt error through
-    // oclif as a raw stack trace (#7439).
-    return null;
-  }
-  // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,
-  // not a crash: print the validation reason as a clean single-line CLI error
-  // and exit nonzero instead of re-throwing it into a Node.js stack trace
-  // (#7627).
-  if (sanitizedError instanceof GatewayManagementDeclarationError) {
-    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
-  }
-  if (sanitizedError instanceof PortableInferenceDescriptorError) {
-    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
-  }
-  if (sanitizedError instanceof OnboardRestoreSnapshotDriftError) {
-    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
-  }
-  // Gateway-authority refusals are reported, never rethrown. Recreation is not
-  // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
-  // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same
-  // journal when it detects sandbox drift. Keying this branch on the flag left
-  // both of those paths emitting a raw stack trace (#8103). Within onboarding
-  // the recreate journal's authority revalidation is the only source of this
-  // typed error, so the operation label holds however recreation was selected.
-  if (sanitizedError instanceof GatewayAuthorityError) {
-    return reportOnboardCommandError(
-      deps,
-      gatewayAuthorityFailureLines(sanitizedError, "sandbox recreate").join("\n"),
-    );
-  }
-  // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
-  // print a clear message and exit non-zero instead of either crashing with
-  // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") {
-    throw sanitizedError;
-  }
-  return reportOnboardCommandError(deps, "  Installation cancelled");
 }
 
 function applyServingProfileEnvironment(
@@ -724,7 +688,7 @@ function handleOnboardCommandAttemptError(
   }
   const deferredExitCode = safeDeferredExitCode(error);
   if (deferredExitCode !== null) return deferredExitCode;
-  return handleOnboardCommandError(error, deps) ?? "complete";
+  return handleOnboardCommandError(error, deps, promptCancellationCode(error)) ?? "complete";
 }
 
 function restoreOnboardCommandEnvironment(
