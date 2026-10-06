@@ -522,6 +522,13 @@ describe("complete managed-image publication workflow", () => {
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
     expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
     expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/reviewed-npm-audit.mts"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/npm-audit-receipt.mts"');
+    expect(prepareAuditEvidence.run).toContain('"audit", "signatures"');
+    expect(prepareAuditEvidence.run).toContain("$RUNNER_TEMP/trusted-mcporter-audit-report/");
+    expect(prBuilder.steps?.map((candidate) => candidate.name)).not.toContain(
+      "Download same-run npm audit evidence",
+    );
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
