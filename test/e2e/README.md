@@ -1050,8 +1050,9 @@ These are application environment bindings, not approved GitHub repository secre
 mappings. Credential provisioning and a supported account model remain external
 prerequisites. Hermes Provider registers the manual Nous key once through
 `credentials add`; only that command maps it into the profile's physical
-`OPENAI_API_KEY` binding. The later switch consumes its owned registration. OAuth
-qualification remains separate and is not established by this manual-key scenario. Do not run this owner against a personal or shared gateway: it pre-cleans and
+`OPENAI_API_KEY` binding. The later switch consumes its owned registration. This scenario does not exercise OAuth acquisition. The unchanged OAuth device
+flow and its native credential handoff retain their existing deterministic tests;
+this migration does not introduce a separate live-login requirement. Do not run this owner against a personal or shared gateway: it pre-cleans and
 tears down its sandbox and removes the named gateway registration. Sandbox
 destroy only deletes sandbox-owned messaging/search providers; native inference
 providers are shared gateway resources. Cleanup command success does not separately

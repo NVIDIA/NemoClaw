@@ -305,6 +305,8 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
+  "src/lib/inference/native-hosted/profiles.ts",
+  "src/lib/inference/native-hosted/openrouter-headers.ts",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
