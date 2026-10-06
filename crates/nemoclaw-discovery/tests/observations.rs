@@ -8,6 +8,7 @@ use nemoclaw_sdk::{
         ObservationStatus,
     },
     hardware_discovery::HardwareObservation,
+    inference_discovery::CredentialObservation,
 };
 
 fn engine(status: ObservationStatus) -> EngineObservation {
@@ -107,6 +108,16 @@ fn observations_survive_a_round_trip_through_json() {
                 engine: "unix:///var/run/docker.sock".into(),
             },
             DiscoveryObservation::Hardware(HardwareObservation::unknown()),
+        )
+        .with(
+            DiscoveryQuery::Credential {
+                reference: "API_KEY".into(),
+            },
+            DiscoveryObservation::Credential(CredentialObservation {
+                reference: "API_KEY".into(),
+                status: ObservationStatus::Available,
+                reason: None,
+            }),
         );
     assert!(!observations.is_empty());
     let encoded = serde_json::to_string(&observations).unwrap();

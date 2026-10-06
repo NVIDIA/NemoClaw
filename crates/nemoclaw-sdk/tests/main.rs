@@ -118,7 +118,5 @@ mod spark_examples;
 mod ssh_live;
 #[path = "telemetry.rs"]
 mod telemetry;
-#[path = "unknown_observations.rs"]
-mod unknown_observations;
 #[path = "web_search.rs"]
 mod web_search;
