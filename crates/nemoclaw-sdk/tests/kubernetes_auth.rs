@@ -126,7 +126,8 @@ fn the_issuer_certificate_is_trusted_only_for_the_issuer_host() {
 }
 
 /// Runs the pinned issuer image with the generated configuration, as the
-/// Deployment does, and fetches both documents over HTTPS with the issuer CA.
+/// Deployment does, and checks that both documents remain available over HTTPS
+/// within the Deployment's memory budget.
 #[tokio::test]
 #[ignore = "runs the issuer image with Docker; run through cargo ci live-docker"]
 async fn the_issuer_image_serves_both_documents_over_https() {
@@ -207,6 +208,19 @@ async fn the_issuer_image_serves_both_documents_over_https() {
         "-p",
         "127.0.0.1::8443",
     ]);
+    // Exercise the same memory budget as the Kubernetes Deployment, including
+    // on hosts where nginx's automatic worker count would exhaust it.
+    let memory = container["resources"]["limits"]["memory"]
+        .as_str()
+        .unwrap()
+        .strip_suffix("Mi")
+        .unwrap();
+    command.args([
+        "--memory",
+        &format!("{memory}m"),
+        "--memory-swap",
+        &format!("{memory}m"),
+    ]);
     command.args(["--mount", &mount("conf.d", "/etc/nginx/conf.d")]);
     command.args(["--mount", &mount("documents", "/documents")]);
     command.args(["--mount", &mount("tls", "/tls")]);
@@ -246,6 +260,7 @@ async fn the_issuer_image_serves_both_documents_over_https() {
     let client = reqwest::Client::builder()
         .tls_certs_only([reqwest::Certificate::from_pem(material.ca_pem().as_bytes()).unwrap()])
         .resolve(host, address)
+        .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
     let url = |path: &str| format!("https://{host}:{}{path}", address.port());
@@ -279,6 +294,29 @@ async fn the_issuer_image_serves_both_documents_over_https() {
     assert_eq!(discovery, material.discovery());
     let missing = client.get(url("/signing.pk8")).send().await.unwrap();
     assert_eq!(missing.status(), 404);
+
+    // The first request can succeed while nginx is still starting workers.
+    // Keep serving after startup to catch exhaustion of the memory budget on
+    // hosts with more CPUs than this static issuer needs.
+    let until = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while tokio::time::Instant::now() < until {
+        for (path, expected) in [
+            ("/jwks", material.jwks()),
+            ("/.well-known/openid-configuration", material.discovery()),
+        ] {
+            let response = client
+                .get(url(path))
+                .send()
+                .await
+                .expect("issuer remains available within its memory budget")
+                .error_for_status()
+                .unwrap();
+            let document: serde_json::Value =
+                serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            assert_eq!(document, expected);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 #[cfg(unix)]

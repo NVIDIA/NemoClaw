@@ -19,11 +19,31 @@ pub fn objects(material: &Material, name: &str, namespace: &str) -> Vec<Value> {
     let issuer = format!("{name}-oidc");
     let metadata = json!({"name": issuer, "namespace": namespace});
     let selector = json!({"app.kubernetes.io/name": "nemoclaw-development-issuer", "app.kubernetes.io/instance": issuer});
+    // The image's default worker count follows the host CPU count and can
+    // exceed this static server's memory limit on large Kubernetes nodes.
     let nginx = format!(
-        "server {{\n    listen {PORT} ssl;\n    ssl_certificate /tls/tls.crt;\n    ssl_certificate_key /tls/tls.key;\n    \
-         default_type application/json;\n    \
-         location = /.well-known/openid-configuration {{ alias /documents/openid-configuration; }}\n    \
-         location = /jwks {{ alias /documents/jwks; }}\n    location / {{ return 404; }}\n}}\n"
+        r#"worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+events {{ worker_connections 1024; }}
+http {{
+    access_log off;
+    client_body_temp_path /tmp/client_temp;
+    proxy_temp_path /tmp/proxy_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
+    server {{
+        listen {PORT} ssl;
+        ssl_certificate /tls/tls.crt;
+        ssl_certificate_key /tls/tls.key;
+        default_type application/json;
+        location = /.well-known/openid-configuration {{ alias /documents/openid-configuration; }}
+        location = /jwks {{ alias /documents/jwks; }}
+        location / {{ return 404; }}
+    }}
+}}
+"#
     );
     vec![
         // The gateway mounts this CA to verify the issuer's certificate.
@@ -62,7 +82,7 @@ pub fn objects(material: &Material, name: &str, namespace: &str) -> Vec<Value> {
                     "image": DEVELOPMENT_ISSUER_IMAGE,
                     "imagePullPolicy": "IfNotPresent",
                     // Skip the image's entrypoint scripts, which edit its configuration.
-                    "command": ["nginx", "-g", "daemon off;"],
+                    "command": ["nginx", "-c", "/etc/nginx/conf.d/default.conf", "-g", "daemon off;"],
                     "ports": [{"containerPort": PORT}],
                     "readinessProbe": {"tcpSocket": {"port": PORT}, "periodSeconds": 2},
                     "resources": {
