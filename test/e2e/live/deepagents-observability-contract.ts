@@ -160,7 +160,7 @@ export function observabilityPresetState(output: string): string {
   return parsePolicyPresetState(output, "observability-otlp-local");
 }
 
-function nativeDcodeData(output: string, command: string): Record<string, unknown> {
+function nativeDcodeData(output: string, command: string): Record<string, unknown> | unknown[] {
   let envelope;
   try {
     envelope = JSON.parse(output);
@@ -171,18 +171,30 @@ function nativeDcodeData(output: string, command: string): Record<string, unknow
     envelope?.schema_version !== 1 ||
     envelope.command !== command ||
     typeof envelope.data !== "object" ||
-    envelope.data === null ||
-    Array.isArray(envelope.data)
+    envelope.data === null
   ) {
     throw new Error("invalid native DCode result envelope");
   }
   return envelope.data;
 }
 
-export function observabilityProbeThreadId(output: string): string {
-  const data = nativeDcodeData(output, "non-interactive");
-  const completion = data.completion as { thread_id?: unknown } | undefined;
-  const threadId = completion?.thread_id;
+export function observabilityProbeThreadId(output: string, probeCwd?: string): string {
+  const data = nativeDcodeData(output, probeCwd ? "threads list" : "non-interactive");
+  // A fresh, privately owned cwd identifies the probe even when cancellation
+  // prevents a completion envelope. The native list filters by exact cwd;
+  // require the returned metadata to agree and reject ambiguous results.
+  if (probeCwd && Array.isArray(data) && data.length === 0) return "";
+  const listed = (Array.isArray(data) && data.length === 1 ? data[0] : undefined) as
+    | { cwd?: unknown; thread_id?: unknown }
+    | undefined;
+  const completion = (Array.isArray(data) ? undefined : data.completion) as
+    | { thread_id?: unknown }
+    | undefined;
+  const threadId = probeCwd
+    ? listed?.cwd === probeCwd
+      ? listed.thread_id
+      : undefined
+    : completion?.thread_id;
   if (
     typeof threadId !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
@@ -265,7 +277,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "probe-thread-id") {
-    process.stdout.write(`${observabilityProbeThreadId(input)}\n`);
+    process.stdout.write(`${observabilityProbeThreadId(input, argument)}\n`);
     return;
   }
   if (command === "validate-captures" && argument) {

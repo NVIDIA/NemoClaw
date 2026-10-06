@@ -18,6 +18,10 @@ ENV_BACKUP="/tmp/${PREFIX}.env.backup.$$"
 ENV_EXISTED=0
 NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com|Server ready|Task completed|PING"
 AUDIT_NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com"
+# OpenShell records the exec transport itself as NET:OPEN. Only this exact
+# local SSH relay record is expected; other network opens must still fail.
+AUDIT_EXEC_RELAY_PATTERN='^\[[0-9]+(\.[0-9]+)?\] \[sandbox\] \[OCSF *\] \[ocsf\] NET:OPEN \[INFO\] '
+AUDIT_EXEC_RELAY_PATTERN+='\[msg:ssh relay open \(channel_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}, target=unix:/run/openshell/ssh\.sock\)\]$'
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -163,15 +167,15 @@ assert_no_rejected_interval_audit_logs() {
   local label="$1"
   local logs="$2"
 
-  if ! echo "$logs" | grep -q "AUDIT_LOG_READ:1"; then
+  if ! grep -q "AUDIT_LOG_READ:1" <<<"$logs"; then
     fail_test "${label}: OpenShell audit logs could not be read: $logs"
     return
   fi
-  if echo "$logs" | grep -q "$FAKE_SECRET"; then
+  if grep -q "$FAKE_SECRET" <<<"$logs"; then
     fail_test "${label}: raw fake secret leaked into OpenShell audit logs"
     return
   fi
-  if echo "$logs" | grep -Eq "$AUDIT_NETWORK_LOG_PATTERN"; then
+  if grep -Ev "$AUDIT_EXEC_RELAY_PATTERN" <<<"$logs" | grep -E "$AUDIT_NETWORK_LOG_PATTERN" >/dev/null; then
     fail_test "${label}: OpenShell audit logs show network path after rejection: $logs"
     return
   fi

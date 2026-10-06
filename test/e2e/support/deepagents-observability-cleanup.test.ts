@@ -10,6 +10,9 @@ import { cleanupExistingPath, terminateProcessIfRunning } from "../fixtures/clea
 import { observabilityProbeThreadId } from "../live/deepagents-observability-contract.ts";
 
 const threadId = "01900000-0000-7000-8000-000000000001";
+const probeCwd = "/sandbox/.deepagents/nemoclaw-otlp-live.fixture";
+const nativeList = (data: unknown) =>
+  JSON.stringify({ schema_version: 1, command: "threads list", data });
 const turn = JSON.stringify({
   schema_version: 1,
   command: "non-interactive",
@@ -36,10 +39,35 @@ describe("observability probe conversation cleanup", () => {
   });
 
   it.each([
+    [[], ""],
+    [[{ thread_id: threadId, cwd: probeCwd }], threadId],
+  ])("recovers only the exact privately owned cwd (%j)", (threads, expected) => {
+    expect(observabilityProbeThreadId(nativeList(threads), probeCwd)).toBe(expected);
+  });
+
+  it.each([
+    null,
+    {},
+    [null],
+    [{ thread_id: threadId, cwd: `${probeCwd}-other` }],
+    [{ thread_id: "--all", cwd: probeCwd }],
+    [{ thread_id: threadId }],
+    [
+      { thread_id: threadId, cwd: probeCwd },
+      { thread_id: threadId, cwd: probeCwd },
+    ],
+  ])("refuses ambiguous or out-of-scope native listings (%j)", (threads) => {
+    expect(() => observabilityProbeThreadId(nativeList(threads), probeCwd)).toThrow();
+  });
+
+  it.each([
     [0, true, false],
     [0, false, false],
     [7, true, false],
     [0, true, true],
+    [0, true, "before"],
+    [0, false, "before"],
+    [7, true, "before"],
   ])(
     "cleans the exact probe on failed-turn exit (%s, present=%s, interrupted=%s)",
     (nativeStatus, present, interrupted) => {
@@ -88,7 +116,7 @@ describe("observability probe conversation cleanup", () => {
   *) case "$2" in
     policy-state) cat ;;
     denial-state) cat >/dev/null; echo policy-denied ;;
-    probe-thread-id) exec "$REAL_TSX" "$REAL_HELPER" probe-thread-id ;;
+    probe-thread-id) shift; exec "$REAL_TSX" "$REAL_HELPER" "$@" ;;
     *) exit 92 ;;
     esac ;;
 esac`,
@@ -99,18 +127,32 @@ esac`,
         "openshell",
         `case "$*" in
   *'getent ahostsv4'*) echo NEMOCLAW_OTLP_BIND_IP=192.168.1.2 ;;
+  *'mkdir -m 0700 -- '*)
+    printf '%s' "\${10}" > "$CASE_ROOT/probe-cwd-value"
+    mkdir "$CASE_ROOT/probe-cwd" ;;
   *'dcode --json --timeout 90 -n'*)
-    cat "$CASE_ROOT/turn.json"
-    if [ "$INTERRUPT_TURN" = true ]; then
+    test "\${7#--chdir=}" = "$(cat "$CASE_ROOT/probe-cwd-value")"
+    if [ "$INTERRUPT_TURN" != before ]; then cat "$CASE_ROOT/turn.json"; fi
+    if [ "$INTERRUPT_TURN" != false ]; then
       kill -TERM "$(cat "$CASE_ROOT/check.pid")"
     fi
     exit 7 ;;
+  *'dcode threads list'*)
+    test "\${10}" = "$(cat "$CASE_ROOT/probe-cwd-value")"
+    if [ -f "$CASE_ROOT/probe-thread" ]; then
+      printf '{"schema_version":1,"command":"threads list","data":[{"thread_id":"${threadId}","cwd":"%s"}]}\\n' "\${10}"
+    else
+      printf '%s\\n' '{"schema_version":1,"command":"threads list","data":[]}'
+    fi ;;
   *'dcode threads delete'*)
     test "$9" = ${threadId}
     printf '%s\\n' "$9" > "$CASE_ROOT/deleted-thread"
     test "$NATIVE_STATUS" = 0 || exit "$NATIVE_STATUS"
     rm -f "$CASE_ROOT/probe-thread"
     ;;
+  *'rmdir -- '*)
+    test "$8" = "$(cat "$CASE_ROOT/probe-cwd-value")"
+    rmdir "$CASE_ROOT/probe-cwd" ;;
   *'.nemoclaw-observability-enabled'*) echo 1 ;;
 esac`,
       );
@@ -158,8 +200,11 @@ esac`,
           },
         },
       );
-      expect(result.status, result.output).toBe(interrupted ? 143 : 1);
-      expect(fs.readFileSync(workspace.path("deleted-thread"), "utf8").trim()).toBe(threadId);
+      expect(result.status, result.output).toBe(interrupted && nativeStatus === 0 ? 143 : 1);
+      const deletion = workspace.path("deleted-thread");
+      expect(fs.existsSync(deletion) ? fs.readFileSync(deletion, "utf8").trim() : "").toBe(
+        interrupted === "before" && !present ? "" : threadId,
+      );
       expect(fs.existsSync(workspace.path("probe-thread"))).toBe(present && nativeStatus !== 0);
       expect(fs.readFileSync(workspace.path("control-thread"), "utf8")).toBe(
         "unrelated conversation",
@@ -169,6 +214,7 @@ esac`,
         false,
       );
       expect(result.stderr.includes("probe conversation cleanup failed")).toBe(nativeStatus !== 0);
+      expect(fs.existsSync(workspace.path("probe-cwd"))).toBe(nativeStatus !== 0);
     },
   );
 });
