@@ -4449,9 +4449,9 @@ EOF
   return 1
 }
 
-# v0.0.123 seeded an empty approvals file that OpenClaw cannot migrate.
+# Older images seeded empty approvals and update-check files that OpenClaw cannot migrate.
 # Retain nonempty files for native migration, including malformed user data.
-remove_empty_legacy_exec_approvals() {
+remove_empty_legacy_state_placeholders() {
   run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
 import os
 import stat
@@ -4473,36 +4473,36 @@ try:
     fds.append(parent_fd)
     root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
     fds.append(root_fd)
-    name = 'exec-approvals.json'
-    try:
-        before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        sys.exit(0)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-        raise ValueError('unsafe approvals file')
-    if before.st_size != 0:
-        sys.exit(0)
-    target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
-    fds.append(target_fd)
-    if (before.st_dev != os.fstat(root_fd).st_dev
-            or stable(os.fstat(target_fd)) != stable(before)
-            or os.read(target_fd, 1)
-            or identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
-            or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
-            or stable(os.stat(name, dir_fd=root_fd, follow_symlinks=False)) != stable(before)
-            or stable(os.fstat(target_fd)) != stable(before)):
-        raise ValueError('approvals file changed')
-    os.unlink(name, dir_fd=root_fd)
-    os.fsync(root_fd)
-    try:
-        os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        pass
-    else:
-        raise ValueError('approvals file reappeared')
-    print('[migration] Removed empty legacy exec-approvals.json placeholder', file=sys.stderr)
+    for name in ('exec-approvals.json', 'update-check.json'):
+        try:
+            before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError('unsafe legacy state file')
+        if before.st_size != 0:
+            continue
+        target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
+        fds.append(target_fd)
+        if (before.st_dev != os.fstat(root_fd).st_dev
+                or stable(os.fstat(target_fd)) != stable(before)
+                or os.read(target_fd, 1)
+                or identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
+                or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
+                or stable(os.stat(name, dir_fd=root_fd, follow_symlinks=False)) != stable(before)
+                or stable(os.fstat(target_fd)) != stable(before)):
+            raise ValueError('legacy state file changed')
+        os.unlink(name, dir_fd=root_fd)
+        os.fsync(root_fd)
+        try:
+            os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('legacy state file reappeared')
+        print(f'[migration] Removed empty legacy {name} placeholder', file=sys.stderr)
 except (OSError, ValueError):
-    print('[SECURITY] Refusing unsafe legacy approvals migration', file=sys.stderr)
+    print('[SECURITY] Refusing unsafe legacy state placeholder migration', file=sys.stderr)
     sys.exit(1)
 finally:
     for fd in reversed(fds):
@@ -5178,7 +5178,7 @@ prepare_openshell_sqlite_tmpdir || exit 1
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_empty_legacy_exec_approvals || exit 1
+remove_empty_legacy_state_placeholders || exit 1
 remove_restored_legacy_device_identity || exit 1
 
 echo 'Setting up NemoClaw...' >&2

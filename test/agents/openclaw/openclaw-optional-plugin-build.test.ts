@@ -314,11 +314,10 @@ it.each([
           printf "node %s\\n" "$*" >> "$call_log"
           cat "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE/fixture" >> "$call_log"
           printf '%s\\n' "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE" > "$CACHE_PATHS"
-          if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then
-            test "$NPM_CONFIG_CACHE" != "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE" || return 8
-            cat "$NPM_CONFIG_CACHE/fixture" >> "$call_log"
-            printf '%s\\n' "$NPM_CONFIG_CACHE" >> "$CACHE_PATHS"
-          fi
+          test "$NPM_CONFIG_CACHE" != "$NEMOCLAW_WECHAT_NPM_INSTALL_CACHE" || return 8
+          test "$NPM_CONFIG_OFFLINE" = "true" || return 8
+          cat "$NPM_CONFIG_CACHE/fixture" >> "$call_log"
+          printf '%s\\n' "$NPM_CONFIG_CACHE" >> "$CACHE_PATHS"
           return "$APPLIER_EXIT_CODE"
         }`,
         ],
@@ -336,12 +335,10 @@ it.each([
       expect(calls.trim().split("\n")).toEqual([
         `node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
         "wechat-locked-graph",
-        ...(union === "1" ? ["official-channel-graphs"] : []),
+        "official-channel-graphs",
       ]);
       const paths = fs.readFileSync(cachePaths, "utf8").trim().split("\n");
-      expect(paths.map((cache) => fs.existsSync(cache))).toEqual(
-        union === "1" ? [false, false] : [false],
-      );
+      expect(paths.map((cache) => fs.existsSync(cache))).toEqual([false, false]);
       expect(fs.readFileSync(path.join(trustedCache, "fixture"), "utf8")).toBe(
         "wechat-locked-graph\n",
       );

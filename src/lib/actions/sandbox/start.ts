@@ -133,7 +133,8 @@ async function waitForStartedNativeGatewayProcess(
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
-    if (running !== false) return running;
+    // A timed-out health probe is unavailable evidence, not completed startup.
+    if (running === true) return true;
     await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
   }
   return false;

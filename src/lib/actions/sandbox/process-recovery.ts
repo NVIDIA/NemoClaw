@@ -1644,7 +1644,8 @@ export async function waitForStartedNativeGatewayProcess(
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
-    if (running !== false) return running;
+    // A timed-out health probe is unavailable evidence, not completed startup.
+    if (running === true) return true;
     const delayMs = Math.min(NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now());
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
     await delay(delayMs);

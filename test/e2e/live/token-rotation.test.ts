@@ -11,7 +11,7 @@ import {
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -72,7 +72,7 @@ function stripAnsi(value: string): string {
 
 function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
   return {
-    ...buildAvailabilityProbeEnv(),
+    ...sandboxAccessEnv(),
     COMPATIBLE_API_KEY: "token-rotation-compatible-e2e",
     TELEGRAM_BOT_TOKEN: tokens.telegram,
     DISCORD_BOT_TOKEN: tokens.discord,
@@ -205,7 +205,7 @@ async function assertSandboxRunning(
     ["-lc", 'openshell sandbox list 2>/dev/null | grep -F -- "$1"', "_", SANDBOX_NAME],
     {
       artifactName,
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxAccessEnv(),
       timeoutMs: 30_000,
     },
   );
@@ -222,7 +222,7 @@ async function sandboxIdentity(
 ): Promise<string> {
   const sandboxGet = await host.command("openshell", ["sandbox", "get", SANDBOX_NAME], {
     artifactName,
-    env: buildAvailabilityProbeEnv(),
+    env: sandboxAccessEnv(),
     timeoutMs: 30_000,
   });
   const output = resultText(sandboxGet);
@@ -255,7 +255,7 @@ async function deleteSandboxIfOpenshellExists(
     ],
     {
       artifactName,
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxAccessEnv(),
       timeoutMs: 60_000,
     },
   );
@@ -340,7 +340,7 @@ test(
       ],
     });
 
-    const cleanupEnv = buildAvailabilityProbeEnv();
+    const cleanupEnv = sandboxAccessEnv();
     const gatewayCleanupOptions = {
       artifactName: "cleanup-openshell-gateway-destroy-token-rotation",
       env: cleanupEnv,
@@ -465,7 +465,7 @@ test(
     ]) {
       const provider = await host.command("openshell", ["provider", "get", providerName], {
         artifactName: `phase-1-provider-get-${providerName}`,
-        env: buildAvailabilityProbeEnv(),
+        env: sandboxAccessEnv(),
         timeoutMs: 30_000,
       });
       expect(provider.exitCode, resultText(provider)).toBe(0);

@@ -623,21 +623,24 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it("passes an unavailable OpenClaw observation to gateway verification", async () => {
-    const probeGatewayProcess = vi.fn(async () => null);
-    const delayGatewayProcessProbe = vi.fn(async () => {});
-    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
-    h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped: true }));
-    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
-
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
-      "native gateway route unavailable",
-    );
-
-    expect(probeGatewayProcess).toHaveBeenCalledOnce();
-    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
-    expect(h.verifyGateway).toHaveBeenCalledOnce();
-  });
+  it.each([true, null])(
+    "waits for an unavailable OpenClaw observation to settle to %s",
+    async (settled) => {
+      const probeGatewayProcess = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(settled);
+      const h = harness({
+        probeGatewayProcess,
+        environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+      });
+      h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped: true }));
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
+        exitCode: settled === true ? 0 : 1,
+      });
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+      expect(h.verifyGateway).toHaveBeenCalledTimes(settled === true ? 1 : 0);
+      expect(h.updateSandbox).toHaveBeenCalledTimes(settled === true ? 1 : 0);
+      expect(h.startOpenShellSandbox).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(

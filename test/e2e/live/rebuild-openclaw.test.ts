@@ -9,6 +9,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
@@ -118,11 +119,13 @@ test(
     assertExitZero(install, "OpenClaw rebuild install");
 
     progress.phase("write durable OpenClaw state");
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env, redactions, false);
     const marker = `rebuild-openclaw-${Date.now()}`;
     const write = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
         [
+          "set -eu",
           `umask 077; mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/hooks /sandbox/.openclaw/cron /sandbox/.local/share/e2e-package`,
           `for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/workspace/.rebuild-state-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do printf '%s\\n' '${marker}' > "$target"; done; sync`,
           "HOME=/sandbox openclaw config set agents.defaults.timeoutSeconds 119",
@@ -149,11 +152,11 @@ test(
       expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
     };
     const verifyRestoredState = async (artifactPrefix: string) => {
-      await waitForNativeOpenClaw(sandbox, redactions, artifactPrefix);
+      await waitForNativeOpenClaw(sandbox, env, redactions, artifactPrefix);
       const read = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
-          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
+          'set -eu; marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
         ),
         {
           artifactName: `${artifactPrefix}-read-marker`,
@@ -196,6 +199,7 @@ test(
 
 async function waitForNativeOpenClaw(
   sandbox: SandboxClient,
+  env: NodeJS.ProcessEnv,
   redactions: string[],
   artifactPrefix: string,
 ): Promise<void> {
@@ -216,7 +220,7 @@ async function waitForNativeOpenClaw(
     ),
     {
       artifactName: `${artifactPrefix}-native-ready`,
-      env: buildAvailabilityProbeEnv(),
+      env,
       redactionValues: redactions,
       timeoutMs: 180_000,
     },

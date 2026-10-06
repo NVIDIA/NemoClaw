@@ -17,9 +17,65 @@ import {
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each([
+    ["becomes ready", [null, true], true, 2_000],
+    ["stays unavailable", [null, null], false, 3_000],
+  ] as const)(
+    "bounds OpenClaw startup when a timed-out health probe %s",
+    async (_case, results, expected, elapsed) => {
+      let clock = 0;
+      const observations = [...results];
+      const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(
+        async (request) => {
+          const ready = observations.shift() === true;
+          return {
+            outcome: { kind: "completed", exitCode: 0 },
+            stdout: execFileSync(
+              "sh",
+              [
+                "-c",
+                `curl() { printf '%s' '${ready ? "200" : "000"}'; return ${ready ? 0 : 28}; }; ${request.command.at(-1)}`,
+              ],
+              { encoding: "utf8" },
+            ),
+            stderr: "",
+          };
+        },
+      );
+      await expect(
+        waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+          environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+          now: () => clock,
+          delay: async (ms) => {
+            clock += ms;
+          },
+          probe: async (name, gateway, options) =>
+            await isSandboxGatewayRunningForStatus(name, gateway, {
+              ...options,
+              getSessionAgent: () => null,
+              getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+              commandExecutor: { runBuffered },
+            }),
+        }),
+      ).resolves.toBe(expected);
+      expect(clock).toBe(elapsed);
+      expect(runBuffered).toHaveBeenCalledTimes(2);
+      expect(runBuffered.mock.calls.map(([request]) => request.timeoutMilliseconds)).toEqual([
+        3_000, 1_000,
+      ]);
+      expect(
+        runBuffered.mock.calls.every(
+          ([request]) =>
+            request.target.kind === "named" && request.target.gatewayName === "nemoclaw-19080",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it.each([
     ["becomes observable", [null, null, null, null, null, true], true],
     ["remains unavailable", [null, null, null, null, null, null], false],
