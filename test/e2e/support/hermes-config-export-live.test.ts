@@ -22,7 +22,8 @@ const mocks = vi.hoisted(() => ({
   validateWithPinnedV1: vi.fn(),
 }));
 
-vi.mock("../../../src/lib/state/registry/persistence.ts", () => ({
+vi.mock("../../../src/lib/state/registry/persistence.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry/persistence.ts")>()),
   load: mocks.load,
   save: mocks.save,
 }));

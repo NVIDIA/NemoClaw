@@ -24,6 +24,7 @@ export interface FakeHttpsCompatibleRequest {
 }
 
 export interface FakeHttpsCompatibleServer extends StartedHttpServer {
+  readonly certificate: Buffer;
   requests(): readonly FakeHttpsCompatibleRequest[];
   setChatRedirect(location: string | null): void;
 }
@@ -161,6 +162,7 @@ export async function startFakeHttpsCompatibleServer(options: {
   await listenOnRandomPort(server);
   return {
     port: requireTcpPort(server),
+    certificate: tls.cert,
     requests: () => requests,
     setChatRedirect: (location) => {
       chatRedirectLocation = location;

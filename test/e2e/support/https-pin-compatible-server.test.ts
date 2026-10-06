@@ -23,8 +23,8 @@ it("serves authenticated streaming agent chat and records the requested path and
             port: server.port,
             path: "/v1/chat/completions",
             method: "POST",
-            // The real tunnel likewise terminates the fixture's ephemeral local TLS.
-            rejectUnauthorized: false,
+            ca: server.certificate,
+            servername: "nemoclaw-https-pin-e2e",
             headers: {
               "content-type": "application/json",
               ...(authorized ? { authorization: `Bearer ${apiKey}` } : {}),
