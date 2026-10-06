@@ -513,35 +513,6 @@ export function findBrokenChangelogRoutes(
   return violations;
 }
 
-/**
- * Validate only inference links on a shared page whose other historical links
- * are outside this checker's scope while still rendering and checking every
- * agent variant.
- */
-export function findBrokenPublishedInferenceRoutes(
-  sourcePath: string,
-  index: PublishedRouteIndex,
-  docsDir: string = docsRoot,
-): RouteViolation[] {
-  return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
-    /\/inference(?:\/|$)/.test(violation.resolved),
-  );
-}
-
-/**
- * Validate only Manage Sandboxes links on a shared page whose other historical
- * links are outside this checker's scope.
- */
-export function findBrokenPublishedManageSandboxRoutes(
-  sourcePath: string,
-  index: PublishedRouteIndex,
-  docsDir: string = docsRoot,
-): RouteViolation[] {
-  return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
-    /\/manage-sandboxes(?:\/|$)/.test(violation.resolved),
-  );
-}
-
 function renderBodyForPublishedRoute(
   source: string,
   sourcePath: string,

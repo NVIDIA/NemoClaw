@@ -828,11 +828,16 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           officialPluginId,
           inspection,
         );
+        const home = sanitizeOptionalString(env.HOME) || homedir();
+        const stateRoot = (
+          sanitizeOptionalString(env.OPENCLAW_STATE_DIR) || join(home, ".openclaw")
+        ).replace(/^~(?=$|[/\\])/, () => home);
         remediateInstalledOfficialOpenClawPlugin({
           archivePath: packed.archivePath,
           env: installEnv as NodeJS.ProcessEnv,
           packageSpec: install.npmPackageSpec!,
           packageDirectory,
+          trustedPluginRoot: join(resolve(stateRoot), "extensions"),
           workingDirectory: packed.rootDir,
         });
       }

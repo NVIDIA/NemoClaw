@@ -16,6 +16,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1682,13 +1683,18 @@ export function remediateReviewedOpenClawPluginArchive(
 }
 
 export function remediateInstalledOfficialOpenClawPlugin(
-  request: RemediationRequest & Readonly<{ packageDirectory?: string }>,
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedPluginRoot: string }>,
 ): void {
   if (REMEDIATIONS[request.packageSpec]?.kind !== "proxy-addr") return;
   if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
     throw new Error("Official plugin remediation requires its verified install path");
   }
-  let installedDependency = resolve(request.packageDirectory);
+  const trustedRoot = realpathSync(request.trustedPluginRoot);
+  const packageDirectory = realpathSync(request.packageDirectory);
+  if (packageDirectory !== join(trustedRoot, "slack")) {
+    throw new Error("Official Slack install path is outside its trusted plugin root");
+  }
+  let installedDependency = packageDirectory;
   for (const component of ["", "node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]) {
     installedDependency = join(installedDependency, component);
     const metadata = lstatSync(installedDependency);
@@ -1698,20 +1704,23 @@ export function remediateInstalledOfficialOpenClawPlugin(
   }
   // The existing no-follow tree walk also rejects unsafe installed members.
   hashPackageTree(installedDependency);
-  const remediated = remediateReviewedOpenClawPluginArchive(request);
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
-    const patched = extractArchive(
-      remediated.archivePath,
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
       directory,
-      request.workingDirectory,
       env,
     );
-    patchOpenClawSlackProxyPackageGraph(
-      request.packageDirectory,
-      join(patched, "node_modules", "@slack", "bolt", "node_modules", "proxy-addr"),
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(directory, "proxy-addr"),
+      directory,
+      env,
     );
+    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

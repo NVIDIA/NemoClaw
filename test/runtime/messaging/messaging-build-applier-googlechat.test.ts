@@ -13,17 +13,11 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
   return {
     ...actual,
-    remediateInstalledOfficialOpenClawPlugin: vi.fn(),
     remediateReviewedOpenClawPluginArchive: vi.fn(() => {
       throw new Error("Official npm installs must not remediate a discarded archive.");
     }),
   };
 });
-
-import {
-  patchOpenClawSlackProxyPackageGraph,
-  remediateInstalledOfficialOpenClawPlugin,
-} from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 import {
   applyMessagingBuildPhase,
@@ -210,13 +204,12 @@ it("bounds a hung official-plugin inspection and removes its packed archive", ()
   }
 }, 75_000);
 
-it("patches the installed official Slack bundle only after registry provenance is verified", () => {
+it("patches the installed official Slack bundle only after registry provenance is verified", async () => {
   const fixture = officialPluginFixture("slack", "2026.9.2");
-  const installed = path.join(fixture.tmp, "installed");
+  const pluginRoot = path.join(fixture.tmp, ".openclaw", "extensions");
+  const installed = path.join(pluginRoot, "slack");
   const target = path.join(installed, "node_modules/@slack/bolt/node_modules/proxy-addr");
-  const replacement = path.join(fixture.tmp, "replacement");
   fs.mkdirSync(target, { recursive: true });
-  fs.mkdirSync(replacement);
   fs.writeFileSync(
     path.join(installed, "package.json"),
     JSON.stringify({ name: "@openclaw/slack", version: "2026.9.2" }),
@@ -229,36 +222,60 @@ it("patches the installed official Slack bundle only after registry provenance i
     path.join(target, "package.json"),
     JSON.stringify({ ...metadata, version: "2.0.7" }),
   );
-  fs.writeFileSync(
-    path.join(replacement, "package.json"),
-    JSON.stringify({ ...metadata, version: "2.0.8" }),
-  );
-  const remediation = vi.mocked(remediateInstalledOfficialOpenClawPlugin);
-  remediation.mockImplementation((request) =>
-    patchOpenClawSlackProxyPackageGraph(request.packageDirectory!, replacement),
-  );
-  const env = { ...fixture.env, OPENCLAW_PLUGIN_INSTALL_PATH: installed };
+  fs.writeFileSync(path.join(target, "index.js"), "vulnerable");
+  const outside = path.join(fixture.tmp, "outside");
+  fs.cpSync(installed, outside, { recursive: true });
+  const env = {
+    ...fixture.env,
+    HOME: fixture.tmp,
+    OPENCLAW_PLUGIN_INSTALL_PATH: installed,
+    NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
+      import.meta.dirname,
+      "../../fixtures/npm/proxy-addr-2.0.8",
+    ),
+  };
+
   try {
-    applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", env);
-    expect(JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")).version).toBe(
-      "2.0.8",
-    );
-    expect(remediation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        packageDirectory: installed,
-        packageSpec: "@openclaw/slack@2026.9.2",
-      }),
-    );
-    remediation.mockClear();
     expect(() =>
       applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
         ...env,
         OPENCLAW_TRUSTED: "false",
       }),
     ).toThrow("did not retain trusted exact registry provenance");
-    expect(remediation).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")).version).toBe(
+      "2.0.7",
+    );
+    expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe("vulnerable");
+    applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", env);
+    expect(JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")).version).toBe(
+      "2.0.8",
+    );
+    const expectedContent = spawnSync(
+      "tar",
+      [
+        "-xOf",
+        path.join(env.NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR, "proxy-addr-2.0.8.tgz"),
+        "package/index.js",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(expectedContent.status, expectedContent.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe(expectedContent.stdout);
+    expect(() =>
+      applyMessagingBuildPhase(fixture.serializedPlan, "agent-install", {
+        ...env,
+        OPENCLAW_PLUGIN_INSTALL_PATH: outside,
+      }),
+    ).toThrow("outside its trusted plugin root");
+    const outsideDependency = path.join(
+      outside,
+      "node_modules/@slack/bolt/node_modules/proxy-addr",
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(outsideDependency, "package.json"), "utf8")).version,
+    ).toBe("2.0.7");
+    expect(fs.readFileSync(path.join(outsideDependency, "index.js"), "utf8")).toBe("vulnerable");
   } finally {
-    remediation.mockReset();
     fs.rmSync(fixture.tmp, { force: true, recursive: true });
   }
 });

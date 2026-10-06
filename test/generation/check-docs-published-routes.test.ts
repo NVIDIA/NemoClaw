@@ -12,8 +12,6 @@ import {
   buildPublishedRouteIndex,
   extractMarkdownLinks,
   findBrokenChangelogRoutes,
-  findBrokenPublishedInferenceRoutes,
-  findBrokenPublishedManageSandboxRoutes,
   findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
@@ -373,33 +371,12 @@ redirects:
     });
   });
 
-  it("can guard inference links without expanding checks to unrelated links", () => {
-    const index = buildPublishedRouteIndex(navYaml);
-    const source = commandsSource(`
-See [Missing Inference](../inference/missing).
-See [Missing Other Page](../other/missing).
-`);
-
-    withDocsSource(source, (docsDir) => {
-      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
-        expect.objectContaining({
-          fromRoute: "/user-guide/openclaw/reference/commands",
-          resolved: "/user-guide/openclaw/inference/missing",
-        }),
-        expect.objectContaining({
-          fromRoute: "/user-guide/hermes/reference/commands",
-          resolved: "/user-guide/hermes/inference/missing",
-        }),
-      ]);
-    });
-  });
-
-  it("includes inference section roots in focused route violations", () => {
+  it("includes inference section roots in published route violations", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource("See [Missing Inference Root](../inference).");
 
     withDocsSource(source, (docsDir) => {
-      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
+      expect(findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir)).toEqual([
         expect.objectContaining({
           fromRoute: "/user-guide/openclaw/reference/commands",
           resolved: "/user-guide/openclaw/inference",
@@ -412,37 +389,12 @@ See [Missing Other Page](../other/missing).
     });
   });
 
-  it("can guard Manage Sandboxes links without expanding checks to unrelated links", () => {
-    const index = buildPublishedRouteIndex(navYaml);
-    const source = commandsSource(`
-See [Missing Sandbox Page](../manage-sandboxes/operate-sandboxes/missing).
-See [Missing Other Page](../other/missing).
-`);
-
-    withDocsSource(source, (docsDir) => {
-      expect(
-        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
-      ).toEqual([
-        expect.objectContaining({
-          fromRoute: "/user-guide/openclaw/reference/commands",
-          resolved: "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/missing",
-        }),
-        expect.objectContaining({
-          fromRoute: "/user-guide/hermes/reference/commands",
-          resolved: "/user-guide/hermes/manage-sandboxes/operate-sandboxes/missing",
-        }),
-      ]);
-    });
-  });
-
-  it("includes Manage Sandboxes section roots in focused route violations", () => {
+  it("includes Manage Sandboxes section roots in published route violations", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource("See [Missing Manage Sandboxes Root](../manage-sandboxes).");
 
     withDocsSource(source, (docsDir) => {
-      expect(
-        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
-      ).toEqual([
+      expect(findBrokenPublishedRoutes("reference/commands.mdx", index, docsDir)).toEqual([
         expect.objectContaining({
           resolved: "/user-guide/openclaw/manage-sandboxes",
         }),
