@@ -11,9 +11,9 @@ export default class SandboxInferenceGetCommand extends NemoClawCommand {
   static id = "sandbox:inference:get";
   static strict = true;
   static enableJsonFlag = true;
-  static summary = "Show the active NemoClaw inference route";
+  static summary = "Show the selected NemoClaw inference path";
   static description =
-    "Read the live OpenShell inference route. NEMOCLAW_GATEWAY_PORT selects the sandbox registry and fallback gateway; a registered sandbox's binding selects its recorded gateway.";
+    "Read the sandbox's native NVIDIA provider path or its gateway's live shared route. NEMOCLAW_GATEWAY_PORT selects the sandbox registry and fallback gateway; a registered sandbox's binding selects its recorded gateway.";
   static usage = ["<name> inference get [--json]"];
   static examples = [
     "<%= config.bin %> my-assistant inference get",

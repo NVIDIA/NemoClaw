@@ -3459,9 +3459,11 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 
 ### `$$nemoclaw inference get`
 
-Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+Show the provider and model for the selected inference path.
+When the selected sandbox has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+For other providers, the command reports the active live route from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe, unambiguous, and reusable.
-Use this command when you want the direct runtime route without the rest of the sandbox status output.
+Use this command when you want the selected inference path without the rest of the sandbox status output.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
 ```bash
@@ -3469,18 +3471,19 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-Managed providers keep the existing provider-and-model output. Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information. Refer to [View the Active Inference Route](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
+A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the recorded provider-and-model output. Other managed providers keep the provider-and-model output. Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information. Refer to [View the Active Inference Route](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
+When `<name>` has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+Otherwise, when that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
 It does not search registries for other gateway ports.
 When the live provider and model match the sandbox's recorded route, text and JSON output identify a `llama-cpp-local` route as `managed` or `attached`.
 JSON reports this value as `llamaCpp.kind`.
 An attached route also reports the fixed loopback URL as `llamaCpp.endpointUrl`; NemoClaw does not report a stored arbitrary endpoint.
 When the ownership receipt is unreadable, `llamaCpp.kind` is `unavailable` and the output includes diagnostic and recovery text.
 The command omits `llamaCpp` when the recorded and live routes differ.
-The global form continues to report only the live provider and model.
-Lookup failures include timeouts, nonzero exits, no exit status, and output NemoClaw cannot interpret after a command exits successfully.
+For a shared-route lookup, the global form reports only the live provider and model.
+Shared-route lookup failures include timeouts, nonzero exits, no exit status, and output NemoClaw cannot interpret after a command exits successfully.
 The error names the gateway without rendering command output.
 It directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
 
