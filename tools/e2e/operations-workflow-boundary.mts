@@ -376,10 +376,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
-      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+      "Manual PR E2E concurrency must not cancel an active hardware or Launchable dispatch",
     );
   }
 
@@ -649,8 +649,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
-        jobName === "jetson-nvmap-gpu" &&
-        step.name === "Check out trusted Jetson controller" &&
+        ((jobName === "jetson-nvmap-gpu" && step.name === "Check out trusted Jetson controller") ||
+          (jobName === "dgx-station-express" &&
+            step.name === "Check out trusted Station controller")) &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedOpenShellDevToolingCheckout =
