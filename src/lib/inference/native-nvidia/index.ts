@@ -273,7 +273,13 @@ export async function ensureNativeNvidiaProvider(input: {
         `OpenShell did not confirm provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' after its credential update.`,
       );
     }
-    return attachmentFromMetadata(observed);
+    const observedReceipt = attachmentFromMetadata(observed);
+    if (observedReceipt.providerId !== input.expected.providerId) {
+      throw new NativeNvidiaProviderError(
+        `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity during its credential update. No provider receipt was recorded.`,
+      );
+    }
+    return observedReceipt;
   }
 
   if (input.expected) {
