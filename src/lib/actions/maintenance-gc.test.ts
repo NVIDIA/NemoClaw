@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 
 const mocks = vi.hoisted(() => ({
   dockerListImagesFormat: vi.fn(),
@@ -250,7 +251,10 @@ describe("garbage collection across gateway registries", () => {
 
     expect(mocks.dockerRmi).toHaveBeenCalledOnce();
     expect(mocks.dockerRmi.mock.calls[0]?.[0]).toBe(bobImage);
-    expect(mocks.dockerListImagesFormat).toHaveBeenCalledTimes(6);
+    expect(mocks.dockerListImagesFormat.mock.calls.map(([repo]) => repo)).toEqual([
+      ...SANDBOX_IMAGE_REPOS,
+      ...SANDBOX_IMAGE_REPOS,
+    ]);
     expect(fs.existsSync(path.join(home, ".nemoclaw-portable-host.lock"))).toBe(false);
   });
 
