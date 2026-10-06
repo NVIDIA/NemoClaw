@@ -8,7 +8,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { fatalOpenClawNpmRemediationDiagnostic } from "../../scripts/lib/openclaw-npm-remediation.mts";
 import { createSlackRemediationFixture } from "../support/slack-remediation-fixture";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "../..");
@@ -50,24 +49,41 @@ function encodedMessagingPlan(renderTarget: string | null): string {
 describe("fatal process diagnostics", () => {
   it.each([
     {
-      failure: "child failure",
-      command: "tar",
-      diagnostic: "OpenClaw Slack proxy-addr remediation failed.",
+      failure: "tar failure",
+      executable: "tar",
+      npmExecutable: undefined,
+      diagnostic: "Official OpenClaw plugin 'slack' remediation command failed.",
     },
     {
-      failure: "unavailable command",
-      command: "unused-tar",
-      diagnostic: "OpenClaw Slack proxy-addr remediation could not start a required command.",
+      failure: "unavailable tar",
+      executable: "unused-tar",
+      npmExecutable: undefined,
+      diagnostic:
+        "Official OpenClaw plugin 'slack' remediation could not start a required command.",
+    },
+    {
+      failure: "npm failure",
+      executable: "replacement-npm",
+      npmExecutable: "replacement-npm",
+      diagnostic: "Official OpenClaw plugin 'slack' remediation command failed.",
+    },
+    {
+      failure: "unavailable npm",
+      executable: "unused-npm",
+      npmExecutable: "missing-npm",
+      diagnostic:
+        "Official OpenClaw plugin 'slack' remediation could not start a required command.",
     },
   ])(
     "identifies Slack remediation $failure without exposing child output",
-    async ({ command, diagnostic }) => {
+    async ({ executable, npmExecutable, diagnostic }) => {
       const fixture = await createSlackRemediationFixture();
       try {
         fs.writeFileSync(
-          path.join(fixture.bin, command),
+          path.join(fixture.bin, executable),
           [
             "#!/bin/sh",
+            'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY"',
             'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY" >&2',
             "exit 1",
             "",
@@ -83,6 +99,11 @@ describe("fatal process diagnostics", () => {
             env: {
               ...fixture.env,
               PATH: fixture.bin,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: npmExecutable
+                ? undefined
+                : fixture.env.NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR,
+              NEMOCLAW_REVIEWED_NPM_EXECUTABLE:
+                npmExecutable && path.join(fixture.bin, npmExecutable),
               NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: CREDENTIAL_CANARY,
             },
             timeout: 10_000,
@@ -94,9 +115,14 @@ describe("fatal process diagnostics", () => {
         expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
         expect(result.stderr).not.toContain(fixture.root);
         expect(result.stdout).not.toContain(CREDENTIAL_CANARY);
+        expect(result.stdout).not.toContain(fixture.root);
         expect(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js"), "utf8")).toBe(
           "vulnerable fixture\n",
         );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "package.json"), "utf8"))
+            .version,
+        ).toBe("2.0.7");
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -106,25 +132,48 @@ describe("fatal process diagnostics", () => {
 
   it.each([
     {
-      message: "OpenClaw npm remediation command failed",
-      diagnostic: "OpenClaw npm remediation command failed.",
-    },
-    {
-      message: "OpenClaw npm remediation command could not start",
+      failure: "unavailable tar",
+      directory: "work",
       diagnostic: "OpenClaw npm remediation could not start a required command.",
     },
-  ])("classifies the fixed command diagnostic $message", ({ message, diagnostic }) => {
-    expect(fatalOpenClawNpmRemediationDiagnostic(new Error(message))).toBe(diagnostic);
-  });
-
-  it.each([
-    `OpenClaw npm remediation command failed ${CREDENTIAL_CANARY}`,
-    `OpenClaw npm remediation command could not start ${CREDENTIAL_CANARY}`,
-    CREDENTIAL_CANARY,
-  ])("keeps unrecognized error text behind the generic diagnostic", (message) => {
-    const diagnostic = fatalOpenClawNpmRemediationDiagnostic(new Error(message));
-    expect(diagnostic).toBe("OpenClaw npm remediation failed.");
-    expect(diagnostic).not.toContain(CREDENTIAL_CANARY);
+    {
+      failure: "inaccessible working directory",
+      directory: "blocked/work",
+      diagnostic: "OpenClaw npm remediation could not access its working files.",
+    },
+  ])("distinguishes $failure at the remediation entrypoint", ({ directory, diagnostic }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remediation-diagnostic-"));
+    try {
+      const bin = path.join(root, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(root, "blocked"), CREDENTIAL_CANARY);
+      const result = spawnSync(
+        process.execPath,
+        [
+          OPENCLAW_NPM_REMEDIATION,
+          "--archive",
+          path.join(REPOSITORY_ROOT, "package.json"),
+          "--package-spec",
+          "@openclaw/slack@2026.9.2",
+          "--working-directory",
+          path.join(root, directory),
+        ],
+        {
+          cwd: REPOSITORY_ROOT,
+          encoding: "utf8",
+          env: { PATH: bin, HOME: root },
+          timeout: 10_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(diagnostic);
+      expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
+      expect(result.stderr).not.toContain(root);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("omits messaging plan credentials from a build failure (#11673)", () => {

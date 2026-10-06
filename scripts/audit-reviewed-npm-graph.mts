@@ -294,7 +294,7 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   }
   return {
     name: "nemoclaw-reviewed-production-graph",
-    overrides: { tar: archiveTarVersion },
+    overrides: { "proxy-addr": "2.0.8", tar: archiveTarVersion },
     private: true,
     version: "1.0.0",
   } as const;

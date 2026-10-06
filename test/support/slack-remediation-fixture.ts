@@ -9,6 +9,8 @@ import { withLegacyMessagingPlanEnvDirect } from "../messaging-plan-test-helper"
 const SLACK_INTEGRITY =
   "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==";
 const PROXY_ADDR_PATH = "node_modules/@slack/bolt/node_modules/proxy-addr";
+const PROXY_ADDR_INTEGRITY =
+  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
 
 function writePackage(directory: string, metadata: Record<string, unknown>): void {
   fs.mkdirSync(directory, { recursive: true });
@@ -23,7 +25,7 @@ export async function createSlackRemediationFixture() {
     const home = path.join(root, "home");
     const packageDirectory = path.join(
       home,
-      ".openclaw/npm/projects/project/node_modules/@openclaw/slack",
+      ".openclaw/npm/projects/openclaw-slack-b25c10c1bd/node_modules/@openclaw/slack",
     );
     const trace = path.join(root, "trace");
     fs.mkdirSync(bin);
@@ -70,6 +72,11 @@ export async function createSlackRemediationFixture() {
         '  "pack:@openclaw/slack@2026.9.2:--pack-destination")',
         '    printf "plugin archive fixture" > "$4/slack.tgz"',
         '    printf \'[{"filename":"slack.tgz","integrity":"%s"}]\' "$TEST_SLACK_INTEGRITY" ;;',
+        '  "view:proxy-addr@2.0.8:dist.integrity") printf "%s" "$TEST_PROXY_ADDR_INTEGRITY" ;;',
+        '  "view:proxy-addr@2.0.8:dist.tarball") printf "%s" "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz" ;;',
+        '  "pack:proxy-addr@2.0.8:--pack-destination")',
+        '    cp "$TEST_PROXY_ADDR_ARCHIVE" "$4/proxy-addr-2.0.8.tgz"',
+        '    printf \'[{"filename":"proxy-addr-2.0.8.tgz","integrity":"%s"}]\' "$TEST_PROXY_ADDR_INTEGRITY" ;;',
         "  *) exit 1 ;;",
         "esac",
         "",
@@ -103,11 +110,19 @@ export async function createSlackRemediationFixture() {
         TMPDIR: path.join(root, "tmp"),
         OPENCLAW_VERSION: "2026.9.2",
         NEMOCLAW_MESSAGING_CHANNELS_B64: Buffer.from('["slack"]').toString("base64"),
-        NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(import.meta.dirname, "../fixtures/npm"),
+        NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
+          import.meta.dirname,
+          "../fixtures/npm/proxy-addr-2.0.8",
+        ),
         TEST_SLACK_INTEGRITY: SLACK_INTEGRITY,
         TEST_SLACK_SOURCE: source,
         TEST_SLACK_INSTALL: packageDirectory,
         TEST_SLACK_TRACE: trace,
+        TEST_PROXY_ADDR_INTEGRITY: PROXY_ADDR_INTEGRITY,
+        TEST_PROXY_ADDR_ARCHIVE: path.resolve(
+          import.meta.dirname,
+          "../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz",
+        ),
         TEST_SLACK_INSPECTION: JSON.stringify({
           plugin: { id: "slack", trustedOfficialInstall: true },
           install: {

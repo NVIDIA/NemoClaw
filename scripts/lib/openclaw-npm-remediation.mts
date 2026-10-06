@@ -16,10 +16,11 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -28,7 +29,14 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "proxy-addr" | "undici";
+  kind:
+    | "axios"
+    | "core"
+    | "current-core"
+    | "jaeger"
+    | "legacy-core"
+    | "slack-proxy-addr"
+    | "undici";
   version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2";
 }>;
 
@@ -44,12 +52,6 @@ type BuildRequest = RemediationRequest &
     expectedPatchedMetadataIntegrity?: string;
     expectedPatchedTreeIntegrity?: string;
   }>;
-
-type InstalledSlackRemediationRequest = Readonly<{
-  env?: NodeJS.ProcessEnv;
-  packageDirectory: string;
-  workingDirectory: string;
-}>;
 
 export type RemediatedArchive = Readonly<
   | {
@@ -114,10 +116,6 @@ const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
 const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz";
-const CURRENT_PROXY_ADDR_VERSION = "2.0.8";
-const CURRENT_PROXY_ADDR_INTEGRITY =
-  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
-const CURRENT_PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
 const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
@@ -136,7 +134,18 @@ const OTEL_CORE_INTEGRITY =
   "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
+const PROXY_ADDR_VERSION = "2.0.8";
+const PROXY_ADDR_INTEGRITY =
+  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
+const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
+
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/slack@2026.9.2": {
+    expectedPatchedTreeIntegrity:
+      "sha512-li/y4SFf6t3Z6JvP2R2H8dfauu0eybiwzd408QMCR9+zzi6oVVVffi+LGRDDYMh2TFCGgQ8Pnv2a5FiXMmPt1A==",
+    kind: "slack-proxy-addr",
+    version: "2026.9.2",
+  },
   "@openclaw/diagnostics-otel@2026.6.10": {
     expectedPatchedMetadataIntegrity:
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
@@ -180,13 +189,6 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     kind: "axios",
     version: "2026.7.1",
   },
-  // Remove after the reviewed Slack archive bundles proxy-addr@2.0.8 or newer.
-  "@openclaw/slack@2026.9.2": {
-    expectedPatchedTreeIntegrity:
-      "sha512-li/y4SFf6t3Z6JvP2R2H8dfauu0eybiwzd408QMCR9+zzi6oVVVffi+LGRDDYMh2TFCGgQ8Pnv2a5FiXMmPt1A==",
-    kind: "proxy-addr",
-    version: "2026.9.2",
-  },
   "openclaw@2026.6.10": {
     expectedPatchedMetadataIntegrity:
       "sha512-XMycUUV7gCzUYbjgwrglER0AQEtfuKUz6wyo4ilm/7nSSkLocYUYVkrJuBFYPW3no8Y5FW/1+2hWCssIyjxn3g==",
@@ -212,17 +214,32 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
 });
 
-function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv) {
+export class OpenClawNpmRemediationCommandError extends Error {
+  readonly couldNotStart: boolean;
+
+  constructor(error?: NodeJS.ErrnoException) {
+    const couldNotStart = ["ENOENT", "EACCES", "EPERM"].includes(error?.code ?? "");
+    super(couldNotStart ? "Remediation command could not start." : "Remediation command failed.");
+    this.couldNotStart = couldNotStart;
+  }
+}
+
+function run(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  maxBuffer = 64 * 1024 * 1024,
+) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf-8",
     env,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error) throw new Error("OpenClaw npm remediation command could not start");
-  if (result.status !== 0) {
-    throw new Error("OpenClaw npm remediation command failed");
+  if (result.error || result.status !== 0) {
+    throw new OpenClawNpmRemediationCommandError(result.error);
   }
   return result.stdout;
 }
@@ -235,7 +252,7 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
     .split("\n")
     .filter((entry) => entry.length > 0);
   if (names.length === 0 || verbose.length !== names.length) {
-    throw new Error("npm archive has an invalid member listing");
+    throw new Error(`npm archive ${archivePath} has an invalid member listing`);
   }
   const seen = new Set<string>();
   for (let index = 0; index < names.length; index += 1) {
@@ -249,12 +266,12 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
       normalized.split("/").some((part) => part === "" || part === "." || part === "..") ||
       seen.has(normalized)
     ) {
-      throw new Error("npm archive has an unsafe member");
+      throw new Error(`npm archive ${archivePath} has an unsafe member: ${member}`);
     }
     seen.add(normalized);
   }
   if (!seen.has("package/package.json")) {
-    throw new Error("npm archive has no package/package.json");
+    throw new Error(`npm archive ${archivePath} has no package/package.json`);
   }
 }
 
@@ -269,7 +286,7 @@ function extractArchive(
   run("tar", ["-xzf", archivePath, "-C", destination], cwd, env);
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
-    throw new Error("npm archive did not extract a package directory");
+    throw new Error(`npm archive ${archivePath} did not extract a package directory`);
   }
   return packageDirectory;
 }
@@ -829,120 +846,6 @@ export function patchOpenClawDiscordPackageGraph(packageDirectory: string): void
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
-export function patchOpenClawSlackProxyAddrPackageGraph(
-  packageDirectory: string,
-  replacementDirectory: string,
-): void {
-  const packageJson = readJson(join(packageDirectory, "package.json"));
-  requirePackageIdentity(packageJson, "@openclaw/slack", "2026.9.2", "OpenClaw Slack plugin");
-  if (
-    packageJson.dependencies?.["@slack/bolt"] !== "5.0.0" ||
-    !Array.isArray(packageJson.bundledDependencies) ||
-    !packageJson.bundledDependencies.includes("@slack/bolt")
-  ) {
-    throw new Error("@openclaw/slack@2026.9.2 Bolt dependency changed after review");
-  }
-
-  const boltDirectory = join(packageDirectory, "node_modules", "@slack", "bolt");
-  const boltPackageJson = readJson(join(boltDirectory, "package.json"));
-  requirePackageIdentity(boltPackageJson, "@slack/bolt", "5.0.0", "OpenClaw Slack bundled Bolt");
-  if (
-    boltPackageJson.dependencies?.express !== "^5.0.0" ||
-    boltPackageJson.license !== "MIT" ||
-    boltPackageJson.engines?.node !== ">=20"
-  ) {
-    throw new Error("@openclaw/slack@2026.9.2 bundled Bolt contract changed after review");
-  }
-
-  const expressPackageJson = readJson(
-    join(boltDirectory, "node_modules", "express", "package.json"),
-  );
-  requirePackageIdentity(expressPackageJson, "express", "5.2.1", "OpenClaw Slack bundled Express");
-  if (
-    expressPackageJson.dependencies?.["proxy-addr"] !== "^2.0.7" ||
-    expressPackageJson.license !== "MIT" ||
-    expressPackageJson.engines?.node !== ">= 18"
-  ) {
-    throw new Error("@openclaw/slack@2026.9.2 bundled Express contract changed after review");
-  }
-
-  const proxyAddrDirectory = join(boltDirectory, "node_modules", "proxy-addr");
-  const proxyAddrPackageJson = readJson(join(proxyAddrDirectory, "package.json"));
-  requirePackageIdentity(
-    proxyAddrPackageJson,
-    "proxy-addr",
-    "2.0.7",
-    "OpenClaw Slack bundled proxy-addr",
-  );
-  requireDependencyShape(
-    proxyAddrPackageJson,
-    { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    "proxy-addr@2.0.7",
-  );
-  if (proxyAddrPackageJson.license !== "MIT" || proxyAddrPackageJson.engines?.node !== ">= 0.10") {
-    throw new Error("@openclaw/slack@2026.9.2 bundled proxy-addr contract changed after review");
-  }
-
-  const replacementPackageJson = readJson(join(replacementDirectory, "package.json"));
-  requirePackageIdentity(
-    replacementPackageJson,
-    "proxy-addr",
-    CURRENT_PROXY_ADDR_VERSION,
-    "OpenClaw Slack proxy-addr remediation package",
-  );
-  requireDependencyShape(
-    replacementPackageJson,
-    { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
-  );
-  if (
-    replacementPackageJson.license !== "MIT" ||
-    replacementPackageJson.engines?.node !== ">= 0.10"
-  ) {
-    throw new Error(
-      `proxy-addr@${CURRENT_PROXY_ADDR_VERSION} package contract changed; review the remediation before updating it`,
-    );
-  }
-
-  copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
-}
-
-export function applyOpenClawSlackProxyAddrRemediation(
-  request: InstalledSlackRemediationRequest,
-): void {
-  const packageDirectory = resolve(request.packageDirectory);
-  const packageStat = lstatSync(packageDirectory);
-  if (!packageStat.isDirectory() || packageStat.isSymbolicLink()) {
-    throw new Error("OpenClaw Slack install is not a regular package directory");
-  }
-  const env = {
-    ...process.env,
-    ...request.env,
-    NPM_CONFIG_AUDIT: "false",
-    NPM_CONFIG_FUND: "false",
-    NPM_CONFIG_IGNORE_SCRIPTS: "true",
-    NPM_CONFIG_UPDATE_NOTIFIER: "false",
-    npm_config_ignore_scripts: "true",
-  };
-  const workingDirectory = resolve(request.workingDirectory);
-  mkdirSync(workingDirectory, { recursive: true, mode: 0o700 });
-  const remediationRoot = mkdtempSync(join(workingDirectory, "openclaw-slack-proxy-addr-"));
-  const proxyAddrArchive = packReplacement(
-    `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
-    CURRENT_PROXY_ADDR_INTEGRITY,
-    CURRENT_PROXY_ADDR_TARBALL,
-    remediationRoot,
-    env,
-  );
-  const proxyAddrPackage = extractArchive(
-    proxyAddrArchive.archivePath,
-    join(remediationRoot, "proxy-addr"),
-    remediationRoot,
-    env,
-  );
-  patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, proxyAddrPackage);
-}
-
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
@@ -1245,15 +1148,46 @@ function packReplacement(
     }
     return { archivePath, rootDirectory: archiveRoot };
   }
-  return packReviewedNpmArchive({
-    env,
-    expectedIntegrity,
-    label: `OpenClaw npm remediation dependency ${packageSpec}`,
-    npmExecutable: env.NEMOCLAW_REVIEWED_NPM_EXECUTABLE,
-    packageSpec,
-    tarballUrl,
-    tempDirectory: workingDirectory,
-  });
+  return packReviewedNpmArchive(
+    {
+      env,
+      expectedIntegrity,
+      label: `OpenClaw npm remediation dependency ${packageSpec}`,
+      npmExecutable: env.NEMOCLAW_REVIEWED_NPM_EXECUTABLE,
+      packageSpec,
+      tarballUrl,
+      tempDirectory: workingDirectory,
+    },
+    (args, request) => run(request.npmExecutable ?? "npm", args, undefined, env, 16 * 1024 * 1024),
+  );
+}
+
+export function patchOpenClawSlackProxyPackageGraph(
+  packageDirectory: string,
+  replacementDirectory: string,
+): void {
+  requirePackageIdentity(
+    readJson(join(packageDirectory, "package.json")),
+    "@openclaw/slack",
+    "2026.9.2",
+    "OpenClaw Slack plugin",
+  );
+  const target = join(
+    packageDirectory,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  );
+  const original = readJson(join(target, "package.json"));
+  const replacement = readJson(join(replacementDirectory, "package.json"));
+  requirePackageIdentity(original, "proxy-addr", "2.0.7", "Bundled Slack proxy-addr");
+  requirePackageIdentity(replacement, "proxy-addr", PROXY_ADDR_VERSION, "proxy-addr replacement");
+  const dependencies = { forwarded: "0.2.0", "ipaddr.js": "1.9.1" };
+  requireDependencyShape(original, dependencies, "Bundled Slack proxy-addr");
+  requireDependencyShape(replacement, dependencies, "proxy-addr replacement");
+  copyReplacementPackage(replacementDirectory, target);
 }
 
 export function buildRemediatedOpenClawPluginArchive(
@@ -1281,7 +1215,22 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "core") {
+  if (remediation.kind === "slack-proxy-addr") {
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(remediationRoot, "proxy-addr"),
+      remediationRoot,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(sourcePackage, replacement);
+  } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
       FS_SAFE_INTEGRITY,
@@ -1419,21 +1368,6 @@ export function buildRemediatedOpenClawPluginArchive(
     );
     patchOpenClawDiscordPackageGraph(sourcePackage);
     copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
-  } else if (remediation.kind === "proxy-addr") {
-    const proxyAddrArchive = packReplacement(
-      `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
-      CURRENT_PROXY_ADDR_INTEGRITY,
-      CURRENT_PROXY_ADDR_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const proxyAddrPackage = extractArchive(
-      proxyAddrArchive.archivePath,
-      join(remediationRoot, "proxy-addr"),
-      remediationRoot,
-      env,
-    );
-    patchOpenClawSlackProxyAddrPackageGraph(sourcePackage, proxyAddrPackage);
   } else if (remediation.kind === "legacy-core") {
     const bundledTarPath = join(sourcePackage, "node_modules", "tar");
     const bundledBaileysPath = join(sourcePackage, "node_modules", "@whiskeysockets", "baileys");
@@ -1774,19 +1708,89 @@ export function remediateReviewedOpenClawPluginArchive(
   });
 }
 
+export function remediateInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
+): void {
+  if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
+  if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
+    throw new Error("Official plugin remediation requires its verified install path");
+  }
+  const trustedRoot = realpathSync(request.trustedStateRoot);
+  const packageDirectory = realpathSync(request.packageDirectory);
+  // OpenClaw 2026.9.2 owns npm plugins in package-specific managed projects,
+  // including artifact-generation projects. Accept only Slack's exact shape.
+  const projectName = `openclaw-slack-${createHash("sha256")
+    .update("@openclaw/slack")
+    .digest("hex")
+    .slice(0, 10)}`;
+  const installedParts = relative(trustedRoot, packageDirectory).split(sep);
+  const project = installedParts[2] ?? "";
+  if (
+    installedParts.length !== 6 ||
+    installedParts[0] !== "npm" ||
+    installedParts[1] !== "projects" ||
+    (project !== projectName &&
+      !new RegExp(`^${projectName}__openclaw-generation__g-[a-f0-9]{16}$`).test(project)) ||
+    installedParts.slice(3).join("/") !== "node_modules/@openclaw/slack" ||
+    relative(resolve(request.trustedStateRoot), resolve(request.packageDirectory)) !==
+      relative(trustedRoot, packageDirectory)
+  ) {
+    throw new Error("Official Slack install path is outside its trusted plugin root");
+  }
+  let installedDependency = trustedRoot;
+  for (const component of [
+    ...installedParts,
+    "node_modules",
+    "@slack",
+    "bolt",
+    "node_modules",
+    "proxy-addr",
+  ]) {
+    installedDependency = join(installedDependency, component);
+    const metadata = lstatSync(installedDependency);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Official plugin dependency directory must be a real directory");
+    }
+  }
+  // The existing no-follow tree walk also rejects unsafe installed members.
+  hashPackageTree(installedDependency);
+  const env = { ...process.env, ...request.env };
+  const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
+  try {
+    const archive = packReplacement(
+      `proxy-addr@${PROXY_ADDR_VERSION}`,
+      PROXY_ADDR_INTEGRITY,
+      PROXY_ADDR_TARBALL,
+      directory,
+      env,
+    );
+    const replacement = extractArchive(
+      archive.archivePath,
+      join(directory, "proxy-addr"),
+      directory,
+      env,
+    );
+    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+  if (error instanceof OpenClawNpmRemediationCommandError) {
+    return error.couldNotStart
+      ? "OpenClaw npm remediation could not start a required command."
+      : "OpenClaw npm remediation command failed.";
+  }
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (message === "OpenClaw npm remediation command could not start") {
-    return "OpenClaw npm remediation could not start a required command.";
-  }
-  if (message === "OpenClaw npm remediation command failed" || message.includes(" failed:")) {
+  if (message.includes(" failed:")) {
     return "OpenClaw npm remediation command failed.";
   }
   if (

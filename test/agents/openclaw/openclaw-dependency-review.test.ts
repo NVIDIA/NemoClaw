@@ -249,7 +249,6 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'hashPackageTree' "$remediation_helper"
 	grep -Fq 'patchOpenClawCorePackageGraph' "$remediation_helper"
 	grep -Fq 'patchOpenClawDiagnosticsPackageGraph' "$remediation_helper"
-	grep -Fq 'applyOpenClawSlackProxyAddrRemediation' "$messaging_build_applier"
 	for package_spec in \
 		'openclaw@2026.3.11' \
 		'openclaw@2026.6.10' \
@@ -258,7 +257,6 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		'@openclaw/msteams@2026.6.10' \
 		'@openclaw/diagnostics-otel@2026.7.1' \
 		'@openclaw/slack@2026.7.1' \
-		'@openclaw/slack@2026.9.2' \
 		'@openclaw/msteams@2026.7.1'; do
 		grep -Fq "$package_spec" "$remediation_helper"
 	done
