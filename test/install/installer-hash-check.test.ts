@@ -54,7 +54,7 @@ const DCODE_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
   sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
 );
 const DCODE_NPM_REPLACEMENT_DIGEST =
-  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
+  "00869358ea440c38fc81d8f921f5eaf9380368fa036b2fc5db07bd84c933c968";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
