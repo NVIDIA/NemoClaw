@@ -74,6 +74,8 @@ mod inference_settings;
 mod inline_recipe;
 #[path = "interfaces.rs"]
 mod interfaces;
+#[path = "kubernetes_auth.rs"]
+mod kubernetes_auth;
 #[path = "kubernetes_cluster.rs"]
 mod kubernetes_cluster;
 #[path = "kubernetes_compile.rs"]

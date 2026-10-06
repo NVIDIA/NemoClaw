@@ -56,6 +56,9 @@ kube.workspace = true
 rustls.workspace = true
 k8s-openapi.workspace = true
 base64 = "0.22.1"
+# Development issuer certificates and token signing.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+ring = "0.17.14"
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

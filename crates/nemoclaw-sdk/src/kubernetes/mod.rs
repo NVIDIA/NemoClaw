@@ -7,6 +7,7 @@
 //! service variables is never consulted, so one deployment cannot reach
 //! another cluster by accident.
 
+pub mod auth;
 pub mod cluster;
 pub mod gateway;
 pub mod operations;
