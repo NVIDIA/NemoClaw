@@ -3,17 +3,20 @@
 
 # Salvage a Pull Request
 
-Repair one narrow blocker when the PR shows the intended behavior. Defer the repair when intent or design is not clear. Stop when the repair exceeds accepted scope.
+Repair one narrow PR blocker when the PR shows the intended behavior. Defer the repair when intent
+or design is not clear. Stop when the repair exceeds accepted scope.
 
 Before editing, complete [PR follow-up](../_shared/pr-follow-up.md) for one unchanged latest PR
-commit. Repair the complete accepted root-cause group. Do not push a reaction to one early review
+commit. Repair the complete PR-blocker root-cause group. Do not push a reaction to one early review
 result while other automated evidence is pending.
 
 ## Decide
 
 | Condition | Action |
 |---|---|
-| Mechanical conflict, missing test, failed check, or narrow correctness defect | Repair it now when the task permits local changes and a push. |
+| Mechanical conflict or classified PR blocker | Repair it now when the task permits local changes and a push. |
+| Valid but pre-existing, adjacent, or optional problem | Defer it. Do not expand the PR. |
+| Advisor check remains blocked after a false-positive or out-of-scope disposition | Report an automation defect. Do not change product code only to make the check pass. |
 | Intent is not clear, or the repair needs a design decision | Ask the contributor or user. |
 | The repair crosses accepted scope or multiple systems | Stop and report the required owner or decision. |
 

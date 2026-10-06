@@ -17,8 +17,9 @@ Preserve the user's scope and any explicit instruction to stop at a draft or wit
 - **Initial publication:** read [Validation](references/validation.md), then
   [Publication](references/publication.md). Use the implementation evidence already collected.
 - **Update an open PR:** first complete the [PR follow-up contract](../_shared/pr-follow-up.md).
-  Repair valid in-scope findings through `nemoclaw-contributor-implement-issue`, then apply the
-  validation and publication references. These are stages of the same authorized task.
+  Repair classified PR blockers through `nemoclaw-contributor-implement-issue`, then apply the
+  validation and publication references. An Advisor priority or failed Advisor check does not
+  authorize a repair. These are stages of the same authorized task.
 - **Inspect CI or review feedback:** use the shared follow-up contract. Load publication procedures
   only if an authorized branch or PR write is needed.
 - **Mark a draft ready:** use the ready-state requirements in
