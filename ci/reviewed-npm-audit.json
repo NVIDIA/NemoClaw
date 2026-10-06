@@ -132,7 +132,7 @@
       "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
       "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
+      "lockSha256": "638758ddee2772a6cb2ad8b68f4697708b5ddf21334e2f9fa79bef1d1fed1907"
     }
   ]
 }
