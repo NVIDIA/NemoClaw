@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
+import { cleanupExistingPath, terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { observabilityProbeThreadId } from "../live/deepagents-observability-contract.ts";
 
 const threadId = "01900000-0000-7000-8000-000000000001";
@@ -14,12 +15,6 @@ const turn = JSON.stringify({
   command: "non-interactive",
   data: { status: "success", completion: { thread_id: threadId } },
 });
-const deleted = (id: string, value: boolean) =>
-  JSON.stringify({
-    schema_version: 1,
-    command: "threads delete",
-    data: { thread_id: id, deleted: value },
-  });
 
 describe("observability probe conversation cleanup", () => {
   it("uses the exact native completion identity", () => {
@@ -41,46 +36,122 @@ describe("observability probe conversation cleanup", () => {
   });
 
   it.each([
-    [0, deleted(threadId, true), 0],
-    [0, deleted(threadId, false), 0],
-    [7, deleted(threadId, true), 7],
-  ])(
-    "accepts removed or absent probe threads and propagates native cleanup failure (%s/%s)",
-    (nativeStatus, receipt, expectedStatus) => {
-      const script = fs.readFileSync(
-        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
-        "utf8",
+    [0, true],
+    [0, false],
+    [7, true],
+  ])("cleans the exact probe on failed-turn exit (%s, present=%s)", (nativeStatus, present) => {
+    const workspace = createHostProcessWorkspace("dcode-exit-cleanup-");
+    const pidFile = workspace.path("collector.pid");
+    onTestFinished(async () => {
+      await cleanupExistingPath(pidFile, () =>
+        terminateProcessIfRunning(Number(fs.readFileSync(pidFile, "utf8"))),
       );
-      const cleanup = script.match(/^cleanup_probe_thread\(\) \{[\s\S]*?^\}/mu)?.[0];
-      expect(cleanup).toBeDefined();
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `${cleanup}
-timeout() { shift 2; "$@"; }
-openshell() {
-  test "$*" = "sandbox exec --name test-sandbox -- dcode threads delete ${threadId} --json" || return 9
-  printf '%s\\n' "$NATIVE_RECEIPT"
-  return "$NATIVE_STATUS"
-}
-cleanup_probe_thread
-`,
-        ],
-        {
-          encoding: "utf8",
-          env: {
-            PATH: process.env.PATH,
-            TSX: path.resolve("node_modules/.bin/tsx"),
-            CONTRACT_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
-            SANDBOX_NAME: "test-sandbox",
-            direct_output: turn,
-            NATIVE_RECEIPT: receipt,
-            NATIVE_STATUS: String(nativeStatus),
-          },
+      await cleanupExistingPath(workspace.path("capture-dir"), () =>
+        fs.rmSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim(), {
+          recursive: true,
+          force: true,
+        }),
+      );
+      workspace.remove();
+    });
+    const fixtureFile = (relative: string, content = "") => {
+      const target = workspace.path(relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+      return target;
+    };
+    const command = (name: string, body: string) =>
+      workspace.writeExecutable(name, `#!/bin/bash\nset -eu\n${body}`);
+    fixtureFile(
+      ".nemoclaw/sandboxes.json",
+      JSON.stringify({
+        sandboxes: { "test-sandbox": { observabilityEnabled: true } },
+      }),
+    );
+    fixtureFile("test/e2e/live/deepagents-otlp-capture-server.ts");
+    fixtureFile("test/e2e/live/deepagents-observability-contract.ts");
+    fixtureFile("policy", "active\n");
+    fixtureFile("control-thread", "unrelated conversation");
+    fixtureFile(present ? "probe-thread" : "absent-thread", "synthetic probe");
+    fixtureFile("turn.json", turn);
+    const tsx = command(
+      "tsx",
+      `case "$1" in
+  *capture-server.ts)
+    echo "$$" > "$CASE_ROOT/collector.pid"
+    printf '%s\\n' "$2" > "$CASE_ROOT/capture-dir"
+    echo CAPTURE_READY:
+    exec /bin/sleep 300 ;;
+  *) case "$2" in
+    policy-state) cat ;;
+    denial-state) cat >/dev/null; echo policy-denied ;;
+    probe-thread-id) exec "$REAL_TSX" "$REAL_HELPER" probe-thread-id ;;
+    *) exit 92 ;;
+    esac ;;
+esac`,
+    );
+    fs.mkdirSync(workspace.path("node_modules/.bin"), { recursive: true });
+    fs.symlinkSync(tsx, workspace.path("node_modules/.bin/tsx"));
+    command(
+      "openshell",
+      `case "$*" in
+  *'getent ahostsv4'*) echo NEMOCLAW_OTLP_BIND_IP=192.168.1.2 ;;
+  *'dcode --json -n'*) cat "$CASE_ROOT/turn.json"; exit 7 ;;
+  *'dcode threads delete'*)
+    test "$9" = ${threadId}
+    printf '%s\\n' "$9" > "$CASE_ROOT/deleted-thread"
+    test "$NATIVE_STATUS" = 0 || exit "$NATIVE_STATUS"
+    rm -f "$CASE_ROOT/probe-thread"
+    ;;
+  *'.nemoclaw-observability-enabled'*) echo 1 ;;
+esac`,
+    );
+    const cli = command(
+      "cli",
+      `case "$2" in
+  policy-list) cat "$CASE_ROOT/policy" ;;
+  policy-add) echo active > "$CASE_ROOT/policy" ;;
+  policy-remove) echo inactive > "$CASE_ROOT/policy" ;;
+  exec) case "$*" in
+    *NEMOCLAW_OTLP_TOOL_ARGUMENT_SENTINEL*) echo TOOL_TRACE_OK ;;
+    *NEMOCLAW_OTLP_ALLOWED_PROBE*) echo REACHED:200 ;;
+    *) echo 'blocked by policy'; exit 7 ;;
+    esac ;;
+  *) exit 93 ;;
+esac`,
+    );
+    command("ip", "echo '1: fixture inet 192.168.1.2/24'");
+    command("curl", "exit 0");
+    command("sleep", "exec /bin/sleep 0.02");
+    command("timeout", 'shift 2; exec "$@"');
+    const result = workspace.run(
+      "bash",
+      [path.resolve("test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh")],
+      {
+        timeout: 10_000,
+        env: {
+          PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
+          HOME: workspace.homeDir,
+          CASE_ROOT: workspace.root,
+          REPO: workspace.root,
+          SANDBOX_NAME: "test-sandbox",
+          NEMOCLAW_CLI_BIN: cli,
+          REAL_TSX: path.resolve("node_modules/.bin/tsx"),
+          REAL_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
+          NATIVE_STATUS: String(nativeStatus),
         },
-      );
-      expect(result.status, result.stderr).toBe(expectedStatus);
-    },
-  );
+      },
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(fs.readFileSync(workspace.path("deleted-thread"), "utf8").trim()).toBe(threadId);
+    expect(fs.existsSync(workspace.path("probe-thread"))).toBe(present && nativeStatus !== 0);
+    expect(fs.readFileSync(workspace.path("control-thread"), "utf8")).toBe(
+      "unrelated conversation",
+    );
+    expect(fs.readFileSync(workspace.path("policy"), "utf8").trim()).toBe("active");
+    expect(fs.existsSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim())).toBe(
+      false,
+    );
+    expect(result.stderr.includes("probe conversation cleanup failed")).toBe(nativeStatus !== 0);
+  });
 });
