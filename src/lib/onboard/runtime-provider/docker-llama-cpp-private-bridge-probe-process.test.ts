@@ -21,6 +21,12 @@ describe("parseLlamaCppPrivateBridgeProbeArguments", () => {
     ).toEqual({ url: "http://127.0.0.1:8081/health", timeoutSeconds: 30 });
   });
 
+  it("accepts the lifecycle readiness timeout ceiling", () => {
+    expect(
+      parseLlamaCppPrivateBridgeProbeArguments(["http://127.0.0.1:8081/health", "86400"]),
+    ).toEqual({ url: "http://127.0.0.1:8081/health", timeoutSeconds: 86_400 });
+  });
+
   it.each([
     ["https://127.0.0.1:8081/health", "30"],
     ["http://0.0.0.0:8081/health", "30"],
@@ -40,6 +46,7 @@ describe("parseLlamaCppPrivateBridgeProbeArguments", () => {
     [["http://127.0.0.1:8081/health", "soon"]],
     [["http://127.0.0.1:8081/health", "0"]],
     [["http://127.0.0.1:8081/health", "1.5"]],
+    [["http://127.0.0.1:8081/health", "86401"]],
     [["http://127.0.0.1:99999/health", "30"]],
   ])("rejects malformed arguments %j", (argv) => {
     expect(() => parseLlamaCppPrivateBridgeProbeArguments(argv)).toThrow();

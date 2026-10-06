@@ -6,6 +6,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const adapterMocks = vi.hoisted(() => ({
   providerCapture: vi.fn(),
   backupWithAuthority: vi.fn(),
+  probeSsh: vi.fn(),
+  startSandbox: vi.fn(),
+  stopSandbox: vi.fn(),
+}));
+
+vi.mock("../../adapters/openshell/sandbox-lifecycle-sdk", () => ({
+  createSdkOpenShellSandboxStateLifecycle: () => ({
+    startSandbox: adapterMocks.startSandbox,
+    stopSandbox: adapterMocks.stopSandbox,
+  }),
 }));
 
 vi.mock("../../onboard/runtime-provider/selection", () => ({
@@ -20,7 +30,11 @@ vi.mock("../../onboard/runtime-provider/selection", () => ({
       containerEngine: {
         supported: true,
         identities: [
-          { operation: "sandbox-lifecycle", engineId: normalized, displayName: normalized },
+          {
+            operation: "sandbox-lifecycle",
+            engineId: normalized,
+            displayName: normalized,
+          },
         ],
         capture: adapterMocks.providerCapture,
       },
@@ -35,9 +49,11 @@ vi.mock("../../state/registry", () => ({
 }));
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: vi.fn(),
+  probeSandboxSshReachable: (...args: unknown[]) => adapterMocks.probeSsh(...args),
 }));
 vi.mock("./snapshot/backup-authority", () => ({
-  backupSandboxStateWithManagedAuthority: (name: string) => adapterMocks.backupWithAuthority(name),
+  backupSandboxStateWithManagedAuthority: (name: string, options: unknown) =>
+    adapterMocks.backupWithAuthority(name, options),
 }));
 
 import * as registry from "../../state/registry";
@@ -45,6 +61,7 @@ import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
+  startedSandboxBackupTransactionDeadline,
   startStoppedSandboxContainerForBackup,
 } from "./stopped-sandbox-backup";
 
@@ -53,43 +70,203 @@ function lifecycleEngine(runtimeProviderId = "docker") {
 }
 
 describe("startStoppedSandboxContainerForBackup", () => {
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    adapterMocks.startSandbox.mockReset();
+    vi.mocked(registry.getSandbox).mockReset();
+    vi.mocked(registry.listSandboxes).mockReset();
+  });
+
   const deps = (over: Record<string, unknown> = {}) => {
     const engine = lifecycleEngine();
     return {
-      getSandboxDriver: vi.fn().mockReturnValue("docker"),
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        openshellDriver: "docker",
+      }),
       listSandboxNames: vi.fn().mockReturnValue(["my-sb"]),
       resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
       listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc123"]),
       inspectStatus: vi.fn().mockReturnValue("exited"),
-      start: vi.fn().mockReturnValue(true),
+      createOpenShellLifecycle: vi.fn().mockReturnValue({
+        startSandbox: vi.fn().mockResolvedValue({ kind: "accepted" }),
+        stopSandbox: vi.fn(),
+      }),
       ...over,
     };
   };
 
-  it("starts an exited provider-owned container and records its provider", () => {
+  it("starts an exited provider-owned container through exact-identity OpenShell", async () => {
     const d = deps();
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toEqual({
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toEqual({
       containerName: "openshell-my-sb-abc123",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
       runtimeProviderId: "docker",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my-sb",
     });
-    expect(d.start).toHaveBeenCalledWith(expect.any(Object), "openshell-my-sb-abc123");
+    expect(d.createOpenShellLifecycle().startSandbox).toHaveBeenCalledWith({
+      sandboxName: "my-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 30_000,
+    });
+    expect(d.resolveLifecycleEngine().capture).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["start"]),
+      expect.anything(),
+    );
   });
 
-  it("uses the same lifecycle path for a registered Podman provider", () => {
+  it("bounds the start operation by the shared transaction deadline", async () => {
+    const d = deps({
+      deadlineMs: 20_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.createOpenShellLifecycle().startSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 15_000,
+      }),
+    );
+  });
+
+  it("does not start a sandbox after the shared deadline expires", async () => {
+    const d = deps({
+      deadlineMs: 5_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle().startSandbox).not.toHaveBeenCalled();
+  });
+
+  it("bounds each provider probe by the remaining transaction time", async () => {
+    const d = deps({
+      deadlineMs: 7_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.listLabeledContainerNames).toHaveBeenCalledWith(expect.anything(), "my-sb", 2_000);
+    expect(d.inspectStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "openshell-my-sb-abc123",
+      2_000,
+    );
+  });
+
+  it("gives each provider probe its own budget without a shared deadline", async () => {
+    const d = deps();
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.listLabeledContainerNames).toHaveBeenCalledWith(expect.anything(), "my-sb", 5_000);
+    expect(d.inspectStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "openshell-my-sb-abc123",
+      5_000,
+    );
+  });
+
+  it("does not probe the provider after the shared deadline expires", async () => {
+    const d = deps({
+      deadlineMs: 5_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
+    expect(d.inspectStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not inspect container status after the listing consumes the deadline", async () => {
+    let now = 4_000;
+    const d = deps({
+      deadlineMs: 5_000,
+      listLabeledContainerNames: vi.fn(() => {
+        now = 5_000;
+        return ["openshell-my-sb-abc123"];
+      }),
+      now: () => now,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.listLabeledContainerNames).toHaveBeenCalledOnce();
+    expect(d.inspectStatus).not.toHaveBeenCalled();
+  });
+
+  it("uses the same OpenShell lifecycle path for a registered Podman provider", async () => {
     const podmanEngine = lifecycleEngine("podman");
     const d = deps({
-      getSandboxDriver: vi.fn().mockReturnValue("podman"),
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        openshellDriver: "podman",
+      }),
       resolveLifecycleEngine: vi.fn().mockReturnValue(podmanEngine),
     });
 
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toEqual({
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toEqual({
       containerName: "openshell-my-sb-abc123",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
       runtimeProviderId: "podman",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my-sb",
     });
-    expect(d.start).toHaveBeenCalledWith(podmanEngine, "openshell-my-sb-abc123");
   });
 
-  it("excludes created pending registrations from container ownership (#9733)", () => {
+  it("uses the default OpenShell lifecycle adapter without container start mutation", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      gatewayName: "nemoclaw",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      openshellDriver: "docker",
+    } as ReturnType<typeof registry.getSandbox>);
+    vi.mocked(registry.listSandboxes).mockReturnValue({
+      sandboxes: [{ name: "my-sb" }],
+      defaultSandbox: null,
+    });
+    adapterMocks.providerCapture.mockImplementation(
+      (_operation: string, args: readonly string[]) => ({
+        status: 0,
+        stdout: args[0] === "ps" ? "openshell-my-sb-abc123\n" : "exited\n",
+        stderr: "",
+      }),
+    );
+    adapterMocks.startSandbox.mockResolvedValueOnce({ kind: "accepted" });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb")).resolves.toMatchObject({
+      containerName: "openshell-my-sb-abc123",
+      sandboxName: "my-sb",
+    });
+    expect(adapterMocks.startSandbox).toHaveBeenCalledOnce();
+    expect(
+      adapterMocks.providerCapture.mock.calls.some(
+        ([, args]) => Array.isArray(args) && (args[0] === "start" || args[0] === "stop"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses lifecycle mutation without immutable sandbox identity", async () => {
+    const d = deps({
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: null,
+        openshellDriver: "docker",
+      }),
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.resolveLifecycleEngine).not.toHaveBeenCalled();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("excludes created pending registrations from container ownership (#9733)", async () => {
     vi.mocked(registry.listSandboxes).mockReturnValue({
       sandboxes: [
         { name: "my" },
@@ -106,71 +283,85 @@ describe("startStoppedSandboxContainerForBackup", () => {
       inspectStatus: vi.fn().mockReturnValue("exited"),
     });
 
-    expect(startStoppedSandboxContainerForBackup("my", d)).toEqual({
+    await expect(startStoppedSandboxContainerForBackup("my", d)).resolves.toEqual({
       containerName: "openshell-my-assistant-12ab",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
       runtimeProviderId: "docker",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my",
     });
   });
 
-  it("starts a created container (onboarded but never run)", () => {
+  it("starts a created container (onboarded but never run)", async () => {
     const d = deps({ inspectStatus: vi.fn().mockReturnValue("created") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).not.toBeNull();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
   });
 
-  it("leaves providers without a container lifecycle engine alone", () => {
+  it("leaves providers without a container lifecycle engine alone", async () => {
     const d = deps({ resolveLifecycleEngine: vi.fn().mockReturnValue(null) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
     expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
   });
 
-  it("returns null when no labeled container owns the sandbox name", () => {
+  it("returns null when no labeled container owns the sandbox name", async () => {
     const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue([]) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.start).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("refuses ambiguous labeled containers", () => {
+  it("refuses ambiguous labeled containers", async () => {
     const d = deps({
       listLabeledContainerNames: vi
         .fn()
         .mockReturnValue(["openshell-my-sb-old", "openshell-my-sb-new"]),
     });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
     expect(d.inspectStatus).not.toHaveBeenCalled();
-    expect(d.start).not.toHaveBeenCalled();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("refuses a labeled container whose name does not belong to the sandbox", () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.start).not.toHaveBeenCalled();
+  it("refuses a labeled container whose name does not belong to the sandbox", async () => {
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]),
+    });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves GPU recovery backup siblings to the dedicated recovery flow", () => {
+  it("leaves GPU recovery backup siblings to the dedicated recovery flow", async () => {
     const d = deps({
       listLabeledContainerNames: vi
         .fn()
         .mockReturnValue(["openshell-my-sb-nemoclaw-gpu-backup-123"]),
     });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.start).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves a running-but-not-Ready container alone (crash loop, gateway drift)", () => {
+  it("leaves a running-but-not-Ready container alone (crash loop, gateway drift)", async () => {
     const d = deps({ inspectStatus: vi.fn().mockReturnValue("running") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.start).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves a paused container alone (#4495)", () => {
+  it("leaves a paused container alone (#4495)", async () => {
     const d = deps({ inspectStatus: vi.fn().mockReturnValue("paused") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.start).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("returns null when the provider start operation fails", () => {
-    const d = deps({ start: vi.fn().mockReturnValue(false) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+  it("returns null when the OpenShell start operation fails", async () => {
+    const d = deps({
+      createOpenShellLifecycle: vi.fn().mockReturnValue({
+        startSandbox: vi.fn().mockResolvedValue({
+          kind: "failed",
+          error: { kind: "timeout", message: "OpenShell timed out." },
+        }),
+        stopSandbox: vi.fn(),
+      }),
+    });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
   });
 });
 
@@ -195,7 +386,9 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
   });
 
   it("reports present when a labeled container still exists", () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc"]) });
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc"]),
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
   });
 
@@ -206,7 +399,9 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
   });
 
   it("fails closed when the labeled listing itself fails (a swallowed ps error is not absence)", () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(null) });
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(null),
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
   });
 
@@ -222,7 +417,11 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.providerCapture.mockReturnValue({ status: 1, stdout: "", stderr: "down" });
+    adapterMocks.providerCapture.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "down",
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
     expect(adapterMocks.providerCapture).toHaveBeenCalledWith(
       "sandbox-lifecycle",
@@ -235,7 +434,11 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.providerCapture.mockReturnValue({ status: 0, stdout: "\n", stderr: "" });
+    adapterMocks.providerCapture.mockReturnValue({
+      status: 0,
+      stdout: "\n",
+      stderr: "",
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(true);
   });
 
@@ -253,67 +456,59 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
 });
 
 describe("returnSandboxContainerToStopped", () => {
-  beforeEach(() => adapterMocks.providerCapture.mockReset());
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    adapterMocks.stopSandbox.mockReset();
+  });
 
   const started = {
     containerName: "openshell-my-sb-abc123",
+    gatewayName: "nemoclaw",
+    mutationTimeoutMs: 75_000,
     runtimeProviderId: "podman",
+    sandboxIdentityFingerprint: "a".repeat(64),
+    sandboxName: "my-sb",
   };
 
-  it("uses the recorded provider and confirms the container stopped", () => {
-    const engine = lifecycleEngine("podman");
-    const resolveLifecycleEngine = vi.fn().mockReturnValue(engine);
-    const stop = vi.fn().mockReturnValue(true);
-    const inspectStatus = vi.fn().mockReturnValue("exited");
-    expect(
+  it("uses the recorded exact identity and confirms OpenShell stopped the sandbox", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
+    await expect(
       returnSandboxContainerToStopped(started, {
-        resolveLifecycleEngine,
-        stop,
-        inspectStatus,
+        createOpenShellLifecycle: () => ({
+          startSandbox: vi.fn(),
+          stopSandbox,
+        }),
       }),
-    ).toBe(true);
-    expect(resolveLifecycleEngine).toHaveBeenCalledWith("podman");
-    expect(stop).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
-    expect(inspectStatus).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith({
+      sandboxName: "my-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 75_000,
+    });
   });
 
-  it("uses the Podman lifecycle timeout when restoring a stopped container", () => {
-    adapterMocks.providerCapture
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "exited\n", stderr: "" });
+  it("uses the OpenShell lifecycle adapter without direct container mutation", async () => {
+    adapterMocks.stopSandbox.mockResolvedValueOnce({ kind: "accepted" });
 
-    expect(returnSandboxContainerToStopped(started)).toBe(true);
-    expect(adapterMocks.providerCapture).toHaveBeenNthCalledWith(
-      1,
-      "sandbox-lifecycle",
-      ["stop", "openshell-my-sb-abc123"],
-      75_000,
-    );
+    await expect(returnSandboxContainerToStopped(started)).resolves.toBe(true);
+    expect(adapterMocks.stopSandbox).toHaveBeenCalledOnce();
+    expect(adapterMocks.providerCapture).not.toHaveBeenCalled();
   });
 
-  it("reports failure when the provider stop operation fails", () => {
-    const engine = lifecycleEngine("podman");
-    const stop = vi.fn().mockReturnValue(false);
-    const inspectStatus = vi.fn();
-    expect(
+  it("reports failure when the OpenShell stop operation fails", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
+    await expect(
       returnSandboxContainerToStopped(started, {
-        resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
-        stop,
-        inspectStatus,
+        createOpenShellLifecycle: () => ({
+          startSandbox: vi.fn(),
+          stopSandbox,
+        }),
       }),
-    ).toBe(false);
-    expect(inspectStatus).not.toHaveBeenCalled();
-  });
-
-  it("reports failure when the container is still running after stop", () => {
-    const engine = lifecycleEngine("podman");
-    expect(
-      returnSandboxContainerToStopped(started, {
-        resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
-        stop: vi.fn().mockReturnValue(true),
-        inspectStatus: vi.fn().mockReturnValue("running"),
-      }),
-    ).toBe(false);
+    ).resolves.toBe(false);
   });
 });
 
@@ -325,61 +520,110 @@ describe("backupStartedSandboxState", () => {
     backedUpFiles: [],
     failedFiles: [],
   };
-  const unreachable = { ...ok, success: false, unreachable: true };
   const denied = { ...ok, success: false };
 
+  beforeEach(() => {
+    adapterMocks.backupWithAuthority.mockReset();
+    adapterMocks.probeSsh.mockReset();
+  });
+
   it("uses managed provider authority through the default stopped-backup path", async () => {
+    adapterMocks.probeSsh.mockReturnValueOnce(true);
     adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
 
     await expect(backupStartedSandboxState("my-sb")).resolves.toEqual(ok);
 
-    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb");
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
+      deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: false,
+      deferCompletionPublication: false,
+    });
+  });
+
+  it("keeps strict stopped backups incomplete until recovery retention publishes", async () => {
+    adapterMocks.probeSsh.mockReturnValueOnce(true);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
+
+    await expect(
+      backupStartedSandboxState("my-sb", { deferCompletionPublication: true }),
+    ).resolves.toEqual(ok);
+
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
+      deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: false,
+      deferCompletionPublication: true,
+    });
   });
 
   it("retries while the just-started container's SSH endpoint is unreachable (#6500)", async () => {
-    const backup = vi
+    let now = 0;
+    const probe = vi
       .fn()
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(ok);
-    const sleep = vi.fn().mockResolvedValue(undefined);
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const backup = vi.fn().mockReturnValue(ok);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
     const result = await backupStartedSandboxState("my-sb", {
       backup,
+      probe,
       sleep,
-      attempts: 5,
       delayMs: 1,
+      now: () => now,
     });
     expect(result.success).toBe(true);
-    expect(backup).toHaveBeenCalledTimes(3);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(backup).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("allows managed startup to exceed the legacy eight-second readiness window (#9356)", async () => {
     vi.useFakeTimers();
-    adapterMocks.backupWithAuthority
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(ok);
+    vi.setSystemTime(0);
+    adapterMocks.probeSsh
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
 
     const pending = backupStartedSandboxState("my-sb");
     await vi.runAllTimersAsync();
 
     await expect(pending).resolves.toEqual(ok);
-    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(7);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(7);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("waits beyond the former ninety-second SSH readiness boundary (#11936)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    adapterMocks.probeSsh.mockImplementation(() => adapterMocks.probeSsh.mock.calls.length > 46);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
+
+    const pending = backupStartedSandboxState("my-sb");
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual(ok);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(47);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 
   it("returns a non-transport failure without retrying", async () => {
+    const probe = vi.fn().mockReturnValue(true);
     const backup = vi.fn().mockReturnValue(denied);
     const sleep = vi.fn().mockResolvedValue(undefined);
     const result = await backupStartedSandboxState("my-sb", {
       backup,
+      probe,
       sleep,
-      attempts: 5,
       delayMs: 1,
     });
     expect(result.success).toBe(false);
@@ -387,16 +631,200 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("gives up after the attempt budget while still unreachable", async () => {
-    const backup = vi.fn().mockReturnValue(unreachable);
-    const sleep = vi.fn().mockResolvedValue(undefined);
+  it("gives a readiness probe its own timeout independent of retry spacing", async () => {
+    const probe = vi.fn().mockReturnValue(true);
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup: vi.fn().mockReturnValue(ok),
+        probe,
+        delayMs: 1,
+        deadlineMs: 330_000,
+        now: () => 0,
+      }),
+    ).resolves.toEqual(ok);
+
+    expect(probe).toHaveBeenCalledWith("my-sb", 20_000);
+  });
+
+  it("preserves a late backup manifest for caller cleanup", async () => {
+    let now = 0;
+    const late = {
+      ...denied,
+      error: "capture failed",
+      manifest: { backupPath: "/backups/alpha/v1" },
+    };
     const result = await backupStartedSandboxState("my-sb", {
-      backup,
-      sleep,
-      attempts: 3,
-      delayMs: 1,
+      backup: vi.fn(() => {
+        now = 300_001;
+        return late as never;
+      }),
+      probe: vi.fn().mockReturnValue(true),
+      deadlineMs: 330_000,
+      now: () => now,
     });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "capture failed Sandbox backup exceeded its transaction deadline.",
+      manifest: { backupPath: "/backups/alpha/v1" },
+    });
+    expect(result).not.toHaveProperty("unreachable");
+  });
+
+  it("stops the default readiness probes at the transaction bound (#11936)", async () => {
+    let now = 0;
+    adapterMocks.probeSsh.mockReturnValue(false);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    const result = await backupStartedSandboxState("my-sb", {
+      sleep,
+      now: () => now,
+    });
+
     expect(result.unreachable).toBe(true);
-    expect(backup).toHaveBeenCalledTimes(3);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(90);
+    expect(sleep).toHaveBeenCalledTimes(90);
+    expect(adapterMocks.backupWithAuthority).not.toHaveBeenCalled();
+  });
+
+  it("reserves final backup and stopped-state cleanup near the readiness deadline (#11936)", async () => {
+    let now = 179_999;
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const backup = vi.fn((_name: string, deadlineMs: number) => {
+      expect(deadlineMs).toBe(300_000);
+      now = deadlineMs;
+      return ok;
+    });
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup,
+        probe: vi.fn().mockReturnValue(true),
+        deadlineMs: transactionDeadlineMs,
+        now: () => now,
+      }),
+    ).resolves.toEqual(ok);
+
+    expect(backup).toHaveBeenCalledWith("my-sb", 300_000, false, false);
+
+    const stopSandbox = vi.fn().mockImplementation(async ({ timeoutMs }: { timeoutMs: number }) => {
+      now += timeoutMs;
+      return { kind: "accepted" };
+    });
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
+          deadlineMs: transactionDeadlineMs,
+          now: () => now,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(now).toBe(transactionDeadlineMs);
+  });
+
+  it("keeps the full stop reserve when extraction and sanitization reach the backup deadline", async () => {
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const backupDeadlineMs = transactionDeadlineMs - 30_000;
+    let now = backupDeadlineMs - 120_001;
+    const extract = vi.fn(() => {
+      now = backupDeadlineMs - 1;
+    });
+    const sanitize = vi.fn(() => {
+      now += 1;
+    });
+    const backup = vi.fn(() => {
+      extract();
+      sanitize();
+      return ok;
+    });
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup,
+        probe: vi.fn().mockReturnValue(true),
+        deadlineMs: transactionDeadlineMs,
+        now: () => now,
+      }),
+    ).resolves.toEqual(ok);
+    expect(extract).toHaveBeenCalledOnce();
+    expect(sanitize).toHaveBeenCalledOnce();
+    expect(now).toBe(backupDeadlineMs);
+
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
+          deadlineMs: transactionDeadlineMs,
+          now: () => now,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 30_000,
+      }),
+    );
+  });
+
+  it("still stops a sandbox on its cleanup reserve after the shared deadline expires", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
+          deadlineMs: 10_000,
+          now: () => 400_000,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "my-sb",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        timeoutMs: 30_000,
+      }),
+    );
   });
 });

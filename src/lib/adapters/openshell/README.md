@@ -11,13 +11,19 @@ issue #10938 and PR #11065. They do not complete the capability migrations in th
 | Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides and requested managed Brave/OpenAI contracts; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
 | Sandbox identity, image, and attachments | `sandboxes.ts` | SDK `raw.getSandbox`; curated `sandbox.get` omits workspace, image, and active policy version. |
 | Configuration identity and effective policy | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID returns both in one response; curated `sandbox.getConfig` does a new name lookup and omits workspace. Policy reads for other consumers remain with #9805 and #9826. |
-| Inference route | `inference/live.ts` | Retains the CLI read with an explicit gateway. The separate generated inference client remains with #9809 and #9828. |
+| Inference route | `inference-route-cli.ts` | CLI read with an explicit gateway behind the typed observation contract from #9809. A generated inference client remains with #9828. |
 | Managed workload and gateway ownership | NemoClaw registry and gateway state | These are NemoClaw provenance, not OpenShell resource fields. |
 
 Use a curated SDK method when it preserves all fields and scope required by its consumer.
 Production access to the raw client and generated messages must stay inside this directory. The SDK connection in
 `sdk.ts` is shared with sandbox execution. It retains the existing managed state-root check,
 explicit loopback gateway, and bounded local mTLS file reads. No second credential loader is needed.
+
+`inference-route.ts` defines configured and unconfigured observations plus redacted error categories.
+The CLI adapter owns argument construction, ANSI and control-sequence removal, parsing, timeouts,
+and command-error mapping. Named gateway reads stay scoped. The observer returns an error when
+OpenShell rejects that scope; it does not retry an unscoped read. Route mutation and rollback remain
+outside this observer.
 
 `sdk-import.mts` keeps the SDK's public entry points behind native ESM imports when
 the CLI compiles to CommonJS. Both connection and policy serialization use this
@@ -26,7 +32,7 @@ The bridge has no top-level await, so the supported Node runtime can load its
 emitted `.mjs` from CommonJS. Compiled package tests cover both consumers with an
 import-only SDK fixture; SDK installation and gateway qualification remain separate.
 
-The read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
+The SDK read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
 not-found response returns `null`. Other failures use the existing sandbox error categories and
 fixed messages. There is no CLI fallback after an SDK failure. Resource versions stay decimal
 strings so uint64 values cannot lose precision.
@@ -39,13 +45,14 @@ Schema failures use fixed messages without rejected values.
 
 Provider reads return credential names and requested non-secret config values.
 For native NVIDIA hosted inference with no overrides, export also reads `raw.getProviderProfile`
-through the same gateway and workspace. It requires the built-in `nvidia` profile, static scope,
+through the same gateway at the provider's empty or current-workspace binding. Either binding must
+resolve to the built-in `nvidia` profile. Export requires static scope,
 revision zero, inference capability, and its single `integrate.api.nvidia.com:443` endpoint.
 The pinned OpenShell native resolver uses `/v1` on that host. Export records the built-in profile
 as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
-cannot use this derivation.
+cannot use this derivation. Missing or foreign-workspace bindings cannot use it either.
 
-Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
+Consumers can request `profileContract: "brave"`, `"openai"`, `"tavily"`, or `"tavily-hermes-v1"` to qualify a managed profile.
 The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
 same gateway. Brave onboarding imports its checked-in profile in the `default` workspace.
 User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
@@ -56,7 +63,9 @@ its global or same-workspace binding returns `managedProfile: null`. Ollama expo
 evidence; managed vLLM still requires a qualified profile. Other read failures remain terminal.
 
 Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
-and inference capability. Brave permits its single header credential and search endpoint;
+and inference capability. Brave permits its single header credential and search endpoint.
+Tavily requires its bearer credential, JSON-body rewriting, and the POST `/search` and `/extract` rules.
+The Hermes Tavily profile requires its managed Python executable instead of the general Tavily binary list.
 OpenAI requires the endpointless inference contract. Credential refresh, token grants, discovery,
 changed rewriting rules, and unknown protobuf fields in the profile's semantic messages fail.
 Provider credential values and handles remain opaque. The reader returns profile identity,

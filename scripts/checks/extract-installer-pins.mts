@@ -509,6 +509,20 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
       // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+      // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
+      "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+      // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
+      "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+      // Exact #12192 secure npm diagnostics; release pins stay unchanged.
+      "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+      // Exact #12192 shared npm diagnostics; release pins stay unchanged.
+      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+      // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
+      "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+      // Exact #12239 control-normalized npm diagnostics for #12192; release pins stay unchanged.
+      "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
+      // Exact #12376 npm replacement; base trust must precede runtime adoption.
+      "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c",
     ],
     formula: {
       asset: "openshell.rb",
@@ -522,6 +536,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
       // Exact #11251 template after immutable stable-override validation.
       "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+      // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+      "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
     ],
     manifests: [
       {
@@ -560,6 +576,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
         // Exact #11251 template after fail-closed gateway recovery validation.
         "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+        // Exact #12376 thread-group template from #12614; base trust precedes runtime adoption.
+        "2fb91b00c15aad1e5780a9e4199ca8ad944e849e3a32ad2b9bbb54c0255c0318",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,

@@ -21,15 +21,12 @@ const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPortBoundary = path.resolve(import.meta.dirname, "src/shared/port-boundary.cts");
 const canonicalPrivateNetworksBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve(import.meta.dirname, "src/shared/sandbox-name.cts");
-const canonicalSnapshotSanitizerBoundary = path.resolve(
-  import.meta.dirname,
-  "src/shared/snapshot-sanitizer-boundary.cts",
-);
 
 type PluginVitestProjectOptions = {
   root: string;
@@ -81,16 +78,16 @@ const pluginVitestProjectOptions = {
         replacement: canonicalOpenShellPolicyBoundary,
       },
       {
+        find: /^.*port-boundary\.cjs$/,
+        replacement: canonicalPortBoundary,
+      },
+      {
         find: /^.*private-networks-boundary\.cjs$/,
         replacement: canonicalPrivateNetworksBoundary,
       },
       {
         find: /^.*sandbox-name\.cjs$/,
         replacement: canonicalSandboxName,
-      },
-      {
-        find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-        replacement: canonicalSnapshotSanitizerBoundary,
       },
     ],
     env: {

@@ -32,6 +32,7 @@ import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildRecreateJournal from "./rebuild-recreate-journal";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
+import * as openClawLifecycle from "./runtime/openclaw-lifecycle";
 
 const policyBoundaryMocks = vi.hoisted(() => ({
   inspectSandboxPolicy: vi.fn(async () => ({
@@ -197,6 +198,8 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
+      vi.spyOn(onboardSession, "loadRebuildSession").mockImplementation(loadSession),
+      vi.spyOn(onboardSession, "selectRebuildSession").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
       vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
         const current = cloneSession(session);
@@ -261,8 +264,19 @@ describe("rebuild resume snapshot repair", () => {
         failedDirs: [],
         failedFiles: [],
         manifest: {
+          version: 2,
+          sandboxName: "alpha",
           backupPath,
           timestamp: "2026-06-01T00:00:00.000Z",
+          agentType: "openclaw",
+          agentVersion: "0.0.1",
+          expectedVersion: "0.1.0",
+          nativeState: {
+            root: "/sandbox",
+            archive: "native-home.tar",
+            sha256: "a".repeat(64),
+          },
+          blueprintDigest: null,
         },
       } as never),
       vi
@@ -303,6 +317,13 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(nim, "stopNimContainer").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainerByName").mockReturnValue(true),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
+      vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockResolvedValue({
+        ok: true,
+        window: { sandboxName: "alpha", kind: "backup" },
+      }),
+      vi
+        .spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete")
+        .mockResolvedValue({ ok: true }),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
         .mockResolvedValue({

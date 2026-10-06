@@ -34,7 +34,7 @@ import {
 } from "./podman-cpu-lifecycle-artifacts.ts";
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
-export const GATEWAY_NAME = "podman-proof";
+export const GATEWAY_NAME = "nemoclaw-18080";
 export const OPENSHELL_VERSION = OPENSHELL_V0116_QUALIFICATION.version;
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 

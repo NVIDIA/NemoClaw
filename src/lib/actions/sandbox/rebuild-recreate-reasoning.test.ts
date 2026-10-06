@@ -34,6 +34,8 @@ const durableConfig: RebuildDurableConfig = {
   dcodeAutoApprovalModeError: null,
   fromDockerfile: null,
   fromDockerfileError: null,
+  fromImage: null,
+  fromImageError: null,
   hermesAuthMethod: null,
   hermesAuthMethodError: null,
   webSearchConfig: null,

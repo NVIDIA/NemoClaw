@@ -10,22 +10,22 @@ import {
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
+import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
   buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
-import {
-  isDcodeOpenRouterModelsRoute404,
-  runSandboxInferenceInvocationProbe,
-} from "../inference-route-health";
+import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
@@ -57,6 +57,7 @@ export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (
@@ -79,6 +80,13 @@ export type LaunchReadinessBoundCapture = (
   options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
 ) => LaunchReadinessCaptureResult;
 
+/** Bind the route observer to the same capture owner as the other readiness reads. */
+export function createLaunchReadinessInferenceRouteObserver(
+  capture: LaunchReadinessBoundCapture,
+): OpenShellInferenceRouteObserver {
+  return createSynchronousCliOpenShellInferenceRouteObserver(capture);
+}
+
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */
 export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
@@ -91,6 +99,7 @@ export function createBoundLaunchReadinessDeps(
         ignoreError: options?.ignoreError ?? true,
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
+    inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
@@ -298,13 +307,10 @@ export async function requireLaunchSemanticHealth(
     const strictRouteHealth =
       inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
     if (strictRouteHealth && agentName !== "langchain-deepagents-code") return;
-    const openRouterDcodeModelsRouteUnsupported =
+    const supportedOpenRouterModelsRouteUnsupported =
       inference.healthy &&
-      isDcodeOpenRouterModelsRoute404(
-        { agentName, provider: entry.provider ?? null },
-        inference.httpStatus,
-      );
-    if (strictRouteHealth || openRouterDcodeModelsRouteUnsupported) {
+      isOpenRouterRuntimeAdapterModelsRoute404(entry.provider, inference.httpStatus);
+    if (strictRouteHealth || supportedOpenRouterModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);
       if (!provider || !model) {

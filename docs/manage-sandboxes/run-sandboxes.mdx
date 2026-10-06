@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Run Sandboxes"
 sidebar-title: "Run Sandboxes"
-description: "Run multiple sandboxes and stop or start containers, with dashboard and tunnel guidance where supported."
+description: "Run multiple sandboxes and stop or start them through OpenShell, with dashboard and tunnel guidance where supported."
 description-agent: "Explains multiple-sandbox naming and stop or start operations, plus dashboard and Cloudflare tunnel controls where the selected agent supports them. Use when operating one or more existing sandboxes."
 keywords: ["nemoclaw multiple sandboxes", "nemoclaw stop", "nemoclaw start", "sandbox operation"]
 content:
@@ -33,6 +33,10 @@ openshell forward list
 
 ## Run Multiple Sandboxes
 
+Choose a distinct sandbox name of 1 to 19 characters before onboarding.
+The limit matches OpenShell's routed sandbox-name limit and applies to every agent runtime.
+For the complete naming rules, refer to [`onboard --name`](../../reference/commands#--name-sandbox).
+
 <AgentOnly variant="openclaw,hermes">
 Each sandbox needs its own dashboard port because `openshell forward` refuses to bind a port that another sandbox already uses.
 </AgentOnly>
@@ -55,8 +59,8 @@ When creating a Hermes sandbox, if another sandbox or a host listener already ho
 <AgentOnly variant="openclaw,hermes">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
-Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `$$nemoclaw <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
-A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
+Sandbox-scoped commands, including `exec`, `status`, `start`, and `stop`, address the sandbox through its recorded gateway binding. `NEMOCLAW_GATEWAY_PORT` selects the gateway for onboarding and new gateway-scoped setup; it does not redirect an existing sandbox command.
+A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, rebuild backups, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.
 The default port keeps the shared `~/.nemoclaw/` location.
@@ -79,8 +83,8 @@ Hermes also retains or restores its registered OpenAI-compatible API forward usi
 <AgentOnly variant="deepagents">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
-Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `nemo-deepagents <name> exec` and `nemo-deepagents <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `nemo-deepagents <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
-A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
+Sandbox-scoped commands, including `exec`, `status`, `start`, and `stop`, address the sandbox through its recorded gateway binding. `NEMOCLAW_GATEWAY_PORT` selects the gateway for onboarding and new gateway-scoped setup; it does not redirect an existing sandbox command.
+A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, rebuild backups, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.
 The default port keeps the shared `~/.nemoclaw/` location.
@@ -123,16 +127,16 @@ nemo-deepagents onboard --name <sandbox-name>
 
 ## Stop and Start a Sandbox
 
-Stop a sandbox's container to free CPU, memory, and GPU resources without losing anything:
+Stop a sandbox through OpenShell to free CPU, memory, and GPU resources without losing anything:
 
 ```bash
 $$nemoclaw <sandbox-name> stop
 ```
 
 Workspace files, credentials, network policies, and the registry entry are preserved.
-The container stops running.
+OpenShell stops the sandbox's provider workload.
 <AgentOnly variant="openclaw,hermes">
-After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
+After the sandbox stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
 The shared host gateway and tunnel services keep serving other sandboxes.
 </AgentOnly>
 
@@ -143,11 +147,11 @@ $$nemoclaw <sandbox-name> start
 ```
 
 <AgentOnly variant="openclaw,hermes">
-After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
+After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state.
 NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.
+After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.
 </AgentOnly>
 Refer to [`$$nemoclaw <name> stop`](../../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../../reference/commands#$$nemoclaw-name-start) for details.
 Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.
@@ -159,12 +163,14 @@ Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destr
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the dashboard with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
+If a live recorded PID cannot be inspected, NemoClaw refuses to create a second tunnel. Restore process-inspection access, then retry; [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
 ```bash
 $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
 a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
 </AgentOnly>
@@ -175,12 +181,14 @@ a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` 
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the forwarded Hermes endpoint with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
+If a live recorded PID cannot be inspected, NemoClaw refuses to create a second tunnel. Restore process-inspection access, then retry; [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
 ```bash
 $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
+If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 </AgentOnly>
 
 ## Related Topics

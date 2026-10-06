@@ -438,6 +438,13 @@ moduleRuntime._resolveFilename = function resolveSourceFilename(request, parent,
         return resolveFilename.call(this, sourceRequest, parent, isMain, options);
       }
     }
+    if (request.startsWith(".") && request.endsWith(".mjs") && parentFilename) {
+      const sourceRequest = `${request.slice(0, -4)}.mts`;
+      const sourceCandidate = path.resolve(path.dirname(parentFilename), sourceRequest);
+      if (sourceCandidate.startsWith(sourceRoot) && fs.existsSync(sourceCandidate)) {
+        return resolveFilename.call(this, sourceRequest, parent, isMain, options);
+      }
+    }
     throw error;
   }
 };
@@ -453,3 +460,4 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
 };
 
 moduleRuntime._extensions[".cts"] = moduleRuntime._extensions[".ts"];
+moduleRuntime._extensions[".mts"] = moduleRuntime._extensions[".ts"];

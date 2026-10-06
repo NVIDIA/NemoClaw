@@ -15,6 +15,10 @@ import {
 } from "./sandbox-observer";
 import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
+import { captureOpenshellCommand } from "./client";
+import { resolveOpenshell } from "./resolve";
+import { assertCliOpenShellTarget } from "./sandbox-command-cli";
+import { OpenShellGatewayEndpointOverrideError } from "../../openshell-gateway-endpoint-guard";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 
@@ -54,6 +58,7 @@ export type CapturedOpenShellCommandResult = Readonly<{
   stdout?: string;
   stderr?: string;
   error?: Error;
+  signal?: NodeJS.Signals | null;
 }>;
 
 export type CapturedSandboxCommandResult = CapturedOpenShellCommandResult;
@@ -75,6 +80,8 @@ export type CaptureSandboxCommand = CaptureOpenShellCommand;
 export type CliOpenShellSandboxObserverDeps = Readonly<{
   capture: CaptureSandboxCommand;
   defaultTimeoutMs?: number;
+  environment?: NodeJS.ProcessEnv;
+  now?: () => number;
 }>;
 
 export type RunSandboxCommand = (
@@ -92,6 +99,7 @@ export type RunSandboxCommand = (
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
   error?: Error | null;
+  signal?: NodeJS.Signals | null;
 }>;
 
 export type CliOpenShellSandboxLookupResult = Readonly<{
@@ -319,6 +327,7 @@ function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenS
       stdout,
       stderr,
       ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
     };
   };
 }
@@ -384,10 +393,12 @@ export function createCliOpenShellLegacyPodReadinessProbe(
  * presentation compatibility path.
  */
 export function createCliOpenShellSandboxLookup(
-  deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs">,
+  deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs" | "now">,
 ): CliOpenShellSandboxLookup {
   return async (request) => {
     const timeout = request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + timeout;
     const captureOptions = {
       ignoreError: true,
       includeStderr: true,
@@ -409,10 +420,20 @@ export function createCliOpenShellSandboxLookup(
       result.status !== 0 &&
       isLegacyOpenShellSandboxConfigUnavailableOutput(output)
     ) {
-      const inventory = await deps.capture(
-        [...targetArgs("list", request.target), "-o", "json"],
-        captureOptions,
-      );
+      const remainingTimeoutMs = Math.ceil(deadlineMs - now());
+      if (remainingTimeoutMs <= 0) {
+        return {
+          result: failure({
+            kind: "timeout",
+            message: "OpenShell sandbox observation timed out.",
+          }),
+          displayOutput: "",
+        };
+      }
+      const inventory = await deps.capture([...targetArgs("list", request.target), "-o", "json"], {
+        ...captureOptions,
+        timeout: remainingTimeoutMs,
+      });
       const listed = observeOpenShellSandboxIdentity(request.sandboxName, inventory);
       if (listed.kind === "present") {
         return {
@@ -434,6 +455,9 @@ export function createCliOpenShellSandboxLookup(
       };
     }
     if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
       result.status !== 0 &&
       isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
     ) {
@@ -459,6 +483,19 @@ export function createCliOpenShellSandboxObserver(
   const listSandboxes = async (
     request: ListOpenShellSandboxesRequest,
   ): Promise<OpenShellSandboxResult<OpenShellSandboxInventory>> => {
+    try {
+      assertCliOpenShellTarget(request.target, deps.environment ?? process.env);
+    } catch (error) {
+      return failure(
+        error instanceof OpenShellGatewayEndpointOverrideError
+          ? { kind: "transport", reason: "endpoint_override", message: error.message }
+          : {
+              kind: "command",
+              reason: "invalid_request",
+              message: "Invalid OpenShell sandbox observation target.",
+            },
+      );
+    }
     const result = await capture(targetArgs("list", request.target), {
       ignoreError: true,
       includeStderr: true,
@@ -471,4 +508,17 @@ export function createCliOpenShellSandboxObserver(
   };
 
   return { listSandboxes };
+}
+
+/** Build the production observer while keeping CLI capture inside the adapter. */
+export function createRuntimeCliOpenShellSandboxObserver(
+  rootDir: string,
+): OpenShellSandboxObserver {
+  return createCliOpenShellSandboxObserver({
+    capture: (args, options) => {
+      const openshell = resolveOpenshell();
+      if (!openshell) return { status: 1, output: "" };
+      return captureOpenshellCommand(openshell, args, { cwd: rootDir, ...options });
+    },
+  });
 }

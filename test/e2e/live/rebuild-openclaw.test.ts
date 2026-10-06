@@ -2,15 +2,47 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
 const DASHBOARD_PORT = 18_792;
+
+function nativePluginInstallScript(): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/e2e-rebuild-plugin",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "e2e-rebuild-plugin",
+    name: "E2E Rebuild Plugin",
+    version: "1.0.0",
+    description: "Native plugin rebuild persistence fixture",
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint = `export default { id: "e2e-rebuild-plugin", name: "E2E Rebuild Plugin", version: "1.0.0", register() {} };\n`;
+  return [
+    "source_dir=/sandbox/e2e-rebuild-plugin-source",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+    "HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --json >/dev/null",
+  ].join("\n");
+}
 
 test(
   "rebuild-openclaw restores durable state and native readiness",
@@ -23,6 +55,7 @@ test(
         "write durable OpenClaw state",
         "rebuild the sandbox",
         "verify restored state and native readiness",
+        "recover a killed Docker source",
       ],
     },
   },
@@ -46,8 +79,9 @@ test(
       boundary: "exact managed OpenClaw rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image instead of constructing a stale base",
-        "workspace state survives the rebuild",
+        "unknown home, workspace, package, hook, cron, native configuration, and native plugin state survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
+        "Docker Error-state recovery preserves workspace and native plugin state",
       ],
     });
 
@@ -88,7 +122,13 @@ test(
     const write = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
+        [
+          `umask 077; mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/hooks /sandbox/.openclaw/cron /sandbox/.local/share/e2e-package`,
+          `for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/workspace/.rebuild-state-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do printf '%s\\n' '${marker}' > "$target"; done; sync`,
+          "HOME=/sandbox openclaw config set agents.defaults.timeoutSeconds 119",
+          "HOME=/sandbox openclaw config validate",
+          nativePluginInstallScript(),
+        ].join("\n"),
       ),
       {
         artifactName: "rebuild-openclaw-write-marker",
@@ -98,41 +138,67 @@ test(
     );
     assertExitZero(write, "write OpenClaw rebuild marker");
 
-    progress.phase("rebuild the sandbox");
-    const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
-      artifactName: "rebuild-openclaw-current-managed-image",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 20 * 60_000,
-    });
-    assertExitZero(rebuild, "rebuild OpenClaw sandbox");
-    expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
-
-    progress.phase("verify restored state and native readiness");
-    await waitForNativeOpenClaw(sandbox, redactions);
-    const read = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript("cat /sandbox/.openclaw/workspace/.rebuild-state-marker"),
-      {
-        artifactName: "rebuild-openclaw-read-marker",
+    const rebuildSource = async (artifactName: string) => {
+      const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+        artifactName,
         env,
         redactionValues: redactions,
+        timeoutMs: 20 * 60_000,
+      });
+      assertExitZero(rebuild, "rebuild OpenClaw sandbox");
+      expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
+    };
+    const verifyRestoredState = async (artifactPrefix: string) => {
+      await waitForNativeOpenClaw(sandbox, redactions, artifactPrefix);
+      const read = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(
+          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
+        ),
+        {
+          artifactName: `${artifactPrefix}-read-marker`,
+          env,
+          redactionValues: redactions,
+        },
+      );
+      assertExitZero(read, "read restored OpenClaw marker");
+      expect(read.stdout.trim(), resultText(read)).toBe(`${marker}\n119`);
+    };
+
+    progress.phase("rebuild the sandbox");
+    await rebuildSource("rebuild-openclaw-current-managed-image");
+    progress.phase("verify restored state and native readiness");
+    await verifyRestoredState("rebuild-openclaw");
+
+    progress.phase("recover a killed Docker source");
+    await proveStoppedDockerAgentRecovery(
+      sandbox,
+      runtimeProvider,
+      artifacts,
+      SANDBOX_NAME,
+      async () => {
+        await rebuildSource("rebuild-openclaw-stopped-source");
+        await verifyRestoredState("rebuild-openclaw-stopped-source");
       },
+      "native-readiness",
     );
-    assertExitZero(read, "read restored OpenClaw marker");
-    expect(read.stdout.trim(), resultText(read)).toBe(marker);
 
     await artifacts.target.complete({
       id: "rebuild-openclaw",
       status: "passed",
       stateRestored: true,
+      nativeConfigurationRestored: true,
       nativeReady: true,
       staleBaseConstructed: false,
     });
   },
 );
 
-async function waitForNativeOpenClaw(sandbox: SandboxClient, redactions: string[]): Promise<void> {
+async function waitForNativeOpenClaw(
+  sandbox: SandboxClient,
+  redactions: string[],
+  artifactPrefix: string,
+): Promise<void> {
   const ready = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -149,7 +215,7 @@ async function waitForNativeOpenClaw(sandbox: SandboxClient, redactions: string[
       ].join("\n"),
     ),
     {
-      artifactName: "rebuild-openclaw-native-ready",
+      artifactName: `${artifactPrefix}-native-ready`,
       env: buildAvailabilityProbeEnv(),
       redactionValues: redactions,
       timeoutMs: 180_000,

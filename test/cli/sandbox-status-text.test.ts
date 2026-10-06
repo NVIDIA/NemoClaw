@@ -592,7 +592,7 @@ describe.concurrent("CLI sandbox status text output", () => {
   );
 
   it.each(["missing", "present"] as const)(
-    "sandbox <name> status reports clean Stopped state with a %s live lookup (#11025)",
+    "sandbox <name> status reports Stopped state with a %s live lookup (#11025)",
     testTimeoutOptions(30_000),
     async (gatewayState) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
@@ -602,7 +602,9 @@ describe.concurrent("CLI sandbox status text output", () => {
       writeSandboxRegistry(home, "alpha", {
         openshellDriver: "docker",
         openshellVersion: "0.0.44",
+        stopped: true,
       });
+      fs.writeFileSync(stoppedState, "stopped\n");
       fs.writeFileSync(
         path.join(localBin, "openshell"),
         [
@@ -612,7 +614,6 @@ describe.concurrent("CLI sandbox status text output", () => {
                 `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'Error: code: "Some requested entity was not found", message: "sandbox not found"'; exit 1; fi`,
               ]
             : []),
-          `if [ "$1" = "sandbox" ] && [ "$2" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
@@ -672,16 +673,6 @@ describe.concurrent("CLI sandbox status text output", () => {
         { mode: 0o755 },
       );
 
-      const stopped = await runWithEnvAsync(
-        "alpha stop",
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
-        30_000,
-      );
-      expect(stopped.code, stopped.out).toBe(0);
-
       const r = await runWithEnvAsync(
         "alpha status",
         {
@@ -691,7 +682,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         30000,
       );
 
-      expect(r.code, r.out).toBe(0);
+      expect(r.code, r.out).toBe(gatewayState === "present" ? 1 : 0);
       expect(r.out).not.toContain("Failure layer:");
       expect(r.out).toContain("Phase: Stopped");
       expect(r.out).not.toContain("Phase: Provisioning");

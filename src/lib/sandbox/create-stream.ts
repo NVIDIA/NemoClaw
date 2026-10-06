@@ -29,7 +29,7 @@ export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
   // Optional poll side effect. Must be paired with failureCheck so any
   // observed side-effect error has an authoritative terminal-state classifier.
-  onPoll?: (() => void) | null;
+  onPoll?: (() => void | Promise<void>) | null;
   failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -411,7 +411,7 @@ export function streamSandboxCreate(
   child.stderr?.on("data", (chunk) => onChunk("stderr", chunk));
 
   const readyTimer = options.readyCheck
-    ? setInterval(() => {
+    ? setInterval(async () => {
         if (settled || polling || waitingForReadyTermination) return;
         polling = true;
         try {
@@ -461,13 +461,14 @@ export function streamSandboxCreate(
 
           let pollFailure: string | null | undefined;
           try {
-            options.onPoll?.();
+            await options.onPoll?.();
           } catch (error) {
             emitTraceEvent("sandbox_create_poll_error", {
               message: redact(error instanceof Error ? error.message : String(error)),
             });
             pollFailure = options.failureCheck?.() ?? "Sandbox create poll side effect failed.";
           }
+          if (settled || waitingForReadyTermination) return;
 
           const failure = pollFailure ?? options.failureCheck?.();
           if (!failure) return;

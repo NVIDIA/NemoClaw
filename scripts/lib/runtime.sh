@@ -144,11 +144,6 @@ find_podman_socket() {
   return 1
 }
 
-is_loopback_ip() {
-  local ip="${1:-}"
-  [[ "$ip" == 127.* ]]
-}
-
 first_non_loopback_nameserver() {
   local resolv_conf="${1:-}"
 
@@ -238,7 +233,7 @@ select_openshell_cluster_container() {
 _validate_port() {
   local name="$1" value="$2"
   case "$value" in
-    '' | *[!0-9]*)
+    '' | 0* | *[!0-9]*)
       printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
       return 1
       ;;

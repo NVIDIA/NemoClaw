@@ -83,8 +83,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
   "sandbox:skill",
 ]);
 
-const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
-
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "inference:get",
   "list",
@@ -100,7 +98,6 @@ const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
   readonly hostFence: "read" | "deny" | null;
-  readonly multiSandboxLifecycle: boolean;
   readonly rawSandboxName: boolean;
 };
 
@@ -118,7 +115,6 @@ export function classifyHermesPortableCommand(
       : HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId)
         ? "deny"
         : null,
-    multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }
@@ -301,6 +297,50 @@ export function qualifyPortableAgentLifecycleAuthority(
     throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
   }
   return { ...disposition, entry };
+}
+
+/** Admit only an exact retained Hermes receipt for legacy profile compatibility. */
+export function qualifyLegacyHermesPortableLifecycleProfile(
+  sandboxName: string,
+  deps: PortableAgentLifecycleAuthorityDeps,
+): boolean {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  return authority.kind === "hermes" && authority.phase === "active" && authority.entry !== null;
+}
+
+export type RegisteredPortableAgentLifecycleClassification =
+  | { readonly kind: "standard" }
+  | { readonly kind: "portable"; readonly agent: "hermes" | "openclaw" };
+
+/** Give start and stop one owner for classifying persisted Portable authority. */
+export function classifyRegisteredPortableAgentLifecycle(
+  sandboxName: string,
+  providerId: string,
+  sandbox: SandboxEntry,
+  deps: PortableAgentLifecycleAuthorityDeps & {
+    readonly qualifyLegacyHermes?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  },
+): RegisteredPortableAgentLifecycleClassification {
+  if (providerId !== "docker") return { kind: "standard" };
+  if (sandbox.portableLifecycleProfile === "hermes" && sandbox.agent === "hermes") {
+    return { kind: "portable", agent: "hermes" };
+  }
+  if (sandbox.portableLifecycleProfile === "openclaw" && sandbox.agent === "openclaw") {
+    return { kind: "portable", agent: "openclaw" };
+  }
+  if (
+    sandbox.portableLifecycleProfile !== undefined ||
+    sandbox.agent !== "hermes" ||
+    typeof sandbox.lifecycleGeneration !== "string"
+  ) {
+    return { kind: "standard" };
+  }
+  return (deps.qualifyLegacyHermes ?? qualifyLegacyHermesPortableLifecycleProfile)(
+    sandboxName,
+    deps,
+  )
+    ? { kind: "portable", agent: "hermes" }
+    : { kind: "standard" };
 }
 
 /** Require active Hermes receipt and exact registry authority. */

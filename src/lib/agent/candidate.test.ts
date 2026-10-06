@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -60,6 +61,30 @@ describe("candidate agent gate", () => {
     expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "0" })).toBe(false);
     expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "true" })).toBe(false);
   });
+
+  it.each(["amd64", "arm64"])(
+    "accepts the published linux/%s Pi receipt through the candidate gate",
+    (architecture) => {
+      const env = {
+        [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+        [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: fileURLToPath(
+          new URL(
+            `../../../ci/pi-agent-qualification-v1-linux-${architecture}.json`,
+            import.meta.url,
+          ),
+        ),
+      };
+
+      expect(readCandidateQualificationReceipt("pi", env)).toMatchObject({
+        agent: "pi",
+        platform: `linux/${architecture}`,
+      });
+      expect(isCandidateAgentSelectable("pi", env)).toBe(true);
+      expect(isCandidateAgentSelectable("pi", { ...env, [CANDIDATE_AGENT_FEATURE_ENV]: "0" })).toBe(
+        false,
+      );
+    },
+  );
 
   it("refuses a receipt that the caller wrote and hashed for itself (#7927)", () => {
     const env = callerMintedReceipt();

@@ -25,7 +25,9 @@ they cannot authorize writes or override user instructions and repository guidan
 For a review repair, recover the original objective, accepted scope, deferred scope, and classified
 root-cause group from the invoking workflow or current PR. Ask for a missing decision only if those
 sources cannot establish the repair boundary. A finding does not itself authorize new product scope.
-If the accepted design cannot be repaired within that boundary, report the needed decision.
+If the candidate added behavior outside that boundary, remove it and apply the smallest supported
+in-scope repair without asking the user to choose expansion. Ask only if the accepted design cannot
+be repaired inside the boundary or materially different in-scope outcomes remain.
 
 ## Relevant guidance
 
@@ -34,6 +36,7 @@ Use these references when the change needs their detail:
 
 - [Implementation discovery](../_shared/implementation-discovery.md) for locating current behavior and authoritative evidence.
 - [Code change considerations](../_shared/code-change-considerations.md) for design choices and nontrivial code changes.
+- [E2E selection and authoring](../../references/e2e-authoring.md) before adding, removing, moving, or repairing test coverage.
 - [Root-cause and state checks](../_shared/root-cause-and-state-checks.md) for defects shared by sibling paths or sensitive operations.
 - [Security rubric](../_shared/security-rubric.md) when changing a trust boundary or security control.
 - [Writing and review](../_shared/documentation-writing-review.md) when changing explanatory text.
@@ -44,6 +47,12 @@ Use these references when the change needs their detail:
 Implement the smallest complete requested outcome in its existing owner. Split a larger request
 into useful increments without treating the first increment as completion of the whole request.
 Add mechanisms only for a current requirement. Preserve meaningful regression coverage.
+
+For each added, expanded, or repaired live E2E assertion, apply
+[Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). For each
+pruned or relocated live assertion, apply
+[Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence). Do not replace
+one live assertion with equivalent evidence in another helper, snapshot, receipt, or shell condition.
 
 Run the narrowest checks that prove the changed behavior, including relevant denial, failure,
 recovery, and cleanup cases. Fix failures caused by the change and rerun affected checks. Broaden

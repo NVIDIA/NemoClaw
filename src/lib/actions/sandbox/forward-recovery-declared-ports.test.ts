@@ -325,6 +325,34 @@ describe("declared and cleanup forward sets", () => {
     expect(mocks.startForward.mock.calls[0]?.[0].forward.port).toBe(8_643);
   });
 
+  it("reports the classified child exit when declared forward recovery fails", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: "hermes",
+        dashboardPort: 18_790,
+        hermesApiPort: 8_643,
+      }),
+    );
+    states.set(8_643, "absent");
+    mocks.startForward.mockImplementationOnce(async (request: StartOpenShellForwardRequest) => ({
+      state: "failed",
+      forward: request.forward,
+      effect: "none",
+      error: {
+        kind: "transport",
+        message: "The OpenShell forward transport failed.",
+      },
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
+
+    await expect(ensureDeclaredAgentForwardPortsHealthy("box", 18_790)).resolves.toBe(false);
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      "  Warning: OpenShell ForwardTcp 8643 for box did not start: The OpenShell forward transport failed. [forward-start startup/child_exited status=17]",
+    );
+  });
+
   it("pins declared recovery to the selected gateway and workspace", async () => {
     mocks.getSandbox.mockReturnValue(
       sandboxEntry({
@@ -349,6 +377,40 @@ describe("declared and cleanup forward sets", () => {
       gatewayName: "nemoclaw-19080",
       workspace: "review-workspace",
       port: 8_643,
+    });
+  });
+
+  it.each([
+    ["released", true],
+    ["bound", false],
+  ] as const)("awaits remote dashboard release verification: %s", async (state, expected) => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ dashboardRemoteBindPrepared: true }));
+    mocks.verifyForwardRelease.mockImplementationOnce(
+      async (request: VerifyOpenShellForwardReleaseRequest) => ({
+        state,
+        forwards: request.forwards,
+      }),
+    );
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(teardownSandboxDashboardForward("box")).resolves.toBe(expected);
+    expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]).toMatchObject({
+      port: 18_789,
+      localHost: "0.0.0.0",
+    });
+  });
+
+  it.each([
+    ["owned", true],
+    ["foreign", false],
+  ] as const)("awaits remote dashboard listener ownership: %s", async (state, expected) => {
+    states.set(18_789, state);
+    const { isSandboxPortForwardHealthy } = await import("./forward-recovery");
+
+    await expect(isSandboxPortForwardHealthy("box", 18_789, "0.0.0.0")).resolves.toBe(expected);
+    expect(mocks.observeForwards.mock.calls[0]?.[0].forwards[0]).toMatchObject({
+      port: 18_789,
+      localHost: "0.0.0.0",
     });
   });
 

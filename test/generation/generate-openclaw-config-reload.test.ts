@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Tests for the gateway.reload pin in scripts/generate-openclaw-config.mts
-// (#4710). The in-sandbox OpenClaw gateway must run with reload mode "hot":
+// (#4710). The in-sandbox OpenClaw gateway must run with reload mode "off":
 // in the default "hybrid" mode a restart-class config change makes the
 // gateway SIGUSR1-restart itself in-process, and a failed restart parks the
 // process alive with no HTTP listener — invisible to the PID-wait respawn
@@ -54,9 +54,9 @@ function buildConfigDirect(envOverrides: Record<string, string> = {}): any {
 }
 
 describe("gateway.reload pin (#4710)", () => {
-  it("pins gateway.reload.mode to hot in the generated config", () => {
+  it("pins gateway.reload.mode to off in the generated config", () => {
     const config = buildConfigDirect();
-    expect(config.gateway.reload).toEqual({ mode: "hot" });
+    expect(config.gateway.reload).toEqual({ mode: "off" });
   });
 
   it.each([
@@ -66,20 +66,19 @@ describe("gateway.reload pin (#4710)", () => {
     { CHAT_UI_URL: "http://127.0.0.1:18792" },
   ])("keeps the pin across unrelated env permutations [case %#]", (overrides) => {
     const config = buildConfigDirect(overrides);
-    expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "hot" });
+    expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "off" });
   });
 
   // Generous timeout: main() does real file I/O and the suite shares a
   // worker pool with heavier integration files.
   it(
-    "re-pins hot mode when an existing config carries a different reload mode",
+    "re-pins off mode when an existing config carries a different reload mode",
     {
       timeout: 20000,
     },
     () => {
-      // preserveExistingOpenClawState() merges plugin install records from an
-      // existing openclaw.json into the regenerated config; the gateway block
-      // (including reload) must come from the generator, not the old file.
+      // Native plugin install records stay under OpenClaw ownership, while the
+      // gateway block (including reload) must come from the generator.
       const configDir = path.join(tmpDir, ".openclaw");
       fs.mkdirSync(configDir, { recursive: true });
       const configPath = path.join(configDir, "openclaw.json");
@@ -94,13 +93,12 @@ describe("gateway.reload pin (#4710)", () => {
       withConfigEnv({}, () => main());
 
       const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      expect(written.gateway.reload).toEqual({ mode: "hot" });
-      // The plugin-install carryover still works alongside the pin.
+      expect(written.gateway.reload).toEqual({ mode: "off" });
       expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
     },
   );
 
-  it("preserves bounded OpenClaw write metadata across managed regeneration (#7744)", () => {
+  it("preserves supported OpenClaw metadata and drops rejected legacy keys (#7744)", () => {
     const configDir = path.join(tmpDir, ".openclaw");
     fs.mkdirSync(configDir, { recursive: true });
     const configPath = path.join(configDir, "openclaw.json");
@@ -108,7 +106,7 @@ describe("gateway.reload pin (#4710)", () => {
       configPath,
       JSON.stringify({
         meta: {
-          lastTouchedVersion: "2026.7.1",
+          lastTouchedVersion: "2026.9.1",
           lastTouchedAt: "2026-08-11T22:45:04.591Z",
           unownedField: "must-not-cross-the-managed-boundary",
         },
@@ -128,8 +126,7 @@ describe("gateway.reload pin (#4710)", () => {
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(written.meta).toEqual({
-      lastTouchedVersion: "2026.7.1",
-      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+      lastTouchedVersion: "2026.9.1",
     });
   });
 
@@ -142,7 +139,7 @@ describe("gateway.reload pin (#4710)", () => {
       `${configPath}.bak`,
       JSON.stringify({
         meta: {
-          lastTouchedVersion: "2026.7.1",
+          lastTouchedVersion: "2026.9.1",
           lastTouchedAt: "2026-08-11T22:45:04.591Z",
           unownedField: "must-not-cross-the-managed-boundary",
         },
@@ -156,8 +153,7 @@ describe("gateway.reload pin (#4710)", () => {
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(written.meta).toEqual({
-      lastTouchedVersion: "2026.7.1",
-      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+      lastTouchedVersion: "2026.9.1",
     });
     expect(written.agents.defaults.model.primary).toBe(BASE_ENV.NEMOCLAW_PRIMARY_MODEL_REF);
     expect(written.models.providers.stale).toBeUndefined();
@@ -166,7 +162,7 @@ describe("gateway.reload pin (#4710)", () => {
   });
 
   it.each([
-    ["partial", { lastTouchedVersion: "2026.7.1" }],
+    ["missing-version", { lastTouchedAt: "2026-08-11T22:45:04.591Z" }],
     [
       "unbounded",
       { lastTouchedVersion: "v".repeat(257), lastTouchedAt: "2026-08-11T22:45:04.591Z" },

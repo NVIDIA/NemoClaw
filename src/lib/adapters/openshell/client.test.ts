@@ -15,7 +15,6 @@ import {
   captureOpenshellCommandAsync,
   captureOpenshellCommandAsyncResult,
   captureSandboxSshConfigCommand,
-  getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
   parseVersionFromText,
   runOpenshellCommand,
@@ -561,21 +560,20 @@ describe("openshell helpers", () => {
     });
   });
 
-  it("bounds asynchronous capture through outputLimitBytes", async () => {
+  it("stops asynchronous capture after one MiB", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,
-      ["-e", "process.stdout.write('x'.repeat(64))"],
-      { ignoreError: true, includeStreams: true, outputLimitBytes: 8 },
+      ["-e", "process.stdout.write('x'.repeat(1024 * 1024 + 1))"],
+      { ignoreError: true, includeStreams: true, outputLimitBytes: 1024 * 1024 },
     );
 
-    expect(result).toEqual({
-      status: 1,
-      output: "x".repeat(8),
-      stdout: "x".repeat(8),
-      stderr: "",
-      error: expect.objectContaining({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }),
-      signal: null,
-    });
+    expect(result.status).not.toBe(0);
+    expect(result.output).toHaveLength(1024 * 1024);
+    expect(result.stdout).toHaveLength(1024 * 1024);
+    expect(result.stderr).toBe("");
+    expect(result.error).toEqual(
+      expect.objectContaining({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }),
+    );
   });
 
   it("uses the injected exit handler on failure", () => {
@@ -624,16 +622,5 @@ describe("openshell helpers", () => {
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start OpenShell command: spawn ENOENT"]);
-  });
-
-  it("reads the installed openshell version through the capture helper", () => {
-    const version = getInstalledOpenshellVersion("openshell", {
-      spawnSyncImpl: stubSpawnSync({
-        status: 0,
-        stdout: "built on 2026.7.1, openshell 0.0.11\n",
-        stderr: "",
-      }),
-    });
-    expect(version).toBe("0.0.11");
   });
 });

@@ -35,7 +35,13 @@ describe("createFinalOnboardFlowPhases", () => {
 
     expect(mocks.createFinalFlowPhases).toHaveBeenCalledWith({
       branchState: "agent_setup",
-      agentSetupDeps: {},
+      agentSetupDeps: {
+        waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+        waitForStartedOpenclawGatewayProcess:
+          finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
+        settleStartedOpenclawGatewayForConfiguration:
+          finalizationHandlerDeps.settleStartedOpenclawGatewayForConfiguration,
+      },
       policiesDeps: {},
       finalization: {},
       finalizationDeps: {

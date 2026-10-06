@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
@@ -941,6 +941,148 @@ describe("production pinned peer transport", () => {
     expect(script).toContain('env["DOCKER_CONTEXT"] = "default"');
     expect(script).not.toContain("MODEL_ID");
     expect(script).not.toContain("IMAGE_REF");
+  });
+
+  it("reads the standard relative os-release symlink without following arbitrary links", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const etc = path.join(root, "etc");
+    const usrLib = path.join(root, "usr", "lib");
+    const primary = path.join(etc, "os-release");
+    const fallback = path.join(usrLib, "os-release");
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(etc, { recursive: true });
+    fs.mkdirSync(usrLib, { recursive: true });
+    fs.writeFileSync(fallback, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+    fs.symlinkSync("../usr/lib/os-release", primary);
+
+    try {
+      const transport = createManagedClusterDiscoveryDeps(() => ({
+        status: 0,
+        stdout: "",
+        stderr: "",
+      })).localTransport();
+      expect(transport.readOsRelease?.(primary, fallback, 4096)).toBe(
+        'ID=ubuntu\nVERSION_ID="24.04"\n',
+      );
+
+      fs.unlinkSync(primary);
+      fs.writeFileSync(outside, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.symlinkSync("../outside", primary);
+      expect(transport.readOsRelease?.(primary, fallback, 4096)).toBeUndefined();
+
+      fs.unlinkSync(primary);
+      expect(transport.readOsRelease?.(primary, fallback, 4096)).toBe(
+        'ID=ubuntu\nVERSION_ID="24.04"\n',
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("routes canonical readiness through the dedicated os-release transport", () => {
+    const readOsRelease = vi.fn(
+      () => 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+    );
+    const candidate: ManagedClusterReadOnlyHostTransport = {
+      execute: (argv) => ({
+        status: 0,
+        stdout: argv[0] === "uname" ? "6.8.0-55-generic\n" : "",
+        stderr: "",
+      }),
+      readFile: () => "",
+      readOsRelease,
+      readdir: () => [],
+    };
+    const deps = createManagedClusterDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    const result = deps.createReadiness(
+      host("local"),
+      candidate,
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION },
+      NOW,
+    );
+
+    expect(readOsRelease).toHaveBeenCalledWith("/etc/os-release", "/usr/lib/os-release", 4096);
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.os.release_unqualified");
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.os.release_inconclusive");
+  });
+
+  it("uses the bounded os-release reader through the pinned SSH transport", () => {
+    const calls: Array<{ readonly args: readonly string[] }> = [];
+    const deps = createManagedClusterDiscoveryDeps((_file, args) => {
+      calls.push({ args: [...args] });
+      return { status: 0, stdout: 'ID=ubuntu\nVERSION_ID="24.04"\n', stderr: "" };
+    });
+    const pinned = deps.openPinnedPeerTransport(identity("192.168.100.2"));
+
+    try {
+      expect(
+        pinned.transport.readOsRelease?.("/etc/os-release", "/usr/lib/os-release", 4096),
+      ).toContain("ID=ubuntu");
+    } finally {
+      pinned.close();
+    }
+
+    const request = JSON.parse(Buffer.from(calls[0]!.args.at(-1)!, "base64url").toString("utf8"));
+    expect(request.argv.slice(-3)).toEqual(["/etc/os-release", "/usr/lib/os-release", "4096"]);
+    expect(request.argv[2]).toContain("os.lstat(primary)");
+    expect(request.argv[2]).toContain("os.readlink(primary)");
+    expect(request.argv[2]).toContain('getattr(os, "O_NOFOLLOW", 0)');
+  });
+
+  it("executes the pinned SSH os-release reader against bounded fixtures", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-os-release-"));
+    const etc = path.join(root, "etc");
+    const usrLib = path.join(root, "usr", "lib");
+    const primary = path.join(etc, "os-release");
+    const fallback = path.join(usrLib, "os-release");
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(etc, { recursive: true });
+    fs.mkdirSync(usrLib, { recursive: true });
+    fs.writeFileSync(fallback, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+    fs.writeFileSync(outside, 'ID=debian\nVERSION_ID="12"\n');
+
+    const executeSerializedRequest: ManagedClusterSpawnSync = (_file, args) => {
+      const request = JSON.parse(Buffer.from(args.at(-1)!, "base64url").toString("utf8")) as {
+        argv: string[];
+      };
+      const [command, ...commandArgs] = request.argv;
+      const result = spawnSync(command!, commandArgs, { encoding: "utf8" });
+      return {
+        status: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    };
+    const pinned = createManagedClusterDiscoveryDeps(
+      executeSerializedRequest,
+    ).openPinnedPeerTransport(identity("192.168.100.2"));
+
+    try {
+      fs.symlinkSync("../usr/lib/os-release", primary);
+      expect(pinned.transport.readOsRelease?.(primary, fallback, 4096)).toBe(
+        'ID=ubuntu\nVERSION_ID="24.04"\n',
+      );
+
+      fs.unlinkSync(primary);
+      expect(pinned.transport.readOsRelease?.(primary, fallback, 4096)).toBe(
+        'ID=ubuntu\nVERSION_ID="24.04"\n',
+      );
+
+      fs.symlinkSync("../outside", primary);
+      expect(pinned.transport.readOsRelease?.(primary, fallback, 4096)).toBeUndefined();
+    } finally {
+      pinned.close();
+      fs.rmSync(root, { force: true, recursive: true });
+    }
   });
 
   it("requires direct routes, exact neighbors, and jumbo reachability on both rails", () => {
