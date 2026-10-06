@@ -120,6 +120,10 @@ with tempfile.TemporaryDirectory() as root:
         "wrapper._resolve_native_inference_guard = lambda: sys.argv[4]",
         "wrapper._MANAGED_HERMES_HOME = sys.argv[5]",
         "wrapper._NATIVE_INFERENCE_HASH_FILE = sys.argv[6]",
+        # Other owners exercise the gateway env boundary; isolate native route validation here.
+        "wrapper._run_gateway_env_file_guard = lambda _path: 0",
+        "wrapper._run_gateway_guard = lambda _path: 0",
+        "wrapper.os.geteuid = lambda: 1000",
         "raise SystemExit(wrapper.main(sys.argv[7:]))",
     ])
     command = [sys.executable, "-c", script, sys.argv[2], str(real), sys.argv[3], sys.argv[1], str(home), str(hashes)]
@@ -137,6 +141,20 @@ with tempfile.TemporaryDirectory() as root:
         assert missing.returncode == 1
         help_run = subprocess.run(command + ["chat", "--help"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
         assert help_run.returncode == 0, help_run.stderr
+    # Restoring a legitimate legacy home changes its hash before the supervised
+    # replacement's preparation transaction can refresh it. Restart only signals
+    # that supervisor; direct launch/chat must still refuse the stale snapshot.
+    config.write_text(json.dumps({"model": {"api_key": "sk-OPENSHELL-PROXY-REWRITE"}}))
+    for argv, expected in [(["gateway", "restart"], 0), (["gateway", "run"], 1), (["gateway", "restart", "--all"], 1), (["chat", "--query", "hello"], 1)]:
+        marker.unlink(missing_ok=True)
+        run = subprocess.run(command + argv, capture_output=True, text=True)
+        assert run.returncode == expected, run.stderr
+        assert marker.exists() == (expected == 0)
+    # The actual launch is admitted only after reconciliation seals the snapshot.
+    hash_text, _, _ = guard._hash_text(str(config), str(env))
+    hashes.write_text(hash_text)
+    run = subprocess.run(command + ["gateway", "run"], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
     config.write_text("model: {api_key: raw-secret-do-not-print}")
     marker.unlink(missing_ok=True)
     run = subprocess.run(command + ["chat", "--query", "hello"], capture_output=True, text=True)

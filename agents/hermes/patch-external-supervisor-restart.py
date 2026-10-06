@@ -48,19 +48,20 @@ def _restart_via_external_supervisor() -> bool:
 def _cmd_restart(args):
 '''
 
-OLD_RESTART_BRANCH = '''    if restart_all:
-        _restart_all(system)
+OLD_RESTART_BRANCH = "    if restart_all and _dispatch_all_via_service_manager_if_s6(\"restart\"):\n"
+NEW_RESTART_BRANCH = '''    if not restart_all and _restart_via_external_supervisor():
         return
-
-    # The Windows restart path handles both registered installs and detached restarts.
-'''
-NEW_RESTART_BRANCH = '''    if restart_all:
-        _restart_all(system)
-        return
-    if _restart_via_external_supervisor():
-        return
-
-    # The Windows restart path handles both registered installs and detached restarts.
+    # A restart without a verified supervisor may launch from this CLI process.
+    # Preserve native route validation before any service-manager/manual fallback.
+    import subprocess
+    native_guard = subprocess.run(
+        [sys.executable, "-I", "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+         "native-inference-credential", "--hermes-dir", "/sandbox/.hermes",
+         "--hash-file", "/etc/nemoclaw/hermes.config-hash"], check=False
+    )
+    if native_guard.returncode != 0:
+        sys.exit(native_guard.returncode)
+    if restart_all and _dispatch_all_via_service_manager_if_s6("restart"):
 '''
 
 
@@ -68,7 +69,8 @@ def patch_file(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
 
     already_patched = source.count(HELPER) == 1 and source.count(NEW_RESTART_BRANCH) == 1
-    if already_patched and source.count(OLD_RESTART_BRANCH) == 0:
+    # The replacement retains the original service-manager branch after its guard.
+    if already_patched and source.count(OLD_RESTART_BRANCH) == 1:
         return
 
     helper_count = source.count(HELPER_MARKER)
