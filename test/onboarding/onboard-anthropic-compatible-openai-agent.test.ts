@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// #6294: an OpenAI-/chat/completions-only agent (langchain-deepagents-code)
+// #6294: host-local endpoints retain the managed-route conversion below.
+// An OpenAI-/chat/completions-only agent (langchain-deepagents-code)
 // onboarded on the Custom Anthropic-compatible provider is coerced onto
 // openai-completions; the gateway provider must then be registered type=openai
 // (OPENAI_BASE_URL) after verifying the endpoint really serves the OpenAI
@@ -38,7 +39,7 @@ const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFacto
 const PROVIDER = "compatible-anthropic-endpoint";
 // Production hands the anthropic-flavor-normalized origin (trailing /v1
 // stripped by normalizeProviderBaseUrl) to setupInference.
-const ENDPOINT = "https://inference-hub.example";
+const ENDPOINT = "http://host.openshell.internal:18767";
 const SURFACE_URL = `${ENDPOINT}/v1`;
 const CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const MODEL = "nvidia/nvidia/nemotron-3-super-v3";
@@ -57,7 +58,7 @@ function commandStubs(routes: Record<string, { status: number; stderr?: string }
 /** Route `provider get` to "absent" so the real upsert takes the create path. */
 const providerAbsentRunner = commandStubs({ "provider get": { status: 1 } });
 
-describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#6294)", () => {
+describe("host-local compatible-anthropic registration for OpenAI-only agents (#6294)", () => {
   beforeEach(() => {
     vi.stubEnv("HOME", testHome);
   });
@@ -115,7 +116,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     // The probe must exercise the same /v1 base OpenShell will call at
     // runtime (<OPENAI_BASE_URL> + /v1/chat/completions with /v1 dedup).
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(SURFACE_URL, MODEL, "hub-secret", {
-      pinnedAddresses: ["93.184.216.34"],
+      pinnedAddresses: [],
       skipResponsesProbe: true,
     });
     const createCommand = harness.commands.find(({ command }) =>

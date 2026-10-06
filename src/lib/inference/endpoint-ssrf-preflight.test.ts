@@ -187,6 +187,17 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     ).toEqual(["llm.corp.example", "10.0.0.8"]);
   });
 
+  it.each(["NEMOCLAW_TRUSTED_PRIVATE_HOSTS", "NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS"])(
+    "withholds malformed %s contents from errors",
+    (name) => {
+      expect(() =>
+        parseTrustedPrivateInferenceHostsFromEnv({
+          [name]: "https://user:opaque-test-secret@example.com",
+        }),
+      ).toThrow(new Error("Invalid trusted private inference host configuration."));
+    },
+  );
+
   it("unions generic and legacy inference trust sources (#8176)", () => {
     expect(
       parseTrustedPrivateInferenceHostsFromEnv({

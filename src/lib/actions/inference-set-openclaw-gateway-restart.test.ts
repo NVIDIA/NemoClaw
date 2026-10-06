@@ -112,7 +112,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
@@ -164,7 +164,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
@@ -258,7 +258,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
@@ -321,7 +321,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
@@ -382,7 +382,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
@@ -427,7 +427,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),

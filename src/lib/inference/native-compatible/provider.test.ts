@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import {
   ensureNativeCompatibleProvider,
+  ensureNativeCompatibleProviderAttached,
   prepareNativeCompatibleProfile,
   verifyNativeCompatibleProviderAttachment,
 } from "./profile";
@@ -56,6 +57,64 @@ async function fixture() {
 }
 
 describe("native compatible provider ownership", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("withholds invalid trust environment contents before any provider operation", async () => {
+    const f = await fixture();
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_HOSTS", "https://user:opaque-test-secret@example.com");
+    await expect(
+      ensureNativeCompatibleProvider({
+        ...input,
+        adapter: f.adapter,
+        credentialValue: "opaque-credential",
+      }),
+    ).rejects.toThrow("Invalid trusted private inference host configuration.");
+    expect(f.getProvider).not.toHaveBeenCalled();
+    expect(f.importProviderProfile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["attachment", ensureNativeCompatibleProviderAttached],
+    ["verification", verifyNativeCompatibleProviderAttachment],
+  ] as const)(
+    "withholds invalid trust environment contents during %s",
+    async (_name, operation) => {
+      const f = await fixture();
+      const inspectProviderProfile = vi.fn();
+      const listProviderAttachments = vi.fn();
+      const attachProvider = vi.fn();
+      vi.stubEnv(
+        "NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS",
+        "https://user:opaque-test-secret@example.com",
+      );
+      await expect(
+        operation({
+          adapter: {
+            ...f.adapter,
+            inspectProviderProfile,
+            listProviderAttachments,
+            attachProvider,
+          },
+          target: input.target,
+          sandboxName: "selected",
+          expected: {
+            schemaVersion: 1,
+            profileId: f.profile.profileId,
+            providerName: f.profile.providerName,
+            providerId: "owned-provider",
+            endpointUrl: f.profile.endpoint,
+            api: f.profile.api,
+            addresses: f.profile.addresses,
+          },
+        }),
+      ).rejects.toThrow(new Error("Invalid trusted private inference host configuration."));
+      expect(inspectProviderProfile).not.toHaveBeenCalled();
+      expect(listProviderAttachments).not.toHaveBeenCalled();
+      expect(attachProvider).not.toHaveBeenCalled();
+      expect(f.importProviderProfile).not.toHaveBeenCalled();
+    },
+  );
+
   it("observes an ambiguous creation without repeating the mutation", async () => {
     const f = await fixture();
     f.getProvider.mockResolvedValueOnce({

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
+import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 import { runInferenceSet } from "./inference-set";
 import {
   baseSession,
@@ -104,6 +105,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
       sandboxName: "alpha",
+      gatewayName: "nemoclaw",
       provider: "compatible-endpoint",
       model: "model-b",
       preferredInferenceApi: "openai-completions",
@@ -211,6 +213,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         provider: "compatible-endpoint",
         model: "model-b",
         preferredInferenceApi: "openai-completions",
@@ -448,13 +451,8 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps host-side verification and the canonical credential for an authenticated endpoint", async () => {
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-endpoint",
-      type: "openai",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      configKey: "OPENAI_BASE_URL",
-    });
+  it("verifies an authenticated hosted endpoint through its scoped native provider", async () => {
+    const native = await nativeCompatibleFixture("https://compatible.example/v1");
     const deps = createDeps({
       config: CONFIG,
       entry: {
@@ -462,48 +460,41 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         agent: "openclaw",
         provider: "compatible-endpoint",
         model: "model-a",
-        endpointUrl: "https://compatible.example/v1",
-        endpointSource: "onboard",
+        endpointUrl: native.profile.endpoint,
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
-      } as SandboxEntry,
-      session: baseSession({
-        provider: "compatible-endpoint",
-        model: "model-a",
-        endpointUrl: "https://compatible.example/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      }),
-      captureOpenshell,
-    });
-
-    await runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "model-b",
-        endpointUrl: "https://compatible.example/v1",
+        nativeCompatibleProviderAttachment: native.receipt,
       },
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
+    });
+    await runInferenceSet(
+      { provider: "compatible-endpoint", model: "model-b", endpointUrl: native.profile.endpoint },
       deps,
     );
-
-    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
-    expect(inferenceSetArgs(captureOpenshell)).toEqual([
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--provider",
-        "compatible-endpoint",
-        "--model",
-        "model-b",
-      ],
-    ]);
-    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual(["alpha", expect.objectContaining({ credentialEnv: "COMPATIBLE_API_KEY" })]);
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(native.adapter.createProvider).not.toHaveBeenCalled();
+    expect(native.adapter.updateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerName: native.profile.providerName,
+        credentials: [{ name: native.profile.credentialEnv, value: "test-credential-value" }],
+      }),
+    );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        provider: "compatible-endpoint",
+        model: "model-b",
+        nativeCompatibleProviderAttachment: native.receipt,
+      }),
+    );
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        credentialEnv: "COMPATIBLE_API_KEY",
+        nativeCompatibleProviderAttachment: native.receipt,
+      }),
+    );
   });
 });

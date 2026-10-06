@@ -1484,23 +1484,30 @@ async function runInferenceSetWithoutHostLock(
   // stopped legacy Hermes row that still records the Anthropic frontend will
   // depend on that route when restarted and must not be normalized away.
   const selectingNativeNvidia = isNativeNvidiaProvider(provider);
-  const selectingNativeCompatible = isNativeCompatibleHostedSelection({
-    provider,
-    endpointUrl: options.endpointUrl || (entry.provider === provider ? entry.endpointUrl : null),
-    credentialEnv:
-      options.credentialEnv || (entry.provider === provider ? entry.credentialEnv : null),
-  });
-  const selectingNative = selectingNativeNvidia || selectingNativeCompatible;
-  const routeSandboxes = deps.listSandboxes().sandboxes;
-  const preparedRoute = prepareInferenceSetRoute({
+  const routeInput = {
     entry: routeEntry,
     sandboxName,
     provider,
     model,
     customRoute,
     session: routeSession,
-    sandboxes: selectingNative ? [] : routeSandboxes,
+  };
+  // Classify the same resolved metadata that will be committed, including a
+  // matching onboarding session and explicit custom endpoint overrides.
+  let preparedRoute = prepareInferenceSetRoute({ ...routeInput, sandboxes: [] });
+  const selectingNativeCompatible = isNativeCompatibleHostedSelection({
+    provider,
+    endpointUrl:
+      preparedRoute.preliminaryExplicitSourceEndpointUrl ??
+      preparedRoute.preliminaryRegistryMetadata.endpointUrl,
+    credentialEnv: preparedRoute.preliminaryRegistryMetadata.credentialEnv,
   });
+  const selectingNative = selectingNativeNvidia || selectingNativeCompatible;
+  if (!selectingNative)
+    preparedRoute = prepareInferenceSetRoute({
+      ...routeInput,
+      sandboxes: deps.listSandboxes().sandboxes,
+    });
   if (preparedRoute.gatewayName !== expectedGatewayName) {
     throw new InferenceSetError(
       `Sandbox '${sandboxName}' moved from OpenShell gateway '${expectedGatewayName}' to ` +

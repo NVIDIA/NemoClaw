@@ -11,21 +11,12 @@ export function compactText(value = ""): string {
 }
 
 export {
+  isLoopbackHostname,
   stripEndpointSuffix,
   normalizeProviderBaseUrl,
   canonicalEndpoint,
   type EndpointFlavor,
-} from "./endpoint-url-safety";
-
-export function isLoopbackHostname(hostname = ""): boolean {
-  const normalized = String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
-  return (
-    normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  );
-}
+} from "./endpoint-url-safety.ts";
 
 /**
  * Classify a socket peer address as loopback. Dual-stack listeners report IPv4

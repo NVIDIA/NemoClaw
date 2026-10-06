@@ -174,7 +174,7 @@ describe("onboarding inference gateway scope", () => {
     });
   });
 
-  it("keeps compatible-endpoint replacement and detach recovery on the target gateway", async () => {
+  it("keeps host-local compatible replacement and detach recovery on the target gateway", async () => {
     await withProcessEnv(
       { COMPATIBLE_ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" },
       async () => {
@@ -219,7 +219,7 @@ describe("onboarding inference gateway scope", () => {
           "test-box",
           "claude-test",
           "compatible-anthropic-endpoint",
-          "https://example.test",
+          "http://host.openshell.internal:18767",
           "COMPATIBLE_ANTHROPIC_API_KEY",
           null,
           [],

@@ -56,7 +56,7 @@ function entry(): SandboxEntry {
     imageTag: "example@sha256:immutable",
     provider: "compatible-endpoint",
     model: "model-a",
-    endpointUrl: "https://inference.example.com/v1/chat/completions",
+    endpointUrl: "http://host.openshell.internal:11434/v1/chat/completions",
     credentialEnv: "COMPATIBLE_API_KEY",
     preferredInferenceApi: "chat-completions",
     compatibleEndpointReasoning: null,

@@ -10,6 +10,7 @@ import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
+import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
 import {
   finalizeInferenceSetRoute,
@@ -229,21 +230,21 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("blocks a custom endpoint conflict before DNS validation or mutation (#6315)", async () => {
+  it("blocks a host-local custom endpoint conflict before DNS validation or mutation (#6315)", async () => {
     const deps = createDeps({
       config: {},
       entries: [
         entry("alpha", {
           provider: "compatible-endpoint",
           model: "custom/model",
-          endpointUrl: "https://alpha.example.test/v1",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           preferredInferenceApi: "openai-completions",
         }),
         entry("custom-peer", {
           provider: "compatible-endpoint",
           model: "custom/model",
-          endpointUrl: "https://peer.example.test/v1",
+          endpointUrl: "http://host.openshell.internal:11435/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           preferredInferenceApi: "openai-completions",
         }),
@@ -257,7 +258,7 @@ describe("runtime shared gateway route containment", () => {
           provider: "compatible-endpoint",
           model: "custom/model",
           sandboxName: "alpha",
-          endpointUrl: "https://alpha.example.test/v1",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -271,12 +272,12 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("refreshes peers after async endpoint validation before route mutation (#6315)", async () => {
+  it("refreshes host-local peers before route mutation (#6315)", async () => {
     const alpha = entry("alpha");
     const peer = entry("late-peer", {
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointUrl: "http://peer.example.test/v1",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
     });
@@ -287,16 +288,14 @@ describe("runtime shared gateway route containment", () => {
       .mockReturnValue({ sandboxes: [alpha, peer], defaultSandbox: "alpha" });
     deps.listSandboxes = listSandboxes;
 
-    // HTTP (not HTTPS) so this test exercises rewriteUrlWithDnsPinning directly
-    // to create the async validation gap; DNS-backed HTTPS endpoints route
-    // through the HTTPS-pin runtime adapter instead.
+    // Shared-route peer inventory is refreshed before provider mutation.
     await expect(
       runInferenceSet(
         {
           provider: "compatible-endpoint",
           model: "custom/model",
           sandboxName: "alpha",
-          endpointUrl: "http://alpha.example.test/v1",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -305,43 +304,51 @@ describe("runtime shared gateway route containment", () => {
     ).rejects.toThrow("late-peer");
 
     expect(listSandboxes).toHaveBeenCalledTimes(2);
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).toHaveBeenCalledOnce();
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("rechecks a DNS-normalized endpoint before route mutation (#6315)", async () => {
-    const customRoute = {
+  it("keeps a hosted endpoint independent of a peer's legacy shared route", async () => {
+    const native = await nativeCompatibleFixture(
+      "https://public.example.test/v1",
+      "openai-completions",
+      false,
+    );
+    const peer = entry("custom-peer", {
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointUrl: "http://public.example.test/v1",
+      endpointUrl: "https://peer.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
-    } as const;
+    });
     const deps = createDeps({
       config: {},
-      entries: [entry("alpha", customRoute), entry("custom-peer", customRoute)],
+      entries: [entry("alpha"), peer],
       defaultSandbox: "alpha",
-      rewriteConfigUrlsWithDnsPinning: async (value) =>
-        typeof value === "string" ? "http://203.0.113.10/v1" : value,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
+      resolveCredentialValue: () => "opaque-test-key",
     });
-
-    await expect(
-      runInferenceSet(
-        {
-          ...customRoute,
-          sandboxName: "alpha",
-          inferenceApi: "openai-completions",
-        },
-        deps,
-      ),
-    ).rejects.toThrow("custom-peer");
-
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).toHaveBeenCalledOnce();
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        sandboxName: "alpha",
+        endpointUrl: native.profile.endpoint,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    );
+    expect(native.adapter.attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha" }),
+    );
+    expect(deps.calls.updateSandbox.mock.calls.every(([name]) => name === "alpha")).toBe(true);
+    expect(peer.endpointUrl).toBe("https://peer.example.test/v1");
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
   });
 
   it("catches a DNS change between the preliminary and finalized gateway route checks", async () => {
@@ -585,7 +592,7 @@ describe("runtime shared gateway route containment", () => {
         gatewayPort: 9090,
         provider: "compatible-anthropic-endpoint",
         model: "old-model",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
@@ -644,7 +651,7 @@ describe("runtime shared gateway route containment", () => {
           agent: "hermes",
           provider: "compatible-anthropic-endpoint",
           model: "new-model",
-          endpointUrl: "https://anthropic-compatible.example/v1",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
           credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
           preferredInferenceApi: "anthropic-messages",
         }),
@@ -656,7 +663,7 @@ describe("runtime shared gateway route containment", () => {
         sandboxName: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "new-model",
-        endpointUrl: "https://anthropic-compatible.example/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),

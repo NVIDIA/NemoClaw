@@ -43,6 +43,25 @@ it("observes a matching endpoint profile without importing it", async () => {
   ]);
 });
 
+it("accepts known exported credential defaults without weakening boundary comparison", async () => {
+  const run = vi.fn<RunProviderCommand>(() => ({
+    status: 0,
+    stdout: JSON.stringify({
+      ...profile,
+      credentials: [{ ...profile.credentials[0], path_template: "" }],
+    }),
+    stderr: "",
+  }));
+  const adapter = createCliOpenShellProviderAdapter({ run });
+  await expect(
+    adapter.inspectProviderProfile({
+      target: { kind: "selected" },
+      profileType: profile.id,
+      expectedProfile,
+    }),
+  ).resolves.toMatchObject({ ok: true });
+});
+
 it.each([
   { ...profile, endpoints: [{ ...profile.endpoints[0], host: "other.example.com" }] },
   {

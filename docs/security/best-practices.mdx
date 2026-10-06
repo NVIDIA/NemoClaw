@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only in the host adapter. The sandbox receives a narrow `inference.local` interface, not the host credentials. |
+| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. Most providers expose `inference.local`; NVIDIA Endpoints uses a sandbox-attached least-privilege provider with placeholder credential rewriting. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |

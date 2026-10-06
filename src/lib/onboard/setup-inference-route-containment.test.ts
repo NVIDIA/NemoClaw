@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compatibility";
 import type { SandboxEntry } from "../state/registry";
@@ -48,6 +49,8 @@ describe("onboard shared gateway route containment", () => {
       endpointUrl: "https://public-name.example/v1",
       resolvedAddress: "93.184.216.34",
       trustedHosts: "",
+      suppliedPins: undefined,
+      expectedLookups: 1,
       expectedError: null,
       expectedPinnedAddresses: ["93.184.216.34"],
       expectedTrustedPrivateAddresses: [],
@@ -57,6 +60,8 @@ describe("onboard shared gateway route containment", () => {
       endpointUrl: "https://llm.corp.example/v1",
       resolvedAddress: "10.0.0.8",
       trustedHosts: "llm.corp.example",
+      suppliedPins: undefined,
+      expectedLookups: 1,
       expectedError: null,
       expectedPinnedAddresses: ["10.0.0.8"],
       expectedTrustedPrivateAddresses: ["10.0.0.8"],
@@ -66,11 +71,24 @@ describe("onboard shared gateway route containment", () => {
       endpointUrl: "https://unlisted.corp.example/v1",
       resolvedAddress: "10.0.0.8",
       trustedHosts: "",
+      suppliedPins: undefined,
+      expectedLookups: 1,
       expectedError: "exit 1",
       expectedPinnedAddresses: [],
       expectedTrustedPrivateAddresses: [],
     },
-  ])("handles a resumed $scenario endpoint at the shared preflight", async (scenario) => {
+    {
+      scenario: "supplied pins with malformed trust configuration",
+      endpointUrl: "https://public-name.example/v1",
+      resolvedAddress: "93.184.216.34",
+      trustedHosts: "https://user:opaque-test-secret@example.com",
+      suppliedPins: ["93.184.216.34"],
+      expectedLookups: 0,
+      expectedError: "Invalid trusted private inference host configuration.",
+      expectedPinnedAddresses: [],
+      expectedTrustedPrivateAddresses: [],
+    },
+  ])("retains the validated address set for a resumed $scenario endpoint", async (scenario) => {
     vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_HOSTS", scenario.trustedHosts);
     let lookupCount = 0;
     const resolveEndpointHost = vi.fn(async () => {
@@ -79,6 +97,31 @@ describe("onboard shared gateway route containment", () => {
         ? [{ address: scenario.resolvedAddress, family: 4 }]
         : [{ address: "10.0.0.8", family: 4 }];
     });
+    const profile = nativeCompatibleEndpointIdentity({
+      endpointUrl: scenario.endpointUrl,
+      api: "openai-completions",
+      addresses: [scenario.resolvedAddress],
+    });
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true })),
+      getProvider: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", exitCode: 1, message: "not found" },
+        })
+        .mockResolvedValue({
+          ok: true,
+          value: {
+            name: profile.providerName,
+            type: profile.profileId,
+            credentialKeys: ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+            configKeys: [],
+            revision: { id: "owned", resourceVersion: 1 },
+          },
+        }),
+      createProvider: vi.fn(async () => ({ ok: true })),
+    };
     const verifyOnboardInferenceSmoke = vi.fn();
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
@@ -107,6 +150,8 @@ describe("onboard shared gateway route containment", () => {
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke,
+      providerAdapter,
+      setNativeCompatibleProviderAuthority: vi.fn(),
       resolveEndpointHost,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
@@ -149,14 +194,17 @@ describe("onboard shared gateway route containment", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { revalidateSandboxIdentity },
+      { revalidateSandboxIdentity, endpointPinnedAddresses: scenario.suppliedPins },
     ).then(
       () => null,
       (error: Error) => error.message,
     );
 
     expect(errorMessage).toBe(scenario.expectedError);
-    expect(resolveEndpointHost).toHaveBeenCalledOnce();
+    expect(providerAdapter.createProvider).toHaveBeenCalledTimes(
+      Number(scenario.expectedError === null),
+    );
+    expect(resolveEndpointHost).toHaveBeenCalledTimes(scenario.expectedLookups);
     expect(
       verifyOnboardInferenceSmoke.mock.calls.flatMap(([request]) => request.pinnedAddresses ?? []),
     ).toEqual(scenario.expectedPinnedAddresses);
@@ -288,7 +336,7 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).not.toHaveBeenCalled();
   });
 
-  it("fails before provider mutation when endpoint or credential identity differs (#6315)", async () => {
+  it("fails before host-local provider mutation when endpoint or credential identity differs (#6315)", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const updateSandbox = vi.fn(() => true);
     const upsertProvider = vi.fn(async () => ({ ok: true }));
@@ -301,7 +349,7 @@ describe("onboard shared gateway route containment", () => {
       gatewayName: "nemoclaw",
       provider: "compatible-endpoint",
       model: "model-a",
-      endpointUrl: "https://endpoint-a.example/v1",
+      endpointUrl: "http://host.openshell.internal:18767/v1",
       credentialEnv: "KEY_A",
       preferredInferenceApi: "openai-completions",
     };
@@ -328,7 +376,7 @@ describe("onboard shared gateway route containment", () => {
         "new-custom",
         "model-b",
         "compatible-endpoint",
-        "https://endpoint-b.example/v1",
+        "http://host.openshell.internal:18768/v1",
         "KEY_B",
         null,
         [],

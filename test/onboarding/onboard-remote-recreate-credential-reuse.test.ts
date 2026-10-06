@@ -18,7 +18,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 describe("onboard recovered remote-provider credential reuse", () => {
   it(
-    "re-applies an exact compatible route without exporting or directly validating its gateway credential",
+    "re-applies a host-local compatible route without exporting or directly validating its gateway credential",
     testTimeoutOptions(90_000),
     () => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-remote-recreate-", {
@@ -84,7 +84,7 @@ const registry = require(${registryPath});
 const registryRoute = {
   provider: "compatible-endpoint",
   model: "nvidia/nemotron-3-ultra",
-  endpointUrl: "https://inference-api.nvidia.com/v1",
+  endpointUrl: "http://host.openshell.internal:18767/v1",
   endpointSource: "onboard",
   preferredInferenceApi: "openai-completions",
   source: "registry",
@@ -99,7 +99,7 @@ if (process.env.NEMOCLAW_TEST_CONFLICTING_ENDPOINT === "1") {
   registry.registerSandbox({
     name: "conflicting-custom",
     ...registryRoute,
-    endpointUrl: "https://other.example/v1",
+    endpointUrl: "http://host.openshell.internal:18768/v1",
     credentialEnv: "COMPATIBLE_API_KEY",
   });
 }

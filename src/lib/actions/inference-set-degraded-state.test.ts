@@ -101,7 +101,10 @@ describe("runInferenceSet degraded state handling", () => {
       const entry = {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: initiallyPresent ? "compatible-endpoint" : "nvidia-prod",
+        endpointUrl: "http://host.openshell.internal:11435/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
         model: "nvidia/nemotron-3-super-120b-a12b",
       };
       let persistedConfig: ConfigObject = {
@@ -175,7 +178,7 @@ describe("runInferenceSet degraded state handling", () => {
         provider: "compatible-endpoint",
         model: "openai/gpt-5.4-mini",
         endpointUrl: initiallyPresent
-          ? "https://new.example/v1"
+          ? "http://host.openshell.internal:11435/v1"
           : "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         inferenceApi: "openai-completions",
@@ -189,7 +192,7 @@ describe("runInferenceSet degraded state handling", () => {
       await expect(failedSync).rejects.not.toThrow(/rebuild/iu);
       expect(
         deps.calls.captureOpenshell.mock.calls.map(([args]) => args.slice(0, 2)),
-      ).toContainEqual(["provider", initiallyPresent ? "update" : "create"]);
+      ).toContainEqual(["provider", initiallyPresent ? "get" : "create"]);
       expect(
         deps.calls.captureOpenshell.mock.calls.map(([args]) => args.slice(0, 2)),
       ).not.toContainEqual(["provider", "delete"]);

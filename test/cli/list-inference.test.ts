@@ -161,7 +161,7 @@ describe.concurrent("CLI dispatch", () => {
             agent: "openclaw",
             provider: "compatible-endpoint",
             model: "custom/model",
-            endpointUrl: "https://inference.example.test/v1",
+            endpointUrl: "http://host.openshell.internal:11434/v1",
             preferredInferenceApi: "openai-completions",
             credentialEnv: "CUSTOM_API_KEY",
             gatewayPort: 19_090,
@@ -205,7 +205,7 @@ describe.concurrent("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
-        endpointUrl: "https://inference.example.test/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
       });
       expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {
@@ -229,7 +229,7 @@ describe.concurrent("CLI dispatch", () => {
             agent: "openclaw",
             provider: "compatible-endpoint",
             model: "custom/model",
-            endpointUrl: "https://inference.example.test/v1",
+            endpointUrl: "http://host.openshell.internal:11434/v1",
             preferredInferenceApi: "openai-completions",
             credentialEnv: "CUSTOM_API_KEY",
             gatewayPort: 19_090,
@@ -272,7 +272,7 @@ describe.concurrent("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
-        endpointUrl: "https://inference.example.test/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
       });
       expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {

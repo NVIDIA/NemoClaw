@@ -34,6 +34,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     lookupState?: "present" | "missing";
     lookupPhase?: "Ready" | "Running";
     provider?: string;
+    endpointUrl?: string;
     liveProvider?: string;
     liveModel?: string;
     preferredInferenceApi?: string;
@@ -54,6 +55,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       agent: options.agent ?? "openclaw",
       model: "nvidia/nemotron",
       provider,
+      endpointUrl: options.endpointUrl,
       preferredInferenceApi: options.preferredInferenceApi,
       ...(options.stopped !== undefined ? { stopped: options.stopped } : {}),
     };
@@ -372,6 +374,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
   it("does not apply the recorded API family to a different live route", async () => {
     const deps = snapshotDeps({
       provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
       preferredInferenceApi: "openai-responses",
       liveProvider: "openai-api",
       liveModel: "gpt-5.2",
@@ -408,6 +411,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
   it("preserves the recorded Responses API for an unchanged live route (#8731)", async () => {
     const deps = snapshotDeps({
       provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
       preferredInferenceApi: "openai-responses",
       liveProvider: "compatible-endpoint",
       liveModel: "nvidia/nemotron",

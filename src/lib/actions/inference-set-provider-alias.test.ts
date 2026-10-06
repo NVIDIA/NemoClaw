@@ -17,19 +17,15 @@ import { shellQuote } from "../core/shell-quote";
 // stay in sync with. Imported here (test only — not into the inference-set hot
 // path) to drive the parity check below. providers.ts is a CJS module.
 import * as onboardProvidersNs from "../onboard/providers";
-import type { ConfigObject, ConfigValue } from "../security/credential-filter";
+import type { ConfigObject } from "../security/credential-filter";
 import {
   INFERENCE_SET_INSTALLER_PROVIDER_ALIASES,
   INFERENCE_SET_SUPPORTED_PROVIDER_NAMES,
   normalizeInferenceSetProvider,
   runInferenceSet,
 } from "./inference-set";
-import {
-  baseSession,
-  createCompatibleProviderCapture,
-  createDeps,
-} from "./inference-set.test-support";
-import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
+import { baseSession, createDeps } from "./inference-set.test-support";
+import { nativeCompatibleFixture } from "../inference/native-compatible/switch.test-support";
 
 const onboardProviders: any =
   (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
@@ -134,12 +130,19 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
     // switch with the same name. The provider must normalize to
     // compatible-anthropic-endpoint and reuse durable endpoint metadata rather
     // than hit "Unsupported provider 'anthropicCompatible'".
+    const native = await nativeCompatibleFixture(
+      "https://inference-api.nvidia.com/v1",
+      "anthropic-messages",
+    );
     const deps = createDeps({
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       config: {
         agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } },
         models: { providers: { inference: { api: "anthropic-messages", models: [] } } },
       },
       entry: {
+        nativeCompatibleProviderAttachment: native.receipt,
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-anthropic-endpoint",
@@ -287,16 +290,20 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
     ]);
   });
 
-  it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {
-    // The alias must be normalized on the host before any gateway call — the
-    // OpenShell provider registry only knows the canonical name, so the installer
-    // alias must never reach the `openshell inference set` argv.
+  it("uses the scoped native provider and persists the canonical provider instead of its alias (#6321)", async () => {
+    const native = await nativeCompatibleFixture(
+      "https://inference-api.nvidia.com/v1",
+      "anthropic-messages",
+    );
     const deps = createDeps({
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
       config: {
         agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } },
         models: { providers: { inference: { api: "anthropic-messages", models: [] } } },
       },
       entry: {
+        nativeCompatibleProviderAttachment: native.receipt,
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-anthropic-endpoint",
@@ -321,12 +328,14 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       ),
     ).resolves.toBeTruthy();
 
-    const openshellArgs = deps.calls.captureOpenshell.mock.calls
-      .map((call) => call[0])
-      .flat()
-      .map(String);
-    expect(openshellArgs).toContain("compatible-anthropic-endpoint");
-    expect(openshellArgs).not.toContain("anthropicCompatible");
+    expect(native.adapter.getProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: native.profile.providerName }),
+    );
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ provider: "compatible-anthropic-endpoint" }),
+    );
   });
 });
 
@@ -407,344 +416,98 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
   );
 });
 
-// Hosts the stand-in guard treats as internal-resolving. Parsed exactly from
-// the URL's hostname (not a whole-URL substring match) so the stub reflects the
-// real DNS-pinning guard's per-host behaviour.
-const STUB_INTERNAL_HOSTS = new Set(["inference-api.nvidia.com", "10.0.0.5"]);
-
-describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
-  // A stand-in DNS-pinning guard: rejects any URL whose hostname resolves
-  // internal (mirrors rewriteConfigUrlsWithDnsPinning blocking an RFC1918
-  // address). Ternary (no branching statement) to satisfy the test-shape gate.
-  function ssrfGuard() {
-    return vi.fn(async (value: ConfigValue): Promise<ConfigValue> => {
-      const host = new URL(String(value)).hostname;
-      return STUB_INTERNAL_HOSTS.has(host)
-        ? Promise.reject(
-            new Error(
-              `URL hostname "${host}" resolves to private/internal address "10.48.203.205". This could expose internal services to the sandbox.`,
-            ),
-          )
-        : value;
-    });
-  }
-
-  // A DNS-backed HTTPS endpoint (the shape every URL in this suite uses) never
-  // reaches rewriteConfigUrlsWithDnsPinning/ssrfGuard above — it is eligible for
-  // the HTTPS-pin runtime adapter, whose real implementation runs its own SSRF
-  // preflight (assertEndpointResolvesPublic) before registering a route. This
-  // stand-in mirrors that preflight against the same STUB_INTERNAL_HOSTS set.
-  function httpsPinAdapterGuard() {
-    return vi.fn(async (options: EnsureHttpsPinRuntimeAdapterOptions) => {
-      const host = new URL(options.endpointUrl).hostname;
-      return STUB_INTERNAL_HOSTS.has(host)
-        ? Promise.reject(
-            new Error(
-              `URL hostname "${host}" resolves to private/internal address "10.48.203.205". This could expose internal services to the sandbox.`,
-            ),
-          )
-        : Promise.resolve({
-            baseUrl: "http://host.openshell.internal:11438/route/test-route",
-            credentialEnv: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN",
-            token: "test-adapter-token",
-            routeId: "test-route",
-          });
-    });
-  }
-
-  it("keeps the SSRF guard when same-endpoint onboarding provenance is missing", async () => {
-    // Legacy registry rows have no machine-checkable endpoint source. Exact
-    // string equality is insufficient because inference set also persists the
-    // current endpoint, so the guarded path remains authoritative.
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "nvidia/model-a",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-      ensureHttpsPinRuntimeAdapter: httpsPinAdapterGuard(),
-    });
-
-    const attempt = runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "nvidia/model-b",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        noVerify: true,
-      },
-      deps,
-    );
-    // Guard still fires (no security relaxation) ...
-    await expect(attempt).rejects.toThrow(
-      /endpoint-url is not allowed:.*private\/internal address/,
-    );
-    // ... but the message now guides toward the working same-provider path.
-    await expect(attempt).rejects.toThrow(/already configured for 'compatible-endpoint'/);
-    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
-    // PRA-2 regression: the SSRF rejection happens before any persistence, so no
-    // sandbox/config mutation or gateway side effect is left half-applied.
-    expectNoInferenceMutation(deps.calls);
-  });
-
-  it("accepts the same onboard-provenanced internal endpoint for anthropicCompatible (#6321)", async () => {
-    // The reporter's exact provider family now has a durable trust boundary:
-    // the canonical supplied URL must match the URL whose registry source is
-    // onboarding. DNS re-resolution is not required for that exact identity.
-    const guard = ssrfGuard();
-    const adapterGuard = httpsPinAdapterGuard();
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-anthropic-endpoint",
-      type: "anthropic",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      configKey: "ANTHROPIC_BASE_URL",
-    });
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-anthropic-endpoint",
-        model: "anthropic/model-a",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
-      },
-      rewriteConfigUrlsWithDnsPinning: guard,
-      ensureHttpsPinRuntimeAdapter: adapterGuard,
-      captureOpenshell,
-    });
-    await expect(
-      runInferenceSet(
-        {
-          provider: "anthropicCompatible",
-          model: "anthropic/model-b",
+describe("native hosted endpoint SSRF validation (#6321)", () => {
+  it.each([undefined, "onboard", "inference-set"] as const)(
+    "refuses private DNS with endpoint provenance %s before mutation",
+    async (endpointSource) => {
+      const lookup = vi.fn(async () => [{ address: "10.48.203.205", family: 4 }]);
+      const deps = createDeps({
+        config: {},
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "compatible-endpoint",
+          model: "old",
           endpointUrl: "https://inference-api.nvidia.com/v1",
-          noVerify: true,
+          endpointSource,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
         },
-        deps,
-      ),
-    ).resolves.toBeTruthy();
-    expect(guard).not.toHaveBeenCalled();
-    expect(adapterGuard).not.toHaveBeenCalled();
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual(["alpha", expect.objectContaining({ endpointSource: "onboard" })]);
-  });
+        resolveNativeCompatibleEndpointHost: lookup,
+      });
+      await expect(
+        runInferenceSet(
+          {
+            provider: "compatible-endpoint",
+            model: "new",
+            endpointUrl: "https://inference-api.nvidia.com/v1",
+            noVerify: true,
+          },
+          deps,
+        ),
+      ).rejects.toThrow("hosted endpoint failed network validation");
+      expect(lookup).toHaveBeenCalled();
+      expectNoInferenceMutation(deps.calls);
+    },
+  );
 
-  it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {
-    const guard = ssrfGuard();
-    const adapterGuard = httpsPinAdapterGuard();
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-endpoint",
-      type: "openai",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      configKey: "OPENAI_BASE_URL",
-    });
+  it("refuses a different private endpoint despite onboarding provenance", async () => {
     const deps = createDeps({
-      config: {
-        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-        models: { providers: { inference: { api: "openai-completions", models: [] } } },
-      },
+      config: {},
       entry: {
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-endpoint",
-        model: "nvidia/model-a",
+        model: "old",
         endpointUrl: "https://inference-api.nvidia.com/v1",
         endpointSource: "onboard",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
-      rewriteConfigUrlsWithDnsPinning: guard,
-      ensureHttpsPinRuntimeAdapter: adapterGuard,
-      captureOpenshell,
     });
-
     await expect(
       runInferenceSet(
         {
           provider: "compatible-endpoint",
-          model: "nvidia/model-b",
-          endpointUrl: "https://inference-api.nvidia.com/v1/",
+          model: "new",
+          endpointUrl: "https://10.0.0.5/v1",
           noVerify: true,
         },
         deps,
       ),
-    ).resolves.toBeTruthy();
-    expect(guard).not.toHaveBeenCalled();
-    expect(adapterGuard).not.toHaveBeenCalled();
+    ).rejects.toThrow("hosted endpoint failed network validation");
+    expectNoInferenceMutation(deps.calls);
   });
 
-  it("keeps the SSRF guard for an inference-set-authored endpoint", async () => {
-    const guard = httpsPinAdapterGuard();
+  it("reuses a valid owned receipt for a model-only switch without managed route mutation", async () => {
+    const native = await nativeCompatibleFixture("https://inference-api.nvidia.com/v1");
     const deps = createDeps({
       config: {
-        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        agents: { defaults: { model: { primary: "inference/old" } } },
         models: { providers: { inference: { api: "openai-completions", models: [] } } },
       },
       entry: {
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-endpoint",
-        model: "nvidia/model-a",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        endpointSource: "inference-set",
+        model: "old",
+        endpointUrl: native.profile.endpoint,
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        nativeCompatibleProviderAttachment: native.receipt,
       },
-      ensureHttpsPinRuntimeAdapter: guard,
+      providerAdapter: native.providerAdapter,
+      resolveNativeCompatibleEndpointHost: native.lookup,
     });
-
-    const attempt = runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "nvidia/model-b",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        noVerify: true,
-      },
-      deps,
-    );
-    await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
-    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
-    expect(guard).toHaveBeenCalled();
-    expectNoInferenceMutation(deps.calls);
-  });
-
-  it("still blocks a DIFFERENT internal endpoint even on a same-provider sandbox (no blanket exemption) (#6321)", async () => {
-    // Onboarding provenance authorizes only the exact canonical endpoint it
-    // accompanies. A different internal URL still reaches the SSRF guard, so
-    // the fix cannot be used to reach arbitrary internal services.
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "nvidia/model-a",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
-    });
-
-    const attempt = runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "nvidia/model-b",
-        endpointUrl: "https://10.0.0.5/v1",
-        noVerify: true,
-      },
-      deps,
-    );
-    await expect(attempt).rejects.toThrow(
-      /endpoint-url is not allowed:.*private\/internal address/,
-    );
-    expectNoInferenceMutation(deps.calls);
-  });
-
-  it("switches the model WITHOUT --endpoint-url on a same-provider sandbox (the guided path works, guard never runs)", async () => {
-    // Proves the hint's advice is real: dropping --endpoint-url reuses the
-    // established route and the model switch succeeds without touching the guard.
-    const deps = createDeps({
-      config: {
-        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-        models: { providers: { inference: { api: "openai-completions", models: [] } } },
-      },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "nvidia/model-a",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
-    });
-
     await expect(
-      runInferenceSet(
-        { provider: "compatible-endpoint", model: "nvidia/model-b", noVerify: true },
-        deps,
-      ),
+      runInferenceSet({ provider: "compatible-endpoint", model: "new", noVerify: true }, deps),
     ).resolves.toBeTruthy();
-    // No --endpoint-url supplied → the SSRF guard is never consulted.
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-  });
-
-  it("does NOT add the same-provider hint when switching to a DIFFERENT provider (bare SSRF error stands)", async () => {
-    // entry.provider is nvidia-prod; the operator is switching to
-    // compatible-endpoint with an internal URL. There is no established route to
-    // fall back to, so the guard's bare message stands with no "omit" hint.
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      ensureHttpsPinRuntimeAdapter: httpsPinAdapterGuard(),
-    });
-
-    const attempt = runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "nvidia/model-b",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        inferenceApi: "openai-completions",
-        noVerify: true,
-      },
-      deps,
+    expect(native.lookup).toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ model: "new", nativeCompatibleProviderAttachment: native.receipt }),
     );
-    await expect(attempt).rejects.toThrow(
-      /endpoint-url is not allowed:.*private\/internal address/,
-    );
-    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
-  });
-
-  it("does NOT append the switch-model hint to a non-SSRF endpoint error (missing URL is not contradicted)", async () => {
-    // Passing --credential-env without --endpoint-url on a same-provider sandbox
-    // makes hasExplicitCustomMetadata true, so normalizeCustomEndpointUrl throws
-    // "endpoint-url is required ...". The guidance is scoped to the SSRF/blocked
-    // case only, so that message must NOT gain a contradictory "omit
-    // --endpoint-url" tail.
-    const deps = createDeps({
-      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "nvidia/model-a",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
-    });
-
-    const attempt = runInferenceSet(
-      {
-        provider: "compatible-endpoint",
-        model: "nvidia/model-b",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        noVerify: true,
-      },
-      deps,
-    );
-    await expect(attempt).rejects.toThrow(/endpoint-url is required/);
-    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
-    // The guard is never consulted — the missing-URL check trips first.
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
   });
 });
 

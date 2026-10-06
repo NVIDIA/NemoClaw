@@ -120,7 +120,21 @@ process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 process.env.BROKEN_API_KEY = "test-key";
 
 const { createSetupInference } = require(${onboardPath});
+let nativeProvider = null;
+const providerAdapter = {
+  importProviderProfile: async () => ({ok: true}),
+  getProvider: async () => nativeProvider
+    ? {ok: true, value: nativeProvider}
+    : {ok: false, error: {kind: "command", reason: "not_found", exitCode: 1, message: "not found"}},
+  createProvider: async (request) => {
+    nativeProvider = {name: request.name, type: request.type, credentialKeys: request.credentials.map(item => item.name), configKeys: [], revision: {id: "smoke-owned-provider", resourceVersion: 1}};
+    require("node:fs").appendFileSync(process.env.NEMOCLAW_FAKE_COMMAND_LOG, "provider create -g " + request.target.gatewayName + " --name " + request.name + "\n");
+    return {ok: true};
+  },
+};
 const setupInference = createSetupInference({
+  providerAdapter,
+  setNativeCompatibleProviderAuthority: () => {},
   resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
 });
 
@@ -176,7 +190,7 @@ const setupInference = createSetupInference({
           (command) =>
             hasTokenSequence(command, ["provider", "create"]) &&
             hasTokenSequence(command, ["-g", "nemoclaw"]) &&
-            hasTokenSequence(command, ["--name", "compatible-endpoint"]),
+            /--name nemoclaw-compatible-[a-f0-9]{64}-v1/.test(command),
         );
         const inferenceSetIndex = commands.findIndex(
           (command) =>
@@ -184,15 +198,11 @@ const setupInference = createSetupInference({
             hasTokenSequence(command, ["-g", "nemoclaw"]) &&
             hasTokenSequence(command, ["--provider", "compatible-endpoint"]),
         );
-        assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
         assert.ok(
-          inferenceSetIndex >= 0,
-          `setupInference did not configure inference; commands:\n${commands.join("\n")}\noutput:\n${output}`,
+          providerCreateIndex >= 0,
+          "setupInference did not create the scoped native provider",
         );
-        assert.ok(
-          providerCreateIndex < inferenceSetIndex,
-          "setupInference configured inference before creating compatible-endpoint",
-        );
+        assert.equal(inferenceSetIndex, -1, "native hosted setup must not mutate the shared route");
 
         const expectedDiagnostics = [
           /compatible-endpoint/i,

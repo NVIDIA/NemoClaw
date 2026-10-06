@@ -4,7 +4,7 @@
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./endpoint";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../ollama/contract";
 import { isBedrockRuntimeEndpoint } from "../bedrock-runtime";
-import { isLoopbackHostname } from "../../private-networks";
+import { isLoopbackHostname } from "../../core/endpoint-url-safety";
 import { isOpenShellManagedHost } from "../endpoint-ssrf-preflight";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 import { nativeCompatibleEndpointIdentity, type NativeCompatibleApi } from "./endpoint";
@@ -121,7 +121,7 @@ export function isNativeCompatibleHostedSelection(selection: {
     return false;
   if (!selection.endpointUrl) return true;
   try {
-    const host = new URL(selection.endpointUrl).hostname;
+    const host = new URL(selection.endpointUrl).hostname.replace(/\.$/, "");
     return !isLoopbackHostname(host) && !isOpenShellManagedHost(host);
   } catch {
     return true;

@@ -25,6 +25,19 @@ function recordValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+const CREDENTIAL_KEYS = new Set([
+  "auth_style",
+  "description",
+  "env_vars",
+  "header_name",
+  "name",
+  "query_param",
+  "path_template",
+  "token_grant",
+  "refresh",
+  "required",
+]);
+
 function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null {
   const profile = recordValue(value);
   if (
@@ -50,6 +63,7 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
     const credential = recordValue(value);
     if (
       !credential ||
+      Object.keys(credential).some((key) => !CREDENTIAL_KEYS.has(key)) ||
       typeof credential.name !== "string" ||
       !Array.isArray(credential.env_vars) ||
       credential.env_vars.some((envVar) => typeof envVar !== "string") ||

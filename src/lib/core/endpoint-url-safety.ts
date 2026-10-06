@@ -170,3 +170,13 @@ export function canonicalEndpoint(
     return null;
   }
 }
+
+export function isLoopbackHostname(hostname = ""): boolean {
+  const normalized = String(hostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return (
+    normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  );
+}

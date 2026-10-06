@@ -1030,7 +1030,9 @@ export function createSetupInference(
               target: { kind: "named", gatewayName },
               endpointUrl: identity.endpoint,
               api,
-              lookup: deps.resolveEndpointHost,
+              lookup: endpointPinnedAddresses?.length
+                ? async () => endpointPinnedAddresses!.map((address) => ({ address }))
+                : deps.resolveEndpointHost,
               trust: {
                 trustedPrivateHosts:
                   deps.trustedPrivateEndpointHosts ??
