@@ -68,7 +68,9 @@ export function resolveSessionAgentDefinition(
   let requestedName = "openclaw";
   try {
     const registered = sandboxName ? registry.getSandbox(sandboxName) : null;
-    requestedName = registered?.agent || onboardSession.loadSession()?.agent || "openclaw";
+    requestedName = registered
+      ? (registered.agent ?? "openclaw")
+      : onboardSession.loadSession()?.agent || "openclaw";
     if (requestedName !== "openclaw") {
       return { agent: null, requestedName, resolved: false };
     }
