@@ -199,6 +199,10 @@ Use these details when your first-run path needs more control.
       nemohermes onboard --experimental-profile portable --fresh
     ```
 
+    The explicit Portable selection is recorded in its lifecycle receipt. Later `nemohermes`
+    commands use that receipt to retain the selected profile; they do not require the installer
+    environment variable to remain exported.
+
     This path does not inspect, start, or use a host Ollama process.
     Leave port `11434` free on `127.0.0.1` and on the Portable host-gateway listener IP.
     When no sandbox has lifecycle authority for the same name, a `--fresh` retry first retires an exact abandoned receipt-owned provider, Portable runner, and private inference state before it starts the replacement transaction.
