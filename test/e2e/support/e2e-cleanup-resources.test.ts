@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { type CleanupHost, CleanupRegistry } from "../fixtures/cleanup.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupAcquiredResource,
@@ -20,6 +21,43 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 
 describe("cleanup resources", () => {
+  it("keeps installer state under the account home and removes only its disposable workspace", async () => {
+    const accountHome = fs.mkdtempSync(path.join(process.cwd(), "installer-account-home-"));
+    const sentinel = path.join(accountHome, "keep");
+    fs.writeFileSync(sentinel, "account data");
+    const userInfo = os.userInfo();
+    const account = vi.spyOn(os, "userInfo").mockReturnValue({ ...userInfo, homedir: accountHome });
+    const cleanup = new CleanupRegistry();
+    try {
+      const root = createPublicInstallWorkspace(cleanup);
+      expect(path.dirname(root)).toBe(accountHome);
+      expect(fs.statSync(root).mode & 0o777).toBe(0o700);
+      fs.mkdirSync(path.join(root, "home", ".local", "state"), { recursive: true });
+      expect((await cleanup.runAll()).failures).toEqual([]);
+      expect(fs.existsSync(root)).toBe(false);
+      expect(fs.readFileSync(sentinel, "utf8")).toBe("account data");
+    } finally {
+      account.mockRestore();
+      fs.rmSync(accountHome, { recursive: true, force: true });
+    }
+  });
+
+  it("disposes an installer workspace when fixture initialization fails immediately", async () => {
+    const cleanup = new CleanupRegistry();
+    let home = "";
+    try {
+      home = createPublicInstallWorkspace(cleanup);
+      throw new Error("fixture initialization failed");
+    } catch (error) {
+      expect(error).toEqual(new Error("fixture initialization failed"));
+      expect(path.dirname(home)).toBe(os.userInfo().homedir);
+      expect(fs.existsSync(home)).toBe(true);
+    } finally {
+      expect((await cleanup.runAll()).failures).toEqual([]);
+    }
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
   it("tears down acquired resources in reverse order", async () => {
     const calls: string[] = [];
     const host: CleanupHost = {
@@ -109,7 +147,8 @@ describe("cleanup resources", () => {
     expect(calls).toBe(1);
   });
 
-  it.each(["full-e2e.test.ts", "hermes-e2e.test.ts"])(
+  // full-e2e-gateway.test.ts exercises OpenClaw's actual setup and teardown callbacks.
+  it.each(["hermes-e2e.test.ts"])(
     "registers sandbox cleanup before installer side effects [case %#] (#7146)",
     (fileName) => {
       const source = fs.readFileSync(

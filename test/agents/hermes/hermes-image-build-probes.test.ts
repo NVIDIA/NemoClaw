@@ -73,7 +73,6 @@ const commands = [
   "cron-create",
   "cron-reopen",
   "cron-runtime-source",
-  "dashboard-policy",
   "discord-backup",
   "discord-create",
   "discord-recovery-source",
@@ -469,6 +468,14 @@ describe("Hermes image build probes", () => {
         (match) => match[1],
       ),
     ).toEqual([digest, digest]);
+    const normalizedDockerfile = imageDockerfile.replace(/\\\n/gu, " ");
+    expect(normalizedDockerfile).toContain("install -d -o root -g root -m 0755 /etc/nemoclaw");
+    expect(normalizedDockerfile).toMatch(
+      /touch \/etc\/nemoclaw\/hermes-mcp-transaction\.lock[\s\S]*chown root:root[\s\S]*\/etc\/nemoclaw\/hermes-mcp-transaction\.lock[\s\S]*chmod 444[\s\S]*\/etc\/nemoclaw\/hermes-mcp-transaction\.lock/u,
+    );
+    expect(normalizedDockerfile).toContain(
+      "check_metadata /etc/nemoclaw/hermes-mcp-transaction.lock 'root:root 444'",
+    );
   });
 
   it("verifies the A2A neutralization patch before root applies it", () => {

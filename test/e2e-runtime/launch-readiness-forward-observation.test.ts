@@ -74,6 +74,7 @@ function createFakeAdapter(
 
 function mockLaunchForwardAuthority(gatewayRuntime = true): void {
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+    name: "openclaw",
     runtime: { kind: gatewayRuntime ? "gateway" : "terminal" },
     forward_ports: [18_790],
   } as never);
@@ -84,6 +85,9 @@ function mockLaunchForwardAuthority(gatewayRuntime = true): void {
     gatewayName: "nemoclaw",
     gatewayPort: 8_080,
   });
+  vi.spyOn(registry, "getSandboxAcrossGatewayRoots").mockImplementation((sandboxName) =>
+    registry.getSandbox(sandboxName),
+  );
   vi.spyOn(platform, "isWsl").mockReturnValue(false);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockReturnValue(
     gatewayAuthority(null),
@@ -249,6 +253,7 @@ it("rejects same-gateway required-port drift after every exact target was proved
     () => "owned",
     () => {
       vi.mocked(agentRuntime.getSessionAgent).mockReturnValue({
+        name: "openclaw",
         runtime: { kind: "gateway" },
         forward_ports: [18_791],
       } as never);
@@ -285,10 +290,12 @@ it("rejects terminal-to-gateway plan drift before reporting zero forwards health
   mockLaunchForwardAuthority(false);
   vi.mocked(agentRuntime.getSessionAgent)
     .mockReturnValueOnce({
+      name: "openclaw",
       runtime: { kind: "terminal" },
       forward_ports: [18_790],
     } as never)
     .mockReturnValue({
+      name: "openclaw",
       runtime: { kind: "gateway" },
       forward_ports: [18_790],
     } as never);

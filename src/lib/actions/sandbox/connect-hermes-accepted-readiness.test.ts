@@ -883,6 +883,32 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
+  it("reports a safe typed forward startup failure", async () => {
+    const harness = missingHermesHarness();
+    harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
+    harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+      forwards.map((forward: object) => ({ state: "absent" as const, forward })),
+    );
+    harness.forwardAdapterStartSpy.mockImplementationOnce(async ({ forward }) => ({
+      state: "failed" as const,
+      forward,
+      effect: "none" as const,
+      error: {
+        kind: "command" as const,
+        message: "The OpenShell forward command failed.",
+      },
+      failure: { stage: "startup" as const, reason: "child_exited" as const, exitStatus: 17 },
+    }));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Startup failure: forward-start startup/child_exited status=17.");
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects active and successor receipt replacement during semantic readiness", async () => {
     const harness = acceptedHermesHarness("compatible-endpoint", "descriptor/model");
     harness.assertHermesPortableOperatingCommandCurrentSpy

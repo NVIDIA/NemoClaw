@@ -4,12 +4,12 @@
 import { describe, expect, it } from "vitest";
 import { validateDgxStationDispatchBoundary } from "../../../tools/e2e/dgx-station-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 
 describe("Station workflow authorization and ownership", () => {
   it("accepts the checked-in explicit Station controller", () => {
     expect(validateDgxStationDispatchBoundary(readWorkflow())).toEqual([]);
-    expect(validateE2eWorkflow(readWorkflow())).toEqual([]);
   });
 
   it.each([
@@ -100,4 +100,39 @@ describe("Station workflow authorization and ownership", () => {
     [job.steps[first], job.steps[second]] = [job.steps[second], job.steps[first]];
     expect(validateDgxStationDispatchBoundary(workflow).join("\n")).toContain("in order");
   });
+});
+
+it.each(["jobs", "targets"] as const)(
+  "selects only the external Station controller through %s",
+  (selector) => {
+    const plan = buildE2eWorkflowPlan({ [selector]: "dgx-station-express" });
+    expect(plan.selectedJobs).toEqual(["dgx-station-express"]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.runtimeProvidersByJob).toEqual({ "dgx-station-express": ["none"] });
+    expect(plan.explicitOnlyJobs).toEqual([
+      "staging-brev-launchable-identity",
+      "external-gateway-health",
+      "mcp-bridge-dev",
+      "portable-hermes-finalization",
+      "dgx-station-express",
+    ]);
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");
+  },
+);
+
+it.each([
+  { jobs: "dgx-station-express,hermes-e2e" },
+  { jobs: "hermes-e2e,dgx-station-express" },
+  { targets: "dgx-station-express,ubuntu-repo-cloud-openclaw" },
+  { targets: "ubuntu-repo-cloud-openclaw,dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "ubuntu-repo-cloud-openclaw" },
+  { jobs: "hermes-e2e", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express,dgx-station-express" },
+  { targets: "dgx-station-express,dgx-station-express" },
+])("rejects Station selectors that its controller cannot execute: %j", (selectors) => {
+  expect(() => buildE2eWorkflowPlan(selectors)).toThrow(
+    "dgx-station-express must be selected by itself",
+  );
 });

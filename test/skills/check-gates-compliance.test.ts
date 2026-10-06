@@ -655,6 +655,89 @@ describe("maintainer merge-gate contributor compliance", () => {
 });
 
 describe("maintainer PR comparator contributor compliance", () => {
+  it("accepts a mergeable PR when GitHub reports a behind merge state", () => {
+    const currentBaseSha = "d".repeat(40);
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "BEHIND",
+      currentBaseSha,
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    const mergeGateOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      details: "No merge conflicts; PR branch is behind its base branch",
+      baseSha: "b".repeat(40),
+      currentBaseSha,
+    });
+    expect(comparatorOutput.gates.mergeable).toBe(true);
+    expect(comparatorOutput.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "BEHIND",
+    });
+    expect(comparatorOutput.failures).not.toContain("substantive:mergeable=MERGEABLE,state=BEHIND");
+  });
+
+  it("accepts a mergeable PR when GitHub reports required hooks", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "HAS_HOOKS",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(true);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "HAS_HOOKS",
+    });
+    expect(output.failures).not.toContain("substantive:mergeable=MERGEABLE,state=HAS_HOOKS");
+  });
+
+  it("keeps blocked PRs eligible for approval but rejects them as merge candidates", () => {
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "BLOCKED",
+      reviewDecision: "APPROVED",
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    const mergeGateOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+    });
+    expect(comparatorOutput.gates).toMatchObject({
+      mergeable: false,
+      branch_protection: true,
+    });
+    expect(comparatorOutput.failures).toContain("substantive:mergeable=MERGEABLE,state=BLOCKED");
+  });
+
+  it("rejects an unstable merge state as comparator evidence", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "UNSTABLE",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(false);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "UNSTABLE",
+    });
+    expect(output.failures).toContain("substantive:mergeable=MERGEABLE,state=UNSTABLE");
+  });
+
   it("passes when DCO and every commit are verified", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",

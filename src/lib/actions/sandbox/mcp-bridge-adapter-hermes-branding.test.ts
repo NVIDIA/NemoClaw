@@ -19,6 +19,7 @@ import {
   assertHermesMcpMutationRuntimeCapability,
   unregisterHermesAdapter,
 } from "./mcp-bridge-adapter-hermes";
+import { assertAgentMcpTeardownRuntimeCapability } from "./mcp-bridge-adapters";
 
 const entry: McpSourceEntry = {
   server: "github",
@@ -67,7 +68,7 @@ describe("Hermes MCP recovery guidance", () => {
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
     vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
     vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
-    mocks.runOpenshell.mockImplementation((_args, options) => {
+    mocks.runOpenshell.mockImplementation((args, options) => {
       expect(options).toEqual(
         expect.objectContaining({
           env: expect.objectContaining({
@@ -83,7 +84,11 @@ describe("Hermes MCP recovery guidance", () => {
       expect(options?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       return {
         status: 0,
-        stdout: JSON.stringify({ changed: true, ok: true, reloaded: true }),
+        stdout: JSON.stringify(
+          args.includes("probe")
+            ? { capabilities: { reconcile_finality: 1 }, ok: true }
+            : { changed: true, ok: true, reloaded: true },
+        ),
         stderr: "",
       };
     });
@@ -91,6 +96,35 @@ describe("Hermes MCP recovery guidance", () => {
     expect(() => assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection)).not.toThrow();
     expect(() => unregisterHermesAdapter("alpha", entry, runtimeSelection)).not.toThrow();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps legacy teardown available while add and restart require finality capability", async () => {
+    mocks.runOpenshell.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({ ok: true }),
+      stderr: "",
+    });
+
+    expect(() => assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection)).toThrow(
+      "does not provide managed MCP reconcile-finality capability version 1. Rebuild the sandbox",
+    );
+    await expect(
+      assertAgentMcpTeardownRuntimeCapability("alpha", "hermes-config", runtimeSelection),
+    ).resolves.toBeUndefined();
+    expect(mocks.runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an unsupported reconcile-finality capability version", () => {
+    mocks.runOpenshell.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({ capabilities: { reconcile_finality: 2 }, ok: true }),
+      stderr: "",
+    });
+
+    expect(() => assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection)).toThrow(
+      "reconcile-finality capability version 1",
+    );
+    expect(mocks.runOpenshell).toHaveBeenCalledOnce();
   });
 
   it("refuses host-local recovery when the selected Hermes gateway is not ready (#10514)", () => {

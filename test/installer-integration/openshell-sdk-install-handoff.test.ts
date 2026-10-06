@@ -114,6 +114,11 @@ it(
 
     fs.mkdirSync(path.join(root, ".git"));
     fs.mkdirSync(path.join(root, "ci"));
+    fs.mkdirSync(path.join(root, "agents", "hermes"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "agents", "hermes", "manifest.yaml"),
+      "deferred_onboarding: true\n",
+    );
     fs.copyFileSync(
       path.join(REPOSITORY_ROOT, "ci", "reviewed-npm-audit.json"),
       path.join(root, "ci", "reviewed-npm-audit.json"),
@@ -154,6 +159,9 @@ fs.writeFileSync("build-saw-sdk", "yes");
       path.join(root, "bin", "nemoclaw.js"),
       `#!/usr/bin/env bash
 name="$(basename "$0")"
+case "\${1:-}:\${2:-}:\${3:-}" in
+  internal:installer:plan) printf 'defer\\n'; exit 0 ;;
+esac
 if [ "\${1:-}" = "--version" ]; then echo "\${name} v1.0.0"; fi
 exit 0
 `,

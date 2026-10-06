@@ -51,6 +51,18 @@ const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
 
 export type RemoteProviderConfigEntryLike = { providerName?: string };
 
+/** Resolve onboarding metadata from the concrete provider name persisted at runtime. */
+export function getRemoteProviderConfigForName<T extends RemoteProviderConfigEntryLike>(
+  providerName: string | null | undefined,
+  remoteProviderConfig: Readonly<Record<string, T>>,
+): T | null {
+  if (!providerName) return null;
+  if (providerName === "nvidia-nim") return remoteProviderConfig.build ?? null;
+  return (
+    Object.values(remoteProviderConfig).find((entry) => entry.providerName === providerName) ?? null
+  );
+}
+
 export function normalizeNonInteractiveProviderKey(
   value: string | null | undefined,
 ): string | null {
