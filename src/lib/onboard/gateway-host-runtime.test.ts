@@ -50,6 +50,7 @@ const MATCHING_REGISTRATION = {
   shouldSelect: false,
   endpoints: [DECLARATION.endpoint],
   namedEndpoint: DECLARATION.endpoint,
+  namedActive: true,
   endpointBinding: "match" as const,
 };
 
@@ -825,6 +826,7 @@ describe("gateway host runtime attachment probe", () => {
         ...MATCHING_REGISTRATION,
         gatewayReuseState: "foreign-active",
         healthy: false,
+        namedActive: false,
         shouldSelect: true,
         endpointBinding: "mismatch",
       })
@@ -988,27 +990,34 @@ describe("gateway host runtime attachment probe", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 
-  it("preserves a reused registration when post-selection verification fails (#12622)", async () => {
-    declareExternalSupervision();
-    const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
-    observer.observeGatewayReuse.mockResolvedValueOnce(MATCHING_REGISTRATION).mockResolvedValue({
-      ...MATCHING_REGISTRATION,
-      gatewayReuseState: "stale",
-      healthy: false,
-    });
-    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
-    const owner = runtime.getGatewayOwner();
-    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+  it.each([
+    [
+      "is unhealthy",
+      { ...MATCHING_REGISTRATION, gatewayReuseState: "stale" as const, healthy: false },
+    ],
+    ["is inactive", { ...MATCHING_REGISTRATION, namedActive: false }],
+  ])(
+    "preserves a reused registration when post-selection verification %s (#12622)",
+    async (_label, observation) => {
+      declareExternalSupervision();
+      const { lifecycle, observer } = gatewayAdaptersForTest(MATCHING_REGISTRATION);
+      observer.observeGatewayReuse
+        .mockResolvedValueOnce(MATCHING_REGISTRATION)
+        .mockResolvedValue(observation);
+      const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+      const owner = runtime.getGatewayOwner();
+      const expectedProbe = await runtime.probeGatewayAttachment(owner);
 
-    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
-      code: "gateway_registration_failed",
-      message: expect.stringMatching(/retained registration was preserved/iu),
-    });
-    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
-    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
-    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
-    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
-  });
+      await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+        code: "gateway_registration_failed",
+        message: expect.stringMatching(/retained registration was preserved/iu),
+      });
+      expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+      expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+      expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+      expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+    },
+  );
 
   it("removes the registration when the listener changes during attachment (#6576)", async () => {
     declareExternalSupervision();

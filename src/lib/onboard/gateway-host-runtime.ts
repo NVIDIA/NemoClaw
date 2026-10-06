@@ -606,6 +606,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       observed.error ||
       !observed.healthy ||
       !observed.namedMetadata ||
+      observed.namedActive !== true ||
       !matchesDeclaredEndpoint(observed)
     ) {
       getGatewayOwner();
