@@ -8,7 +8,7 @@ import { googlechatWebhookTunnelPidDir, stopGooglechatWebhookTunnel } from "./li
 
 describe("Google Chat webhook tunnel lifecycle", () => {
   it("stops the sandbox-scoped cloudflared process and route proxy", () => {
-    const stopCloudflared = vi.fn();
+    const stopCloudflared = vi.fn(() => true);
     const stopGooglechatWebhookProxy = vi.fn();
     const pidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
@@ -41,7 +41,7 @@ describe("Google Chat webhook tunnel lifecycle", () => {
         readCloudflaredState,
         resolveServicePidDir,
         startAll: async () => undefined,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState,
@@ -55,12 +55,29 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     const teardownPidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
         resolveServicePidDir,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       },
       webhookProxy: { stopGooglechatWebhookProxy: () => undefined },
     });
 
     expect(readCloudflaredState).toHaveBeenCalledWith(teardownPidDir);
     expect(readGooglechatWebhookProxyState).toHaveBeenCalledWith(teardownPidDir);
+  });
+
+  it("preserves the route proxy when cloudflared cleanup is unverified", () => {
+    const stopGooglechatWebhookProxy = vi.fn();
+
+    expect(() =>
+      stopGooglechatWebhookTunnel("alpha", {
+        services: {
+          resolveServicePidDir: () => "/tmp/nemoclaw-services-alpha",
+          stopCloudflared: () => false,
+        },
+        webhookProxy: { stopGooglechatWebhookProxy },
+      }),
+    ).toThrow(
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
+    );
+    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
   });
 });

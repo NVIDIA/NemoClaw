@@ -156,4 +156,21 @@ describe("doctor system checks", () => {
       hint: "start Ollama or change the sandbox inference provider",
     });
   });
+
+  it("reports unreadable cloudflared identity with safe recovery guidance", () => {
+    const { cloudflaredDoctorCheck } = requireDist(modulePath);
+
+    expect(
+      cloudflaredDoctorCheck("my-sandbox", () => ({
+        kind: "unverified-pid-process",
+        pid: 4242,
+      })),
+    ).toEqual({
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: "PID 4242, identity unavailable",
+      hint: "process identity is unavailable; restore process inspection access, then retry",
+    });
+  });
 });

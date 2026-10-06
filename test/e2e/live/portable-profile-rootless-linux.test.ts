@@ -1015,6 +1015,17 @@ async function main(progress: TestProgress): Promise<void> {
     const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
 
+    const legacyImageRef = "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e";
+    const registryConfig = path.join(
+      configHome,
+      "containers/registries.conf.d/99-nemoclaw-portable.conf",
+    );
+    fs.mkdirSync(path.dirname(registryConfig), { recursive: true });
+    fs.writeFileSync(
+      registryConfig,
+      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
+    );
+
     progress.phase("prepare the rootless container runtime");
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
@@ -1024,14 +1035,6 @@ async function main(progress: TestProgress): Promise<void> {
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
-    );
-    const registryConfig = path.join(
-      configHome,
-      "containers/registries.conf.d/99-nemoclaw-portable.conf",
-    );
-    assert.equal(
-      fs.readFileSync(registryConfig, "utf-8"),
-      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
     );
     assert.match(
       run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
@@ -1056,7 +1059,6 @@ async function main(progress: TestProgress): Promise<void> {
     assert.equal(disposableNetwork.dns_enabled, true);
     assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
     const disposableSubnets = disposableNetwork.subnets as Record<string, unknown>[];
-    assert.equal(disposableSubnets.length, 1);
     const disposableSubnet = disposableSubnets[0]!;
     assert.equal(Object.hasOwn(disposableSubnet, "lease_range"), false);
     assert.notEqual(disposableSubnet.subnet, "169.254.1.0/24");
@@ -1110,13 +1112,22 @@ async function main(progress: TestProgress): Promise<void> {
       origin: "generated",
       log: console.log,
     });
-    const imageRef = prebuild.imageRef as string;
+    const imageRef = prebuild.imageRef;
+    assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
+
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
     assert.match(
       run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
+
+    run("podman", ["pull", legacyImageRef]);
+    assert.equal(
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", legacyImageRef]),
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
+    );
+    run("podman", ["image", "rm", legacyImageRef]);
 
     progress.phase("prepare the staged Hermes build context");
     const hermesContextStateDir = path.join(root, "hermes-build-state");

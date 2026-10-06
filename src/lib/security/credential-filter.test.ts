@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { constants, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import JSON5 from "json5";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { describe, expect, it } from "vitest";
 
 import {
   makeEmptyClaimsJwtFixture,
@@ -18,16 +13,14 @@ import {
   isConfigValue,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
-  sanitizeConfigFile,
-  sanitizeConfigFileContent,
-  sanitizeEnvFile,
+  npmConfigContainsCredentialDirective,
   sanitizeEnvFileContent,
-  sanitizeYamlConfigContent,
-  sanitizeYamlConfigFile,
-  shouldScanSnapshotFileForCredentials,
   stripCredentials,
+  textContainsCredential,
+  textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route.js";
 
 function expectCredentialFieldClassification(fields: readonly string[], expected: boolean): void {
   for (const field of fields) {
@@ -203,6 +196,175 @@ describe("valueLooksLikeSecret", () => {
   });
 });
 
+describe("textContainsHighConfidenceCredential", () => {
+  it("does not flag generated placeholder matcher source as a Slack credential", () => {
+    expect(
+      textContainsHighConfidenceCredential(
+        String.raw`const bot = /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u; const app = /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u;`,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "xoxb-OPENSHELL-RESOLVE-ENV-SLACK-BOT-TOKEN",
+    "xapp-OPENSHELL-RESOLVE-ENV-SLACK-APP-TOKEN",
+  ])("flags malformed Slack placeholder-shaped credentials: %s", (value) => {
+    expect(textContainsHighConfidenceCredential(value)).toBe(true);
+  });
+
+  it("does not flag the reserved Hermes proxy rewrite sentinel as a credential", () => {
+    expect(textContainsHighConfidenceCredential(HERMES_PROXY_REWRITE_SENTINEL)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${HERMES_PROXY_REWRITE_SENTINEL}-secret`)).toBe(
+      true,
+    );
+  });
+
+  it("allows only the canonical public JWT documentation vector", () => {
+    const publicJwt = [
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+      "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+      "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    ].join(".");
+
+    expect(textContainsHighConfidenceCredential(publicJwt)).toBe(false);
+    expect(textContainsHighConfidenceCredential(makeJwtFixture())).toBe(true);
+  });
+
+  it.each([["AKIA", "IOSFODNN7EXAMPLE"].join(""), ["AKIA", "I44QH8DHBEXAMPLE"].join("")])(
+    "allows only the public AWS documentation access key %s",
+    (publicAwsAccessKey) => {
+      expect(textContainsHighConfidenceCredential(publicAwsAccessKey)).toBe(false);
+      expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey.slice(0, -1)}1`)).toBe(
+        true,
+      );
+      expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey}1`)).toBe(true);
+    },
+  );
+
+  it("allows only whatsapp-rust-bridge's public WASM byte sequence", () => {
+    const publishedBytes = ["AKIA", "1JDQYCQC", "ANIA9GDQ"].join("");
+
+    expect(textContainsHighConfidenceCredential(publishedBytes)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${publishedBytes.slice(0, -1)}1`)).toBe(true);
+  });
+
+  it("allows only MSAL's synthetic private-key documentation block", () => {
+    const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const end = ["-----END", "PRIVATE KEY-----"].join(" ");
+    const documentedShape = `${begin} ... ${end}`;
+    const actualBlock = `${begin}\nnot-public-key-material\n${end}`;
+
+    expect(textContainsHighConfidenceCredential(documentedShape)).toBe(false);
+    expect(textContainsHighConfidenceCredential(actualBlock)).toBe(true);
+  });
+
+  it("allows only botocore's synthetic DSA private-key documentation block", () => {
+    const begin = ["-----BEGIN", "DSA PRIVATE KEY-----"].join(" ");
+    const end = ["-----END", "DSA PRIVATE KEY-----"].join(" ");
+
+    expect(
+      textContainsHighConfidenceCredential(`${begin}<a very long private key string>${end}`),
+    ).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${begin}\nprivate-key-material\n${end}`)).toBe(
+      true,
+    );
+  });
+
+  it("continues to flag real Slack credentials", () => {
+    expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
+    expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
+  });
+
+  it("preserves visibly synthetic token examples in upstream documentation", () => {
+    expect(textContainsHighConfidenceCredential(["ghp_", "x".repeat(20)].join(""))).toBe(false);
+    expect(textContainsHighConfidenceCredential(["sk-", "x".repeat(20)].join(""))).toBe(false);
+    expect(textContainsHighConfidenceCredential(["ghp_", "0123456789abcdef"].join(""))).toBe(true);
+  });
+
+  it("does not treat sk- inside an ordinary hyphenated word as a token prefix", () => {
+    expect(textContainsHighConfidenceCredential("task-concurrency-diagnosis")).toBe(false);
+    expect(textContainsHighConfidenceCredential(["sk-", "0123456789abcdefghij"].join(""))).toBe(
+      true,
+    );
+  });
+});
+
+describe("textContainsCredential", () => {
+  it.each([
+    "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
+    "password=abc",
+    "sessionToken=opaqueCredentialPayloadZ1234567890",
+    '  "client_secret": "opaqueCredentialPayloadZ1234567890"',
+    '{"nested":{"sessionToken":"opaqueCredentialPayloadZ1234567890"}}',
+    "//registry.example/:_authToken=opaqueCredentialPayloadZ1234567890",
+  ])("flags opaque credential context in arbitrary text: %s", (value) => {
+    expect(textContainsCredential(value)).toBe(true);
+  });
+
+  it.each([
+    "exports.valueLooksLikeSecret = valueLooksLikeSecret;",
+    "Authorization: Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
+    ["Authorization: Bearer", "private-qa"].join(" "),
+    "sessionToken=[STRIPPED_BY_MIGRATION]",
+  ])("preserves non-secret source or placeholder text: %s", (value) => {
+    expect(textContainsCredential(value)).toBe(false);
+  });
+
+  it("does not exempt values that merely extend the Microsoft Teams QA marker", () => {
+    expect(textContainsCredential("Authorization: Bearer private-qa-live")).toBe(true);
+  });
+
+  it("allows only @pinojs/redact's complete public wildcard fixture", () => {
+    const publishedFixture = [
+      "// Tests for Issue #2319: @pinojs/redact fails to redact patterns with 3+ consecutive wildcards",
+      "password: 'secret-2-levels'",
+      "password: 'secret-3-levels'",
+      "password: 'secret-4-levels'",
+      "password: 'secret-5-levels'",
+      "password: 'secret-6-levels'",
+      "password: 'secret-value'",
+      "token: 'token1'",
+      "token: 'token2'",
+      "token: 'token3'",
+      "password: 'secret'",
+      "username: 'admin'",
+      "password: 'secret1'",
+      "password: 'secret2'",
+      "authorization: 'Bearer secret-token'",
+      "authorization: 'Bearer another-token'",
+    ].join("\n");
+
+    expect(textContainsCredential(publishedFixture)).toBe(false);
+    expect(
+      textContainsCredential(publishedFixture.replace("another-token", "another-token-x")),
+    ).toBe(true);
+    expect(textContainsCredential(publishedFixture.replace("Issue #2319", "Issue #2320"))).toBe(
+      true,
+    );
+  });
+});
+
+describe("npmConfigContainsCredentialDirective", () => {
+  it.each(["_auth", "_authToken", "username", "password", "_password"])(
+    "rejects the npm credential directive %s",
+    (directive) => {
+      expect(
+        npmConfigContainsCredentialDirective(
+          `//registry.example/:${directive}=opaqueCredentialPayloadZ1234567890`,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("allows non-credential npm registry configuration", () => {
+    expect(
+      npmConfigContainsCredentialDirective(
+        ["registry=https://registry.npmjs.org/", "always-auth=false"].join("\n"),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("isSafeCredentialPlaceholder", () => {
   it("recognizes OpenShell resolve placeholders and the unused sentinel", () => {
     expect(isSafeCredentialPlaceholder("openshell:resolve:env:DISCORD_BOT_TOKEN")).toBe(true);
@@ -210,6 +372,8 @@ describe("isSafeCredentialPlaceholder", () => {
     expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
+    expect(isSafeCredentialPlaceholder("nemoclaw-managed-inference")).toBe(true);
+    expect(isSafeCredentialPlaceholder(HERMES_PROXY_REWRITE_SENTINEL)).toBe(true);
     expect(isSafeCredentialPlaceholder("[STRIPPED_BY_MIGRATION]")).toBe(true);
     expect(isSafeCredentialPlaceholder("Bearer openshell:resolve:env:REMOTE_MCP_TOKEN")).toBe(true);
     // `Bearer <safe-literal>` proxy-auth sentinels are preserved too.
@@ -310,244 +474,6 @@ describe("stripCredentials", () => {
   });
 });
 
-describe("sanitizeConfigFile", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "cred-filter-test-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("strips credentials while preserving non-secret gateway settings", () => {
-    const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        model: "gpt-4",
-        apiKey: "sk-secret",
-        gateway: { port: 8080, authToken: "gw-token" },
-      }),
-    );
-
-    sanitizeConfigFile(configPath);
-
-    const result = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(result.model).toBe("gpt-4");
-    expect(result.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toEqual({ port: 8080, authToken: "[STRIPPED_BY_MIGRATION]" });
-  });
-
-  it("sanitizes a realistic openclaw.json without breaking restorable settings (#5027)", () => {
-    const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        models: {
-          mode: "merge",
-          providers: {
-            nvidia: { baseUrl: "https://x/v1", apiKey: "unused", models: [{ id: "kimi" }] },
-          },
-        },
-        mcpServers: { fs: { command: "npx" } },
-        channels: {
-          discord: { accounts: { default: { token: "openshell:resolve:env:DISCORD_BOT_TOKEN" } } },
-        },
-        customAgents: { researcher: { prompt: "be thorough" } },
-        leaked: { apiKey: "sk-real-secret" },
-        gateway: { port: 18789, authToken: "gw-token" },
-      }),
-    );
-
-    sanitizeConfigFile(configPath);
-
-    const result = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(result.models.providers.nvidia.apiKey).toBe("unused");
-    expect(result.models.providers.nvidia.models[0].id).toBe("kimi");
-    expect(result.mcpServers.fs.command).toBe("npx");
-    expect(result.channels.discord.accounts.default.token).toBe(
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
-    );
-    expect(result.customAgents.researcher.prompt).toBe("be thorough");
-    expect(result.leaked.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
-  });
-
-  it("skips non-existent files", () => {
-    sanitizeConfigFile(join(tmpDir, "nonexistent.json"));
-    // Should not throw
-  });
-
-  it("skips invalid JSON", () => {
-    const configPath = join(tmpDir, "bad.json");
-    writeFileSync(configPath, "not json at all");
-    sanitizeConfigFile(configPath);
-    // Should not throw, file unchanged
-    expect(readFileSync(configPath, "utf-8")).toBe("not json at all");
-  });
-
-  it("preserves native OpenClaw JSON5 settings while scrubbing credentials (#11764)", () => {
-    const sanitized = sanitizeConfigFileContent(
-      "openclaw.json",
-      [
-        "{",
-        "  // Native OpenClaw config accepts JSON5.",
-        "  gateway: { port: 18789, auth: { token: 'gateway-secret', }, },",
-        "  plugins: { entries: { weather: { enabled: true, }, }, },",
-        "}",
-      ].join("\n"),
-    );
-
-    expect(JSON5.parse(sanitized as string)).toEqual({
-      gateway: { port: 18789, auth: { token: "[STRIPPED_BY_MIGRATION]" } },
-      plugins: { entries: { weather: { enabled: true } } },
-    });
-  });
-
-  it("removes JSON5 comments from sanitized OpenClaw snapshots (#11764)", () => {
-    const secret = "nvapi-comment-only-secret-abcdefghijklmnopqrstuvwxyz";
-    const sanitized = sanitizeConfigFileContent(
-      "openclaw.json",
-      [
-        `{`,
-        `  // API key retained by a native tool: ${secret}`,
-        `  model: 'inference/model-a',`,
-        `}`,
-      ].join("\n"),
-    );
-
-    expect(sanitized).not.toContain(secret);
-    expect(sanitized).not.toContain("native tool");
-    expect(JSON.parse(sanitized as string)).toEqual({ model: "inference/model-a" });
-  });
-
-  it("rejects deeply nested OpenClaw JSON5 before recursive credential filtering (#11764)", () => {
-    const nested = `${"{ nested: ".repeat(70)}'value'${" }".repeat(70)}`;
-
-    expect(() => sanitizeConfigFileContent("openclaw.json", nested)).not.toThrow();
-    expect(sanitizeConfigFileContent("openclaw.json", nested)).toBeNull();
-  });
-
-  it("does not follow config-file symlinks while sanitizing", () => {
-    const targetPath = join(tmpDir, "target.json");
-    const linkPath = join(tmpDir, "openclaw.json");
-    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret" }));
-    try {
-      symlinkSync(targetPath, linkPath);
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
-      if (code === "EPERM" || code === "EACCES") return;
-      throw error;
-    }
-
-    sanitizeConfigFile(linkPath);
-
-    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({ apiKey: "sk-secret" });
-  });
-
-  it("strips Hermes YAML credentials and removes gateway", () => {
-    const configPath = join(tmpDir, "config.yaml");
-    writeFileSync(
-      configPath,
-      [
-        "model: hermes",
-        "api_key: sk-hermes-secret-key-value",
-        "botToken: xoxb-slack-bot-token-value",
-        "publicKey: keep-me",
-        "gateway:",
-        "  authToken: gw-token",
-        "env:",
-        "  GITHUB_TOKEN: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-        "  NODE_ENV: production",
-        "",
-      ].join("\n"),
-    );
-
-    expect(sanitizeConfigFile(configPath)).toBe(true);
-
-    const result = readFileSync(configPath, "utf-8");
-    expect(result).toContain("model: hermes");
-    expect(result).toContain("publicKey: keep-me");
-    expect(result).toContain("NODE_ENV: production");
-    expect(result).toContain("[STRIPPED_BY_MIGRATION]");
-    expect(result).not.toContain("sk-hermes-secret-key-value");
-    expect(result).not.toContain("xoxb-slack-bot-token-value");
-    expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
-    expect(result).not.toContain("gateway:");
-  });
-
-  it("fails closed for malformed Hermes YAML", () => {
-    const configPath = join(tmpDir, "broken.yaml");
-    writeFileSync(configPath, "api_key: [unclosed\n");
-    expect(sanitizeYamlConfigFile(configPath)).toBe(false);
-    expect(sanitizeConfigFile(configPath)).toBe(false);
-    expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
-  });
-
-  it("sanitizes nested YAML arrays and rejects non-object documents", () => {
-    const sanitized = sanitizeYamlConfigContent(
-      [
-        "items:",
-        "  - safe",
-        "  - api_key: sk-secret-value-long-enough",
-        "    enabled: true",
-        "    count: 2",
-        "    optional: null",
-        "",
-      ].join("\n"),
-    );
-
-    expect(parseYaml(sanitized as string)).toEqual({
-      items: [
-        "safe",
-        {
-          api_key: "[STRIPPED_BY_MIGRATION]",
-          enabled: true,
-          count: 2,
-          optional: null,
-        },
-      ],
-    });
-    expect(sanitizeYamlConfigContent("42\n")).toBeNull();
-    expect(sanitizeYamlConfigContent("- first\n- second\n")).toBeNull();
-  });
-
-  it("returns failure without changing the source when a YAML rewrite fails", () => {
-    const configPath = join(tmpDir, "config.yaml");
-    const source = "api_key: sk-hermes-secret-key-value\n";
-    writeFileSync(configPath, source);
-
-    expect(
-      sanitizeYamlConfigFile(configPath, () => {
-        throw new Error("injected rewrite failure");
-      }),
-    ).toBe(false);
-    expect(readFileSync(configPath, "utf-8")).toBe(source);
-  });
-
-  it.each([
-    ["empty.yaml", ""],
-    ["comments.yaml", "# nothing to sanitize\n"],
-  ])("preserves empty and comment-only YAML documents [case %#]", (name, source) => {
-    const configPath = join(tmpDir, name);
-    writeFileSync(configPath, source);
-    expect(sanitizeYamlConfigFile(configPath)).toBe(true);
-    expect(readFileSync(configPath, "utf-8")).toBe(source);
-  });
-
-  it("sanitizes valid JSON arrays instead of treating them as failures", () => {
-    const configPath = join(tmpDir, "config.json");
-    writeFileSync(configPath, JSON.stringify([{ apiKey: "sk-secret-value-long-enough" }]));
-
-    expect(sanitizeConfigFile(configPath)).toBe(true);
-    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual([
-      { apiKey: "[STRIPPED_BY_MIGRATION]" },
-    ]);
-  });
-});
-
 describe("sanitizeEnvFileContent", () => {
   it("strips PASS/TOKEN secrets without over-matching KEYBOARD_LAYOUT", () => {
     const input = [
@@ -604,77 +530,6 @@ describe("sanitizeEnvFileContent", () => {
   });
 });
 
-describe("sanitizeEnvFile", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "cred-env-test-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("rewrites .env credentials in place", () => {
-    const envPath = join(tmpDir, ".env");
-    writeFileSync(envPath, "DB_PASS=secret\nAPI_KEY=sk-secret-value\nLOG_LEVEL=info\n");
-    expect(sanitizeEnvFile(envPath)).toBe(true);
-    expect(readFileSync(envPath, "utf-8")).toBe(
-      "DB_PASS=[STRIPPED_BY_MIGRATION]\nAPI_KEY=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
-    );
-  });
-
-  it("returns failure without changing the source when an env rewrite fails", () => {
-    const envPath = join(tmpDir, ".env");
-    const source = "DB_PASS=secret\n";
-    writeFileSync(envPath, source);
-
-    expect(
-      sanitizeEnvFile(envPath, () => {
-        throw new Error("injected rewrite failure");
-      }),
-    ).toBe(false);
-    expect(readFileSync(envPath, "utf-8")).toBe(source);
-  });
-});
-
-describe("credential filter no-follow boundary", () => {
-  it("fails closed without atomic no-follow support", () => {
-    const root = mkdtempSync(join(tmpdir(), "nemoclaw-credential-filter-failure-"));
-    const jsonPath = join(root, "openclaw.json");
-    const yamlPath = join(root, "config.yaml");
-    const envPath = join(root, ".env");
-    const jsonSource = JSON.stringify({ apiKey: "sk-secret-value" });
-    const yamlSource = "api_key: sk-secret-value\n";
-    const envSource = "API_KEY=sk-secret-value\n";
-    const reflectGet = Reflect.get;
-    const noFollow = vi
-      .spyOn(Reflect, "get")
-      .mockImplementation((...args) =>
-        args[0] === constants && args[1] === "O_NOFOLLOW" ? undefined : reflectGet(...args),
-      );
-    let observed: unknown[] = [];
-
-    try {
-      writeFileSync(jsonPath, jsonSource);
-      writeFileSync(yamlPath, yamlSource);
-      writeFileSync(envPath, envSource);
-      observed = [
-        sanitizeConfigFile(jsonPath),
-        sanitizeYamlConfigFile(yamlPath),
-        sanitizeEnvFile(envPath),
-        readFileSync(jsonPath, "utf-8"),
-        readFileSync(yamlPath, "utf-8"),
-        readFileSync(envPath, "utf-8"),
-      ];
-    } finally {
-      noFollow.mockRestore();
-      rmSync(root, { recursive: true, force: true });
-    }
-    expect(observed).toEqual([false, false, false, jsonSource, yamlSource, envSource]);
-  });
-});
-
 describe("isSensitiveFile", () => {
   it("detects credential-bearing auth state basenames", () => {
     expect(isSensitiveFile("auth-profiles.json")).toBe(true);
@@ -689,31 +544,6 @@ describe("isSensitiveFile", () => {
     expect(isSensitiveFile("openclaw.json")).toBe(false);
     expect(isSensitiveFile("config.yaml")).toBe(false);
     expect(isSensitiveFile("SOUL.md")).toBe(false);
-  });
-});
-
-describe("shouldScanSnapshotFileForCredentials", () => {
-  it("scans runtime config, env, and Hermes YAML files", () => {
-    expect(shouldScanSnapshotFileForCredentials("openclaw.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials(".env")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("service.env")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.yaml")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.yml")).toBe(true);
-  });
-
-  it("skips dependency lockfiles that can contain non-secret package metadata matches", () => {
-    expect(shouldScanSnapshotFileForCredentials(".package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("npm-shrinkwrap.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("yarn.lock")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("pnpm-lock.yaml")).toBe(false);
-  });
-
-  it("applies lockfile exclusions to paths by basename", () => {
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.yaml")).toBe(true);
   });
 });
 
