@@ -100,15 +100,12 @@ pub(crate) fn populate(
             }] }
         });
         if kubernetes {
-            // Destroy does not need image metadata, so a document without it
-            // still compiles. Deployment discovery rejects the empty reference;
-            // teardown removes these data sources without reading the image.
             graph["data"]["nemoclaw_fabric_capabilities"][&name]["metadata_env"] = json!(
                 sandbox
                     .image
                     .metadata
                     .as_ref()
-                    .map_or("", |metadata| metadata.env.as_str())
+                    .map(|metadata| metadata.env.as_str())
             );
         }
         if managed {

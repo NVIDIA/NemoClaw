@@ -63,6 +63,19 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
 }
 
 #[test]
+fn kubernetes_sandboxes_must_name_their_image_metadata() {
+    // No local engine can be inspected, so each image's metadata bundle is
+    // required up front.
+    let mut input = external_document();
+    input["spec"]["sandboxes"][0]["image"]
+        .as_object_mut()
+        .unwrap()
+        .remove("metadata");
+    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
+}
+
+#[test]
 fn agent_sandbox_is_a_platform_prerequisite_not_a_setting() {
     // Agent Sandbox must already be installed; the deployment never
     // installs it, so there is nothing to choose.
@@ -314,7 +327,7 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
 }
 
 #[test]
-fn managed_kubernetes_target_cannot_enter_legacy_engine_specs() {
+fn a_kubernetes_target_cannot_enter_a_local_engine_spec() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!(
         "../../nemoclaw-provider/src/managed/reference.json"
     ))

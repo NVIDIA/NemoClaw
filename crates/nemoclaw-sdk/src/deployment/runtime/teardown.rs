@@ -11,6 +11,7 @@ fn destroy_environment(document: &Document) -> Document {
         provider.credential = None;
     }
     for sandbox in &mut environment.spec.sandboxes {
+        // Destroy never reads the image, so it needs no metadata path.
         sandbox.image.metadata = None;
         sandbox.integrations.clear();
         sandbox.agent.integrations.clear();

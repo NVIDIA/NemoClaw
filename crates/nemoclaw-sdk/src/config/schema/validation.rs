@@ -355,7 +355,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     // a default; image metadata stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("spec/sandboxes/[]/image/ref", json!({"pattern":c::IMAGE}), true),
+        "then": at("spec/sandboxes/[]/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
         "else": at("spec/sandboxes/[]/image", forbid(&["metadata"]), false)
     }));
     root["allOf"].as_array_mut().unwrap().push(json!({
