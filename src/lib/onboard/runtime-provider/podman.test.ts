@@ -128,7 +128,7 @@ function externalImageInspectArgs(reference: string) {
     "inspect",
     "--format",
     expect.stringMatching(
-      /^\[\{"Id":\{\{json \.Id\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
+      /^\[\{"Id":\{\{json \.ID\}\},"Os":\{\{json \.Os\}\},"Architecture":\{\{json \.Architecture\}\},"Config":\{\{json \.Config\}\}\}\]$/u,
     ),
     reference,
   ];

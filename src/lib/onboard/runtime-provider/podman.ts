@@ -108,7 +108,7 @@ const QUALIFIED_EXTERNAL_IMAGE_SUPPORT = {
 } as const;
 
 const EXTERNAL_IMAGE_INSPECT_FORMAT =
-  '[{"Id":{{json .Id}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
+  '[{"Id":{{json .ID}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
 
 function isEmptyJsonArray(value: string): boolean {
   try {
