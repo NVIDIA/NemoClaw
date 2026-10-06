@@ -32,6 +32,30 @@ pub fn target(document: &Document) -> Target {
     }
 }
 
+/// The machine answered for `engines`, so choosing their runtime targets them.
+/// Returns what the machine said.
+pub fn found_local_engines(
+    state: &mut nemoclaw_authoring::JourneyState,
+    engines: &[(&str, ComputeDriver)],
+) -> DiscoveryObservations {
+    let candidates: Vec<DiscoveryRequest> = engines
+        .iter()
+        .map(|(engine, compute_driver)| DiscoveryRequest {
+            engine: (*engine).into(),
+            compute_driver: *compute_driver,
+        })
+        .collect();
+    let mut observations = DiscoveryObservations::new();
+    for request in &candidates {
+        observations.record(
+            DiscoveryQuery::Engine(request.clone()),
+            DiscoveryObservation::Engine(available_engine()),
+        );
+    }
+    state.use_local_engines(&candidates, &observations);
+    observations
+}
+
 /// Observed images must advertise the Fabric bridge to be compatible.
 pub fn installed_catalog() -> FabricCatalog {
     let mut catalog = FabricCatalog::bundled();

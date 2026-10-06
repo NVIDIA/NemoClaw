@@ -4,7 +4,7 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    Capabilities, JourneyQuestionKind, JourneyState, discovery_queries, environment_queries,
+    Capabilities, JourneyQuestionKind, JourneyState, discovery_queries,
     inference_request_for_document,
 };
 use nemoclaw_discovery::{Direct, DiscoveryObservations};
@@ -64,7 +64,8 @@ pub(crate) async fn run(
             viewport: Viewport::Fixed(area),
         },
     )?;
-    let mut wizard = JourneyWizard::new(capabilities, state);
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(nemoclaw_discovery::local_engine_candidates());
     let mut needs_render = true;
     let mut queued_events = VecDeque::new();
     loop {
@@ -74,7 +75,7 @@ pub(crate) async fn run(
         // Learn what this machine can run before the first question, so early
         // choices can use it. Each read is attempted once, even when it fails.
         if discover {
-            let queries = environment_probe(&wizard);
+            let queries = local_engine_probe(&wizard);
             if !queries.is_empty() {
                 terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
                 if !ask_target(
@@ -168,7 +169,7 @@ pub(crate) async fn run(
                     .await;
                     match observed {
                         Ok(Some(observations)) => {
-                            wizard.observations.merge(observations);
+                            wizard.remember(observations);
                             match wizard
                                 .state
                                 .delegate_remaining(&wizard.capabilities, &wizard.observations)
@@ -218,7 +219,7 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(observations)) => wizard.observations.merge(observations),
+                        Ok(Some(observations)) => wizard.remember(observations),
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
                         Err(error) => {
@@ -302,9 +303,15 @@ async fn wait_for_discovery<T>(
     }
 }
 
-/// This machine's engines, until each has been asked about once.
-pub(super) fn environment_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
-    wizard.observations.missing(&environment_queries())
+/// This machine's candidate engines, until each has been asked about once.
+pub(super) fn local_engine_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    let queries: Vec<DiscoveryQuery> = wizard
+        .local_engine_candidates
+        .iter()
+        .cloned()
+        .map(DiscoveryQuery::Engine)
+        .collect();
+    wizard.observations.missing(&queries)
 }
 
 /// The model catalog of the route being asked about, once the journey is at its
@@ -347,7 +354,7 @@ pub(super) async fn ask_target(
     else {
         return Ok(false);
     };
-    wizard.observations.merge(observed);
+    wizard.remember(observed);
     Ok(true)
 }
 

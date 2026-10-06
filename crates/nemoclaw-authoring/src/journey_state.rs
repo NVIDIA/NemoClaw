@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
-use nemoclaw_sdk::discovery::ObservationStatus;
+use nemoclaw_sdk::discovery::{DiscoveryRequest, ObservationStatus};
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};
@@ -252,6 +252,9 @@ pub struct JourneyState {
     authored: AuthoredValues,
     decisions: DecisionRecord,
     position: JourneyPosition,
+    /// This machine's engines that answered, in the order they were asked;
+    /// `None` until the machine has been asked.
+    answered_engines: Option<Vec<DiscoveryRequest>>,
 }
 
 impl JourneyState {
@@ -270,7 +273,30 @@ impl JourneyState {
             authored,
             decisions: DecisionRecord::default(),
             position: JourneyPosition::new(selected_route),
+            answered_engines: None,
         })
+    }
+
+    /// Keep the `candidates` this machine has that `observations` show as
+    /// available. A runtime they offer becomes the suggestion when it is the
+    /// only one, and choosing a runtime targets the engine that answered for it.
+    /// A managed gateway's runtime that none answered for is reported first.
+    pub fn use_local_engines(
+        &mut self,
+        candidates: &[DiscoveryRequest],
+        observations: &DiscoveryObservations,
+    ) {
+        self.answered_engines = Some(
+            candidates
+                .iter()
+                .filter(|request| {
+                    observations
+                        .engine(request)
+                        .is_some_and(|engine| engine.status == ObservationStatus::Available)
+                })
+                .cloned()
+                .collect(),
+        );
     }
 
     pub fn values(&self) -> &Value {

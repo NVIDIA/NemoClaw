@@ -4,7 +4,7 @@
 use super::labels::display_value;
 use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
 use nemoclaw_discovery::DiscoveryObservations;
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
 
 pub(crate) struct JourneyWizard {
@@ -15,6 +15,8 @@ pub(crate) struct JourneyWizard {
     pub(super) selection_changed: bool,
     pub(super) custom_answer: bool,
     pub(super) observations: DiscoveryObservations,
+    /// The engines this machine's environment names, read before the first question.
+    pub(super) local_engine_candidates: Vec<DiscoveryRequest>,
     pub(super) input: String,
     pub(super) error: Option<String>,
     pub(super) started: bool,
@@ -32,12 +34,29 @@ impl JourneyWizard {
             selection_changed: false,
             custom_answer: false,
             observations: DiscoveryObservations::new(),
+            local_engine_candidates: Vec::new(),
             input: String::new(),
             error: None,
             started: false,
             accepted: false,
             review_scroll: 0,
         }
+    }
+
+    /// Read `candidates` as this machine's engines.
+    pub(crate) fn with_local_engine_candidates(
+        mut self,
+        candidates: Vec<DiscoveryRequest>,
+    ) -> Self {
+        self.local_engine_candidates = candidates;
+        self
+    }
+
+    /// Keep what the target said, and which of this machine's engines answered.
+    pub(super) fn remember(&mut self, observed: DiscoveryObservations) {
+        self.observations.merge(observed);
+        self.state
+            .use_local_engines(&self.local_engine_candidates, &self.observations);
     }
 
     #[cfg(test)]

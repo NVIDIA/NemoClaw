@@ -5,6 +5,7 @@ use nemoclaw_authoring::{
     Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
     JourneyScope, PartialDocument,
 };
+use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
 
@@ -1243,7 +1244,6 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
 #[test]
 fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
     use nemoclaw_authoring::inference_request_for_document;
-    use nemoclaw_discovery::DiscoveryObservations;
     use nemoclaw_sdk::{
         discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus},
         inference_discovery::{AuthenticationStatus, EndpointObservation},
@@ -1377,6 +1377,11 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
         .ask(["/spec/sandboxes/0/runtime/provider"])
         .start(&capabilities)
         .unwrap();
+    let podman = "unix:///run/user/501/podman/podman.sock";
+    crate::support::found_local_engines(
+        &mut state,
+        &[(podman, nemoclaw_sdk::config::ComputeDriver::Podman)],
+    );
     state
         .answer(
             &capabilities,
@@ -1386,7 +1391,7 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
         .unwrap();
     assert_eq!(
         state.values().pointer("/spec/gateway/engine"),
-        Some(&json!("unix:///run/user/1000/podman/podman.sock"))
+        Some(&json!(podman))
     );
     assert!(
         state
@@ -1395,6 +1400,115 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
             .assessment()
             .document()
             .is_some()
+    );
+}
+
+#[test]
+fn a_runtime_no_local_engine_answered_for_gets_no_guessed_engine() {
+    use nemoclaw_sdk::config::ComputeDriver;
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("runtime", base)
+        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .start(&capabilities)
+        .unwrap();
+    let docker = "unix:///home/me/.colima/docker.sock";
+    crate::support::found_local_engines(&mut state, &[(docker, ComputeDriver::Docker)]);
+    let runtime = "/spec/sandboxes/0/runtime/provider";
+    state
+        .answer(&capabilities, runtime, Some(json!("docker")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer("/spec/gateway/engine"),
+        Some(&json!(docker))
+    );
+    // Only Docker answered: Podman gets no engine, not Docker's.
+    state
+        .answer(&capabilities, runtime, Some(json!("podman")))
+        .unwrap();
+    assert_eq!(state.values().pointer("/spec/gateway/engine"), None);
+}
+
+/// A journey whose machine was asked about its engines and answered only for Docker.
+fn docker_only_journey(
+    capabilities: &Capabilities,
+    ask: &[&str],
+) -> (nemoclaw_authoring::JourneyState, DiscoveryObservations) {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("runtime", base)
+        .ask(ask.iter().copied())
+        .start(capabilities)
+        .unwrap();
+    let observations = crate::support::found_local_engines(
+        &mut state,
+        &[(
+            "unix:///home/me/.colima/docker.sock",
+            nemoclaw_sdk::config::ComputeDriver::Docker,
+        )],
+    );
+    (state, observations)
+}
+
+fn first_target_reason(
+    state: &nemoclaw_authoring::JourneyState,
+    capabilities: &Capabilities,
+    observations: &DiscoveryObservations,
+) -> Option<String> {
+    state
+        .resolve_with_observations(capabilities, observations)
+        .unwrap()
+        .target_assessment()
+        .and_then(|assessment| assessment.reasons.first().cloned())
+}
+
+#[test]
+fn a_runtime_no_local_engine_answered_for_is_reported_first() {
+    let capabilities = Capabilities::available();
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/sandboxes/0/runtime/provider"]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    assert_eq!(
+        first_target_reason(&state, &capabilities, &observations).as_deref(),
+        Some(
+            "No podman engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+        )
+    );
+}
+
+#[test]
+fn an_explicit_gateway_engine_is_not_reported_as_missing() {
+    let capabilities = Capabilities::available();
+    let (mut state, observations) = docker_only_journey(
+        &capabilities,
+        &["/spec/sandboxes/0/runtime/provider", "/spec/gateway/engine"],
+    );
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/engine",
+            Some(json!("unix:///srv/podman.sock")),
+        )
+        .unwrap();
+    assert!(
+        first_target_reason(&state, &capabilities, &observations)
+            .is_some_and(|reason| !reason.starts_with("No podman engine"))
     );
 }
 
@@ -3136,7 +3250,14 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
         ])
         .start(&capabilities)
         .unwrap();
-    let podman = json!("unix:///run/user/1000/podman/podman.sock");
+    let podman = json!("unix:///run/user/501/podman/podman.sock");
+    crate::support::found_local_engines(
+        &mut journey,
+        &[(
+            "unix:///run/user/501/podman/podman.sock",
+            nemoclaw_sdk::config::ComputeDriver::Podman,
+        )],
+    );
     journey
         .answer(
             &capabilities,

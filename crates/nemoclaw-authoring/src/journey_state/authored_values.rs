@@ -247,7 +247,13 @@ impl AuthoredValues {
         }
     }
 
-    pub(super) fn sync_gateway_engine_for_runtime(&mut self) -> Result<(), Diagnostics> {
+    /// Target a managed gateway at the local engine that answered for the
+    /// chosen runtime. Without one, a generated engine is withdrawn rather
+    /// than left pointing at another runtime's engine.
+    pub(super) fn sync_gateway_engine_for_runtime(
+        &mut self,
+        answered_engines: &[DiscoveryRequest],
+    ) -> Result<(), Diagnostics> {
         if self
             .values
             .pointer("/spec/gateway/management")
@@ -259,16 +265,18 @@ impl AuthoredValues {
         if self.values.pointer("/spec/gateway/engine").is_some() && !self.generated_gateway_engine {
             return Ok(());
         }
-        let Some(engine) = self
+        let runtime = self
             .values
             .pointer(RUNTIME_PROVIDER)
-            .and_then(Value::as_str)
-            .and_then(crate::local_runtimes::local_engine)
-        else {
+            .and_then(Value::as_str);
+        let engine = answered_engines
+            .iter()
+            .find(|request| Some(request.compute_driver.as_str()) == runtime)
+            .map(|request| Value::String(request.engine.clone()));
+        if engine.is_none() && !self.generated_gateway_engine {
             return Ok(());
-        };
-        self.put_sdk_field("/spec/gateway/engine", Some(Value::String(engine.into())))?;
-        self.generated_gateway_engine = true;
-        Ok(())
+        }
+        self.generated_gateway_engine = engine.is_some();
+        self.put_sdk_field("/spec/gateway/engine", engine)
     }
 }

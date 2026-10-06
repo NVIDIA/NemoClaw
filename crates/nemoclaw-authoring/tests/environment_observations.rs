@@ -6,19 +6,29 @@
 //! ignored the host could not pass by agreeing with the template.
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument};
 use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryRequest;
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// A host as onboarding found it: the engines its environment named, and what
+/// each said when asked.
+#[derive(Deserialize)]
+struct RecordedHost {
+    candidates: Vec<DiscoveryRequest>,
+    observations: DiscoveryObservations,
+}
 
 const RUNTIME: &str = "/spec/sandboxes/0/runtime/provider";
 
 const DOCKER_ONLY: &str = include_str!("fixtures/observations/docker-only.json");
 const PODMAN_ONLY: &str = include_str!("fixtures/observations/podman-only.json");
 const BOTH_ENGINES: &str = include_str!("fixtures/observations/both-engines.json");
-const NOTHING_RECORDED: &str = "[]";
+const NOTHING_RECORDED: &str = r#"{"candidates": [], "observations": []}"#;
 
 /// The runtime the journey suggests for a template that names `template`, once
 /// the environment queries have been answered as `recorded`.
 async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
-    let observations = serde_json::from_str::<DiscoveryObservations>(recorded).unwrap();
+    let host = serde_json::from_str::<RecordedHost>(recorded).unwrap();
     let capabilities = Capabilities::available();
     let yaml =
         String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())
@@ -26,12 +36,13 @@ async fn suggested_runtime(recorded: &str, template: &str) -> Option<Value> {
     // The example names its runtime exactly once.
     let yaml = yaml.replace("provider: docker", &format!("provider: {template}"));
     let base = PartialDocument::from_yaml(yaml.as_bytes()).unwrap();
-    let state = JourneyDefinition::new("runtime", base)
+    let mut state = JourneyDefinition::new("runtime", base)
         .ask([RUNTIME])
         .start(&capabilities)
         .unwrap();
+    state.use_local_engines(&host.candidates, &host.observations);
     state
-        .resolve_with_observations(&capabilities, &observations)
+        .resolve_with_observations(&capabilities, &host.observations)
         .unwrap()
         .question(RUNTIME)
         .unwrap()

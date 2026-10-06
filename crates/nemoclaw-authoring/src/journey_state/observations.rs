@@ -15,7 +15,14 @@ impl JourneyState {
         let mut resolution = self.resolve(capabilities)?;
         // A host that can run only one local runtime makes it the suggestion,
         // even over a supplied value; the user still decides.
-        if let [only] = crate::local_runtimes::reachable_runtimes(observations).as_slice()
+        let answered = self.answered_engines.as_deref().unwrap_or_default();
+        let mut runtimes: Vec<&str> = Vec::new();
+        for engine in answered {
+            if !runtimes.contains(&engine.compute_driver.as_str()) {
+                runtimes.push(engine.compute_driver.as_str());
+            }
+        }
+        if let [only] = runtimes.as_slice()
             && let Some(question) = resolution
                 .questions
                 .iter_mut()
@@ -27,6 +34,18 @@ impl JourneyState {
             && let Some(document) = resolution.assessment.document()
         {
             resolution.target_assessment = Some(crate::assess_target(document, observations)?);
+        }
+        // Without an engine for its runtime, a managed gateway falls back to the
+        // SDK's default socket, whose read reports a mismatch rather than the cause.
+        if let Some(runtime) = self.runtime_without_local_engine()
+            && let Some(assessment) = resolution.target_assessment.as_mut()
+        {
+            assessment.reasons.insert(
+                0,
+                format!(
+                    "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+                ),
+            );
         }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
@@ -64,6 +83,26 @@ impl JourneyState {
             }
         }
         Ok(resolution)
+    }
+
+    /// The chosen runtime of a managed gateway without an authored engine, when
+    /// this machine was asked and no engine answered for that runtime.
+    fn runtime_without_local_engine(&self) -> Option<&str> {
+        let answered = self.answered_engines.as_deref()?;
+        let values = &self.authored.values;
+        if values
+            .pointer("/spec/gateway/management")
+            .and_then(Value::as_str)
+            != Some("managed")
+            || values.pointer("/spec/gateway/engine").is_some()
+        {
+            return None;
+        }
+        let runtime = values.pointer(RUNTIME_PROVIDER).and_then(Value::as_str)?;
+        (!answered
+            .iter()
+            .any(|engine| engine.compute_driver.as_str() == runtime))
+        .then_some(runtime)
     }
 
     /// Accept remaining suggestions as one explicit, fact-gated action.

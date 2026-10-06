@@ -10,11 +10,13 @@ mod engine;
 mod facts;
 pub mod gateway;
 mod inference;
+mod local;
 mod ssh;
 
 pub use engine::{Direct, Engine, Engines, is_missing, optional, remote};
 pub use facts::{judge_image, observe_engine, observe_fabric, observe_hardware};
 pub use inference::observe_endpoint;
+pub use local::local_engine_candidates;
 #[cfg(unix)]
 pub use ssh::command as ssh_command;
 

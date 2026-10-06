@@ -1,42 +1,54 @@
-[
-  {
-    "query": {
-      "kind": "engine",
+{
+  "candidates": [
+    {
       "engine": "unix:///var/run/docker.sock",
       "compute_driver": "docker"
     },
-    "observation": {
-      "kind": "engine",
-      "observation": {
-        "status": "unavailable",
-        "reason": "the engine socket does not exist",
-        "source": "fixture",
-        "server_version": null,
-        "architecture": null,
-        "operating_system": null,
-        "memory_bytes": null,
-        "cpus": null
-      }
-    }
-  },
-  {
-    "query": {
-      "kind": "engine",
+    {
       "engine": "unix:///run/user/1000/podman/podman.sock",
       "compute_driver": "podman"
-    },
-    "observation": {
-      "kind": "engine",
+    }
+  ],
+  "observations": [
+    {
+      "query": {
+        "kind": "engine",
+        "engine": "unix:///var/run/docker.sock",
+        "compute_driver": "docker"
+      },
       "observation": {
-        "status": "available",
-        "reason": null,
-        "source": "fixture",
-        "server_version": "5.2.0",
-        "architecture": "x86_64",
-        "operating_system": "linux",
-        "memory_bytes": null,
-        "cpus": null
+        "kind": "engine",
+        "observation": {
+          "status": "unavailable",
+          "reason": "the engine socket does not exist",
+          "source": "fixture",
+          "server_version": null,
+          "architecture": null,
+          "operating_system": null,
+          "memory_bytes": null,
+          "cpus": null
+        }
+      }
+    },
+    {
+      "query": {
+        "kind": "engine",
+        "engine": "unix:///run/user/1000/podman/podman.sock",
+        "compute_driver": "podman"
+      },
+      "observation": {
+        "kind": "engine",
+        "observation": {
+          "status": "available",
+          "reason": null,
+          "source": "fixture",
+          "server_version": "5.2.0",
+          "architecture": "x86_64",
+          "operating_system": "linux",
+          "memory_bytes": null,
+          "cpus": null
+        }
       }
     }
-  }
-]
+  ]
+}

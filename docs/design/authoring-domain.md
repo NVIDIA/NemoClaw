@@ -150,8 +150,10 @@ A read that could not be made is recorded as an unknown observation with its rea
 `discovery_queries` returns the queries a journey asks for an SDK-valid document.
 They are the SDK's `plan_queries`, the list a plan compiles into its discovery data sources, so onboarding and planning cannot ask different questions, plus the credential checks.
 Three exclusions are deliberate and tested: only the selected route's inference catalog is read, onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
-`environment_queries` returns the queries that need no answers, which are the local engines, so the first question can use them.
-Recorded observations in `tests/fixtures/observations` replay a host, such as one with only Podman.
+`JourneyState::use_local_engines` keeps the candidate engines this machine has that answered; the caller supplies the candidates, so authoring holds no socket paths.
+A runtime they offer becomes the suggestion when it is the only one, and choosing a runtime targets the managed gateway at the engine that answered for it.
+A runtime no engine answered for gets no engine, and the target assessment's first reason says so unless an engine is authored.
+Recorded hosts in `tests/fixtures/observations` replay the candidates a machine named and what each answered, such as a host with only Podman.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
 An empty `DiscoveryObservations` leaves the resolution unchanged.

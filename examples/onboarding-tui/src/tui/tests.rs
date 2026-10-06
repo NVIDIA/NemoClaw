@@ -5,18 +5,18 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, environment_probe, model_catalog_probe},
+    terminal::{ask_target, local_engine_probe, model_catalog_probe},
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
     Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
-    discovery_queries, environment_queries, inference_request_for_document,
+    discovery_queries, inference_request_for_document,
 };
 use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     CancellationToken, Error,
-    config::Document,
-    discovery::{DiscoveryObservation, DiscoveryQuery, EngineObservation},
+    config::{ComputeDriver, Document},
+    discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation},
     inference_discovery::EndpointObservation,
 };
 use ratatui::{Terminal, backend::TestBackend};
@@ -549,16 +549,46 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
     );
 }
 
-#[test]
-fn enter_accepts_the_runtime_this_machine_can_run() {
+/// A host as onboarding found it: the engines its environment named, and what
+/// each said when asked.
+#[derive(serde::Deserialize)]
+struct RecordedHost {
+    candidates: Vec<DiscoveryRequest>,
+    observations: DiscoveryObservations,
+}
+
+#[tokio::test]
+async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state);
     // Only Podman answered when this machine was read, but the template says Docker.
-    wizard.observations = serde_json::from_str(include_str!(
+    let host: RecordedHost = serde_json::from_str(include_str!(
         "../../../../crates/nemoclaw-authoring/tests/fixtures/observations/podman-only.json"
     ))
     .unwrap();
+    let podman = host
+        .candidates
+        .iter()
+        .find(|candidate| candidate.compute_driver.as_str() == "podman")
+        .unwrap()
+        .engine
+        .clone();
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(host.candidates.clone());
+    let queries = local_engine_probe(&wizard);
+    let replay = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| Ok(host.observations);
+    assert!(
+        ask_target(
+            &mut wizard,
+            replay,
+            queries,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+        )
+        .await
+        .unwrap()
+    );
     for _ in 0..5 {
         if wizard
             .question()
@@ -577,6 +607,10 @@ fn enter_accepts_the_runtime_this_machine_can_run() {
             .values()
             .pointer("/spec/sandboxes/0/runtime/provider"),
         Some(&serde_json::json!("podman"))
+    );
+    assert_eq!(
+        wizard.state.values().pointer("/spec/gateway/engine"),
+        Some(&serde_json::json!(podman))
     );
 }
 
@@ -672,16 +706,29 @@ async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
 async fn a_new_questionnaire_asks_which_engines_this_machine_has_exactly_once() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state);
-    assert_eq!(environment_probe(&wizard), environment_queries());
+    let candidates = [
+        "unix:///home/me/.colima/docker.sock",
+        "unix:///run/user/501/podman/podman.sock",
+    ]
+    .into_iter()
+    .zip([ComputeDriver::Docker, ComputeDriver::Podman])
+    .map(|(engine, compute_driver)| DiscoveryRequest {
+        engine: engine.into(),
+        compute_driver,
+    })
+    .collect::<Vec<_>>();
+    let mut wizard =
+        JourneyWizard::new(capabilities, state).with_local_engine_candidates(candidates.clone());
+    let asked: Vec<DiscoveryQuery> = candidates.into_iter().map(DiscoveryQuery::Engine).collect();
+    assert_eq!(local_engine_probe(&wizard), asked);
 
-    let queries = environment_probe(&wizard);
+    let queries = local_engine_probe(&wizard);
     assert!(ask(&mut wizard, queries).await);
 
     // Each read is recorded, even though none could be made, so none is repeated.
-    assert!(environment_probe(&wizard).is_empty());
-    for query in environment_queries() {
-        assert!(wizard.observations.contains(&query));
+    assert!(local_engine_probe(&wizard).is_empty());
+    for query in &asked {
+        assert!(wizard.observations.contains(query));
     }
 }
 
