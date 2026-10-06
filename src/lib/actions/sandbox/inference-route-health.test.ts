@@ -146,7 +146,6 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(invocation).toMatchObject({ ok: false, httpStatus: null, endpoint });
     expect(
       buildSandboxInferenceRouteHealth(gateway(200), null, invocation, {
-        agentName: "openclaw",
         provider: "compatible-endpoint",
       }).endpoint,
     ).toBe(endpoint);
@@ -162,7 +161,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         httpStatus: 404,
         endpoint: "https://inference.local/v1/chat/completions",
       },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.ok).toBe(false);
@@ -178,7 +177,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: false, detail: "probe was unavailable", httpStatus: null },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.endpoint).toBe("https://inference.local/v1/models");
@@ -196,7 +195,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
           httpStatus: 404,
           endpoint: "https://inference.local/v1/chat/completions",
         },
-        { agentName: "openclaw", provider: "nvidia-prod" },
+        { provider: "nvidia-prod" },
       );
 
       expect(result.subprobes?.[0]).toMatchObject({
@@ -212,42 +211,27 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: true },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.subprobes?.[0]).toMatchObject({ ok: true, okLabel: "reachable" });
   });
 
-  it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {
+  it("accepts the OpenRouter adapter 404 when the invocation succeeds (#12621)", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
       {
-        agentName: "openclaw",
         provider: "openrouter-api",
       },
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.failureLabel).toBe("unreachable");
-    expect(result.detail).toContain("never validated against a model catalog");
+    expect(result.ok).toBe(true);
   });
 
-  it("fails closed for a non-DCode agent when the route 404s and invocation was never attempted", () => {
+  it("fails closed for the OpenRouter adapter 404 when no invocation was attempted (#12621)", () => {
     const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
-      agentName: "openclaw",
-      provider: "openrouter-api",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.okLabel).toBeUndefined();
-    expect(result.failureLabel).toBe("unreachable");
-  });
-
-  it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
-    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
-      agentName: "langchain-deepagents-code",
       provider: "openrouter-api",
     });
 
@@ -256,60 +240,38 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.detail).toContain("no inference request confirmed the selected model");
   });
 
-  it("fails closed for Deep Agents Code on OpenRouter when the invocation fails", () => {
+  it("fails closed for the OpenRouter adapter 404 when the invocation fails", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: false, detail: "provider rejected the request", httpStatus: 401 },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-      },
+      { provider: "openrouter-api" },
     );
 
     expect(result.ok).toBe(false);
   });
 
-  it("still tolerates a 404 for Deep Agents Code on OpenRouter when invocation succeeds", () => {
+  it("normalizes the provider before matching the OpenRouter adapter 404", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-      },
+      { provider: " openrouter-api " },
     );
 
     expect(result.ok).toBe(true);
   });
 
-  it("normalizes the provider before matching the Deep Agents Code 404 exception", () => {
+  it("does not extend the adapter 404 tolerance to a different provider", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: " openrouter-api ",
-      },
-    );
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("does not extend the DCode 404 tolerance to a different provider", () => {
-    const result = buildSandboxInferenceRouteHealth(
-      gateway(404),
-      null,
-      { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "nvidia-nim",
-      },
+      { provider: "nvidia-nim" },
     );
 
     expect(result.ok).toBe(false);
+    expect(result.detail).toContain("provider does not have a supported catalog-less route");
   });
 
   it.each([401, 403])(
@@ -319,7 +281,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: true },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(true);
@@ -333,7 +295,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: false, detail: "provider rejected the request", httpStatus },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(false);
@@ -347,7 +309,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: true },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(false);
@@ -360,10 +322,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: true },
-      {
-        agentName: "openclaw",
-        provider: "openrouter-api",
-      },
+      { provider: "openrouter-api" },
     );
 
     expect(result.ok).toBe(true);

@@ -590,7 +590,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
   });
 
-  it("reports an OpenClaw sandbox with a 404 models route as not ready (#10080)", async () => {
+  it("reports a non-OpenRouter sandbox with a 404 models route as not ready (#10080)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -605,55 +605,58 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as ready once an invocation succeeds (#10080)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: true,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 404,
-      detail:
-        "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
-    };
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"])(
+    "reports a %s OpenRouter 404 route as ready once an invocation succeeds (#12621)",
+    async (agentName) => {
+      const gateway: SandboxInferenceRouteHealth = {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 404,
+        detail:
+          "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
+      };
 
-    const options = snapshotDeps(
-      gateway,
-      null,
-      { ok: true },
-      {
-        agent: "langchain-deepagents-code",
-        gatewayName: "nemoclaw-19080",
-        provider: "openrouter-api",
-        model: "openai/gpt-4o-mini",
-      },
-    );
-    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
-    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
-    const snapshot = await collectSandboxStatusSnapshot("alpha", {
-      ...options,
-      deps: {
-        ...options.deps,
-        probeSandboxInferenceGatewayHealthImpl,
-        probeSandboxInferenceInvocationImpl,
-      },
-    });
+      const options = snapshotDeps(
+        gateway,
+        null,
+        { ok: true },
+        {
+          agent: agentName,
+          gatewayName: "nemoclaw-19080",
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+        },
+      );
+      const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
+      const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          probeSandboxInferenceGatewayHealthImpl,
+          probeSandboxInferenceInvocationImpl,
+        },
+      });
 
-    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
-      {
-        sandboxName: "alpha",
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw-19080",
+          ...(agentName === "langchain-deepagents-code" ? { agentName } : {}),
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+          preferredInferenceApi: null,
+        },
+        {},
+        95_000,
+      );
+      expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
         gatewayName: "nemoclaw-19080",
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-        model: "openai/gpt-4o-mini",
-        preferredInferenceApi: null,
-      },
-      {},
-      95_000,
-    );
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
-      gatewayName: "nemoclaw-19080",
-    });
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
-    expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
-  });
+      });
+      expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+    },
+  );
 
   it("pins Hermes status health to its recorded OpenShell gateway (#10302)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
@@ -705,7 +708,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as not ready when the invocation fails (#10080)", async () => {
+  it("reports a supported OpenRouter 404 route as not ready when the invocation fails (#12621)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -725,7 +728,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
           httpStatus: 401,
         },
         {
-          agent: "langchain-deepagents-code",
+          agent: "hermes",
           provider: "openrouter-api",
           model: "openai/gpt-4o-mini",
         },
