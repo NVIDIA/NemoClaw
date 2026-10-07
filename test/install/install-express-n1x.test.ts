@@ -159,6 +159,75 @@ detect_express_platform
       }
     },
   );
+  const runConceptIsoInstall = (environment: Record<string, string>) =>
+    runInstallerSourced(
+      `
+is_wsl_host() { return 1; }
+classify_dgx_station_hardware() { :; }
+spark_fastos_release_is_trusted() { return 1; }
+uname() {
+  case "$1" in
+    -s) printf '%s' "$TEST_OS" ;;
+    -m) printf '%s' "$TEST_ARCH" ;;
+    -r) printf '%s' "$TEST_KERNEL" ;;
+  esac
+}
+n1x_fastos_release_path() { printf '%s' "$HOME/fastos-release"; }
+n1x_fastos_release_is_trusted() { return 1; }
+n1x_pci_devices_path() { printf '%s' "$HOME/pci"; }
+if [ -n "$TEST_DEVICE" ]; then
+  mkdir -p "$HOME/pci/0000:01:00.0"
+  printf '%s\\n' 0x10de >"$HOME/pci/0000:01:00.0/vendor"
+  printf '%s\\n' 0x030000 >"$HOME/pci/0000:01:00.0/class"
+  printf '%s\\n' "$TEST_DEVICE" >"$HOME/pci/0000:01:00.0/device"
+fi
+station_dual_pair_resume_pending() { return 1; }
+if [ "$TEST_MARKER" = 1 ]; then : >"$HOME/fastos-release"; fi
+maybe_offer_express_install
+printf 'RESULT PLATFORM=%s PROVIDER=%s\\n' "\${_SELECTED_EXPRESS_PLATFORM:-}" "\${NEMOCLAW_PROVIDER:-}"
+`,
+      {
+        TEST_OS: "Linux",
+        TEST_ARCH: "aarch64",
+        TEST_KERNEL: "7.0.0-2020-nvidia-bos",
+        TEST_MARKER: "0",
+        TEST_DEVICE: "",
+        ...environment,
+      },
+    );
+
+  it("explains ordinary onboarding when Concept ISO has no qualifying N1x identity (#12737)", () => {
+    const result = runConceptIsoInstall({});
+
+    expect(result.result.status, result.output).toBe(0);
+    expect(result.output).toContain("NVIDIA BOS ARM64 host has no /etc/fastos-release");
+    expect(result.output).toContain(
+      "Deferred N1x Express preview requires a trusted N1x FASTOS marker or recognized N1x PCI identity",
+    );
+    expect(result.output).toContain("Continuing with ordinary onboarding");
+    expect(result.output).toContain("RESULT PLATFORM= PROVIDER=");
+    expect(result.output).not.toContain("Run the Deferred N1x preview");
+  });
+
+  it("detects a PCI-qualified Concept ISO host before the fallback notice (#12737)", () => {
+    const result = runConceptIsoInstall({ TEST_DEVICE: "0x2e2a", NON_INTERACTIVE: "1" });
+    expect(result.result.status, result.output).toBe(0);
+    expect(result.output).toContain("Detected N1x.");
+    expect(result.output).not.toContain("NVIDIA BOS ARM64 host has no /etc/fastos-release");
+  });
+
+  it.each([
+    ["ordinary Linux kernel", { TEST_KERNEL: "7.0.0-generic" }],
+    ["non-ARM64 host", { TEST_ARCH: "x86_64" }],
+    ["non-Linux host", { TEST_OS: "Darwin" }],
+    ["host with an existing FastOS marker", { TEST_MARKER: "1" }],
+  ])("does not show the Concept ISO notice on a %s (#12737)", (_scenario, environment) => {
+    const result = runConceptIsoInstall(environment);
+
+    expect(result.result.status, result.output).toBe(0);
+    expect(result.output).not.toContain("NVIDIA BOS ARM64 host has no /etc/fastos-release");
+    expect(result.output).toContain("RESULT PLATFORM= PROVIDER=");
+  });
 
   it.each([
     [
