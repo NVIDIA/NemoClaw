@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   recordExtraProvider: vi.fn(),
   forgetExtraProvider: vi.fn(),
   resolveGatewayCredentialMutationAuthority: vi.fn(),
+  getNativeNvidiaProviderAuthority: vi.fn(),
+  clearNativeNvidiaProviderAuthority: vi.fn(),
 }));
 
 vi.mock("../lib/credentials/store", () => ({
@@ -35,6 +37,10 @@ vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => 
     runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
   };
 });
+vi.mock("../lib/state/registry/native-nvidia-provider-authority", () => ({
+  getNativeNvidiaProviderAuthority: mocks.getNativeNvidiaProviderAuthority,
+  clearNativeNvidiaProviderAuthority: mocks.clearNativeNvidiaProviderAuthority,
+}));
 vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
   resolveGatewayCredentialMutationAuthority: mocks.resolveGatewayCredentialMutationAuthority,
 }));
@@ -55,6 +61,7 @@ describe("credentials oclif adapter source coverage", () => {
     mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: false });
     mocks.runOpenshellProviderCommand.mockReturnValue({ status: 0, stdout: "nvidia-prod\n" });
     mocks.resolveGatewayCredentialMutationAuthority.mockReturnValue({});
+    mocks.getNativeNvidiaProviderAuthority.mockReturnValue(undefined);
     process.exitCode = undefined;
   });
 
@@ -336,7 +343,30 @@ describe("credentials oclif adapter source coverage", () => {
     expect(output).not.toContain("alpha-telegram-bridge\n");
   });
 
-  it("deletes provider credentials with --yes", async () => {
+  it("deletes owned native provider credentials with --yes and confirms absence", async () => {
+    mocks.getNativeNvidiaProviderAuthority.mockReturnValue({
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "11111111-2222-4333-8444-555555555555",
+    });
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: [
+          "Name: nemoclaw-nvidia-prod-v1",
+          "Id: 11111111-2222-4333-8444-555555555555",
+          "Type: nemoclaw-nvidia-inference-v1",
+          "Resource version: 1",
+          "Credential keys: NVIDIA_INFERENCE_API_KEY",
+          "Config keys: <none>",
+        ].join("\n"),
+      })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "Error: provider 'nemoclaw-nvidia-prod-v1' not found",
+      });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await CredentialsResetCommand.run(["nvidia-prod", "--yes"], rootDir);
@@ -353,6 +383,13 @@ describe("credentials oclif adapter source coverage", () => {
     );
     const output = log.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     log.mockRestore();
+    expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+      ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+    ]);
+    expect(mocks.clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+    expect(process.exitCode).not.toBe(1);
     expect(output).toContain("Removed provider 'nvidia-prod'");
   });
 

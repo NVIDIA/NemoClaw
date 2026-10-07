@@ -336,30 +336,57 @@ describe("credentials oclif commands", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("deletes a provider credential with --yes", async () => {
-    const calls = installRuntimeBridge({
-      runOpenshell: (args, opts) => {
-        calls.push({ args, opts });
-        return { status: 0 };
-      },
+  it("deletes an owned native provider with --yes and clears its receipt after absence", async () => {
+    const authority = require(
+      path.join(REPO_ROOT, "dist/lib/state/registry/native-nvidia-provider-authority.js"),
+    ) as typeof import("../../../src/lib/state/registry/native-nvidia-provider-authority");
+    authority.setNativeNvidiaProviderAuthority("nemoclaw", {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "11111111-2222-4333-8444-555555555555",
     });
+    const runOpenshell = vi
+      .fn<RuntimeBridge["runOpenshell"]>()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: [
+          "Name: nemoclaw-nvidia-prod-v1",
+          "Id: 11111111-2222-4333-8444-555555555555",
+          "Type: nemoclaw-nvidia-inference-v1",
+          "Resource version: 1",
+          "Credential keys: NVIDIA_INFERENCE_API_KEY",
+          "Config keys: <none>",
+        ].join("\n"),
+      })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "Error: provider 'nemoclaw-nvidia-prod-v1' not found",
+      });
+    installRuntimeBridge({ runOpenshell });
     const { CredentialsResetCommand } = loadCommands();
 
     const output = await captureOutput(() => CredentialsResetCommand.run(["nvidia-prod", "--yes"]));
 
-    expect(calls).toEqual([
-      {
-        args: ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
-        opts: {
-          env: expect.any(Object),
-          ignoreError: true,
-          replaceEnv: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          suppressOutput: true,
-          timeout: 30_000,
-        },
-      },
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+      ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
     ]);
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+      {
+        env: expect.any(Object),
+        ignoreError: true,
+        replaceEnv: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
+        timeout: 30_000,
+      },
+    );
+    expect(authority.getNativeNvidiaProviderAuthority("nemoclaw")).toBeUndefined();
     expect(output.stdout).toContain("Removed provider 'nvidia-prod'");
     expect(output.stdout).toContain("Rerun 'nemoclaw onboard'");
   });
