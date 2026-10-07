@@ -348,7 +348,10 @@ export async function runTunnelLifecycleContract({
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
   expect(install.exitCode, resultText(install)).toBe(0);
-  await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });
+  await host.expectListed(SANDBOX_NAME, {
+    artifactName: "post-install-nemoclaw-list",
+    env: tunnelLifecycleCommandEnv(),
+  });
 
   progress.phase("wait for the local dashboard origin");
   let localReady = false;
