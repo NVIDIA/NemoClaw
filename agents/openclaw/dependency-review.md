@@ -96,6 +96,24 @@ The compressed 2026.9.5 lock fixture records the migration input without changin
 The replacement audit test consumes that fixture and the checked-in policy, then verifies the emitted
 provenance and npm identity requests.
 
+The trust-stage audit checks the selected 2026.9.2 production lock. It does not qualify the staged
+2026.9.5 lock. Before approving the trust stage, reviewers must also inspect the runtime PR's retained
+audit evidence and match its `packageLockSha256` to the replacement identity and decompressed fixture.
+[CI run 37677060608](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/job/112983299250)
+audited the 2026.9.5 graph at commit `754d187fa833f6198e7a3d808ddf88dc2944025d`.
+Its [reviewed-npm-audit artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/artifacts/11507039810)
+contains the receipt, raw report, and scanner provenance for lock SHA-256
+`b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7`.
+The receipt reports no blocking advisories at the `high` threshold; the policy report records three
+moderate advisories. The audit job also completed signature verification before emitting the receipt.
+This evidence qualifies those lock bytes, not a different lock or a future advisory database.
+Require a fresh matching audit when its receipt expires.
+
+The audit workflow, action, and implementation are unchanged from the trust PR's base,
+`b430d4d2495de65cbd1151d8fd6bff3def0cd58a`. Their candidate-checkout execution is existing repository
+behavior. Reviewers must independently inspect this PR's policy diff; a passing candidate audit does
+not authorize changes to its own policy.
+
 The runtime stage completes the transition by moving all production version owners to 2026.9.5,
 promoting its lock identity to primary, and removing the replacement and superseded archive records.
 For these two PRs, the maintainer requested green CI and managed-image checks, PR Advisor clearance,
