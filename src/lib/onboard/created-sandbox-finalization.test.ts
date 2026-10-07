@@ -1233,6 +1233,7 @@ describe("created sandbox completion actions", () => {
             getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
           gpu: {
+            commandExecutor: { runBuffered: vi.fn() },
             config: gpuConfig,
             provider: "ollama",
             dockerDriverGateway: true,
