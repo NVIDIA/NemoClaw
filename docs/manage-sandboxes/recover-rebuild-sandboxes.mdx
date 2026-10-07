@@ -39,8 +39,9 @@ The replacement sandbox keeps its restored state.
 
 If the rebuild cannot read part of the sandbox state, it stops before it deletes the sandbox.
 The `Reason:` line shows the read error that the backup reported.
-If you can correct the ownership or permissions of the reported path, run the rebuild again.
-For a sandbox with a legacy state record, the error also says that Shields can leave state that only root can read, and it prints replacement steps.
+If the `Failed:` line shows `permission denied`, correct the ownership or permissions of the reported path.
+Then run the rebuild again.
+For a sandbox with a legacy state record, a permission denial also prints a note that Shields can leave state that only root can read, followed by replacement steps.
 Replace the sandbox only if you cannot restore read access to that state.
 
 <Warning>
