@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
+import {
+  FIXED_HOSTED_PLAN_SCRIPT,
+  FIXED_HOSTED_RUN_SCRIPT,
+} from "./fixed-hosted-qualification.mts";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
 import {
@@ -34,6 +38,8 @@ const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+const FIXED_HOSTED_CALLER_SECRET =
+  "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hermes-fixed-bearer-inference-switch' && secrets.NOUS_API_KEY || matrix.id == 'hermes-fixed-openrouter-inference-switch' && secrets.OPENROUTER_API_KEY || matrix.id == 'openclaw-fixed-openai-inference-switch' && secrets.OPENAI_API_KEY || (matrix.id == 'hermes-fixed-anthropic-inference-switch' || matrix.id == 'openclaw-fixed-anthropic-inference-switch') && secrets.ANTHROPIC_API_KEY || '') || '' }}";
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -47,6 +53,14 @@ const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
 ].join("\n")}\n`;
 const PROFILE_JOBS = {
+  "fixed-hosted": {
+    job: "catalogue-fixed-hosted",
+    matrix: "catalogue_fixed_hosted_matrix",
+    credentialBoundary: "Selected fixed hosted provider",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "HOSTED_PROVIDER_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
   standard: {
     job: "catalogue-standard",
     matrix: "catalogue_standard_matrix",
@@ -208,10 +222,18 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
       }
     }
+    if (profile === "fixed-hosted" && withInputs.hosted_model !== "${{ inputs.hosted_model }}")
+      errors.push("fixed hosted profile must pass the explicit model input");
     const callerSecrets = record(job.secrets);
     if (
       Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
-      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
+      contract.secrets.some(
+        (name) =>
+          callerSecrets[name] !==
+          (name === "HOSTED_PROVIDER_API_KEY"
+            ? FIXED_HOSTED_CALLER_SECRET
+            : guardedCallerSecret(name)),
+      )
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);
     }
@@ -222,6 +244,16 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const triggers = record(profile.on ?? profile[true as unknown as string]);
   const call = record(triggers.workflow_call);
   const inputs = record(call.inputs);
+  const hostedModelInput = record(inputs.hosted_model);
+  if (
+    hostedModelInput.required !== false ||
+    hostedModelInput.type !== "string" ||
+    hostedModelInput.default !== ""
+  )
+    errors.push("fixed hosted model must be an optional explicit string input");
+  const requiredCallInputs = Object.fromEntries(
+    Object.entries(inputs).filter(([name]) => name !== "hosted_model"),
+  );
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
@@ -258,7 +290,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     trusted_main: "boolean",
   };
   if (
-    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
+    Object.keys(requiredCallInputs).sort().join(",") !==
+      Object.keys(requiredInputs).sort().join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
@@ -267,6 +300,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must require its exact execution-plan inputs");
   }
   const acceptedSecrets = [
+    "HOSTED_PROVIDER_API_KEY",
     "DOCKERHUB_TOKEN",
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
@@ -277,7 +311,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its four optional profile secrets");
+    errors.push("standard E2E profile must accept only its reviewed optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -390,6 +424,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       ENV: "/dev/null",
       EXECUTION_ID: "${{ inputs.execution_id }}",
       GITHUB_WORKSPACE_VALUE: "${{ github.workspace }}",
+      HOSTED_MODEL: "${{ inputs.hosted_model }}",
       HOST_PACKAGES: "${{ inputs.host_packages }}",
       HOST_PREPARATION: "${{ inputs.host_preparation }}",
       INSTALL_MODE: "${{ inputs.install_mode }}",
@@ -399,7 +434,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       TARGET_ID: "${{ inputs.target_id }}",
       TEST_FILE: "${{ inputs.test_file }}",
     }) ||
-    executionPlanFragments.some((fragment) => !executionPlanRun.includes(fragment))
+    executionPlanFragments.some((fragment) => !executionPlanRun.includes(fragment)) ||
+    !executionPlanRun.includes(FIXED_HOSTED_PLAN_SCRIPT)
   ) {
     errors.push(
       "standard E2E profile must derive validated execution paths before candidate checkout",
@@ -661,6 +697,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !String(execute?.run).includes(
       'npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"',
     ) ||
+    !String(execute?.run).includes(FIXED_HOSTED_RUN_SCRIPT) ||
+    executeEnv.HOSTED_PROVIDER_API_KEY !==
+      "${{ inputs.trusted_main && secrets.HOSTED_PROVIDER_API_KEY || '' }}" ||
+    executeEnv.HOSTED_CREDENTIAL_NAME !== "${{ steps.execution_plan.outputs.hosted_credential }}" ||
+    executeEnv.HOSTED_MODEL !== "${{ inputs.hosted_model }}" ||
     executeEnv.INSTALL_MODE !== "${{ inputs.install_mode }}" ||
     executeEnv.CATALOGUE_ID !== "${{ inputs.catalogue_id }}" ||
     executeEnv.TEST_FILE !== "${{ inputs.test_file }}" ||

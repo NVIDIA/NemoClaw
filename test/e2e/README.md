@@ -1067,6 +1067,29 @@ a mock baseline is not evidence of vendor success. Select one scenario at a time
 for each required protocol/credential shape; no provider-by-platform matrix or new
 scheduled jobs are introduced.
 
+Trusted workflow qualification uses an explicitly selected target and a nonempty
+`hosted_model` input. Select one of `hermes-fixed-bearer-inference-switch`,
+`hermes-fixed-anthropic-inference-switch`, `hermes-fixed-openrouter-inference-switch`,
+`openclaw-fixed-openai-inference-switch`, or
+`openclaw-fixed-anthropic-inference-switch` through the existing E2E workflow's
+`targets` input. Each selection runs on Docker and receives only its declared
+provider credential. These targets are excluded from the default suite. The
+trusted workflow revision must contain this selection and credential transport
+before it can dispatch a candidate PR; candidate code cannot authorize its own
+credential access. Approved credential provisioning and a canonical supported
+model remain prerequisites. The existing manifest binds the candidate revision,
+selected target, and switch artifacts to the workflow result.
+
+The existing `openclaw-inference-switch` owner also accepts `openai-api` and
+`anthropic-prod` with an explicit `NEMOCLAW_SWITCH_MODEL`. These two selections
+cover the native OpenAI-compatible and Anthropic Messages consumer paths. They
+start from an authenticated local baseline, then supply only the selected
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to the switch command. The existing
+attachment, configuration, sandbox response, and gateway model-run checks prove
+the native route. A native provider failure fails the target rather than skipping
+qualification. Models must match the provider's response model ID. Local fixture
+and support-test passes do not prove that either real provider succeeded.
+
 ## Native plugin and package lifecycle
 
 Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job

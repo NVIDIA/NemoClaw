@@ -4,6 +4,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fixedOpenClawSwitchScenario,
+  openClawSwitchRoute,
+  openClawSwitchCurlCommand,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -237,5 +240,64 @@ describe("openclaw-inference-switch mock-Anthropic baseline", () => {
     const baseline = mockBaselineInference("http://10.0.0.5:9000/v1");
     expect(baseline.endpointUrl).toBe("http://10.0.0.5:9000/v1");
     expect(baseline.env.NEMOCLAW_ENDPOINT_URL).toBe("http://10.0.0.5:9000/v1");
+  });
+});
+
+describe("native OpenClaw switch qualification", () => {
+  it.each([
+    [
+      "openai-api",
+      "openai-completions",
+      "OPENAI_API_KEY",
+      "https://api.openai.com/v1",
+      "/chat/completions",
+      "Authorization: Bearer ",
+    ],
+    [
+      "anthropic-prod",
+      "anthropic-messages",
+      "ANTHROPIC_API_KEY",
+      "https://api.anthropic.com",
+      "/v1/messages",
+      "x-api-key: ",
+    ],
+  ])(
+    "selects the native protocol and issued credential for %s",
+    (provider, inferenceApi, credentialEnv, baseUrl, suffix, auth) => {
+      expect(
+        fixedOpenClawSwitchScenario({
+          NEMOCLAW_SWITCH_PROVIDER: provider,
+          NEMOCLAW_SWITCH_MODEL: " selected-model ",
+        }),
+      ).toEqual({ provider, model: "selected-model", inferenceApi, credentialEnv });
+      expect(openClawSwitchRoute(provider, inferenceApi)).toEqual({
+        baseUrl,
+        apiKey: `\${${credentialEnv}}`,
+      });
+      const command = openClawSwitchCurlCommand(provider, inferenceApi);
+      expect(command).toContain(baseUrl + suffix);
+      expect(command).toContain(auth);
+      expect(command).toContain(`_${credentialEnv}$`);
+      expect(command).not.toContain("inference.local");
+      expect(() => fixedOpenClawSwitchScenario({ NEMOCLAW_SWITCH_PROVIDER: provider })).toThrow(
+        "NEMOCLAW_SWITCH_MODEL",
+      );
+      expect(() =>
+        fixedOpenClawSwitchScenario({
+          NEMOCLAW_SWITCH_PROVIDER: provider,
+          NEMOCLAW_SWITCH_MODEL: "selected-model",
+          NEMOCLAW_SWITCH_INFERENCE_API: "wrong-api",
+        }),
+      ).toThrow("protocol");
+    },
+  );
+  it("keeps the authenticated mock baseline on its own shared route", () => {
+    expect(openClawSwitchRoute(null, "openai-completions")).toEqual({
+      baseUrl: "https://inference.local/v1",
+      apiKey: "unused",
+    });
+    expect(
+      fixedOpenClawSwitchScenario({ NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint" }),
+    ).toBeNull();
   });
 });

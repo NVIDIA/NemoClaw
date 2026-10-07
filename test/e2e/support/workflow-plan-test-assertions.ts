@@ -14,6 +14,7 @@ export function expectedWorkflowPlanCiOutput(
     `matrix=${JSON.stringify(plan.matrix)}`,
     `test_matrix=${JSON.stringify(plan.testMatrix)}`,
     `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
+    `catalogue_fixed_hosted_matrix=${JSON.stringify(plan.catalogueMatrices["fixed-hosted"])}`,
     `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
     `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
     `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,

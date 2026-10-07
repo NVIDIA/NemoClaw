@@ -7,6 +7,9 @@
 // accepted while echoed or embedded tokens are rejected, without gating on
 // NEMOCLAW_RUN_LIVE_E2E=1.
 
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles.ts";
+import { nativeInferenceProbeAuthScript } from "../../../src/lib/inference/probe/native-inference-probe-auth.ts";
+
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
 
 export interface OpenClawPostSwitchInferenceAttempt {
@@ -172,4 +175,39 @@ export function mockBaselineInference(endpointUrl: string): BaselineInferenceCon
       NEMOCLAW_PROVIDER: "custom",
     },
   };
+}
+
+/** Fixed-provider proofs reuse the live switch owner with an explicit model. */
+export function fixedOpenClawSwitchScenario(env: NodeJS.ProcessEnv) {
+  const provider = env.NEMOCLAW_SWITCH_PROVIDER;
+  if (provider !== "openai-api" && provider !== "anthropic-prod") return null;
+  const model = env.NEMOCLAW_SWITCH_MODEL?.trim();
+  if (!model) throw new Error("Fixed hosted qualification requires NEMOCLAW_SWITCH_MODEL");
+  const profile = nativeHostedProfile(provider)!;
+  const inferenceApi = provider === "anthropic-prod" ? "anthropic-messages" : "openai-completions";
+  if (env.NEMOCLAW_SWITCH_INFERENCE_API && env.NEMOCLAW_SWITCH_INFERENCE_API !== inferenceApi)
+    throw new Error("Fixed hosted qualification protocol does not match the selected provider");
+  return { provider, model, inferenceApi, credentialEnv: profile.credentialEnv };
+}
+
+export function openClawSwitchRoute(provider: string | null, inferenceApi: string) {
+  const profile = nativeHostedProfile(provider);
+  return {
+    baseUrl:
+      profile?.endpoint ??
+      (inferenceApi === "anthropic-messages"
+        ? "https://inference.local"
+        : "https://inference.local/v1"),
+    apiKey: profile ? `\${${profile.credentialEnv}}` : "unused",
+  };
+}
+
+export function openClawSwitchCurlCommand(provider: string, inferenceApi: string): string {
+  const profile = nativeHostedProfile(provider);
+  const endpoint = openClawSwitchRoute(provider, inferenceApi).baseUrl;
+  const anthropic = inferenceApi === "anthropic-messages";
+  const auth = profile
+    ? nativeInferenceProbeAuthScript(profile.credentialEnv, anthropic).join("; ")
+    : "";
+  return `${auth ? `${auth}; ` : ""}curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 ${endpoint}${anthropic ? "/v1/messages" : "/chat/completions"} -H 'Content-Type: application/json'${profile ? ' -H "$AUTH_HEADER"' : ""}${anthropic ? " -H 'anthropic-version: 2023-06-01'" : ""} --data-binary @/tmp/nemoclaw-switch-payload.json`;
 }

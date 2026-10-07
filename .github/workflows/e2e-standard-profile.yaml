@@ -105,10 +105,16 @@ on:
       trusted_main:
         required: true
         type: boolean
+      hosted_model:
+        required: false
+        type: string
+        default: ""
     secrets:
       DOCKERHUB_USERNAME:
         required: false
       DOCKERHUB_TOKEN:
+        required: false
+      HOSTED_PROVIDER_API_KEY:
         required: false
       NVIDIA_API_KEY:
         required: false
@@ -150,6 +156,7 @@ jobs:
           ENV: /dev/null
           EXECUTION_ID: ${{ inputs.execution_id }}
           GITHUB_WORKSPACE_VALUE: ${{ github.workspace }}
+          HOSTED_MODEL: ${{ inputs.hosted_model }}
           HOST_PACKAGES: ${{ inputs.host_packages }}
           HOST_PREPARATION: ${{ inputs.host_preparation }}
           INSTALL_MODE: ${{ inputs.install_mode }}
@@ -181,6 +188,21 @@ jobs:
           if [[ "$ARTIFACT_LAYOUT" == "flat-shard" && "$SHARD" == "default" ]]; then
             fail "flat shard layout requires a named shard"
           fi
+          hosted_credential=""
+          case "$CATALOGUE_ID" in
+            hermes-fixed-bearer-inference-switch) [[ "$TARGET_ID" == "hermes-inference-switch" && "$TEST_FILE" == "test/e2e/live/hermes-inference-switch.test.ts" && "$SHARD" == "hermes-provider" ]] || fail "fixed hosted identity"; hosted_credential=NOUS_API_KEY ;;
+            hermes-fixed-anthropic-inference-switch) [[ "$TARGET_ID" == "hermes-inference-switch" && "$TEST_FILE" == "test/e2e/live/hermes-inference-switch.test.ts" && "$SHARD" == "anthropic-prod" ]] || fail "fixed hosted identity"; hosted_credential=ANTHROPIC_API_KEY ;;
+            hermes-fixed-openrouter-inference-switch) [[ "$TARGET_ID" == "hermes-inference-switch" && "$TEST_FILE" == "test/e2e/live/hermes-inference-switch.test.ts" && "$SHARD" == "openrouter-api" ]] || fail "fixed hosted identity"; hosted_credential=OPENROUTER_API_KEY ;;
+            openclaw-fixed-openai-inference-switch) [[ "$TARGET_ID" == "openclaw-inference-switch" && "$TEST_FILE" == "test/e2e/live/openclaw-inference-switch.test.ts" && "$SHARD" == "openai-api" ]] || fail "fixed hosted identity"; hosted_credential=OPENAI_API_KEY ;;
+            openclaw-fixed-anthropic-inference-switch) [[ "$TARGET_ID" == "openclaw-inference-switch" && "$TEST_FILE" == "test/e2e/live/openclaw-inference-switch.test.ts" && "$SHARD" == "anthropic-prod" ]] || fail "fixed hosted identity"; hosted_credential=ANTHROPIC_API_KEY ;;
+            *) [[ -z "${HOSTED_MODEL:-}" ]] || fail "unexpected hosted model" ;;
+          esac
+          if [[ -n "$hosted_credential" ]]; then
+            [[ "$RUNTIME_PROVIDER" == "docker" ]] || fail "fixed hosted runtime"
+            [[ "$HOSTED_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$ ]] || fail "hosted model"
+          fi
+          printf 'hosted_credential=%s
+          ' "$hosted_credential" >>"$GITHUB_OUTPUT"
           artifact_directory="e2e-artifacts/live/${TARGET_ID}"
           upload_name="e2e-${EXECUTION_ID}"
           if [[ "$SHARD" != "default" ]]; then
@@ -532,6 +554,9 @@ jobs:
           INSTALL_MODE: ${{ inputs.install_mode }}
           CATALOGUE_ID: ${{ inputs.catalogue_id }}
           TEST_FILE: ${{ inputs.test_file }}
+          HOSTED_PROVIDER_API_KEY: ${{ inputs.trusted_main && secrets.HOSTED_PROVIDER_API_KEY || '' }}
+          HOSTED_CREDENTIAL_NAME: ${{ steps.execution_plan.outputs.hosted_credential }}
+          HOSTED_MODEL: ${{ inputs.hosted_model }}
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
@@ -551,6 +576,13 @@ jobs:
             export OPENSHELL_BIN
             "$OPENSHELL_BIN" --version
           fi
+          if [[ -n "$HOSTED_CREDENTIAL_NAME" ]]; then
+            [[ -n "$HOSTED_PROVIDER_API_KEY" ]] || { echo "::error::Selected hosted provider credential is unavailable" >&2; exit 1; }
+            printf -v "$HOSTED_CREDENTIAL_NAME" '%s' "$HOSTED_PROVIDER_API_KEY"
+            export "$HOSTED_CREDENTIAL_NAME"
+            export NEMOCLAW_SWITCH_MODEL="$HOSTED_MODEL"
+          fi
+          unset HOSTED_PROVIDER_API_KEY
           npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"
 
       - name: Finalize runner comparison telemetry

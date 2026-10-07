@@ -1,3 +1,4 @@
+import { validateFixedHostedSelection } from "./fixed-hosted-qualification.mts";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -80,6 +81,8 @@ export type E2eWorkflowPlan = {
 };
 
 type WorkflowPlanOptions = {
+  hostedModel?: string;
+  eventName?: string;
   changedFiles?: readonly string[];
   gatewayRuntimes?: readonly E2eGatewayRuntime[];
 };
@@ -97,6 +100,7 @@ const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
 const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   standard: "catalogue-standard",
   "nvidia-api": "catalogue-nvidia-api",
+  "fixed-hosted": "catalogue-fixed-hosted",
   "nvidia-inference": "catalogue-nvidia-inference",
   "github-read": "catalogue-github-read",
 };
@@ -443,6 +447,7 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
   return {
     standard: [],
     "nvidia-api": [],
+    "fixed-hosted": [],
     "nvidia-inference": [],
     "github-read": [],
   };
@@ -630,6 +635,11 @@ export function buildE2eWorkflowPlan(
   const gatewayRuntimes = e2eGatewayRuntimes((options.gatewayRuntimes ?? ["docker"]).join(","));
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
+  validateFixedHostedSelection(
+    [...jobs, ...targets],
+    options.hostedModel ?? "",
+    options.eventName ?? "",
+  );
 
   if (
     (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
@@ -690,7 +700,9 @@ export function buildE2eWorkflowPlan(
   if (jobs.length > 0 || targets.length > 0) {
     const selectedIds = new Set([...jobs, ...targets]);
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
-      (target) => selectedIds.has(target.id) || selectedIds.has(target.targetId),
+      (target) =>
+        selectedIds.has(target.id) ||
+        (target.profile !== "fixed-hosted" && selectedIds.has(target.targetId)),
     );
     const unsupportedCatalogueTarget = selectedCatalogueTargets.find(
       (target) => e2eRuntimeProviders(target.gatewayRuntimes, gatewayRuntimes).length === 0,
@@ -824,7 +836,9 @@ export function buildE2eWorkflowPlan(
       ...riskJobIds,
     ]);
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
-      (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
+      (target) =>
+        target.profile !== "fixed-hosted" &&
+        (selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId)),
     );
     const unresolvedRiskJobIds = riskJobIds.filter((id) => {
       const workflowJob = inventory.targetToJob.get(id) ?? id;
@@ -876,7 +890,10 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      catalogueMatrices: catalogueMatrices(
+        E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "fixed-hosted"),
+        gatewayRuntimes,
+      ),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
@@ -1139,6 +1156,11 @@ export function writeE2eWorkflowPlanCiOutput(
   selectors: WorkflowPlanSelectors,
   environment: NodeJS.ProcessEnv = process.env,
 ): void {
+  validateFixedHostedSelection(
+    [...selectorIds(selectors.jobs, "jobs"), ...selectorIds(selectors.targets, "targets")],
+    environment.HOSTED_MODEL ?? "",
+    environment.EVENT_NAME ?? "",
+  );
   const inferenceMode = environment.INFERENCE_MODE ?? "";
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
@@ -1154,7 +1176,12 @@ export function writeE2eWorkflowPlanCiOutput(
   );
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
+  const planned = buildE2eWorkflowPlan(selectors, {
+    changedFiles,
+    gatewayRuntimes,
+    hostedModel: environment.HOSTED_MODEL,
+    eventName: environment.EVENT_NAME,
+  });
   const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
@@ -1169,6 +1196,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `matrix=${JSON.stringify(plan.matrix)}`,
       `test_matrix=${JSON.stringify(plan.testMatrix)}`,
       `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
+      `catalogue_fixed_hosted_matrix=${JSON.stringify(plan.catalogueMatrices["fixed-hosted"])}`,
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,

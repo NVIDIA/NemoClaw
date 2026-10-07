@@ -61,6 +61,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Install reviewed npm for trusted E2E planning": {},
   "Install trusted E2E planner dependencies": {},
   "Generate E2E target matrix": {
+    HOSTED_MODEL: "${{ inputs.hosted_model }}",
     INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     NEMOCLAW_GATEWAY_RUNTIMES:
       "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",

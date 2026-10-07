@@ -79,14 +79,16 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual(
       credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
     );
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
+    );
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: E2E_TARGET_CATALOGUE.length,
+      catalogue: E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
       "typed-registry": 3,
       "shared-e2e": 1,
       "retained-workflow": 14,
@@ -699,6 +701,7 @@ describe("E2E workflow plan", () => {
       "nvidia-api": false,
       "nvidia-inference": false,
       "github-read": false,
+      "fixed-hosted": false,
     });
   });
 
@@ -969,7 +972,9 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
+    );
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
@@ -977,7 +982,7 @@ describe("E2E workflow plan", () => {
 
   it("selects every catalogue target when its shared installer changes", () => {
     expect(catalogueTargetsForChangedFiles(["scripts/install-openshell.sh"])).toEqual(
-      E2E_TARGET_CATALOGUE,
+      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired),
     );
   });
 
@@ -1149,6 +1154,7 @@ describe("E2E workflow plan", () => {
           "nvidia-api": [],
           "nvidia-inference": [],
           "github-read": [],
+          "fixed-hosted": [],
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],

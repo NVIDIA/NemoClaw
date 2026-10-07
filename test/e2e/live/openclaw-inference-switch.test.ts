@@ -16,7 +16,8 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
+import { nativeHostedProfile } from "../../../src/lib/inference/native-hosted/profiles.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -53,6 +54,9 @@ import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  fixedOpenClawSwitchScenario,
+  openClawSwitchRoute,
+  openClawSwitchCurlCommand,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -64,17 +68,22 @@ import {
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
-  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
-  readPublicNvidiaSwitchAttachmentEvidence,
+  readNativeSwitchAttachmentEvidence,
+  expectedNativeSwitchAttachmentEvidence,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-inf-switch";
 const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
-const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
-const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
+const FIXED_HOSTED_SWITCH = fixedOpenClawSwitchScenario(process.env);
+const SWITCH_MODEL =
+  FIXED_HOSTED_SWITCH?.model ?? process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
+const SWITCH_INFERENCE_API =
+  process.env.NEMOCLAW_SWITCH_INFERENCE_API ??
+  (SWITCH_PROVIDER === "anthropic-prod" ? "anthropic-messages" : "openai-completions");
+const SWITCH_PROFILE = nativeHostedProfile(SWITCH_PROVIDER);
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
 const TEST_TIMEOUT_MS = testTimeout(75 * 60_000);
@@ -82,7 +91,6 @@ const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
-const NATIVE_NVIDIA_AUTH_HEADER = "Author" + "ization: Bearer nemoclaw-openshell-provider";
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -569,7 +577,9 @@ async function assertRegistryAndSession(
     default:
       expect(sandbox?.endpointUrl).toBeNull();
       expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
-      expect(sandbox?.preferredInferenceApi).toBeNull();
+      expect(sandbox?.preferredInferenceApi).toBe(
+        SWITCH_PROVIDER === "anthropic-prod" ? "anthropic-messages" : null,
+      );
   }
 
   const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
@@ -586,14 +596,16 @@ async function assertRegistryAndSession(
     case "compatible-anthropic-endpoint":
       expect(session.preferredInferenceApi).toBe("anthropic-messages");
       break;
+    case "openai-api":
+    case "anthropic-prod":
     case PUBLIC_NVIDIA_SWITCH_PROVIDER:
       expect(
         [
           session.endpointUrl,
           session.credentialEnv,
           session.preferredInferenceApi,
-          await readPublicNvidiaSwitchAttachmentEvidence({
-            artifactName: "native-nvidia-provider-attachment-after-switch",
+          await readNativeSwitchAttachmentEvidence({
+            artifactName: "native-provider-attachment-after-switch",
             env: commandEnv(home),
             logicalProvider: SWITCH_PROVIDER,
             receipt: sandbox?.nativeHostedProviderAttachment,
@@ -603,10 +615,10 @@ async function assertRegistryAndSession(
         ].join("\n"),
       ).toBe(
         [
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          "NVIDIA_INFERENCE_API_KEY",
-          "openai-completions",
-          PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+          SWITCH_PROFILE?.endpoint,
+          SWITCH_PROFILE?.credentialEnv,
+          SWITCH_INFERENCE_API,
+          expectedNativeSwitchAttachmentEvidence(SWITCH_PROVIDER),
         ].join("\n"),
       );
       break;
@@ -620,6 +632,7 @@ async function readAndAssertOpenClawConfig(
     model: string;
     inferenceApi: string;
     artifactName: string;
+    baseline?: boolean;
   },
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
@@ -640,14 +653,12 @@ async function readAndAssertOpenClawConfig(
   const selectedModel = provider?.models?.find((entry) => entry.id === expected.model);
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
-  expect(provider?.baseUrl).toBe(
-    SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : expected.inferenceApi === "anthropic-messages"
-        ? "https://inference.local"
-        : "https://inference.local/v1",
+  const route = openClawSwitchRoute(
+    expected.baseline && FIXED_HOSTED_SWITCH ? null : SWITCH_PROVIDER,
+    expected.inferenceApi,
   );
-  expect(provider?.apiKey).toBe("unused");
+  expect(provider?.baseUrl).toBe(route.baseUrl);
+  expect(provider?.apiKey).toBe(route.apiKey);
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
@@ -675,7 +686,10 @@ async function assertInitialOpenClawConfig(
     artifactName: string;
   },
 ): Promise<void> {
-  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
+  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, {
+    ...expected,
+    baseline: true,
+  });
   expect(selectedModel?.contextWindow).toBeUndefined();
   expect(selectedModel?.maxTokens).toBeUndefined();
 }
@@ -737,15 +751,10 @@ async function checkSandboxInference(
       : {
           model: SWITCH_MODEL,
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-          max_tokens: 100,
+          [resolveMaxTokensField(SWITCH_MODEL)]: 100,
         };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-  const curlCommand =
-    SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H '${NATIVE_NVIDIA_AUTH_HEADER}' --data-binary @/tmp/nemoclaw-switch-payload.json`
-      : SWITCH_INFERENCE_API === "anthropic-messages"
-        ? `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' --data-binary @/tmp/nemoclaw-switch-payload.json`
-        : `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data-binary @/tmp/nemoclaw-switch-payload.json`;
+  const curlCommand = openClawSwitchCurlCommand(SWITCH_PROVIDER, SWITCH_INFERENCE_API);
   const script = [
     "set -u",
     "tmp=$(mktemp)",
@@ -827,7 +836,7 @@ async function checkSandboxInference(
   const lastFailure = execution.value?.lastFailure ?? "probe failed without a result";
   if (execution.evidence.outcome === "exhausted") {
     const exhausted = classifyExhaustedPostSwitchEvidence({
-      required: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      required: Boolean(SWITCH_PROFILE),
       lastFailure,
     });
     return exhausted.outcome === "failed"
@@ -1040,7 +1049,7 @@ async function runOpenClawInferenceSetWithRetry(
   home: string,
   redactionValues: string[],
   switchBinding: CompatibleAnthropicSwitchBinding | null,
-  publicNvidiaApiKey: string | null,
+  nativeApiKey: string | null,
   artifacts: { writeJson(path: string, value: unknown): Promise<string> },
 ): Promise<ShellProbeResult> {
   const attempts = inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS);
@@ -1084,7 +1093,9 @@ async function runOpenClawInferenceSetWithRetry(
         artifactName: `nemoclaw-inference-set-${attempt}`,
         env: {
           ...compatibleAnthropicSwitchEnv(switchBinding),
-          ...(publicNvidiaApiKey ? { NVIDIA_INFERENCE_API_KEY: publicNvidiaApiKey } : {}),
+          ...(nativeApiKey && SWITCH_PROFILE
+            ? { [SWITCH_PROFILE.credentialEnv]: nativeApiKey }
+            : {}),
         },
         redactionValues,
         timeoutMs: COMMAND_TIMEOUT_MS,
@@ -1149,12 +1160,14 @@ test(
     });
 
     const useMockBaseline =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
+      FIXED_HOSTED_SWITCH ||
+      (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
+          chatContent: "PONG",
           host: "0.0.0.0",
           model: MOCK_BASELINE_MODEL,
           publicHost: "host.openshell.internal",
@@ -1166,13 +1179,16 @@ test(
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
         : null;
+    const nativeApiKey = SWITCH_PROFILE
+      ? (publicApiKey ?? secrets.required(SWITCH_PROFILE.credentialEnv))
+      : null;
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig({
           required: (name) => publicApiKey ?? secrets.required(name),
         });
     const apiKey = baseline.apiKey;
-    const redactionValues = [apiKey, publicApiKey].filter(
+    const redactionValues = [apiKey, publicApiKey, nativeApiKey].filter(
       (value): value is string => typeof value === "string",
     );
 
@@ -1229,7 +1245,7 @@ test(
     const providerValidationUnavailable =
       onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText);
     const unavailable = classifyUnavailableInitialProviderEvidence({
-      required: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      required: Boolean(SWITCH_PROFILE),
       detail: onboardText,
     });
     if (providerValidationUnavailable && unavailable.outcome === "skipped") {
@@ -1288,7 +1304,7 @@ test(
       redactionValues,
       false,
     );
-    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
+    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1" || SWITCH_PROVIDER === "anthropic-prod";
     expect(SWITCH_INFERENCE_API).toBe(
       apiFamilyChanges ? "anthropic-messages" : "openai-completions",
     );
@@ -1298,7 +1314,7 @@ test(
       home,
       redactionValues,
       switchBinding,
-      publicApiKey,
+      nativeApiKey,
       artifacts,
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);

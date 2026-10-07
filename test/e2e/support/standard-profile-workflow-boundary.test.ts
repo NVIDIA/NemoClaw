@@ -288,7 +288,7 @@ describe("standard E2E execution profile", () => {
       });
       expect(valid.status, valid.stderr).toBe(0);
       expect(fs.readFileSync(githubOutput, "utf8")).toBe(
-        "artifact_directory=e2e-artifacts/live/hermes-inference-switch/anthropic\n" +
+        "hosted_credential=\nartifact_directory=e2e-artifacts/live/hermes-inference-switch/anthropic\n" +
           "upload_name=e2e-hermes-inference-switch-anthropic-podman\n",
       );
       expect(fs.readFileSync(githubEnvironment, "utf8")).toBe(

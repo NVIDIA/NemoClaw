@@ -31,7 +31,10 @@ import {
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
+import { FIXED_HOSTED_QUALIFICATIONS } from "./fixed-hosted-qualification.mts";
+
 export const E2E_EXECUTION_PROFILES = [
+  "fixed-hosted",
   "standard",
   "nvidia-api",
   "nvidia-inference",
@@ -1620,6 +1623,33 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: false,
     exposeCliBin: false,
   }),
+  ...FIXED_HOSTED_QUALIFICATIONS.map((selection) => ({
+    ...target(selection.id, {
+      displayName: `Inference: ${selection.agent} switches to ${selection.provider}`,
+      agentRuntime: selection.agent,
+      environmentOrInferenceEndpoint: `Ubuntu; native ${selection.provider} inference`,
+      profile: "fixed-hosted",
+      targetId: `${selection.agent}-inference-switch`,
+      testFile: `test/e2e/live/${selection.agent}-inference-switch.test.ts`,
+      timeoutMinutes: selection.agent === "openclaw" ? 90 : 55,
+      installMode: selection.agent === "openclaw" ? "none" : "authenticated",
+      installNonInteractive: true,
+      restoreCli: true,
+      exposeCliBin: true,
+      hostPreparation: selection.agent === "hermes" ? "hermes-swap" : "none",
+      shard: selection.provider,
+      gatewayRuntimes: ["docker"],
+      environment: {
+        ...nonInteractive,
+        NEMOCLAW_AGENT: selection.agent,
+        NEMOCLAW_SWITCH_PROVIDER: selection.provider,
+        NEMOCLAW_SWITCH_INFERENCE_API: selection.protocol,
+        NEMOCLAW_SANDBOX_NAME: `e2e-${selection.agent}-${selection.provider}`,
+        OPENSHELL_GATEWAY: "nemoclaw",
+      },
+    }),
+    releaseRequired: false,
+  })),
 ] as const;
 
 export const E2E_CATALOGUE_SHARED_PATHS = [
@@ -1821,13 +1851,15 @@ export function catalogueTargetsForChangedFiles(
 ): E2eCatalogueTarget[] {
   const files = [...new Set(changedFiles)];
   if (files.some((file) => E2E_CATALOGUE_SHARED_PATHS.some((owner) => pathMatches(file, owner)))) {
-    return [...E2E_TARGET_CATALOGUE];
+    return E2E_TARGET_CATALOGUE.filter((entry) => entry.profile !== "fixed-hosted");
   }
-  return E2E_TARGET_CATALOGUE.filter((entry) =>
-    files.some(
-      (file) =>
-        file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
-    ),
+  return E2E_TARGET_CATALOGUE.filter(
+    (entry) =>
+      entry.profile !== "fixed-hosted" &&
+      files.some(
+        (file) =>
+          file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
+      ),
   );
 }
 
