@@ -141,11 +141,14 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: build\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
       // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
-      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", {
+        provider: "build",
+        openshellDriver: "docker",
+      });
       // Record docker argv and make `docker inspect` fail like an absent legacy
       // container would. The doctor must not even attempt the inspect, so this
       // should never produce a failure — and we assert the call was skipped, not
@@ -206,10 +209,11 @@ describe("CLI dispatch", () => {
       '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
       '  "sandbox list -g nemoclaw-8090") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: build\\nModel: test-model\\n"; exit 0 ;;',
       "esac",
     ]);
     writeDoctorSandboxRegistry(setup.home, "alpha", {
+      provider: "build",
       gatewayName: "nemoclaw-8090",
       gatewayPort: 8090,
       openshellDriver: "docker",
@@ -273,10 +277,13 @@ describe("CLI dispatch", () => {
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: build\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
-      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", {
+        provider: "build",
+        openshellDriver: "kubernetes",
+      });
 
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
@@ -367,11 +374,14 @@ describe("CLI dispatch", () => {
           '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
           '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-          '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+          '  "inference get") printf "Provider: build\\nModel: test-model\\n"; exit 0 ;;',
           "esac",
         ],
       );
-      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", {
+        provider: "build",
+        openshellDriver: "kubernetes",
+      });
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
       writeLocalGatewayProbeStubs(setup, hostCalls, {

@@ -35,6 +35,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
+export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
@@ -237,6 +238,9 @@ is_managed_token_value_for_name() {
   case "$name" in
     DEEPAGENTS_CODE_OPENAI_API_KEY)
       [ "$value" = "nemoclaw-managed-inference" ] && return 0
+      ;;
+    NEMOCLAW_ATTACHED_PROVIDER_API_KEY)
+      [ "$value" = "nemoclaw-openshell-provider" ] && return 0
       ;;
     SLACK_BOT_TOKEN)
       case "$value" in

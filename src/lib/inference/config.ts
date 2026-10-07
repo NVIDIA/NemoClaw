@@ -13,6 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
@@ -21,6 +22,18 @@ import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
 export { isSafeModelId };
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
+export {
+  detachNativeNvidiaProvider,
+  ensureNativeNvidiaProvider,
+  ensureNativeNvidiaProviderAttached,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
+  resolveGatewayNativeNvidiaProviderAuthority,
+} from "./native-nvidia";
+export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -218,6 +231,13 @@ export function getProviderSelectionConfig(
 
   switch (provider) {
     case "nvidia-prod":
+      return {
+        ...base,
+        endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        model: model || DEFAULT_CLOUD_MODEL,
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerLabel: "NVIDIA Endpoints",
+      };
     case "nvidia-nim":
       return {
         ...base,
@@ -383,6 +403,14 @@ export function getSandboxInferenceConfig(
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       break;
     case "nvidia-prod":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      inferenceBaseUrl = NVIDIA_HOSTED_NATIVE_ENDPOINT;
+      inferenceApi = "openai-completions";
+      inferenceCompat = {
+        supportsStore: false,
+      };
+      break;
     case "nvidia-nim":
     default:
       providerKey = MANAGED_PROVIDER_ID;

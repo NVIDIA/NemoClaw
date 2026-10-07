@@ -210,9 +210,10 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 ## Inference Routing
 
-Managed agent runtimes send model requests to `inference.local` instead of an upstream endpoint.
-During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell inference route, and writes the matching model reference into the managed agent configuration.
-OpenShell keeps the provider credential outside the sandbox and sends approved requests to the upstream endpoint.
+Most managed providers send model requests through `inference.local` instead of directly to an upstream endpoint.
+NVIDIA Endpoints uses a sandbox-attached OpenShell provider that permits approved requests to `integrate.api.nvidia.com`.
+During onboarding, NemoClaw validates the selected provider and model, configures the applicable OpenShell route or provider attachment, and writes the matching model reference into the managed agent configuration.
+In both paths, OpenShell keeps the provider credential outside the sandbox and sends only approved requests to the upstream endpoint.
 When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from a configured model pool available through NVIDIA Endpoints for each request.
 
 <AgentOnly variant="hermes">

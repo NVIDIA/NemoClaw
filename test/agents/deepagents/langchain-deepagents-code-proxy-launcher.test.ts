@@ -710,8 +710,12 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     expect(headlessCheck).toContain("getent hosts inference.local >/dev/null 2>&1");
     expect(headlessCheck).toContain("direct inference.local DNS/hosts is absent");
     expect(headlessCheck).toContain('stat -c "%u:%a"');
-    expect(headlessCheck).toContain("direct-exec dcode -n reached managed inference");
-    expect(headlessCheck).toContain("connect --probe-only accepted the managed inference route");
+    expect(headlessCheck).toContain(
+      "direct-exec dcode -n reached ${route_contract:-unknown} inference",
+    );
+    expect(headlessCheck).toContain(
+      "connect --probe-only accepted the ${route_contract:-unknown} inference route",
+    );
   });
 
   it.each([

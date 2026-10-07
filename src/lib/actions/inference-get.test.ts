@@ -172,6 +172,36 @@ function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: st
 }
 
 describe("runInferenceGet", () => {
+  it("reads a recorded native NVIDIA route without consulting the shared gateway route", async () => {
+    const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      },
+    };
+    deps.getDefaultSandbox = () => "alpha";
+    deps.getSandbox = () => sandbox;
+
+    await expect(runInferenceGet({}, deps)).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+    });
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: nvidia-prod",
+      "Model:    nvidia/nemotron-3-super-120b-a12b",
+      "Endpoint: https://integrate.api.nvidia.com/v1",
+    ]);
+  });
+
   it("prints the live provider and model", async () => {
     const deps = createDeps(configuredRoute("nvidia-prod", "nvidia/model"));
 

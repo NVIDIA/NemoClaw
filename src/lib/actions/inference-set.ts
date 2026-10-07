@@ -13,7 +13,16 @@ import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  detachNativeNvidiaProvider,
+  ensureNativeNvidiaProvider,
+  ensureNativeNvidiaProviderAttached,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
+  resolveGatewayNativeNvidiaProviderAuthority,
   resolveAgentInferenceApi,
+  type NativeNvidiaProviderAttachment,
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
@@ -170,6 +179,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     sandboxes: SandboxEntry[];
     defaultSandbox: string | null;
   };
+  getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -302,6 +313,8 @@ function defaultDeps(): InferenceSetDeps {
     getDefaultSandbox: registry.getDefault,
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
+    getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -921,6 +934,209 @@ function assertReasoningEffortRoute(
   }
 }
 
+function assertNativeNvidiaMigrationReady(input: {
+  provider: string;
+  previousProvider: string;
+  previousAttachment?: NativeNvidiaProviderAttachment;
+  sandboxName: string;
+}): void {
+  if (
+    isNativeNvidiaProvider(input.provider) &&
+    isNativeNvidiaProvider(input.previousProvider) &&
+    !input.previousAttachment
+  ) {
+    throw new InferenceSetError(
+      `Sandbox '${input.sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before changing its NVIDIA model.`,
+      2,
+    );
+  }
+}
+
+async function prepareNativeNvidiaSelection(input: {
+  provider: string;
+  expectedAttachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  deps: InferenceSetDeps;
+}): Promise<{
+  attachment?: NativeNvidiaProviderAttachment;
+  attachmentChanged: boolean;
+}> {
+  if (!isNativeNvidiaProvider(input.provider)) return { attachmentChanged: false };
+  const target = { kind: "named", gatewayName: input.gatewayName } as const;
+  const ensured = await ensureNativeNvidiaProvider({
+    adapter: input.deps.providerAdapter,
+    target,
+    credentialValue: input.deps.resolveCredentialValue(NVIDIA_HOSTED_CREDENTIAL_ENV) || null,
+    ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
+  });
+  if (input.deps.getNativeNvidiaProviderAuthority) {
+    await persistNativeNvidiaProviderAuthority({
+      adapter: input.deps.providerAdapter,
+      target,
+      gatewayName: input.gatewayName,
+      receipt: ensured,
+      ...(input.expectedAttachment ? { existing: input.expectedAttachment } : {}),
+      readAuthority: input.deps.getNativeNvidiaProviderAuthority,
+      writeAuthority: input.deps.setNativeNvidiaProviderAuthority,
+    });
+  } else {
+    input.deps.setNativeNvidiaProviderAuthority(input.gatewayName, ensured);
+  }
+  const attached = await ensureNativeNvidiaProviderAttached({
+    adapter: input.deps.providerAdapter,
+    target,
+    sandboxName: input.sandboxName,
+    expected: ensured,
+  });
+  return { attachment: attached.receipt, attachmentChanged: attached.changed };
+}
+
+async function rollbackNativeNvidiaSelection(input: {
+  attachmentChanged: boolean;
+  registryCommitted: boolean;
+  attachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  error: unknown;
+  deps: InferenceSetDeps;
+}): Promise<void> {
+  if (!input.attachmentChanged || input.registryCommitted || !input.attachment) return;
+  try {
+    await detachNativeNvidiaProvider({
+      adapter: input.deps.providerAdapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: input.attachment,
+    });
+  } catch (rollbackError) {
+    const detail = input.error instanceof Error ? input.error.message : String(input.error);
+    const rollbackDetail =
+      rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+    throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`);
+  }
+}
+
+async function detachPreviousNativeNvidiaBeforePublish(input: {
+  selectingNativeNvidia: boolean;
+  previousAttachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  deps: InferenceSetDeps;
+}): Promise<boolean> {
+  if (input.selectingNativeNvidia || !input.previousAttachment) return false;
+  await detachNativeNvidiaProvider({
+    adapter: input.deps.providerAdapter,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.previousAttachment,
+  });
+  return true;
+}
+
+function nativeNvidiaDepartureRegistryFields(
+  detached: boolean,
+): Pick<SandboxEntry, "nativeNvidiaProviderAttachment"> | Record<string, never> {
+  return detached ? { nativeNvidiaProviderAttachment: undefined } : {};
+}
+
+async function restorePreviousNativeNvidiaAfterFailedPublish(input: {
+  detached: boolean;
+  committed: boolean;
+  previousAttachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  error: unknown;
+  deps: InferenceSetDeps;
+}): Promise<void> {
+  if (!input.detached || input.committed || !input.previousAttachment) return;
+  try {
+    await ensureNativeNvidiaProviderAttached({
+      adapter: input.deps.providerAdapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: input.previousAttachment,
+    });
+  } catch (reattachError) {
+    const detail = input.error instanceof Error ? input.error.message : String(input.error);
+    const recoveryDetail =
+      reattachError instanceof Error ? reattachError.message : String(reattachError);
+    throw new InferenceSetError(
+      `${detail}\n  Native NVIDIA access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
+      input.error instanceof InferenceSetError ? input.error.exitCode : 1,
+    );
+  }
+}
+
+async function applyInferenceRouteSelection(input: {
+  nativeNvidia: boolean;
+  provider: string;
+  model: string;
+  gatewayName: string;
+  noVerify: boolean;
+  retryProviderNotFound: boolean;
+  onAmbiguousFailure: () => void;
+  deps: InferenceSetDeps;
+}): Promise<boolean> {
+  if (input.nativeNvidia) {
+    input.deps.log(`  Using attached native NVIDIA provider: ${input.provider} / ${input.model}`);
+    return false;
+  }
+  input.deps.log(`  Setting OpenShell inference route: ${input.provider} / ${input.model}`);
+  const setInferenceRoute = () =>
+    input.deps.inferenceRouteMutator.setInferenceRoute({
+      target: { kind: "named", gatewayName: input.gatewayName },
+      route: { provider: input.provider, model: input.model },
+      verification: input.noVerify ? "skip" : "required",
+    });
+  let setResult = await setInferenceRoute();
+  if (
+    !setResult.ok &&
+    !setResult.ambiguous &&
+    input.retryProviderNotFound &&
+    setResult.error.kind === "command" &&
+    setResult.error.reason === "provider_not_found"
+  ) {
+    setResult = await setInferenceRoute();
+  }
+  if (setResult.ok) return true;
+  if (setResult.ambiguous) input.onAmbiguousFailure();
+  const failure = await buildInferenceSetFailure(
+    setResult.error,
+    setResult.ambiguous,
+    input.gatewayName,
+    input.deps,
+  );
+  throw new InferenceSetError(failure.message, failure.exitCode);
+}
+
+function observeInferenceRouteForSelection(input: {
+  nativeNvidia: boolean;
+  gatewayName: string;
+  deps: InferenceSetDeps;
+}): Promise<OpenShellInferenceRouteObservation> {
+  if (input.nativeNvidia) return Promise.resolve({ state: "unconfigured" });
+  return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
+}
+
+function providerBackedRouteLacksRollbackTarget(input: {
+  nativeNvidia: boolean;
+  directProviderBinding: boolean;
+  httpsPinProviderBinding: boolean;
+  probeDirectSandboxBridge: boolean;
+  rollbackRoute: boolean;
+  previousNativeNvidiaAttachment: boolean;
+}): boolean {
+  return (
+    !input.nativeNvidia &&
+    (input.directProviderBinding ||
+      input.httpsPinProviderBinding ||
+      input.probeDirectSandboxBridge) &&
+    !input.rollbackRoute &&
+    !input.previousNativeNvidiaAttachment
+  );
+}
+
 function recordedDirectProviderBindingMismatches(options: {
   entry: SandboxEntry;
   provider: string;
@@ -1144,6 +1360,7 @@ async function runInferenceSetWithoutHostLock(
   // Registered peers are compared exactly as recorded. In particular, a
   // stopped legacy Hermes row that still records the Anthropic frontend will
   // depend on that route when restarted and must not be normalized away.
+  const selectingNativeNvidia = isNativeNvidiaProvider(provider);
   const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
     entry: routeEntry,
@@ -1152,7 +1369,7 @@ async function runInferenceSetWithoutHostLock(
     model,
     customRoute,
     session: routeSession,
-    sandboxes: routeSandboxes,
+    sandboxes: selectingNativeNvidia ? [] : routeSandboxes,
   });
   if (preparedRoute.gatewayName !== expectedGatewayName) {
     throw new InferenceSetError(
@@ -1161,10 +1378,11 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const preMutationRoute = await observeInferenceRouteBeforeMutation(
+  const preMutationRoute = await observeInferenceRouteForSelection({
+    nativeNvidia: selectingNativeNvidia,
+    gatewayName: preparedRoute.gatewayName,
     deps,
-    preparedRoute.gatewayName,
-  );
+  });
   const target = resolveMatchingAgentConfigTarget(deps, sandboxName, agentName);
   // Explicit custom routes may start an HTTPS-pin adapter during finalization,
   // so reject an unsupported API family before that first possible mutation.
@@ -1227,6 +1445,7 @@ async function runInferenceSetWithoutHostLock(
   // OpenRouter onboarding registers a sandbox-facing adapter without a custom
   // provider binding. Verify its model switches through the sandbox route too.
   const probeSandboxRoute =
+    selectingNativeNvidia ||
     provider === "openrouter-api" ||
     isSandboxBridgeProviderBinding(directProviderBinding) ||
     loopbackNoAuthProxyRoute;
@@ -1307,6 +1526,22 @@ async function runInferenceSetWithoutHostLock(
   assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
+  const previousNativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
+    entry.nativeNvidiaProviderAttachment,
+  );
+  assertNativeNvidiaMigrationReady({
+    provider,
+    previousProvider,
+    previousAttachment: previousNativeNvidiaAttachment,
+    sandboxName,
+  });
+  const nativeNvidiaProviderAuthority = selectingNativeNvidia
+    ? resolveGatewayNativeNvidiaProviderAuthority({
+        gatewayName: preparedRoute.gatewayName,
+        gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(preparedRoute.gatewayName),
+        recordedAttachment: previousNativeNvidiaAttachment,
+      })
+    : undefined;
   const rollbackRoute = preMutationRoute.state === "configured" ? preMutationRoute.route : null;
   // Capture before registry writes: a retry already has the new route, while
   // the sandbox config can still carry the previous endpoint's context window.
@@ -1320,7 +1555,16 @@ async function runInferenceSetWithoutHostLock(
         [previousInferenceApi, preMutationInferenceApi],
         [entry.endpointUrl ?? null, registryMetadata.endpointUrl ?? null],
       ].some(([previous, next]) => previous !== next));
-  if ((directProviderBinding || httpsPinProviderBinding || probeSandboxRoute) && !rollbackRoute) {
+  if (
+    providerBackedRouteLacksRollbackTarget({
+      nativeNvidia: selectingNativeNvidia,
+      directProviderBinding: Boolean(directProviderBinding),
+      httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
+      probeDirectSandboxBridge: probeSandboxRoute,
+      rollbackRoute: Boolean(rollbackRoute),
+      previousNativeNvidiaAttachment: Boolean(previousNativeNvidiaAttachment),
+    })
+  ) {
     throw new InferenceSetError(
       `Cannot change the provider-backed route because gateway '${preparedRoute.gatewayName}' has no configured ` +
         "inference selection to restore if provider commit or sandbox verification fails.",
@@ -1335,7 +1579,16 @@ async function runInferenceSetWithoutHostLock(
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
+  let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
+  let nativeNvidiaAttachmentChanged = false;
+  let nativeNvidiaRegistryCommitted = false;
+  let previousNativeNvidiaDetached = false;
+  let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
+    if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
+      appliedInferenceSelection = false;
+      return null;
+    }
     if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
     if (rollbackRoute.provider === provider && rollbackRoute.model === model) {
       return (
@@ -1362,6 +1615,15 @@ async function runInferenceSetWithoutHostLock(
     return null;
   };
   try {
+    const nativeNvidiaSelection = await prepareNativeNvidiaSelection({
+      provider,
+      expectedAttachment: nativeNvidiaProviderAuthority,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      deps,
+    });
+    nativeNvidiaProviderAttachment = nativeNvidiaSelection.attachment;
+    nativeNvidiaAttachmentChanged = nativeNvidiaSelection.attachmentChanged;
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
@@ -1419,34 +1681,18 @@ async function runInferenceSetWithoutHostLock(
 
     await assertProviderCurrentBeforeSelection?.();
     if (routeImpactWarning) deps.log(`  ${routeImpactWarning}`);
-    deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-    const setInferenceRoute = () =>
-      deps.inferenceRouteMutator.setInferenceRoute({
-        target: { kind: "named", gatewayName: preparedRoute.gatewayName },
-        route: { provider, model },
-        verification: effectiveNoVerify ? "skip" : "required",
-      });
-    let setResult = await setInferenceRoute();
-    if (
-      !setResult.ok &&
-      !setResult.ambiguous &&
-      directProviderBinding &&
-      setResult.error.kind === "command" &&
-      setResult.error.reason === "provider_not_found"
-    ) {
-      setResult = await setInferenceRoute();
-    }
-    if (!setResult.ok) {
-      ambiguousInferenceSelection = setResult.ambiguous;
-      const failure = await buildInferenceSetFailure(
-        setResult.error,
-        setResult.ambiguous,
-        preparedRoute.gatewayName,
-        deps,
-      );
-      throw new InferenceSetError(failure.message, failure.exitCode);
-    }
-    appliedInferenceSelection = true;
+    appliedInferenceSelection = await applyInferenceRouteSelection({
+      nativeNvidia: selectingNativeNvidia,
+      provider,
+      model,
+      gatewayName: preparedRoute.gatewayName,
+      noVerify: effectiveNoVerify,
+      retryProviderNotFound: Boolean(directProviderBinding),
+      onAmbiguousFailure: () => {
+        ambiguousInferenceSelection = true;
+      },
+      deps,
+    });
     if (providerMutation) {
       try {
         await providerMutation.commit();
@@ -1474,6 +1720,7 @@ async function runInferenceSetWithoutHostLock(
               provider,
               model,
               preferredInferenceApi: preMutationInferenceApi,
+              ...(selectingNativeNvidia ? { nativeProvider: true } : {}),
             },
             previousProvider,
             previousModel,
@@ -1524,6 +1771,17 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
+    // Removing native NVIDIA access is a security gate for publishing another
+    // route. Do not commit the non-native registry/config while the sandbox can
+    // still use the credential-bearing attached provider.
+    previousNativeNvidiaDetached = await detachPreviousNativeNvidiaBeforePublish({
+      selectingNativeNvidia,
+      previousAttachment: previousNativeNvidiaAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      deps,
+    });
+
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
     const registryFields = (preferredInferenceApi: string | null) => ({
@@ -1543,6 +1801,8 @@ async function runInferenceSetWithoutHostLock(
         nimContainer: registryMetadata.nimContainer ?? null,
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
+      ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...nativeNvidiaDepartureRegistryFields(previousNativeNvidiaDetached),
     });
     if (
       !deps.updateSandbox(
@@ -1560,6 +1820,8 @@ async function runInferenceSetWithoutHostLock(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );
     }
+    nativeNvidiaRegistryCommitted = Boolean(nativeNvidiaProviderAttachment);
+    previousNativeNvidiaDetachCommitted = previousNativeNvidiaDetached;
 
     const preferredInferenceApi =
       explicitPreferredInferenceApi ??
@@ -1739,6 +2001,24 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    await restorePreviousNativeNvidiaAfterFailedPublish({
+      detached: previousNativeNvidiaDetached,
+      committed: previousNativeNvidiaDetachCommitted,
+      previousAttachment: previousNativeNvidiaAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      error,
+      deps,
+    });
+    await rollbackNativeNvidiaSelection({
+      attachmentChanged: nativeNvidiaAttachmentChanged,
+      registryCommitted: nativeNvidiaRegistryCommitted,
+      attachment: nativeNvidiaProviderAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      error,
+      deps,
+    });
     if (!providerMutation) throw error;
     if (ambiguousInferenceSelection) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
@@ -1830,7 +2110,8 @@ export async function runInferenceSet(
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
     await completeInferencePostCommit(mutation, deps);
-    // Keep recovery pending until both the running gateway and pairing have converged.
+    // The agent config has converged once post-commit work succeeds. Do not
+    // leave its recovery marker pending if later provider cleanup fails.
     if (mutation.openClawConfigSyncPending) {
       clearOpenClawConfigSyncPending(selected.sandboxName, deps);
     }
