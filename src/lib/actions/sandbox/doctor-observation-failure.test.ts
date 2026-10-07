@@ -65,11 +65,15 @@ vi.mock("../../state/registry", () => ({
   getSandbox: () => null,
 }));
 
-vi.mock("./doctor-inference", () => ({
-  collectInferenceChecks: () => [],
-  collectManagedLlamaCppDoctorChecks: () => [],
-  resolveDoctorReasoningEffort: () => undefined,
-}));
+vi.mock("./doctor-inference", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./doctor-inference")>();
+  return {
+    ...actual,
+    collectInferenceChecks: () => [],
+    collectManagedLlamaCppDoctorChecks: () => [],
+    resolveDoctorReasoningEffort: () => undefined,
+  };
+});
 
 vi.mock("./doctor-system-checks", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./doctor-system-checks")>();

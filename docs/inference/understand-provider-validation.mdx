@@ -52,7 +52,7 @@ If the last retry fails or times out, validation stops without another Chat Comp
 
 <AgentOnly variant="deepagents">
 
-The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions through `https://inference.local/v1`.
+The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions. Most providers use `https://inference.local/v1`; NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `https://integrate.api.nvidia.com/v1`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
 
 </AgentOnly>

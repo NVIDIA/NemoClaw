@@ -373,7 +373,9 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">
-    After confirmation, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
+    After confirmation, NemoClaw registers the selected provider with OpenShell.
+    Most providers use the shared `inference.local` route.
+    NVIDIA Endpoints uses a least-privilege provider attached to the sandbox instead.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
     NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
@@ -410,7 +412,7 @@ Use these details when your first-run path needs more control.
     The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
     Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
 
-    Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
+    Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and selected inference path are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.
     Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
     Restore the configured endpoint or proxy, run `nemoclaw onboard --resume` to complete the retained onboarding session, then rerun `nemoclaw <sandbox-name> status` to verify the route.
