@@ -24,13 +24,15 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
-REDACTION_PROBE_STARTED=0
+DIRECT_TURN_STARTED=0
+DIRECT_OUTPUT="${CAPTURE_DIR}/direct.stdout"
+DIRECT_PROBE_CWD="/sandbox/.deepagents/${CAPTURE_DIR##*/}"
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
 SERVICE_NAME="nemoclaw-langchain-deepagents-code"
 ALLOWED_PROBE="NEMOCLAW_OTLP_ALLOWED_PROBE"
-DIRECT_PROMPT="NEMOCLAW_OTLP_DIRECT_PROMPT_SENTINEL_${CAPTURE_DIR##*/}"
+DIRECT_PROMPT="NEMOCLAW_OTLP_DIRECT_PROMPT_SENTINEL"
 DIRECT_RESPONSE="NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL"
 LOGIN_PROMPT="NEMOCLAW_OTLP_LOGIN_PROMPT_SENTINEL"
 LOGIN_RESPONSE="NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL"
@@ -40,7 +42,6 @@ TOOL_RESULT="NEMOCLAW_OTLP_TOOL_RESULT_SENTINEL"
 AMBIENT_CANARY="NEMOCLAW_OTLP_AMBIENT_EXPORTER_CANARY"
 REDACTION_PROBE="sk-EXAMPLE0000000000000000000000"
 REDACTION_MARKER="<redacted-secret>"
-DIRECT_INPUT="My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -82,43 +83,18 @@ restore_observability_policy() {
   OBSERVABILITY_POLICY_DIRTY=0
 }
 
-cleanup_redaction_probe() {
-  [ "$REDACTION_PROBE_STARTED" -eq 1 ] || return 0
-  local source
-  source="$(
-    cat <<'PY'
-import asyncio
-import sys
-
-from deepagents_code import sessions
-
-async def main():
-    threads = await sessions.list_threads(limit=1001)
-    if len(threads) > 1000:
-        raise RuntimeError("Too many threads to identify the test-owned redaction probe")
-    await sessions.populate_thread_checkpoint_details(
-        threads, include_message_count=False, include_initial_prompt=True
-    )
-    owned = [t["thread_id"] for t in threads if t.get("initial_prompt") == sys.argv[1]]
-    if len(owned) > 1 or (not owned and sys.argv[2] == "required"):
-        raise RuntimeError("Expected exactly one test-owned redaction probe thread")
-    for thread_id in owned:
-        if not await sessions.delete_thread(thread_id) or await sessions.thread_exists(thread_id):
-            raise RuntimeError("Could not remove the test-owned redaction probe thread")
-
-asyncio.run(main())
-PY
-  )"
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    /opt/venv/bin/python3 -I -c "$source" "$DIRECT_INPUT" "${1:-optional}" || return 1
-  REDACTION_PROBE_STARTED=0
-}
-
 cleanup() {
   local exit_status="$?"
   trap - EXIT
-  if ! cleanup_redaction_probe; then
-    printf '%s: redaction probe thread cleanup failed\n' "$PREFIX" >&2
+  # The redaction probe is deliberately credential-shaped. Remove only its
+  # native thread so a later rebuild can inspect the retained conversations.
+  if [ "$DIRECT_TURN_STARTED" -eq 1 ] && ! cleanup_probe_thread; then
+    printf '%s: probe conversation cleanup failed; retained directory: %s\n' \
+      "$PREFIX" "$DIRECT_PROBE_CWD" >&2
+    printf 'Inspect only this probe: openshell sandbox exec --name %q -- dcode threads list --cwd %q --limit 2 --json\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
+    printf 'After deleting the matching probe thread, remove its empty directory: openshell sandbox exec --name %q -- rmdir -- %q\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
     exit_status=1
   fi
   if ! restore_observability_policy; then
@@ -134,6 +110,8 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
 
@@ -316,10 +294,33 @@ binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER
 pass "OTLP route is denied to an unmanaged binary"
 
 run_dcode_direct() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
+  timeout --kill-after=5 120 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    env --chdir="$DIRECT_PROBE_CWD" OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode -n "$DIRECT_INPUT" 2>&1
+    dcode --json --timeout 90 -n \
+    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." \
+    2>"${CAPTURE_DIR}/direct.stderr"
+}
+
+cleanup_probe_thread() {
+  local thread_id threads
+  if ! thread_id="$("$TSX" "$CONTRACT_HELPER" probe-thread-id <"$DIRECT_OUTPUT" 2>/dev/null)"; then
+    printf '%s: recovering probe conversation in %s\n' "$PREFIX" "$DIRECT_PROBE_CWD" >&2
+    threads="$(timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads list --cwd "$DIRECT_PROBE_CWD" --limit 2 --json)" || return 1
+    thread_id="$(printf '%s\n' "$threads" | "$TSX" "$CONTRACT_HELPER" probe-thread-id "$DIRECT_PROBE_CWD")" \
+      || return 1
+  fi
+  if [ -n "$thread_id" ]; then
+    printf '%s: probe conversation cleanup: dcode threads delete %s --json\n' \
+      "$PREFIX" "$thread_id" >&2
+    # Native deletion succeeds when the exact thread is removed or already absent.
+    timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads delete "$thread_id" --json >/dev/null || return 1
+  fi
+  # Keep the owned directory on failure so its exact cwd remains recoverable.
+  timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    rmdir -- "$DIRECT_PROBE_CWD"
 }
 
 run_dcode_login() {
@@ -424,8 +425,12 @@ marker_output="$(observability_marker_value)" \
 [ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
 pass "host observability policy is restored before positive trace checks"
 
-REDACTION_PROBE_STARTED=1
-direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
+timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  mkdir -m 0700 -- "$DIRECT_PROBE_CWD" || fail "could not create private probe working directory"
+DIRECT_TURN_STARTED=1
+# Preserve native cancellation metadata before the parent resumes or exits.
+run_dcode_direct >"$DIRECT_OUTPUT" || fail "direct-exec dcode observability turn failed"
+direct_output="$(cat "$DIRECT_OUTPUT")"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"
@@ -473,9 +478,4 @@ done
   || fail "captured OTLP contract did not become valid: $validation_output"
 
 pass "decoded OTLP associates model/tool content and excludes ambient exporter configuration"
-# The synthetic key must remain in native history until the trace assertion.
-# Then remove only this run's probe through native session deletion, so later
-# rebuild/export checks still reject credentials instead of our test fixture.
-cleanup_redaction_probe required || fail "could not remove the test-owned redaction probe thread"
-pass "test-owned redaction probe thread is removed before rebuild and export"
-printf '%s: 15 passed, 0 failed\n' "$PREFIX"
+printf '%s: 14 passed, 0 failed\n' "$PREFIX"

@@ -235,6 +235,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
     );
+    expect(dockerfile).toContain(
+      "COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts",
+    );
     expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
@@ -385,6 +388,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=1`);
       expect(envFileLines).toContain(`export ${name}=1`);
     }
+    expect(envFileLines).toContain(
+      "export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider",
+    );
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
@@ -454,6 +460,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "nemoclaw_read_only_mcp.py",
         "patch-managed-deepagents-code.py",
         "patch-managed-quickjs.py",
+        "validate-quickjs-runtime.py",
         "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
@@ -474,7 +481,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
         "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
-        'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+        "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
         "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
@@ -484,7 +491,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
     );
     const quickjsProbeIndex = dockerfile.indexOf(
-      'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+      "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
     );
     const quickjsCleanupIndex = dockerfile.indexOf(
       "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
@@ -641,6 +648,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(defaultPolicy.filesystem_policy?.read_only).toEqual(
         expect.arrayContaining(["/usr", "/opt/venv", "/etc"]),
       );
+      // The build runs without Landlock; the live probe must also be readable
+      // under the effective sandbox policy, without widening that policy.
+      const quickjsImagePath = readAgentFile("Dockerfile").match(
+        /^COPY agents\/langchain-deepagents-code\/validate-quickjs-runtime\.py (\S+)$/m,
+      )?.[1];
+      const quickjsLivePath = fs
+        .readFileSync(tuiStartupCheckPath, "utf8")
+        .match(/\/opt\/venv\/bin\/python3 -I (\S+) --require-memfd-denied/)?.[1];
+      expect(quickjsLivePath).toBe(quickjsImagePath);
+      expect(
+        defaultPolicy.filesystem_policy?.read_only?.some((root) =>
+          quickjsImagePath?.startsWith(`${root}/`),
+        ),
+      ).toBe(true);
       expect(defaultPolicy.landlock).toMatchObject({ compatibility: "strict" });
 
       const githubBinaries = policyBinaryPaths(defaultPolicy, "github");
@@ -814,11 +835,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_PROBE:other",
       "unable to probe sandbox",
       "unexpected sandbox probe output",
-      "libc.memfd_create",
-      "errno.EPERM",
-      "from quickjs_rs import Runtime",
-      'context.eval("20 + 22") == 42',
-      "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK",
+      "validate-quickjs-runtime.py --require-memfd-denied",
+      "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK",
       "SANDBOX_EXEC_TIMEOUT_SECONDS=45",
       "SANDBOX_EXEC_KILL_AFTER_SECONDS=5",
       "--signal=TERM",
@@ -960,7 +978,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "dcode_connect_fail_closed_contract",
     "connect rejects untrusted image-backed route evidence before session attach",
     "fresh direct-exec dcode session retained only the original skill",
-    "connect --probe-only accepted the managed inference route",
+    "connect --probe-only accepted the ${route_contract:-unknown} inference route",
     'sandbox_login_exec "cd /sandbox',
     "https://inference.local/v1/models",
     "HTTP_CODE:%{http_code}",
@@ -968,6 +986,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "https://inference\\.local(/v1)?",
     "references_managed_placeholder_key",
     'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    "references_native_nvidia_route",
+    "https://integrate\\.api\\.nvidia\\.com/v1",
+    "references_attached_provider_placeholder_key",
+    'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+    "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
     '"status"',
@@ -1087,6 +1110,47 @@ describe("LangChain Deep Agents Code image contracts", () => {
         CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
       }),
     ).toBe("key");
+  });
+
+  it.each([
+    [
+      "managed",
+      [
+        'base_url = "https://inference.local/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "native-nvidia",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
+    expect(runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toBe(
+      `${expected}\n`,
+    );
+  });
+
+  it.each([
+    [
+      "native endpoint with managed placeholder",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "mixed routes",
+      [
+        'base_url = "https://inference.local/v1"',
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
+    expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
   });
 
   it("rejects unsafe headless timeout values before sandbox execution", () => {

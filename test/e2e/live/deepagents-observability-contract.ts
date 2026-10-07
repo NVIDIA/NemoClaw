@@ -41,7 +41,6 @@ export type DeepAgentsTraceExpectations = {
   ambientCanary: string;
   llmExchanges: readonly LlmTraceExpectation[];
   redaction: {
-    marker: string;
     rawCredential: string;
   };
   serviceName: string;
@@ -50,7 +49,6 @@ export type DeepAgentsTraceExpectations = {
 
 type CaptureMetadata = {
   accepted?: unknown;
-  contentType?: unknown;
   method?: unknown;
   path?: unknown;
   port?: unknown;
@@ -119,11 +117,9 @@ export function assertDeepAgentsTraceContract(
   bodies: readonly Uint8Array[],
   expectations: DeepAgentsTraceExpectations,
 ): { requestCount: number; spanCount: number } {
-  if (bodies.length === 0) throw new Error("no managed OTLP trace requests were captured");
+  // Required LLM and tool spans below also reject an empty capture.
   const canary = Buffer.from(expectations.ambientCanary);
   const rawCredential = Buffer.from(expectations.redaction.rawCredential);
-  const redactionMarker = Buffer.from(expectations.redaction.marker);
-  let redactionMarkerObserved = false;
   const spans = bodies.flatMap((body, index) => {
     const encoded = Buffer.from(body);
     if (encoded.includes(canary)) {
@@ -132,7 +128,6 @@ export function assertDeepAgentsTraceContract(
     if (encoded.includes(rawCredential)) {
       throw new Error("credential-shaped prompt content reached OTLP");
     }
-    redactionMarkerObserved ||= encoded.includes(redactionMarker);
     try {
       return decodeExportTraceServiceRequest(body);
     } catch (error) {
@@ -141,10 +136,8 @@ export function assertDeepAgentsTraceContract(
       );
     }
   });
-  if (!redactionMarkerObserved) {
-    throw new Error("credential-shaped OTLP content lacks the redaction marker");
-  }
-
+  // Check the replacement marker on the originating LLM span, not merely
+  // somewhere in the encoded request.
   for (const expectation of expectations.llmExchanges) {
     assertLlmExchange(spans, expectations.serviceName, expectation);
   }
@@ -165,6 +158,50 @@ export function hasConfirmedOpenShellPolicyDenial(output: string): boolean {
 
 export function observabilityPresetState(output: string): string {
   return parsePolicyPresetState(output, "observability-otlp-local");
+}
+
+function nativeDcodeData(output: string, command: string): Record<string, unknown> | unknown[] {
+  let envelope;
+  try {
+    envelope = JSON.parse(output);
+  } catch {
+    throw new Error("invalid native DCode result envelope");
+  }
+  if (
+    envelope?.schema_version !== 1 ||
+    envelope.command !== command ||
+    typeof envelope.data !== "object" ||
+    envelope.data === null
+  ) {
+    throw new Error("invalid native DCode result envelope");
+  }
+  return envelope.data;
+}
+
+export function observabilityProbeThreadId(output: string, probeCwd?: string): string {
+  const data = nativeDcodeData(output, probeCwd ? "threads list" : "non-interactive");
+  // A fresh, privately owned cwd identifies the probe even when cancellation
+  // prevents a completion envelope. The native list filters by exact cwd;
+  // require the returned metadata to agree and reject ambiguous results.
+  if (probeCwd && Array.isArray(data) && data.length === 0) return "";
+  const listed = (Array.isArray(data) && data.length === 1 ? data[0] : undefined) as
+    | { cwd?: unknown; thread_id?: unknown }
+    | undefined;
+  const completion = (Array.isArray(data) ? undefined : data.completion) as
+    | { thread_id?: unknown }
+    | undefined;
+  const threadId = probeCwd
+    ? listed?.cwd === probeCwd
+      ? listed.thread_id
+      : undefined
+    : completion?.thread_id;
+  if (
+    typeof threadId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+  ) {
+    throw new Error("observability probe did not report its native thread ID");
+  }
+  return threadId;
 }
 
 function requiredEnvironment(name: string): string {
@@ -210,9 +247,8 @@ export function validateCaptureDirectory(
         `unexpected captured route ${String(metadata.method)} ${String(metadata.path)} on ${String(metadata.port)}`,
       );
     }
-    if (metadata.contentType !== "application/x-protobuf") {
-      throw new Error(`${metadataFile} is not OTLP binary protobuf`);
-    }
+    // The capture server accepts only application/x-protobuf; rejected
+    // content types fail the accepted check above.
     const body = fs.readFileSync(path.join(captureDir, metadataFile.replace(/\.json$/u, ".body")));
     if (body.equals(Buffer.from(allowedProbeBody))) {
       allowedProbeCount += 1;
@@ -240,6 +276,10 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (command === "probe-thread-id") {
+    process.stdout.write(`${observabilityProbeThreadId(input, argument)}\n`);
+    return;
+  }
   if (command === "validate-captures" && argument) {
     const result = validateCaptureDirectory(
       argument,
@@ -248,7 +288,6 @@ async function main(): Promise<void> {
       {
         ambientCanary: requiredEnvironment("AMBIENT_CANARY"),
         redaction: {
-          marker: requiredEnvironment("REDACTION_MARKER"),
           rawCredential: requiredEnvironment("REDACTION_PROBE"),
         },
         serviceName: requiredEnvironment("SERVICE_NAME"),
@@ -276,7 +315,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|validate-captures> [capture-dir]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|validate-captures|probe-thread-id> [argument]",
   );
 }
 
