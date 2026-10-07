@@ -285,6 +285,42 @@ fn complete_local_container_fixture_binds_the_managed_gateway_and_protects_speec
 }
 
 #[test]
+fn protected_input_volume_labels_match_the_bound_process_generation() {
+    for value in [authored(), local_development()] {
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
+        let mut generations = generations();
+        generations.insert("container_service".into(), "b".repeat(32));
+        let graph = compile(&document, &generations, "0.1.0").unwrap();
+        let spec: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+            serde_json::from_str(
+                graph["resource"]["nemoclaw_container_inputs"]["voice"]["spec"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        let volume = &graph["resource"]["docker_volume"]["container_storage_voice"];
+        assert_eq!(volume["name"], spec.process.volume());
+        assert_eq!(
+            volume["labels"],
+            json!([
+                {"label":nemoclaw_sdk::managed::OWNER_LABEL,"value":spec.process.owner},
+                {"label":nemoclaw_sdk::managed::GENERATION_LABEL,"value":spec.process.generation}
+            ])
+        );
+        assert_eq!(spec.process.generation, "b".repeat(32));
+        assert!(volume.get("lifecycle").is_none());
+        let runtime =
+            nemoclaw_sdk::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let cache = &runtime["resource"]["docker_volume"]["ollama_service_storage_ollama-server"];
+        assert_eq!(
+            cache["labels"],
+            json!([{"label":nemoclaw_sdk::managed::OWNER_LABEL,"value":document.metadata.uid}])
+        );
+        assert_eq!(cache["lifecycle"]["prevent_destroy"], true);
+    }
+}
+
+#[test]
 fn complete_container_connection_document_keeps_operator_identity_out_of_application_inputs() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/config/container-agent-connection.yaml");

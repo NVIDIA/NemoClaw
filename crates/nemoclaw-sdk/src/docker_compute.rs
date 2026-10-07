@@ -150,6 +150,9 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
                 ("owner".into(), storage.owner),
             ]);
             if !retained {
+                target
+                    .values
+                    .insert("generation".into(), storage.generation);
                 target.values.insert("disposable".into(), "true".into());
             }
         }
@@ -283,6 +286,10 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             "docker_volume" => {
                 let mut volume = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}});
                 if target.values.get("disposable").is_some_and(|v| v == "true") {
+                    volume["labels"].as_array_mut().unwrap().push(json!({
+                        "label":crate::managed::GENERATION_LABEL,
+                        "value":target.values["generation"]
+                    }));
                     volume.as_object_mut().unwrap().remove("lifecycle");
                 }
                 volume
