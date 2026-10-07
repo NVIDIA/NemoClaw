@@ -37,7 +37,7 @@ NemoClaw groups its supported capabilities around running, connecting, controlli
 | Area | Capability |
 |---|---|
 | Run supported agents | Onboards OpenClaw, Hermes, or LangChain Deep Agents Code into an agent-specific sandbox image and configuration. |
-| Route inference | Connects supported hosted inference and local inference providers through `inference.local`. OpenShell keeps provider credentials outside the sandbox. |
+| Route inference | Connects supported hosted and local inference providers through OpenShell-managed routes. Most use `inference.local`; NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. OpenShell keeps provider credentials outside the sandbox. |
 | Control sandbox access | Applies network policy, filesystem policy, process controls, and managed inference through OpenShell. |
 | Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, and rebuilds or recovers sandboxes while preserving the native agent home. |
 | Connect Model Context Protocol (MCP) servers | Manages authenticated HTTPS Streamable HTTP MCP servers for all supported agent runtimes. OpenShell replaces credential placeholders at approved egress boundaries. |

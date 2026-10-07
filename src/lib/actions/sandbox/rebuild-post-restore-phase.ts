@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
@@ -578,6 +580,31 @@ export async function runRebuildPostRestorePhase(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
       );
       bail("OpenClaw pairing remained incomplete after rebuild.");
+      return;
+    }
+  }
+  if (
+    postRestoreComplete &&
+    targetAgentName === "openclaw" &&
+    recreatedEntry.provider === "compatible-endpoint"
+  ) {
+    try {
+      await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
+        sandboxName,
+        provider: recreatedEntry.provider,
+        model: recreatedEntry.model ?? "",
+        endpointUrl: recreatedEntry.endpointUrl,
+        credentialEnv: recreatedEntry.credentialEnv,
+        environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        gatewayName: mcpRuntimeSelection?.gatewayName,
+      });
+    } catch {
+      console.error(`  OpenClaw inference verification failed after rebuilding '${sandboxName}'.`);
+      if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      console.error(
+        `  Correct the provider or route configuration, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
+      );
+      bail("OpenClaw inference verification failed after rebuild.");
       return;
     }
   }

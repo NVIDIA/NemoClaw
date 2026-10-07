@@ -235,6 +235,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
     );
+    expect(dockerfile).toContain(
+      "COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts",
+    );
     expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
@@ -385,6 +388,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=1`);
       expect(envFileLines).toContain(`export ${name}=1`);
     }
+    expect(envFileLines).toContain(
+      "export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider",
+    );
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
@@ -960,7 +966,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "dcode_connect_fail_closed_contract",
     "connect rejects untrusted image-backed route evidence before session attach",
     "fresh direct-exec dcode session retained only the original skill",
-    "connect --probe-only accepted the managed inference route",
+    "connect --probe-only accepted the ${route_contract:-unknown} inference route",
     'sandbox_login_exec "cd /sandbox',
     "https://inference.local/v1/models",
     "HTTP_CODE:%{http_code}",
@@ -968,6 +974,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "https://inference\\.local(/v1)?",
     "references_managed_placeholder_key",
     'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    "references_native_nvidia_route",
+    "https://integrate\\.api\\.nvidia\\.com/v1",
+    "references_attached_provider_placeholder_key",
+    'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+    "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
     '"status"',
@@ -1087,6 +1098,47 @@ describe("LangChain Deep Agents Code image contracts", () => {
         CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
       }),
     ).toBe("key");
+  });
+
+  it.each([
+    [
+      "managed",
+      [
+        'base_url = "https://inference.local/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "native-nvidia",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
+    expect(runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toBe(
+      `${expected}\n`,
+    );
+  });
+
+  it.each([
+    [
+      "native endpoint with managed placeholder",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "mixed routes",
+      [
+        'base_url = "https://inference.local/v1"',
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
+    expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
   });
 
   it("rejects unsafe headless timeout values before sandbox execution", () => {

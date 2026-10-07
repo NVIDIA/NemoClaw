@@ -13,9 +13,11 @@ import {
   cloudflaredTargetsRegisteredPort,
   classifyCloudflaredLog,
   getCloudflaredLogPath,
+  getCloudflaredPidPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
   resolveTunnelLifecycleDashboardPort,
+  resolveTunnelLifecycleStateDir,
   tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
@@ -180,7 +182,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     ]);
   });
 
-  it("does not attribute an unrelated newer cloudflared log to the current sandbox", () => {
+  it("does not attribute a legacy per-sandbox log to the host tunnel", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
     const unrelatedDir = path.join(logRoot, "nemoclaw-services-other-sandbox");
     fs.mkdirSync(unrelatedDir, { recursive: true });
@@ -199,27 +201,44 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     }
   });
 
-  it("classifies only the sandbox-specific cloudflared log", () => {
+  it("classifies only the gateway-scoped host-side cloudflared log", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
-    fs.mkdirSync(sandboxDir, { recursive: true });
-    const sandboxLog = path.join(sandboxDir, "cloudflared.log");
-    fs.writeFileSync(sandboxLog, "https://current.trycloudflare.com\n");
+    const tunnelDir = path.join(logRoot, "tunnel");
+    fs.mkdirSync(tunnelDir, { recursive: true });
+    const tunnelLog = path.join(tunnelDir, "cloudflared.log");
+    fs.writeFileSync(tunnelLog, "https://current.trycloudflare.com\n");
 
     try {
-      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-life")).toBe(sandboxLog);
+      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-life")).toBe(tunnelLog);
       expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_capture_bug");
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
   });
 
+  it("resolves PID and log evidence from the selected non-default gateway state root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-home-"));
+    const stateRoot = resolveTunnelLifecycleStateDir(home, 18_080);
+    const tunnelDir = path.join(stateRoot, "tunnel");
+    fs.mkdirSync(tunnelDir, { recursive: true });
+    const tunnelLog = path.join(tunnelDir, "cloudflared.log");
+    fs.writeFileSync(tunnelLog, "gateway-scoped log\n");
+
+    try {
+      expect(stateRoot).toContain(path.join("gateways", "18080", "state"));
+      expect(getCloudflaredPidPath(stateRoot)).toBe(path.join(tunnelDir, "cloudflared.pid"));
+      expect(getCloudflaredLogPath(stateRoot)).toBe(tunnelLog);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("classifies localhost/origin-refused logs as a NemoClaw local-origin fault", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
-    fs.mkdirSync(sandboxDir, { recursive: true });
+    const tunnelDir = path.join(logRoot, "tunnel");
+    fs.mkdirSync(tunnelDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sandboxDir, "cloudflared.log"),
+      path.join(tunnelDir, "cloudflared.log"),
       'ERR Request failed error="Unable to reach the origin service. dial tcp 127.0.0.1:18789: connect: connection refused"\n',
     );
 
@@ -232,10 +251,10 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
 
   it("classifies representative quick-tunnel registration failures as Cloudflare faults", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
-    fs.mkdirSync(sandboxDir, { recursive: true });
+    const tunnelDir = path.join(logRoot, "tunnel");
+    fs.mkdirSync(tunnelDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sandboxDir, "cloudflared.log"),
+      path.join(tunnelDir, "cloudflared.log"),
       "ERR failed to unmarshal quick Tunnel response: tunnel server returned 503 bad gateway\n",
     );
 

@@ -162,6 +162,8 @@ Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destr
 
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the dashboard with a public URL.
+NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
+Stopping, destroying, or recreating a sandbox does not stop that tunnel.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
@@ -170,6 +172,16 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+An explicitly set `NEMOCLAW_GATEWAY_PORT` selects the host tunnel state.
+Otherwise, tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default gateway when no sandbox resolves.
+If the sandbox name belongs to more than one gateway registry, tunnel-state selection fails closed.
+After an upgrade, when no live gateway-scoped PID record exists and exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves that record into gateway-scoped state.
+If NemoClaw cannot inspect that PID's process identity, it preserves the record and refuses to start a second tunnel.
+If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
+It reports an unrecorded `cloudflared` executable as a conflict.
+Windows skips this scan.
+If process listing fails on another platform, tunnel start fails closed without starting a tunnel, and status cannot report unmanaged conflicts until process inspection is restored.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
 a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
@@ -180,6 +192,8 @@ a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` 
 
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the forwarded Hermes endpoint with a public URL.
+NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
+Stopping, destroying, or recreating a sandbox does not stop that tunnel.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
@@ -188,6 +202,16 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
+An explicitly set `NEMOCLAW_GATEWAY_PORT` selects the host tunnel state.
+Otherwise, tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default gateway when no sandbox resolves.
+If the sandbox name belongs to more than one gateway registry, tunnel-state selection fails closed.
+After an upgrade, when no live gateway-scoped PID record exists and exactly one live legacy PID record matches a sandbox in the selected gateway registry, NemoClaw moves that record into gateway-scoped state.
+If NemoClaw cannot inspect that PID's process identity, it preserves the record and refuses to start a second tunnel.
+If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
+On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
+It reports an unrecorded `cloudflared` executable as a conflict.
+Windows skips this scan.
+If process listing fails on another platform, tunnel start fails closed without starting a tunnel, and status cannot report unmanaged conflicts until process inspection is restored.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 </AgentOnly>
 
