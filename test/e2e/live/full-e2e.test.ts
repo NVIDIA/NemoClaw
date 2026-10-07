@@ -138,6 +138,7 @@ async function repoNemoclaw(
 type GatewayRegistrationCapture = Readonly<{
   result: ShellProbeResult;
   registration: string | null;
+  healthy: boolean;
 }>;
 
 function canonicalObservedGatewayRegistration(
@@ -185,6 +186,7 @@ async function captureGatewayRegistration(
   return {
     result,
     registration: canonicalObservedGatewayRegistration(observation, gateway.env.OPENSHELL_GATEWAY),
+    healthy: observation.healthy,
   };
 }
 
@@ -1464,6 +1466,7 @@ test(
             retainedGatewayEvidence.afterOnboard.registration === retainedRegistration &&
             finalDestroy?.exitCode === 0 &&
             finalGatewayRegistration?.result.exitCode === 0 &&
+            finalGatewayRegistration.healthy &&
             finalGatewayRegistration.registration === retainedRegistration)),
       [
         retainedGatewayEvidence?.beforeDestroy.result,
