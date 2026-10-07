@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as credentialStore from "../credentials/store";
+import { resolveNonInteractiveBuildCredential } from "./build-credential-reuse";
 
 import {
   ensureResumeProviderReady,
@@ -209,4 +211,37 @@ describe("ensureResumeProviderReady", () => {
     ]);
     expect(recorder.note).toHaveLength(0);
   });
+});
+
+it("resumes NVIDIA through the native provider name without a host credential", async () => {
+  const recorder = makeDeps({ remoteProviderConfig: { build: NVIDIA_ENDPOINT_CONFIG } });
+  const names: string[] = [];
+  recorder.deps.providerExistsInGateway = (name) => {
+    names.push(name);
+    return name === "nemoclaw-nvidia-prod-v1";
+  };
+  await expect(
+    ensureResumeProviderReady("nvidia-prod", "NVIDIA_INFERENCE_API_KEY", recorder.deps),
+  ).resolves.toEqual({ forceInferenceSetup: false, credentialEnv: "NVIDIA_INFERENCE_API_KEY" });
+  expect(names).toEqual(["nemoclaw-nvidia-prod-v1"]);
+  expect(recorder.replaceCalls).toEqual([]);
+  expect(recorder.exitCalls).toEqual([]);
+});
+
+it("reuses the native gateway credential for keyless non-interactive rebuild", async () => {
+  const credential = vi.spyOn(credentialStore, "resolveProviderCredential").mockReturnValue(null);
+  const providerExistsInGateway = vi.fn(async (name: string) => name === "nemoclaw-nvidia-prod-v1");
+  try {
+    await expect(
+      resolveNonInteractiveBuildCredential({
+        provider: "nvidia-prod",
+        helpUrl: null,
+        recoveredFromSandbox: true,
+        providerExistsInGateway,
+      }),
+    ).resolves.toBe(true);
+    expect(providerExistsInGateway).toHaveBeenCalledWith("nemoclaw-nvidia-prod-v1");
+  } finally {
+    credential.mockRestore();
+  }
 });

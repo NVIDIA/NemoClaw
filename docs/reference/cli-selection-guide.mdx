@@ -197,7 +197,7 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 <AgentOnly variant="openclaw">
 
-Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
+Use the NemoClaw commands for model or provider inspection and switches so the provider binding and running agent config stay consistent. NVIDIA Endpoints uses a sandbox-attached provider; other selections use the shared OpenShell route:
 
 ```bash
 $$nemoclaw inference get
@@ -207,7 +207,7 @@ $$nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
+Use the NemoClaw commands for model or provider inspection and switches so the provider binding and running agent config stay consistent. NVIDIA Endpoints uses a sandbox-attached provider; other selections use the shared OpenShell route:
 
 ```bash
 $$nemoclaw inference get
@@ -223,7 +223,7 @@ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, prefer a fresh recreate when you need to change the provider or model. The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned while the Deep Agents runtime switch path is still being hardened.
+For Deep Agents sandboxes, prefer a fresh recreate when you need to change the provider or model. The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so recreation keeps the provider binding and sandbox config aligned. NVIDIA Endpoints uses the native endpoint through a sandbox-attached provider; other selections use the shared OpenShell route.
 
 ```bash
 nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox

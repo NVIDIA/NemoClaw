@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { isNativeNvidiaProvider } from "../../inference/native-nvidia/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
+  checkNativeNvidiaRebuildProvider,
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -152,6 +154,19 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
+  if (isNativeNvidiaProvider(sb.provider)) {
+    try {
+      await checkNativeNvidiaRebuildProvider(sb);
+      return true;
+    } catch (error) {
+      bail(
+        error instanceof Error
+          ? error.message
+          : "Native NVIDIA rebuild provider verification failed",
+      );
+      return false;
+    }
+  }
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
     sb.provider,
     sb.credentialEnv,

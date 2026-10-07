@@ -107,15 +107,15 @@ describe("rebuildSandbox flow: credential preflight", () => {
       const expires = start + 60_000;
       let inventoryReads = 0;
       const runtime = providerRuntime(
-        ["nvidia-prod"],
+        ["nvidia-nim"],
         {},
         {
-          "nvidia-prod": { NVIDIA_INFERENCE_API_KEY: expires },
+          "nvidia-nim": { NVIDIA_INFERENCE_API_KEY: expires },
         },
       );
       const harness = createRebuildFlowHarness({
         sandboxEntry: {
-          provider: "nvidia-prod",
+          provider: "nvidia-nim",
           model: MODEL,
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },
@@ -128,7 +128,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
           return runtime(args);
         },
       });
-      configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+      configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
       await expect(
         harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
       ).rejects.toThrow("is expired before sandbox deletion");
@@ -145,10 +145,10 @@ describe("rebuildSandbox flow: credential preflight", () => {
     "preserves the sandbox when provider inventory becomes %s during backup (#10394)",
     async (failure) => {
       let backedUp = false;
-      const runtime = providerRuntime(["nvidia-prod"]);
+      const runtime = providerRuntime(["nvidia-nim"]);
       const harness = createRebuildFlowHarness({
         sandboxEntry: {
-          provider: "nvidia-prod",
+          provider: "nvidia-nim",
           model: MODEL,
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },
@@ -163,7 +163,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
             : runtime(args);
         },
       });
-      configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+      configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
       await expect(
         harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
       ).rejects.toThrow("is indeterminate before sandbox deletion");
@@ -176,21 +176,21 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it("aborts before backup when the target provider and credential are missing", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => null,
       runOpenshell: providerRuntime([]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Missing gateway provider: nvidia-prod");
+    ).rejects.toThrow("Missing gateway provider: nvidia-nim");
 
     const output = diagnostics(harness);
-    expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+    expect(output).toContain("provider 'nvidia-nim' is not registered in OpenShell");
     expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(output).not.toContain("provider credential not found");
     expect(output).not.toContain("export NVIDIA_INFERENCE_API_KEY=<your-key>");
@@ -204,15 +204,15 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it("continues when canonical hydration supplies a saved provider credential", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: (credentialEnv) =>
         credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "saved-provider-key" : null,
-      runOpenshell: providerRuntime(["nvidia-prod"]),
+      runOpenshell: providerRuntime(["nvidia-nim"]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -225,25 +225,25 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it("aborts before backup when the selected provider credential is expired (#10394)", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => "saved-provider-key",
       runOpenshell: providerRuntime(
-        ["nvidia-prod"],
+        ["nvidia-nim"],
         {},
-        { "nvidia-prod": { NVIDIA_INFERENCE_API_KEY: 1_000 } },
+        { "nvidia-nim": { NVIDIA_INFERENCE_API_KEY: 1_000 } },
       ),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
-    ).rejects.toThrow("Expired gateway provider credential: nvidia-prod/NVIDIA_INFERENCE_API_KEY");
+    ).rejects.toThrow("Expired gateway provider credential: nvidia-nim/NVIDIA_INFERENCE_API_KEY");
 
     expect(diagnostics(harness)).toContain(
-      "provider 'nvidia-prod' credential NVIDIA_INFERENCE_API_KEY is expired",
+      "provider 'nvidia-nim' credential NVIDIA_INFERENCE_API_KEY is expired",
     );
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
@@ -254,23 +254,23 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it("aborts before backup when the provider lacks the selected credential key (#10394)", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => "saved-provider-key",
-      runOpenshell: providerRuntime(["nvidia-prod"], {
-        "nvidia-prod": "OTHER_API_KEY",
+      runOpenshell: providerRuntime(["nvidia-nim"], {
+        "nvidia-nim": "OTHER_API_KEY",
       }),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
-    ).rejects.toThrow("Missing gateway provider credential: nvidia-prod/NVIDIA_INFERENCE_API_KEY");
+    ).rejects.toThrow("Missing gateway provider credential: nvidia-nim/NVIDIA_INFERENCE_API_KEY");
 
     expect(diagnostics(harness)).toContain(
-      "provider 'nvidia-prod' no longer exposes credential NVIDIA_INFERENCE_API_KEY",
+      "provider 'nvidia-nim' no longer exposes credential NVIDIA_INFERENCE_API_KEY",
     );
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
@@ -288,18 +288,18 @@ describe("rebuildSandbox flow: credential preflight", () => {
     async (_case, expirationMap) => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: {
-          provider: "nvidia-prod",
+          provider: "nvidia-nim",
           model: MODEL,
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },
         hydrateCredentialEnv: () => "saved-provider-key",
         runOpenshell: providerRuntime(
-          ["nvidia-prod"],
+          ["nvidia-nim"],
           {},
-          expirationMap ? { "nvidia-prod": expirationMap } : {},
+          expirationMap ? { "nvidia-nim": expirationMap } : {},
         ),
       });
-      configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+      configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -311,13 +311,13 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("preserves the sandbox when the provider loses the selected credential key during backup (#10394)", async () => {
     let backedUp = false;
-    const validProvider = providerRuntime(["nvidia-prod"]);
-    const mismatchedProvider = providerRuntime(["nvidia-prod"], {
-      "nvidia-prod": "OTHER_API_KEY",
+    const validProvider = providerRuntime(["nvidia-nim"]);
+    const mismatchedProvider = providerRuntime(["nvidia-nim"], {
+      "nvidia-nim": "OTHER_API_KEY",
     });
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
@@ -327,7 +327,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
       },
       runOpenshell: (args) => (backedUp ? mismatchedProvider(args) : validProvider(args)),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
@@ -341,10 +341,10 @@ describe("rebuildSandbox flow: credential preflight", () => {
   });
 
   it("aborts before backup when provider expiry metadata cannot be verified (#10394)", async () => {
-    const registeredProvider = providerRuntime(["nvidia-prod"]);
+    const registeredProvider = providerRuntime(["nvidia-nim"]);
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
@@ -354,13 +354,13 @@ describe("rebuildSandbox flow: credential preflight", () => {
           ? { status: 0, output: "not-json", stdout: "not-json", stderr: "" }
           : registeredProvider(args),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Could not verify gateway provider: nvidia-prod");
+    ).rejects.toThrow("Could not verify gateway provider: nvidia-nim");
 
-    expect(diagnostics(harness)).toContain("could not verify provider 'nvidia-prod' in OpenShell");
+    expect(diagnostics(harness)).toContain("could not verify provider 'nvidia-nim' in OpenShell");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
@@ -368,18 +368,18 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it("does not let a host credential bypass a missing gateway provider", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => "host-provider-key",
       runOpenshell: providerRuntime([]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Missing gateway provider: nvidia-prod");
+    ).rejects.toThrow("Missing gateway provider: nvidia-nim");
 
     expect(diagnostics(harness)).not.toContain("missing from gateway; recreating it");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
@@ -573,15 +573,15 @@ describe("rebuildSandbox flow: credential preflight", () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         agent: "hermes",
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       buildMessagingRebuildPlan: () => plan,
       hydrateCredentialEnv: () => "saved-provider-key",
-      runOpenshell: providerRuntime(["nvidia-prod"]),
+      runOpenshell: providerRuntime(["nvidia-nim"]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -666,9 +666,9 @@ describe("rebuildSandbox flow: credential preflight", () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: { provider: "openai-api", model: MODEL, credentialEnv: null },
       hydrateCredentialEnv: () => null,
-      runOpenshell: providerRuntime(["nvidia-prod"]),
+      runOpenshell: providerRuntime(["nvidia-nim"]),
     });
-    configureSession(harness, "nvidia-prod", null);
+    configureSession(harness, "nvidia-nim", null);
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -739,17 +739,17 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
-  it("reuses a registered nvidia-prod provider without a host key", async () => {
+  it("reuses a registered nvidia-nim provider without a host key", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => null,
-      runOpenshell: providerRuntime(["nvidia-prod"]),
+      runOpenshell: providerRuntime(["nvidia-nim"]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -759,21 +759,21 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
-  it("rejects nvidia-prod when both gateway registration and host key are missing", async () => {
+  it("rejects nvidia-nim when both gateway registration and host key are missing", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
-        provider: "nvidia-prod",
+        provider: "nvidia-nim",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
       hydrateCredentialEnv: () => null,
       runOpenshell: providerRuntime([]),
     });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    configureSession(harness, "nvidia-nim", "NVIDIA_INFERENCE_API_KEY");
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Missing gateway provider: nvidia-prod");
+    ).rejects.toThrow("Missing gateway provider: nvidia-nim");
 
     expect(diagnostics(harness)).toContain("Sandbox is untouched");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
@@ -851,5 +851,83 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(output).toContain("credentials must be stored in OpenShell");
     expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("native NVIDIA rebuild ownership", () => {
+  installRebuildFlowTestHooks();
+  const providerId = "11111111-2222-4333-8444-555555555555";
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: "nemoclaw-nvidia-inference-v1" as const,
+    providerName: "nemoclaw-nvidia-prod-v1" as const,
+    providerId,
+  };
+  function nativeHarness(
+    attachment: typeof receipt | undefined,
+    liveId: { value: string },
+    beforeBackup = () => {},
+  ) {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        provider: "nvidia-prod",
+        model: MODEL,
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        nativeNvidiaProviderAttachment: attachment,
+      },
+      hydrateCredentialEnv: () => null,
+      beforeBackup,
+      runOpenshell: (args) => {
+        const inventory = JSON.stringify([
+          { name: receipt.providerName, credential_keys: ["NVIDIA_INFERENCE_API_KEY"] },
+        ]);
+        const metadata = `Name: ${receipt.providerName}\nType: ${receipt.profileId}\nId: ${liveId.value}\nResource version: 1\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n`;
+        const responses: Record<
+          string,
+          { status: number; output: string; stdout: string; stderr: string }
+        > = {
+          "provider list": { status: 0, output: inventory, stdout: inventory, stderr: "" },
+          "provider get": { status: 0, output: metadata, stdout: metadata, stderr: "" },
+        };
+        return responses[`${args[0]} ${args[1]}`];
+      },
+    });
+    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+    return harness;
+  }
+  it("preserves native authority and restores state through rebuild", async () => {
+    const harness = nativeHarness(receipt, { value: providerId });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(
+      harness.runOpenshellSpy.mock.calls.some(
+        ([args]) =>
+          args[0] === "provider" && args[1] === "get" && args.includes(receipt.providerName),
+      ),
+    ).toBe(true);
+  });
+  it("preserves the source when native provider identity changes during backup", async () => {
+    const liveId = { value: providerId };
+    const harness = nativeHarness(receipt, liveId, () => {
+      liveId.value = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("ownership changed");
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+  it("refuses native rebuild without a recorded ownership receipt", async () => {
+    const harness = nativeHarness(undefined, { value: providerId });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("owned provider receipt");
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 });

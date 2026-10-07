@@ -319,7 +319,7 @@ Use the recovery guidance that matches the reported check:
 - Resolve an incomplete MCP destroy transaction before retrying.
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
-- Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
+- For a shared-route selection, set the live OpenShell inference route to the recorded provider and model when rebuild reports route drift.
 
 <AgentOnly variant="openclaw,hermes">
   Prepared backup recovery reuses its digest-verified pre-upgrade policy handoff
@@ -327,7 +327,9 @@ Use the recovery guidance that matches the reported check:
   before deletion if the handoff is missing or changed.
 </AgentOnly>
 
-A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
+For shared-route selections, a gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before recreation.
+
+For an already-native NVIDIA sandbox, rebuild validates the owned provider and credential on the recorded gateway before deletion. It reuses that provider during recreation without changing the shared route. A missing ownership receipt, changed provider identity, missing credential, expired credential, or unverifiable provider stops rebuild before deletion. For ownership failures, ask the gateway administrator to reconcile the provider and receipt; do not create a replacement provider to bypass the check. Rebuild does not migrate legacy NVIDIA sandboxes automatically.
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete

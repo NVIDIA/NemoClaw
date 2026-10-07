@@ -12,7 +12,6 @@ import type {
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   type NativeNvidiaProviderAttachment,
@@ -24,6 +23,8 @@ export {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  isNativeNvidiaProvider,
+  nativeInferenceProviderForSandbox,
   normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "./contract";
@@ -44,10 +45,6 @@ export function nativeNvidiaProviderProfilePath(root = REPOSITORY_ROOT): string 
   );
 }
 
-export function isNativeNvidiaProvider(provider: string | null | undefined): boolean {
-  return provider?.trim() === NVIDIA_HOSTED_LOGICAL_PROVIDER;
-}
-
 export function resolveGatewayNativeNvidiaProviderAuthority(input: {
   gatewayName: string;
   gatewayAuthority?: NativeNvidiaProviderAttachment | null;
@@ -64,13 +61,6 @@ export function resolveGatewayNativeNvidiaProviderAuthority(input: {
     );
   }
   return gatewayAuthority ?? recordedAttachment ?? undefined;
-}
-
-export function nativeInferenceProviderForSandbox(
-  provider: string | null | undefined,
-): string | null {
-  const normalized = provider?.trim() || null;
-  return isNativeNvidiaProvider(normalized) ? NVIDIA_HOSTED_NATIVE_PROVIDER : normalized;
 }
 
 function providerErrorDetail(error: OpenShellProviderError): string {
@@ -325,6 +315,41 @@ export async function ensureNativeNvidiaProvider(input: {
     );
   }
   return attachmentFromMetadata(observed);
+}
+
+/** Verify an owned provider and its non-secret credential expiry before destructive rebuild. */
+export async function verifyNativeNvidiaProviderCredential(input: {
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  expected: NativeNvidiaProviderAttachment;
+}): Promise<NativeNvidiaProviderAttachment> {
+  const observed = await input.adapter.getProvider({
+    target: input.target,
+    providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    includeCredentialExpirations: true,
+  });
+  if (!observed.ok) {
+    throw new NativeNvidiaProviderError(
+      `Cannot verify native NVIDIA provider before rebuild: ${providerErrorDetail(observed.error)}`,
+    );
+  }
+  const receipt = attachmentFromMetadata(observed.value);
+  if (receipt.providerId !== input.expected.providerId) {
+    throw new NativeNvidiaProviderError("Native NVIDIA provider ownership changed before rebuild.");
+  }
+  const expirations = observed.value.credentialExpiresAtMs;
+  if (expirations === undefined) {
+    throw new NativeNvidiaProviderError(
+      "Cannot verify native NVIDIA credential expiry before rebuild.",
+    );
+  }
+  const expiry = expirations[NVIDIA_HOSTED_CREDENTIAL_ENV];
+  if (expiry !== undefined && expiry > 0 && expiry <= Date.now()) {
+    throw new NativeNvidiaProviderError(
+      "Native NVIDIA provider credential is expired. Refresh it before rebuild.",
+    );
+  }
+  return receipt;
 }
 
 /** Prove that the exact NemoClaw-owned NVIDIA provider is attached to one sandbox. */

@@ -17,6 +17,7 @@ import {
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   persistNativeNvidiaProviderAuthority,
   verifyNativeNvidiaProviderAttachment,
+  verifyNativeNvidiaProviderCredential,
 } from "./native-nvidia";
 
 const target = { kind: "named", gatewayName: "nemoclaw" } as const;
@@ -503,5 +504,52 @@ describe("native NVIDIA OpenShell provider", () => {
     ).rejects.toThrow(
       /does not have its native NVIDIA inference provider attached[\s\S]*did not confirm removal/u,
     );
+  });
+});
+
+describe("native NVIDIA rebuild credential evidence", () => {
+  const expected: NativeNvidiaProviderAttachment = {
+    schemaVersion: 1,
+    profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+    providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    providerId: "provider-id",
+  };
+  it("accepts an owned nonexpiring credential without updating it", async () => {
+    const providerAdapter = adapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: metadata({ credentialExpiresAtMs: {} }),
+      })),
+    });
+    await expect(
+      verifyNativeNvidiaProviderCredential({ adapter: providerAdapter, target, expected }),
+    ).resolves.toEqual(expected);
+    expect(providerAdapter.getProvider).toHaveBeenCalledWith({
+      target,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      includeCredentialExpirations: true,
+    });
+    expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
+  });
+  it.each([
+    [
+      "identity drift",
+      { revision: { id: "other-id", resourceVersion: 1 }, credentialExpiresAtMs: {} },
+    ],
+    ["unknown expiry", {}],
+    ["expired credential", { credentialExpiresAtMs: { [NVIDIA_HOSTED_CREDENTIAL_ENV]: 1 } }],
+    ["wrong credential", { credentialKeys: ["OTHER_KEY"], credentialExpiresAtMs: {} }],
+    ["wrong profile", { type: "openai", credentialExpiresAtMs: {} }],
+  ])("refuses %s before rebuild", async (_name, override) => {
+    const providerAdapter = adapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: metadata(override),
+      })),
+    });
+    await expect(
+      verifyNativeNvidiaProviderCredential({ adapter: providerAdapter, target, expected }),
+    ).rejects.toThrow();
+    expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
   });
 });

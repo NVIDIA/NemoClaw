@@ -16,6 +16,7 @@ import {
 } from "../adapters/openshell/forward-runtime";
 import { resolveDashboardForwardBind, type DashboardForwardBind } from "./dashboard-runtime";
 import { resolveGatewayName } from "./gateway-binding";
+import { isNativeNvidiaProvider } from "../inference/native-nvidia/contract";
 import type { InferenceRouteState } from "./inference-route";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
 import {
@@ -357,6 +358,7 @@ export async function preflightAuthoritativeRebuildTarget<
     // the route unknown, which onboarding resolves the same way. Only a gateway
     // that answers with a different route contradicts the rebuild target.
     if (
+      !isNativeNvidiaProvider(target.provider) &&
       target.deferInferenceRouteUntilOnboard !== true &&
       deps.inferenceRouteState(target.provider, target.model) === "mismatched"
     ) {

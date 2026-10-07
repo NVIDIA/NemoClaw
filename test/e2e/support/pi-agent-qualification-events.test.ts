@@ -453,3 +453,42 @@ describe("Pi qualification event oracle", () => {
     ).toThrow("does not match the qualified route");
   });
 });
+
+it("accepts the native Pi endpoint with its native credential reference", () => {
+  expect(
+    parsePiInferenceEvidence(
+      JSON.stringify({
+        providers: {
+          openshell: {
+            api: "openai-completions",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+            models: [{ id: "nvidia/test-model" }],
+          },
+        },
+      }),
+      "nvidia/test-model",
+    ),
+  ).toEqual({
+    api: "openai-completions",
+    route: "https://integrate.api.nvidia.com/v1",
+    model: "nvidia/test-model",
+  });
+});
+it("rejects the native Pi endpoint with the managed-route dummy credential", () => {
+  expect(() =>
+    parsePiInferenceEvidence(
+      JSON.stringify({
+        providers: {
+          openshell: {
+            api: "openai-completions",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "nemoclaw-managed-inference",
+            models: [{ id: "nvidia/test-model" }],
+          },
+        },
+      }),
+      "nvidia/test-model",
+    ),
+  ).toThrow("does not match the qualified route");
+});

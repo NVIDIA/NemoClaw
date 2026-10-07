@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
 import {
@@ -362,5 +362,42 @@ describe("revalidateRebuildRouteBeforeDelete", () => {
       ok: false,
       message: "Sandbox inference route changed before sandbox deletion.",
     });
+  });
+});
+
+it("preserves shared peers and rejects native ownership drift before deletion", () => {
+  const nativeNvidiaProviderAttachment = {
+    schemaVersion: 1 as const,
+    profileId: "nemoclaw-nvidia-inference-v1" as const,
+    providerName: "nemoclaw-nvidia-prod-v1" as const,
+    providerId: "owned-id",
+  };
+  const target = sandbox("target", "nvidia-prod", {
+    nativeNvidiaProviderAttachment,
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  });
+  const peer = sandbox("peer", "nvidia-prod");
+  const other = sandbox("other", "compatible-endpoint", { credentialEnv: "OTHER_KEY" });
+  const state = transactionDependencies(registry(target, peer, other));
+  const result = commitRebuildRoutePreflight(
+    { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+    state.dependencies,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    receipt: { migratedSandboxNames: [], nativeNvidiaProviderAttachment },
+  });
+  expect(state.persisted().sandboxes.peer).toEqual(peer);
+  expect(state.persisted().sandboxes.other).toEqual(other);
+  assert(result.ok);
+  expect(revalidateRebuildRouteBeforeDelete(result.receipt, state.dependencies).ok).toBe(true);
+  const changed = state.persisted();
+  changed.sandboxes.target!.nativeNvidiaProviderAttachment = {
+    ...nativeNvidiaProviderAttachment,
+    providerId: "replacement-id",
+  };
+  state.dependencies.save(changed);
+  expect(revalidateRebuildRouteBeforeDelete(result.receipt, state.dependencies)).toMatchObject({
+    ok: false,
   });
 });

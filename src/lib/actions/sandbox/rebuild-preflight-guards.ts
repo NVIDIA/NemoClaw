@@ -13,6 +13,11 @@ import {
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
+import {
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
@@ -38,6 +43,7 @@ export interface RebuildRoutePreflightReceipt {
   readonly gatewayName: string;
   readonly route: GatewayInferenceRoute;
   readonly migratedSandboxNames: readonly string[];
+  readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
 }
 
 export type RebuildRoutePreflightResult =
@@ -145,9 +151,13 @@ export function commitRebuildRoutePreflight(
 
     const target = { ...currentTarget, ...input.targetUpdate };
     const targetRoute = normalizedRoute(target);
+    const nativeAttachment = isNativeNvidiaProvider(target.provider)
+      ? normalizeNativeNvidiaProviderAttachment(target.nativeNvidiaProviderAttachment)
+      : undefined;
     const migratedSandboxNames: string[] = [];
     for (const peer of Object.values(sandboxRegistry.sandboxes)) {
       if (
+        nativeAttachment !== undefined ||
         peer.name === input.sandboxName ||
         peer.provider !== targetRoute.provider ||
         !missingCredentialIdentity(peer.credentialEnv)
@@ -174,12 +184,9 @@ export function commitRebuildRoutePreflight(
     const projectedSandboxes = Object.values(sandboxRegistry.sandboxes).map((entry) =>
       entry.name === input.sandboxName ? target : entry,
     );
-    const conflict = hardRouteConflict(
-      input.gatewayName,
-      input.sandboxName,
-      targetRoute,
-      projectedSandboxes,
-    );
+    const conflict = nativeAttachment
+      ? null
+      : hardRouteConflict(input.gatewayName, input.sandboxName, targetRoute, projectedSandboxes);
     if (conflict) return { ok: false, message: conflict };
 
     Object.assign(currentTarget, input.targetUpdate);
@@ -191,6 +198,7 @@ export function commitRebuildRoutePreflight(
         gatewayName: input.gatewayName,
         route: targetRoute,
         migratedSandboxNames: migratedSandboxNames.sort(),
+        ...(nativeAttachment ? { nativeNvidiaProviderAttachment: nativeAttachment } : {}),
       },
     };
   });
@@ -237,12 +245,23 @@ export function revalidateRebuildRouteBeforeDelete(
       message: "Sandbox inference route changed before sandbox deletion.",
     };
   }
-  const conflict = hardRouteConflict(
-    receipt.gatewayName,
-    receipt.sandboxName,
-    currentRoute,
-    Object.values(sandboxRegistry.sandboxes),
+  const currentAttachment = normalizeNativeNvidiaProviderAttachment(
+    target.nativeNvidiaProviderAttachment,
   );
+  if (currentAttachment?.providerId !== receipt.nativeNvidiaProviderAttachment?.providerId) {
+    return {
+      ok: false,
+      message: "Native NVIDIA provider ownership changed before sandbox deletion.",
+    };
+  }
+  const conflict = receipt.nativeNvidiaProviderAttachment
+    ? null
+    : hardRouteConflict(
+        receipt.gatewayName,
+        receipt.sandboxName,
+        currentRoute,
+        Object.values(sandboxRegistry.sandboxes),
+      );
   return conflict ? { ok: false, message: conflict } : { ok: true, receipt };
 }
 

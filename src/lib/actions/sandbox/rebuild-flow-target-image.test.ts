@@ -31,7 +31,7 @@ type RetainedContextMutation = {
 
 const FIXED_CONTEXT_TIME = new Date("2026-01-01T00:00:00.000Z");
 const NVIDIA_PROVIDER_OUTPUT = [
-  "Name: nvidia-prod",
+  "Name: nvidia-nim",
   "Type: openai",
   "Credential keys: NVIDIA_INFERENCE_API_KEY",
   "Config keys: OPENAI_BASE_URL",
@@ -330,7 +330,7 @@ describe("rebuildSandbox flow: target image", () => {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
         sandboxEntry: {
-          provider: "nvidia-prod",
+          provider: "nvidia-nim",
           model: "nvidia/nemotron",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },

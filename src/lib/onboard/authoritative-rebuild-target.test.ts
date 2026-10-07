@@ -24,7 +24,7 @@ import {
 
 const target = {
   sandboxName: "alpha",
-  provider: "nvidia-prod",
+  provider: "openai-api",
   model: "nvidia/nemotron",
   targetGatewayName: "nemoclaw-12345",
   controlUiPort: 18789,
@@ -568,4 +568,13 @@ describe("authoritative rebuild target preflight", () => {
     expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
     expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
   });
+});
+
+it("ignores an unrelated shared route during native NVIDIA rebuild readiness", async () => {
+  const targetDeps = deps({ inferenceRouteState: vi.fn((): InferenceRouteState => "mismatched") });
+  await expect(
+    preflightAuthoritativeRebuildTarget({ ...target, provider: "nvidia-prod" }, targetDeps),
+  ).resolves.toBeUndefined();
+  expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
+  expect(targetDeps.assertGatewayReadiness).toHaveBeenCalledOnce();
 });

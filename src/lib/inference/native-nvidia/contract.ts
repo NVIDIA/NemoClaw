@@ -35,3 +35,14 @@ export function normalizeNativeNvidiaProviderAttachment(
     providerId: receipt.providerId,
   };
 }
+
+export function isNativeNvidiaProvider(provider: string | null | undefined): boolean {
+  return provider?.trim() === NVIDIA_HOSTED_LOGICAL_PROVIDER;
+}
+
+export function nativeInferenceProviderForSandbox(
+  provider: string | null | undefined,
+): string | null {
+  const normalized = provider?.trim() || null;
+  return isNativeNvidiaProvider(normalized) ? NVIDIA_HOSTED_NATIVE_PROVIDER : normalized;
+}

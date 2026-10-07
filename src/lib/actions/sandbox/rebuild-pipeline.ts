@@ -74,6 +74,7 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import {
+  checkNativeNvidiaRebuildProvider,
   inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -830,7 +831,23 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
+          let nativeProviderVerified: boolean;
+          try {
+            nativeProviderVerified = await checkNativeNvidiaRebuildProvider(
+              sandboxEntry,
+              runtimeSelection,
+            );
+          } catch (error) {
+            return {
+              ok: false,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Native NVIDIA provider verification failed before deletion",
+            };
+          }
           if (
+            !nativeProviderVerified &&
             !recreateOptions.rebuildProviderReconfigure &&
             shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
           ) {

@@ -14,6 +14,14 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import {
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
+  resolveGatewayNativeNvidiaProviderAuthority,
+  verifyNativeNvidiaProviderCredential,
+} from "../../inference/native-nvidia";
+import { resolveSandboxGatewayName } from "./rebuild-flow-helpers";
+import type { SandboxEntry } from "../../state/registry";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
@@ -57,6 +65,38 @@ function rebuildProviderAdapter(
           })) as RunProviderCommand)
       : undefined,
   );
+}
+
+/** Validate native ownership without reading a host key or changing the provider. */
+export async function checkNativeNvidiaRebuildProvider(
+  entry: SandboxEntry,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  adapter = rebuildProviderAdapter(runtimeSelection),
+): Promise<boolean> {
+  if (!isNativeNvidiaProvider(entry.provider)) return false;
+  const recordedAttachment = normalizeNativeNvidiaProviderAttachment(
+    entry.nativeNvidiaProviderAttachment,
+  );
+  if (!recordedAttachment) {
+    throw new Error(
+      "Native NVIDIA rebuild requires the sandbox's owned provider receipt. Legacy sandboxes must be recreated explicitly.",
+    );
+  }
+  const gatewayName = resolveSandboxGatewayName(entry);
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error("Native NVIDIA rebuild gateway changed before provider verification.");
+  }
+  const expected = resolveGatewayNativeNvidiaProviderAuthority({
+    gatewayName,
+    recordedAttachment,
+    gatewayAuthority: registry.getNativeNvidiaProviderAuthority(gatewayName),
+  })!;
+  await verifyNativeNvidiaProviderCredential({
+    adapter,
+    target: { kind: "named", gatewayName },
+    expected,
+  });
+  return true;
 }
 
 export async function inspectRebuildGatewayProviderRegistration(

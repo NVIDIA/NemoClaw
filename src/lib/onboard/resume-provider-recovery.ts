@@ -9,6 +9,7 @@
 // recorded `provider`/`model`, leaving the sandbox rebuild to fail with an
 // authentication error (#3278).
 
+import { nativeInferenceProviderForSandbox } from "../inference/native-nvidia/contract";
 import { getRemoteProviderConfigForName } from "./inference-providers/provider-selection-keys";
 
 export type RemoteProviderConfigEntry = {
@@ -84,7 +85,7 @@ export async function ensureResumeProviderReady(
   if (!provider || (!config && !deps.isRoutedInferenceProvider(provider))) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
-  if (await deps.providerExistsInGateway(provider)) {
+  if (await deps.providerExistsInGateway(nativeInferenceProviderForSandbox(provider)!)) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
 

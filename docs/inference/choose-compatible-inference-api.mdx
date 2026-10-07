@@ -60,7 +60,8 @@ NEMOCLAW_PREFERRED_API=openai-completions $$nemoclaw onboard
 ## Understand the Deep Agents Runtime
 
 `NEMOCLAW_PREFERRED_API` does not change the managed Deep Agents `dcode` runtime.
-Deep Agents sandboxes keep `use_responses_api = false` in `/sandbox/.deepagents/config.toml` and use Chat Completions through the OpenShell route.
+Deep Agents sandboxes keep `use_responses_api = false` in `/sandbox/.deepagents/config.toml` and use Chat Completions.
+NVIDIA Endpoints uses the native NVIDIA endpoint through a sandbox-attached OpenShell provider. Other selections use the shared OpenShell inference route.
 
 </AgentOnly>
 
