@@ -830,7 +830,20 @@ export async function waitForBaseImagePublication(
   );
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(request, runsPath, "workflow_runs");
+    // Only these first-parent commits can cover the required image inputs.
+    // Listing all main runs eventually exceeds GitHub's 1,000-result search
+    // limit even when the eligible commit has just one successful publication.
+    const workflowRuns: unknown[] = [];
+    for (const headSha of options.history.distanceBySha.keys()) {
+      const scopedPath = `${runsPath}&head_sha=${sha(headSha, "publication history SHA")}`;
+      const page = await collectPaginated(request, scopedPath, "workflow_runs");
+      const scopedRuns = page.workflow_runs as unknown[];
+      if (scopedRuns.some((run) => asRecord(run).head_sha !== headSha)) {
+        throw new Error("workflow run listing does not match the requested head SHA");
+      }
+      workflowRuns.push(...scopedRuns);
+    }
+    const runs = { total_count: workflowRuns.length, workflow_runs: workflowRuns };
     const excludedRunIds = new Set<number>();
     const select = () =>
       selectPublicationRun(runs, options.history, workflowId, {

@@ -12,9 +12,7 @@ import {
   baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
-  type FirstParentHistory,
   githubRequest,
-  type PublicationRun,
   isBaseImagePublicationEvent,
   matchesBaseImagePushPath,
   parseBaseImagePushPaths,
@@ -27,153 +25,33 @@ import {
   writePublicationRunOutputs,
 } from "../../../tools/e2e/base-image-publication.mts";
 
-const EXPECTED_SHA = "a".repeat(40);
-const DESCENDANT_SHA = "b".repeat(40);
-const RELEVANT_SHA = "c".repeat(40);
-const STALE_SHA = "d".repeat(40);
-const RUN_ID = 29891942278;
-const WORKFLOW_ID = 251475843;
-const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
-const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
-const MANAGED_IMAGE_PROMOTION_JOB =
-  "Publish complete managed images / Promote complete multi-platform managed image cohort";
-const BASE_IMAGE_WORKFLOW_SOURCE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-  "utf8",
-);
-const WORKFLOW_SOURCE = `on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/base-image.yaml"
-      - "Dockerfile.base"
-  workflow_dispatch:
-jobs: {}
-`;
-
-function required<T>(value: T | undefined, message: string): T {
-  return (
-    value ??
-    (() => {
-      throw new Error(message);
-    })()
-  );
-}
-
-function historyGitResponse(args: string[], relevantSha: string, firstParentShas: string): string {
-  const responses = new Map([
-    ["rev-parse:--verify", EXPECTED_SHA],
-    ["rev-parse:--is-shallow-repository", "false"],
-    ["log:--first-parent", relevantSha],
-    ["rev-list:--first-parent", firstParentShas],
-  ]);
-  return required(responses.get(`${args[0]}:${args[1]}`), "unexpected git history request");
-}
-
-function nextFetchResponse(responses: Array<Response | Error>): Promise<Response> {
-  const response = required(responses.shift(), "unexpected GitHub request");
-  return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
-}
-
-function history(): FirstParentHistory {
-  return {
-    expectedSha: EXPECTED_SHA,
-    relevantSha: RELEVANT_SHA,
-    relevantDistance: 2,
-    distanceBySha: new Map([
-      [EXPECTED_SHA, 0],
-      [DESCENDANT_SHA, 1],
-      [RELEVANT_SHA, 2],
-    ]),
-  };
-}
-
-function workflowRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: RUN_ID,
-    run_attempt: 1,
-    workflow_id: WORKFLOW_ID,
-    name: "Images / Publish Base and Managed Images",
-    event: "push",
-    status: "completed",
-    conclusion: "success",
-    head_sha: RELEVANT_SHA,
-    head_branch: "main",
-    path: ".github/workflows/base-image.yaml",
-    repository: { full_name: "NVIDIA/NemoClaw" },
-    head_repository: { full_name: "NVIDIA/NemoClaw" },
-    html_url: RUN_URL,
-    ...overrides,
-  };
-}
-
-function workflowMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: WORKFLOW_ID,
-    name: "Images / Publish Base and Managed Images",
-    path: ".github/workflows/base-image.yaml",
-    state: "active",
-    html_url: "https://github.com/NVIDIA/NemoClaw/blob/main/.github/workflows/base-image.yaml",
-    url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/workflows/${WORKFLOW_ID}`,
-    ...overrides,
-  };
-}
-
-function runsPayload(runs: unknown[]): Record<string, unknown> {
-  return { total_count: runs.length, workflow_runs: runs };
-}
-
-function selectedRun(overrides: Partial<PublicationRun> = {}): PublicationRun {
-  return {
-    id: RUN_ID,
-    attempt: 1,
-    event: "push",
-    workflowId: WORKFLOW_ID,
-    headSha: RELEVANT_SHA,
-    status: "completed",
-    conclusion: "success",
-    url: RUN_URL,
-    ...overrides,
-  };
-}
-
-function publisherJob(
-  name: string,
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    id: 1000,
-    run_id: RUN_ID,
-    run_attempt: 1,
-    head_sha: RELEVANT_SHA,
-    name,
-    status: "completed",
-    conclusion: "success",
-    ...overrides,
-  };
-}
-
-function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string, unknown>[] {
-  const runAttempt = overrides.runAttempt ?? 1;
-  return [
-    publisherJob("Build and push OpenClaw base image", {
-      id: 1,
-      run_attempt: runAttempt,
-    }),
-    publisherJob("Build and push Hermes base image", {
-      id: 2,
-      run_attempt: runAttempt,
-    }),
-    publisherJob("Build and push Deep Agents Code base image", {
-      id: 3,
-      run_attempt: runAttempt,
-    }),
-  ];
-}
-
-function successfulManualJobs(): Record<string, unknown>[] {
-  return [...successfulJobs(), publisherJob(MANAGED_IMAGE_PROMOTION_JOB, { id: 4 })];
-}
+import {
+  EXPECTED_SHA,
+  DESCENDANT_SHA,
+  RELEVANT_SHA,
+  STALE_SHA,
+  RUN_ID,
+  WORKFLOW_ID,
+  RUN_URL_ROOT,
+  RUN_URL,
+  MANAGED_IMAGE_PROMOTION_JOB,
+  BASE_IMAGE_WORKFLOW_SOURCE,
+  WORKFLOW_SOURCE,
+  required,
+  historyGitResponse,
+  nextFetchResponse,
+  history,
+  workflowRun,
+  workflowMetadata,
+  runsPayload,
+  historyRunPages,
+  HISTORY_RUN_REQUESTS,
+  selectedRun,
+  publisherJob,
+  successfulJobs,
+  successfulManualJobs,
+  historyLimitRequest,
+} from "./base-image-publication.fixtures.ts";
 
 describe("base-image publication evidence", () => {
   it("publishes after a root package manifest changes", () => {
@@ -805,13 +683,44 @@ describe("base-image publication evidence", () => {
     );
   });
 
+  it("finds eligible image evidence after main history exceeds the API search limit", async () => {
+    const unrelated = Array.from({ length: 1_003 }, (_, index) =>
+      workflowRun({ id: index + 1, head_sha: STALE_SHA }),
+    );
+    const requests: string[] = [];
+    const result = await waitForBaseImagePublication({
+      history: history(),
+      waitMs: 100,
+      pollMs: 10,
+      now: () => 0,
+      request: historyLimitRequest(unrelated, requests),
+    });
+    expect(result).toEqual(selectedRun());
+    expect(requests.filter((request) => request.includes("/base-image.yaml/runs?"))).toEqual(
+      HISTORY_RUN_REQUESTS,
+    );
+  });
+
+  it("rejects a run returned for a different requested history commit", async () => {
+    const responses = [workflowMetadata(), runsPayload([workflowRun()])];
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        waitMs: 100,
+        pollMs: 10,
+        now: () => 0,
+      }),
+    ).rejects.toThrow(/does not match the requested head SHA/u);
+  });
+
   it("polls from missing through publisher completion and verifies jobs (#9549)", async () => {
     const responses = [
       workflowMetadata(),
-      runsPayload([]),
-      runsPayload([workflowRun({ status: "queued", conclusion: null })]),
+      ...historyRunPages([]),
+      ...historyRunPages([workflowRun({ status: "queued", conclusion: null })]),
       { total_count: 0, jobs: [] },
-      runsPayload([workflowRun()]),
+      ...historyRunPages([workflowRun()]),
       { total_count: 3, jobs: successfulJobs() },
       workflowRun(),
     ];
@@ -839,14 +748,14 @@ describe("base-image publication evidence", () => {
     expect(run.id).toBe(RUN_ID);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
-    expect(requestBudgets).toEqual([100, 100, 90, 90, 80, 80, 80]);
+    expect(requestBudgets).toEqual([100, 100, 100, 100, 90, 90, 90, 90, 80, 80, 80, 80, 80]);
     expect(notices).toHaveLength(2);
   });
 
@@ -862,7 +771,7 @@ describe("base-image publication evidence", () => {
     ];
     const responses = [
       workflowMetadata(),
-      runsPayload([inProgressRun]),
+      ...historyRunPages([inProgressRun]),
       { total_count: jobs.length, jobs },
       inProgressRun,
     ];
@@ -886,10 +795,10 @@ describe("base-image publication evidence", () => {
     const inProgressRun = workflowRun({ status: "in_progress", conclusion: null });
     const responses = [
       workflowMetadata(),
-      runsPayload([inProgressRun]),
+      ...historyRunPages([inProgressRun]),
       { total_count: 3, jobs: successfulJobs() },
       inProgressRun,
-      runsPayload([workflowRun()]),
+      ...historyRunPages([workflowRun()]),
       { total_count: 3, jobs: successfulJobs() },
       workflowRun(),
     ];
@@ -916,7 +825,7 @@ describe("base-image publication evidence", () => {
     const completedRun = workflowRun();
     const responses = [
       workflowMetadata(),
-      runsPayload([listedRun]),
+      ...historyRunPages([listedRun]),
       { total_count: 3, jobs: successfulJobs() },
       completedRun,
     ];
@@ -941,7 +850,7 @@ describe("base-image publication evidence", () => {
       const manualRun = workflowRun({ event: "workflow_dispatch" });
       const responses = [
         workflowMetadata(),
-        runsPayload([manualRun]),
+        ...historyRunPages([manualRun]),
         { total_count: 4, jobs: successfulManualJobs() },
         manualRun,
       ];
@@ -962,7 +871,7 @@ describe("base-image publication evidence", () => {
       ).resolves.toEqual(selectedRun({ event: "workflow_dispatch" }));
       expect(requests).toEqual([
         "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+        ...HISTORY_RUN_REQUESTS,
         `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
         `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
       ]);
@@ -1016,7 +925,7 @@ describe("base-image publication evidence", () => {
     const pushRun = workflowRun();
     const responses = [
       workflowMetadata(),
-      runsPayload([olderManualRun, newerManualRun, pushRun]),
+      ...historyRunPages([olderManualRun, newerManualRun, pushRun]),
       { total_count: manualJobs(newerManualRunId).length, jobs: manualJobs(newerManualRunId) },
       { total_count: manualJobs(olderManualRunId).length, jobs: manualJobs(olderManualRunId) },
       { total_count: successfulJobs().length, jobs: successfulJobs() },
@@ -1039,7 +948,7 @@ describe("base-image publication evidence", () => {
     ).resolves.toEqual(selectedRun());
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${newerManualRunId}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${olderManualRunId}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
@@ -1063,7 +972,7 @@ describe("base-image publication evidence", () => {
     const pushRun = workflowRun();
     const responses = [
       workflowMetadata(),
-      runsPayload([manualRun, pushRun]),
+      ...historyRunPages([manualRun, pushRun]),
       { total_count: manualJobs.length, jobs: manualJobs },
       { total_count: successfulJobs().length, jobs: successfulJobs() },
       pushRun,
@@ -1085,7 +994,7 @@ describe("base-image publication evidence", () => {
     ).resolves.toEqual(selectedRun());
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
@@ -1109,7 +1018,7 @@ describe("base-image publication evidence", () => {
     const pushRun = workflowRun();
     const responses = [
       workflowMetadata(),
-      runsPayload([manualRun, pushRun]),
+      ...historyRunPages([manualRun, pushRun]),
       { total_count: malformedManualJobs.length, jobs: malformedManualJobs },
     ];
     const requests: string[] = [];
@@ -1129,7 +1038,7 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/conclusion is invalid/u);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
     ]);
   });
@@ -1138,7 +1047,7 @@ describe("base-image publication evidence", () => {
     const failedRun = workflowRun({ conclusion: "failure" });
     const responses = [
       workflowMetadata(),
-      runsPayload([failedRun]),
+      ...historyRunPages([failedRun]),
       { total_count: 3, jobs: successfulJobs() },
       failedRun,
     ];
@@ -1165,7 +1074,7 @@ describe("base-image publication evidence", () => {
     const successfulAttempt = workflowRun({ run_attempt: 1 });
     const responses = [
       workflowMetadata(),
-      runsPayload([cancelledRun]),
+      ...historyRunPages([cancelledRun]),
       ...failedAttempts,
       successfulAttempt,
       { total_count: 3, jobs: successfulJobs() },
@@ -1189,7 +1098,7 @@ describe("base-image publication evidence", () => {
     ).resolves.toMatchObject({ id: RUN_ID, attempt: 1, conclusion: "success" });
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       ...Array.from(
         { length: 11 },
         (_, index) => `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${11 - index}`,
@@ -1204,7 +1113,7 @@ describe("base-image publication evidence", () => {
     const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
     const responses = [
       workflowMetadata(),
-      runsPayload([cancelledRun]),
+      ...historyRunPages([cancelledRun]),
       workflowRun({ run_attempt: 2, head_sha: STALE_SHA }),
     ];
     const requests: string[] = [];
@@ -1223,7 +1132,7 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/selected base-image workflow changed while evidence was verified/u);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...HISTORY_RUN_REQUESTS,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
     ]);
   });
@@ -1232,7 +1141,7 @@ describe("base-image publication evidence", () => {
     const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
     const responses = [
       workflowMetadata(),
-      runsPayload([cancelledRun]),
+      ...historyRunPages([cancelledRun]),
       workflowRun({ run_attempt: 2, conclusion: "failure" }),
     ];
     const requests: Array<{ path: string; budgetMs: number | undefined }> = [];
@@ -1260,10 +1169,7 @@ describe("base-image publication evidence", () => {
         path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
         budgetMs: 100,
       },
-      {
-        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
-        budgetMs: 100,
-      },
+      ...HISTORY_RUN_REQUESTS.map((path) => ({ path, budgetMs: 100 })),
       {
         path: `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
         budgetMs: 100,
@@ -1284,7 +1190,7 @@ describe("base-image publication evidence", () => {
       ];
       const responses = [
         workflowMetadata(),
-        runsPayload([terminalRun]),
+        ...historyRunPages([terminalRun]),
         { total_count: jobs.length, jobs },
         terminalRun,
       ];
@@ -1306,7 +1212,7 @@ describe("base-image publication evidence", () => {
     );
     const responses = [
       workflowMetadata(),
-      runsPayload([workflowRun()]),
+      ...historyRunPages([workflowRun()]),
       { total_count: jobs.length, jobs },
     ];
 
@@ -1321,7 +1227,7 @@ describe("base-image publication evidence", () => {
   });
 
   it("times out deterministically without sleeping past its budget (#7372)", async () => {
-    const responses = [workflowMetadata(), runsPayload([])];
+    const responses = [workflowMetadata(), ...historyRunPages([])];
     await expect(
       waitForBaseImagePublication({
         history: history(),
