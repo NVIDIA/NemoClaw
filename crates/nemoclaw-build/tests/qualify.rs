@@ -55,6 +55,11 @@ fn a_lifecycle_profile_gets_the_native_helper_home_and_key() {
             .windows(2)
             .any(|pair| pair[0] == "--workdir" && pair[1] == "/sandbox")
     );
-    assert!(arguments.iter().any(|argument| argument
-        == "type=bind,src=/repo/image/qualify_native.py,dst=/qualify_native.py,readonly"));
+    // The source is the host path, joined with the host's separator.
+    let helper = Path::new("/repo").join("image").join("qualify_native.py");
+    let mount = format!(
+        "type=bind,src={},dst=/qualify_native.py,readonly",
+        helper.display()
+    );
+    assert!(arguments.contains(&mount), "{arguments:?}");
 }
