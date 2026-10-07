@@ -380,10 +380,24 @@ DGX Spark automatically selects its Qwen recipe from the detected unified-memory
 | At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
 
 The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+The admission floor uses detected total unified-memory capacity, not currently available memory.
+The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
+The profile remains Experimental.
+[Physical 64 GB DGX Spark validation](https://github.com/NVIDIA/NemoClaw/pull/12633) covered automatic OpenClaw onboarding, local chat, read/write/exec tools, a 30,037-token prompt, and one restart.
+That test used a source build without memory or profile overrides and retained existing swap.
+It did not validate the hosted installer, prolonged use, or concurrent workloads.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
+
+<Note title="64 GB DGX Spark Release Selection">
+The capacity-selected recipe first shipped in `v0.0.130`; lazy weight loading shipped in `v0.0.131`.
+As of October 7, the default installer selects maintained `lkg` at `v0.0.124`, which contains neither fix.
+For 64 GB DGX Spark evaluation, select `v0.0.131` explicitly using the [Quickstart release-selection command](../../get-started/quickstart#installation-and-runtime-details).
+After installation, confirm the installed version with `$$nemoclaw --version`.
+For Express installation, keep automatic serving-profile selection (option 1); the fixed profile (option 2) retains its 64 GB detected-capacity floor.
+</Note>
+
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
