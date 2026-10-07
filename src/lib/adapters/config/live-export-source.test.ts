@@ -7,6 +7,11 @@ import {
   exportLiveSource,
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
+import {
+  NATIVE_HOSTED_PROFILES,
+  type NativeHostedProfile,
+} from "../../inference/native-hosted/profiles";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -40,6 +45,7 @@ import {
   legacySharedNvidiaProvider,
   provider,
   configuration,
+  nativeHostedExportFixture,
   nativeNvidiaEntry,
   nativeNvidiaProvider,
   nativeNvidiaProfile,
@@ -144,6 +150,25 @@ function mockNativeNvidiaSource(profileWorkspace = "default") {
       },
     },
   });
+}
+
+function mockNativeHostedSource(profile: NativeHostedProfile) {
+  const fixture = nativeHostedExportFixture(profile);
+  mockSupportedLiveSource(3, 3, fixture.sourceEntry);
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: profile.logicalProvider,
+    model: "model-a",
+  });
+  raw.getProvider.mockResolvedValue({ provider: fixture.providerValue });
+  raw.getProviderProfile.mockResolvedValue({ profile: fixture.profileValue });
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: { ...inventory().sandbox.spec, providers: [profile.providerName] },
+    },
+  });
+  return fixture;
 }
 
 describe("live export snapshot reader", () => {
@@ -694,6 +719,71 @@ describe("live export snapshot reader", () => {
     expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
     expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
     expect(raw.getProviderProfile).toHaveBeenCalled();
+  });
+
+  it.each(NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"))(
+    "exports native $label without shared-route or credential reads",
+    async (profile) => {
+      const fixture = mockNativeHostedSource(profile);
+      const { result, writeStdout, publish } = await exportLiveSource();
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      expect(document.spec.inferenceProviders[0]).toMatchObject({
+        endpoint: profile.endpoint,
+        credential: { env: profile.hostCredentialEnv ?? profile.credentialEnv },
+      });
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+      expect(fixture.readCredential).not.toHaveBeenCalled();
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<{
+    label: string;
+    change: (fixture: ReturnType<typeof nativeHostedExportFixture>) => void;
+  }>([
+    {
+      label: "provider identity",
+      change: (fixture) => {
+        fixture.providerValue.metadata.id = "replacement";
+      },
+    },
+    {
+      label: "profile host",
+      change: (fixture) => {
+        fixture.profileValue.endpoints[0]!.host = "other.example";
+      },
+    },
+    {
+      label: "profile rules",
+      change: (fixture) => {
+        fixture.profileValue.endpoints[0]!.rules[1]!.allow.path = "/v1/*";
+      },
+    },
+    {
+      label: "credential binding",
+      change: (fixture) => {
+        fixture.profileValue.credentials[0]!.envVars = ["OTHER_KEY"];
+      },
+    },
+    {
+      label: "sandbox attachment",
+      change: () => {
+        raw.getSandbox.mockResolvedValue(inventory());
+      },
+    },
+  ])("refuses native hosted $label drift without exporting credentials", async ({ change }) => {
+    const fixture = mockNativeHostedSource(
+      NATIVE_HOSTED_PROFILES.find((profile) => profile.logicalProvider === "openai-api")!,
+    );
+    change(fixture);
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result.ok).toBe(false);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(fixture.readCredential).not.toHaveBeenCalled();
   });
 
   it("retains the legacy shared-route NVIDIA export without a native receipt", async () => {

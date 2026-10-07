@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { createHash } from "node:crypto";
 import { vi } from "vitest";
 
@@ -391,5 +392,103 @@ export function braveProvider() {
       credentials,
       config: {},
     },
+  };
+}
+
+export function nativeHostedExportFixture(profile: NativeHostedProfile) {
+  const api =
+    profile.logicalProvider === "anthropic-prod" ? "anthropic-messages" : "openai-completions";
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    profile.logicalProvider,
+    "model-a",
+    api,
+  );
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    inference: {
+      ...startupInput.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: profile.logicalProvider,
+      routedBaseUrl: route.inferenceBaseUrl,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+      api,
+    },
+  });
+  const sourceEntry: SandboxEntry = {
+    ...entry,
+    provider: profile.logicalProvider,
+    preferredInferenceApi: api,
+    endpointUrl: profile.endpoint,
+    credentialEnv: profile.hostCredentialEnv ?? profile.credentialEnv,
+    nativeHostedProviderAttachment: {
+      schemaVersion: 1,
+      profileId: profile.profileId,
+      providerName: profile.providerName,
+      providerId: "native-provider-id",
+    },
+    workload: {
+      ...entry.workload,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  };
+  const readCredential = vi.fn(() => {
+    throw new Error(readFailureCanary);
+  });
+  const providerValue = {
+    ...nativeNvidiaProvider(),
+    metadata: {
+      ...nativeNvidiaProvider().metadata,
+      id: "native-provider-id",
+      name: profile.providerName,
+    },
+    type: profile.profileId,
+    credentials: Object.defineProperty({}, profile.credentialEnv, {
+      enumerable: true,
+      get: readCredential,
+    }),
+  };
+  const profileValue = nativeHostedProfileFixture(profile, api);
+  return { sourceEntry, providerValue, profileValue, readCredential };
+}
+
+function nativeHostedProfileFixture(profile: NativeHostedProfile, api: string) {
+  const url = new URL(profile.endpoint);
+  const prefix = url.pathname === "/" ? "/v1" : url.pathname;
+  return {
+    ...nativeNvidiaProfile(),
+    id: profile.profileId,
+    credentials: [
+      {
+        name: "api_key",
+        envVars: [profile.credentialEnv] as string[],
+        required: true,
+        authStyle: api === "anthropic-messages" ? "header" : "bearer",
+        headerName: api === "anthropic-messages" ? "x-api-key" : "authorization",
+        queryParam: "",
+        pathTemplate: "",
+      },
+    ],
+    endpoints: [
+      {
+        ...nativeNvidiaEndpoint(),
+        host: url.hostname,
+        rules: [
+          { allow: { ...emptyNativeAllow, method: "GET", path: `${prefix}/models` } },
+          {
+            allow: {
+              ...emptyNativeAllow,
+              method: "POST",
+              path: `${prefix}/${api === "anthropic-messages" ? "messages" : "chat/completions"}`,
+            },
+          },
+          ...(["openai-api", "hermes-provider"].includes(profile.logicalProvider)
+            ? [{ allow: { ...emptyNativeAllow, method: "POST", path: `${prefix}/responses` } }]
+            : []),
+        ],
+      },
+    ],
   };
 }

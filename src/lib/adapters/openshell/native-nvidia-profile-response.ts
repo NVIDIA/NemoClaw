@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-type NativeNvidiaProfileResponse = Readonly<{
+import {
+  NATIVE_HOSTED_PROFILES,
+  type NativeHostedProfile,
+} from "../../inference/native-hosted/profiles";
+
+type NativeHostedProfileResponse = Readonly<{
   profile: Readonly<{
-    id: "nemoclaw-nvidia-inference-v1";
+    id: NativeHostedProfile["profileId"];
     source: "user";
     scope: "platform" | "workspace";
     resourceVersion: bigint | string;
@@ -33,15 +38,17 @@ function stringArrayEquals(value: unknown, expected: readonly string[]): boolean
   );
 }
 
-function nativeCredential(value: unknown): boolean {
+function nativeCredential(value: unknown, expected: NativeHostedProfile): boolean {
   const credential = record(value);
   return (
     credential !== null &&
     credential.name === "api_key" &&
-    stringArrayEquals(credential.envVars, ["NVIDIA_INFERENCE_API_KEY"]) &&
+    stringArrayEquals(credential.envVars, [expected.credentialEnv]) &&
     credential.required === true &&
-    credential.authStyle === "bearer" &&
-    credential.headerName === "authorization" &&
+    credential.authStyle ===
+      (expected.logicalProvider === "anthropic-prod" ? "header" : "bearer") &&
+    credential.headerName ===
+      (expected.logicalProvider === "anthropic-prod" ? "x-api-key" : "authorization") &&
     credential.queryParam === "" &&
     credential.pathTemplate === "" &&
     credential.refresh === undefined &&
@@ -66,12 +73,24 @@ function nativeRule(value: unknown, method: "GET" | "POST", path: string): boole
   );
 }
 
-function nativeEndpoint(value: unknown): boolean {
+function nativeEndpoint(value: unknown, expected: NativeHostedProfile): boolean {
+  const url = new URL(expected.endpoint);
+  const prefix = url.pathname === "/" ? "/v1" : url.pathname;
+  const expectedRules: ReadonlyArray<readonly ["GET" | "POST", string]> = [
+    ["GET", `${prefix}/models`],
+    [
+      "POST",
+      `${prefix}/${expected.logicalProvider === "anthropic-prod" ? "messages" : "chat/completions"}`,
+    ],
+    ...(["openai-api", "hermes-provider"].includes(expected.logicalProvider)
+      ? [["POST", `${prefix}/responses`] as const]
+      : []),
+  ];
   const endpoint = record(value);
   const rules = endpoint?.rules;
   return (
     endpoint !== null &&
-    endpoint.host === "integrate.api.nvidia.com" &&
+    endpoint.host === url.hostname &&
     endpoint.port === 443 &&
     emptyArray(endpoint.ports) &&
     endpoint.protocol === "rest" &&
@@ -79,9 +98,8 @@ function nativeEndpoint(value: unknown): boolean {
     endpoint.enforcement === "enforce" &&
     endpoint.access === "" &&
     Array.isArray(rules) &&
-    rules.length === 2 &&
-    nativeRule(rules[0], "GET", "/v1/models") &&
-    nativeRule(rules[1], "POST", "/v1/chat/completions") &&
+    rules.length === expectedRules.length &&
+    expectedRules.every(([method, path], index) => nativeRule(rules[index], method, path)) &&
     emptyArray(endpoint.allowedIps) &&
     emptyArray(endpoint.denyRules) &&
     endpoint.allowEncodedSlash === false &&
@@ -116,17 +134,19 @@ function nativeBinaries(value: unknown): boolean {
 }
 
 /** Verify the live custom profile at the credential, egress, and binary security boundary. */
-export function isManagedNativeNvidiaProfileResponse(
+export function isManagedNativeHostedProfileResponse(
   value: unknown,
-): value is NativeNvidiaProfileResponse {
+  expected: NativeHostedProfile,
+): value is NativeHostedProfileResponse {
   const response = record(value);
   const profile = record(response?.profile);
   const revision = profile?.resourceVersion;
   const credentials = profile?.credentials;
   const endpoints = profile?.endpoints;
   return (
+    NATIVE_HOSTED_PROFILES.includes(expected) &&
     profile !== null &&
-    profile.id === "nemoclaw-nvidia-inference-v1" &&
+    profile.id === expected.profileId &&
     profile.source === "user" &&
     (profile.scope === "platform" || profile.scope === "workspace") &&
     (typeof revision === "bigint" || typeof revision === "string") &&
@@ -135,10 +155,10 @@ export function isManagedNativeNvidiaProfileResponse(
     profile.discovery === undefined &&
     Array.isArray(credentials) &&
     credentials.length === 1 &&
-    nativeCredential(credentials[0]) &&
+    nativeCredential(credentials[0], expected) &&
     Array.isArray(endpoints) &&
     endpoints.length === 1 &&
-    nativeEndpoint(endpoints[0]) &&
+    nativeEndpoint(endpoints[0], expected) &&
     nativeBinaries(profile.binaries)
   );
 }

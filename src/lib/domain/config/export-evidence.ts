@@ -1,16 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted/contract";
+import {
+  NATIVE_HOSTED_PROFILES,
+  nativeHostedProfile,
+  type NativeHostedProfile,
+} from "../../inference/native-hosted/profiles";
 
-export function exportNativeNvidiaReceipt(entry: {
+export function exportNativeHostedReceipt(entry: {
   provider?: string | null;
   nativeNvidiaProviderAttachment?: unknown;
   nativeHostedProviderAttachment?: unknown;
 }) {
-  if (entry.provider?.trim() !== "nvidia-prod") return undefined;
-  return normalizeNativeNvidiaProviderAttachment(
-    entry.nativeNvidiaProviderAttachment ?? entry.nativeHostedProviderAttachment,
+  const profile = nativeHostedProfile(entry.provider);
+  const receipt = normalizeNativeHostedProviderAttachment(
+    entry.nativeHostedProviderAttachment ?? entry.nativeNvidiaProviderAttachment,
+  );
+  return receipt?.profileId === profile?.profileId ? receipt : undefined;
+}
+
+export function exportNativeHostedProfile(
+  receipt: NonNullable<ReturnType<typeof exportNativeHostedReceipt>>,
+) {
+  return NATIVE_HOSTED_PROFILES.find(
+    (profile) =>
+      profile.profileId === receipt.profileId && profile.providerName === receipt.providerName,
   );
 }
 
@@ -154,7 +169,7 @@ export interface ObservedExportEndpointEvidence {
         | "openai"
         | "tavily"
         | "tavily-hermes-v1"
-        | "nemoclaw-nvidia-inference-v1";
+        | NativeHostedProfile["profileId"];
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
@@ -169,7 +184,7 @@ export interface ObservedExportEndpointEvidence {
     | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
     | {
         readonly kind: "managed-profile";
-        readonly profileId: "nemoclaw-nvidia-inference-v1";
+        readonly profileId: NativeHostedProfile["profileId"];
       };
 }
 

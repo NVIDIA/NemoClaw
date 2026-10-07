@@ -4,7 +4,7 @@
 export interface NativeHostedProfile {
   readonly label: string;
   readonly logicalProvider: string;
-  readonly profileId: string;
+  readonly profileId: `nemoclaw-${"nvidia" | "openai" | "anthropic" | "gemini" | "openrouter" | "hermes"}-inference-v1`;
   readonly providerName: string;
   readonly endpoint: string;
   // Host credentials can use a different name from the OpenShell profile binding.

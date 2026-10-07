@@ -8,12 +8,6 @@ import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/rou
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
-import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-} from "../../inference/native-nvidia/contract";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import {
   buildManagedStartupProfile,
@@ -46,7 +40,7 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
   ExportSourceValuesSchema,
   exportWebSearchBinding,
-  exportNativeNvidiaReceipt,
+  exportNativeHostedReceipt,
 } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
@@ -832,37 +826,49 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
+function nativeEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (evidence?.source.kind !== "managed-profile") return false;
+  const receipt = exportNativeHostedReceipt(snapshot.registry);
+  const profile = nativeHostedProfile(snapshot.registry.provider);
+  return (
+    receipt !== undefined &&
+    profile !== undefined &&
+    (profile.logicalProvider === "anthropic-prod"
+      ? inference.api === "anthropic-messages"
+      : inference.api === "openai-completions" ||
+        (["openai-api", "hermes-provider"].includes(profile.logicalProvider) &&
+          inference.api === "openai-responses")) &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.endpoint,
+        evidence.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        profile.profileId,
+        receipt.providerName,
+        receipt.providerId,
+        profile.logicalProvider,
+        profile.endpoint,
+        profile.endpoint,
+        profile.hostCredentialEnv ?? profile.credentialEnv,
+      ],
+    )
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
   if (evidence.source.kind === "managed-profile") {
-    const receipt = exportNativeNvidiaReceipt(snapshot.registry);
-    return (
-      receipt !== undefined &&
-      isDeepStrictEqual(
-        [
-          evidence.source.profileId,
-          evidence.provider.name,
-          evidence.provider.id,
-          inference.provider,
-          inference.api,
-          inference.endpoint,
-          evidence.endpoint,
-          inference.credentialEnv,
-        ],
-        [
-          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          receipt.providerName,
-          receipt.providerId,
-          NVIDIA_HOSTED_LOGICAL_PROVIDER,
-          "openai-completions",
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_CREDENTIAL_ENV,
-        ],
-      )
-    );
+    return nativeEndpointEvidenceMatches(snapshot);
   }
   if (evidence.source.kind === "builtin-profile") {
     return (
@@ -937,7 +943,7 @@ function validateSandboxIdentity(
 
 function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
-  const nativeReceipt = exportNativeNvidiaReceipt(entry);
+  const nativeReceipt = exportNativeHostedReceipt(entry);
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
   const webSearch = exportWebSearchBinding(entry);
@@ -1248,7 +1254,7 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 }
 
 function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
-  return exportNativeNvidiaReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider;
+  return exportNativeHostedReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider;
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
