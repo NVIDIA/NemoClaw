@@ -517,7 +517,6 @@ async def run_test(args: argparse.Namespace) -> int:
     summary_path = output_dir / f"summary_{args.users}users.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print_chat_table(results, args.duration, args.inflight_start, args.inflight_per_user)
-    print(f"Wrote {summary_path}")
     if successful < 1:
         print("No successful user→sandbox Hermes queries.", file=sys.stderr)
         return 1

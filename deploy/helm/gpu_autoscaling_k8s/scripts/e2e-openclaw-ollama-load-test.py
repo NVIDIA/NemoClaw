@@ -910,7 +910,6 @@ async def run_test(args: argparse.Namespace) -> int:
         args.inflight_per_user,
         check_listeners=not (args.chat_only or bool(endpoints)),
     )
-    print(f"Wrote {summary_path}")
     if successful < 1:
         print("No successful user→sandbox OpenClaw queries.", file=sys.stderr)
         return 1
