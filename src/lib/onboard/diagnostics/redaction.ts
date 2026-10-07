@@ -457,6 +457,11 @@ export function formatOnboardEndpointDiagnostic(endpointUrl: string): string {
     if (path.includes("%") || redactFull(path) !== path) {
       endpoint.pathname = "/<REDACTED>";
     }
+    if (
+      [...endpoint.searchParams].some(([key, value]) => key.includes("%") || value.includes("%"))
+    ) {
+      endpoint.search = "";
+    }
     return JSON.stringify(redactStandaloneSecretsFull(endpoint.toString()).slice(0, 240));
   } catch {
     return JSON.stringify("<REDACTED>");

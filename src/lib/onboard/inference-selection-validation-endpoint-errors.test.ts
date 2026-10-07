@@ -30,7 +30,7 @@ it.each([
   },
   {
     name: "encoded token under an ordinary query name",
-    url: `${endpoint}?model=${encodeURIComponent(secret).replace("n", "%6e")}`,
+    url: `${endpoint}?model=%6e${secret.slice(1)}&%2561pi_key=nested-query-canary`,
   },
   {
     name: "literal and percent-encoded tokens in the path",
