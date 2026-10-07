@@ -13,6 +13,7 @@ import {
   ensureNativeProviderAttached,
   verifyNativeProviderAttachment,
   ensureNativeProvider,
+  persistNativeProviderAuthority,
 } from "../native-provider/lifecycle";
 import {
   nativeBedrockIdentity,
@@ -76,6 +77,11 @@ export async function ensureNativeBedrockProvider(input: {
   adapter: OpenShellProviderAdapter;
   credentialValue: string | null;
   expected?: NativeBedrockProviderAttachment;
+  authority?: {
+    gatewayName: string;
+    read: (profileId: string) => NativeBedrockProviderAttachment | undefined;
+    write: (receipt: NativeBedrockProviderAttachment) => void;
+  };
 }): Promise<NativeBedrockProviderAttachment> {
   const profile = prepareNativeBedrockProfile(input.binding);
   const expected = input.expected && normalizeNativeBedrockProviderAttachment(input.expected);
@@ -91,7 +97,7 @@ export async function ensureNativeBedrockProvider(input: {
       expected,
       profile: { ...profile, profilePath, label: "Bedrock adapter" },
     });
-    return {
+    const attachment = {
       ...receipt,
       endpointUrl: input.binding.endpointUrl,
       region: input.binding.region,
@@ -99,6 +105,21 @@ export async function ensureNativeBedrockProvider(input: {
       adapterBaseUrl: input.binding.adapterBaseUrl,
       gatewayName: input.binding.gatewayName,
     };
+    if (input.authority) {
+      const authority = input.authority;
+      await persistNativeProviderAuthority({
+        profile: { ...profile, profilePath, label: "Bedrock adapter" },
+        adapter: input.adapter,
+        target: { kind: "named" as const, gatewayName: input.binding.gatewayName },
+        gatewayName: authority.gatewayName,
+        receipt: attachment,
+        existing: expected,
+        readAuthority: () => authority.read(profile.profileId),
+        writeAuthority: () => authority.write(attachment),
+        recoveryGuidance: "Inspect provider ownership before retrying the command.",
+      });
+    }
+    return attachment;
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

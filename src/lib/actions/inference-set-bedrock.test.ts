@@ -141,6 +141,53 @@ describe("native Bedrock inference selection", () => {
       "test-adapter-token",
     );
   });
+  it("removes a new Bedrock provider when authority persistence fails before attachment", async () => {
+    const f = fixture();
+    Object.assign(f.deps.getSandbox("alpha")!, {
+      provider: "openai-api",
+      endpointUrl: undefined,
+      nativeBedrockProviderAttachment: undefined,
+    });
+    f.attachments.clear();
+    f.adapter.getProvider.mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "absent" },
+    });
+    f.deps.resolveCredentialValue = vi.fn(() => "test-aws-credential");
+    f.deps.getNativeBedrockProviderAuthority = vi.fn(() => undefined);
+    f.deps.setNativeBedrockProviderAuthority = vi.fn(() => {
+      throw new Error("registry write failed");
+    });
+    f.deps.ensureBedrockRuntimeAdapter = vi.fn(async () => ({
+      baseUrl: f.receipt.adapterBaseUrl,
+      localBaseUrl: "http://127.0.0.1:11436/v1",
+      logPath: "/unused-test-log",
+      credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+      token: "test-adapter-token",
+      region: f.receipt.region,
+      endpointUrl: f.receipt.endpointUrl,
+      generation: f.receipt.adapterGeneration,
+    }));
+    await expect(
+      runInferenceSet(
+        {
+          sandboxName: "alpha",
+          provider: "compatible-anthropic-endpoint",
+          model: "new-model",
+          endpointUrl: f.receipt.endpointUrl,
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi: "openai-completions",
+          noVerify: true,
+        },
+        f.deps,
+      ),
+    ).rejects.toThrow("newly created provider was removed");
+    expect(f.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.sharedRoute).not.toHaveBeenCalled();
+  });
   it("retains provider ownership when another sandbox still uses Bedrock", async () => {
     const f = fixture();
     f.adapter.deleteProvider.mockResolvedValue({

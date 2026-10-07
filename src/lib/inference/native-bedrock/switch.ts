@@ -78,15 +78,24 @@ export async function prepareNativeBedrockSelection(input: {
       binding,
       adapter: deps.providerAdapter,
       credentialValue: adapter.token,
+      authority: {
+        gatewayName: input.gatewayName,
+        read: (profileId) =>
+          (deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority)(
+            input.gatewayName,
+            profileId,
+          ),
+        write: (receipt) =>
+          (deps.setNativeBedrockProviderAuthority ?? setNativeBedrockProviderAuthority)(
+            input.gatewayName,
+            receipt,
+          ),
+      },
       expected: (deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority)(
         input.gatewayName,
         identity.profileId,
       ),
     });
-    (deps.setNativeBedrockProviderAuthority ?? setNativeBedrockProviderAuthority)(
-      input.gatewayName,
-      attachment,
-    );
   }
   const attached = await ensureNativeBedrockProviderAttached({
     adapter: deps.providerAdapter,

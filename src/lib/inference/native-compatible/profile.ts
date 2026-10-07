@@ -21,6 +21,7 @@ import {
   detachNativeProvider,
   verifyNativeProviderAttachment,
   ensureNativeProvider,
+  persistNativeProviderAuthority,
   type NativeProviderAttachment,
 } from "../native-provider/lifecycle";
 
@@ -112,6 +113,11 @@ export async function ensureNativeCompatibleProvider(
     credentialValue: string | null;
     expected?: NativeProviderAttachment;
     resolveExpected?: (profileId: string) => NativeProviderAttachment | undefined;
+    authority?: {
+      gatewayName: string;
+      read: (profileId: string) => NativeCompatibleProviderAttachment | undefined;
+      write: (receipt: NativeCompatibleProviderAttachment) => void;
+    };
   },
 ) {
   const profile = await prepareNativeCompatibleProfile({
@@ -124,19 +130,35 @@ export async function ensureNativeCompatibleProvider(
   try {
     const profilePath = path.join(directory, "profile.yaml");
     fs.writeFileSync(profilePath, JSON.stringify(profile.document), { mode: 0o600 });
+    const existing = input.resolveExpected?.(profile.profileId) ?? input.expected;
     const receipt = await ensureNativeProvider({
       adapter: input.adapter,
       target: input.target,
       credentialValue: input.credentialValue,
-      expected: input.resolveExpected?.(profile.profileId) ?? input.expected,
+      expected: existing,
       profile: { ...profile, label: "compatible hosted", profilePath },
     });
-    return {
+    const attachment = {
       ...receipt,
       endpointUrl: profile.endpoint,
       api: profile.api,
       addresses: profile.addresses,
     };
+    if (input.authority) {
+      const authority = input.authority;
+      await persistNativeProviderAuthority({
+        profile: { ...profile, profilePath, label: "compatible hosted" },
+        adapter: input.adapter,
+        target: input.target,
+        gatewayName: authority.gatewayName,
+        receipt: attachment,
+        existing: existing,
+        readAuthority: () => authority.read(profile.profileId),
+        writeAuthority: () => authority.write(attachment),
+        recoveryGuidance: "Inspect provider ownership before retrying the command.",
+      });
+    }
+    return attachment;
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

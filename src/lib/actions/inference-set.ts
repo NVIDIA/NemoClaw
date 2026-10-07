@@ -1394,11 +1394,19 @@ async function prepareNativeCompatibleSelection(input: {
     resolveExpected: (profileId) =>
       deps.getNativeCompatibleProviderAuthority?.(gatewayName, profileId) ??
       (input.previousAttachment?.profileId === profileId ? input.previousAttachment : undefined),
+    authority: {
+      gatewayName,
+      read: (profileId) =>
+        (
+          deps.getNativeCompatibleProviderAuthority ?? registry.getNativeCompatibleProviderAuthority
+        )(gatewayName, profileId),
+      write: (receipt) =>
+        (
+          deps.setNativeCompatibleProviderAuthority ?? registry.setNativeCompatibleProviderAuthority
+        )(gatewayName, receipt),
+    },
   });
-  (deps.setNativeCompatibleProviderAuthority ?? registry.setNativeCompatibleProviderAuthority)(
-    gatewayName,
-    ensured,
-  );
+
   const attached = await ensureNativeCompatibleProviderAttached({
     adapter: deps.providerAdapter,
     target: { kind: "named", gatewayName: gatewayName },

@@ -1061,6 +1061,19 @@ export function createSetupInference(
               adapter: deps.providerAdapter,
               binding,
               credentialValue: adapter.token,
+              authority: {
+                gatewayName,
+                read: (profileId) =>
+                  (deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority)(
+                    gatewayName,
+                    profileId,
+                  ),
+                write: (receipt) =>
+                  (deps.setNativeBedrockProviderAuthority ?? setNativeBedrockProviderAuthority)(
+                    gatewayName,
+                    receipt,
+                  ),
+              },
               expected:
                 (deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority)(
                   gatewayName,
@@ -1068,10 +1081,7 @@ export function createSetupInference(
                 ) ??
                 (recordedReceipt?.profileId === identity.profileId ? recordedReceipt : undefined),
             });
-            (deps.setNativeBedrockProviderAuthority ?? setNativeBedrockProviderAuthority)(
-              gatewayName,
-              nativeBedrockProviderAttachment,
-            );
+
             return null;
           }
 
@@ -1134,14 +1144,24 @@ export function createSetupInference(
                   parseTrustedPrivateInferenceHostsFromEnv(process.env),
               },
               credentialValue,
+              authority: {
+                gatewayName,
+                read: (profileId) => {
+                  if (!deps.getNativeCompatibleProviderAuthority)
+                    throw new Error("Native compatible authority observation is unavailable.");
+                  return deps.getNativeCompatibleProviderAuthority(gatewayName, profileId);
+                },
+                write: (receipt) => {
+                  if (!deps.setNativeCompatibleProviderAuthority)
+                    throw new Error("Native compatible authority persistence is unavailable.");
+                  deps.setNativeCompatibleProviderAuthority(gatewayName, receipt);
+                },
+              },
               resolveExpected: (profileId) =>
                 deps.getNativeCompatibleProviderAuthority?.(gatewayName, profileId) ??
                 (recordedReceipt?.profileId === profileId ? recordedReceipt : undefined),
             });
-            deps.setNativeCompatibleProviderAuthority?.(
-              gatewayName,
-              nativeCompatibleProviderAttachment,
-            );
+
             return null;
           }
 

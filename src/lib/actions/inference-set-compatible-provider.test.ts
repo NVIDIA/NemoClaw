@@ -719,6 +719,38 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("removes an unowned new endpoint when authority persistence fails before attachment", async () => {
+    const native = await nativeCompatibleFixture(undefined, undefined, false);
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      providerAdapter: native.providerAdapter,
+    });
+    deps.getNativeCompatibleProviderAuthority = vi.fn(() => undefined);
+    deps.setNativeCompatibleProviderAuthority = vi.fn(() => {
+      throw new Error("registry write failed");
+    });
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new",
+          endpointUrl: native.profile.endpoint,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("newly created provider was removed");
+    expect(native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(native.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(native.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(
+      deps.getNativeCompatibleProviderAuthority("nemoclaw", native.receipt.profileId),
+    ).toBeUndefined();
+  });
+
   it("removes a newly selected endpoint after failed verification and clears confirmed authority", async () => {
     const native = await nativeCompatibleFixture(undefined, undefined, false);
     const deps = createDeps({
