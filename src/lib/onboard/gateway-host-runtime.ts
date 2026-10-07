@@ -575,14 +575,29 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       );
     }
     let createdRegistration = false;
+    const getRegistrationOwner = () => {
+      try {
+        return getGatewayOwner();
+      } catch (error) {
+        if (!createdRegistration) throw error;
+        throw new GatewayOwnershipError(
+          "gateway_registration_failed",
+          `${error instanceof Error ? error.message : String(error)} ` +
+            `New gateway registration '${owner.gatewayName}' was retained because cleanup authority could not be verified. ` +
+            "Confirm the gateway authority and inspect the named registration with 'openshell gateway list -o json' " +
+            "before rerunning onboarding.",
+          owner,
+        );
+      }
+    };
     const removeCreatedRegistration = async () => {
       if (!createdRegistration) return;
-      const currentOwner = getGatewayOwner();
+      const currentOwner = getRegistrationOwner();
       if (!sameGatewayOwner(owner, currentOwner))
         throw new Error("Gateway authority changed; registration was retained.");
       const removed = await deps.lifecycle.removeGateway(request);
       if (!removed.ok) {
-        getGatewayOwner();
+        getRegistrationOwner();
         await deps.observer.observeGatewayReuse(request);
         throw new Error(
           `${removed.error.message} Gateway registration was retained for inspection.`,
@@ -591,16 +606,16 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) delete process.env.OPENSHELL_GATEWAY;
     };
     if (!reusedRegistration) {
-      getGatewayOwner();
+      getRegistrationOwner();
       const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });
       if (!added.ok) {
-        getGatewayOwner();
+        getRegistrationOwner();
         await observeRegistration();
         throw new GatewayOwnershipError("gateway_registration_failed", added.error.message, owner);
       }
       createdRegistration = true;
     }
-    getGatewayOwner();
+    getRegistrationOwner();
     const selected = await deps.lifecycle.selectGateway(request);
     const observed = await observeRegistration();
     if (
@@ -611,7 +626,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       observed.namedActive !== true ||
       !matchesDeclaredEndpoint(observed)
     ) {
-      getGatewayOwner();
+      getRegistrationOwner();
       await removeCreatedRegistration();
       const registrationState = createdRegistration
         ? "The new registration was removed."
@@ -646,6 +661,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
         owner,
       );
     }
+    getRegistrationOwner();
     process.env.OPENSHELL_GATEWAY = owner.gatewayName;
   }
 

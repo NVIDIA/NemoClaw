@@ -950,28 +950,36 @@ describe("gateway host runtime attachment probe", () => {
     },
   );
 
-  it("rejects changed authority after registration before selecting the gateway (#12622)", async () => {
-    declareExternalSupervision();
-    const { lifecycle, observer } = gatewayAdaptersForTest(MISSING_REGISTRATION);
-    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
-    const owner = runtime.getGatewayOwner();
-    const expectedProbe = await runtime.probeGatewayAttachment(owner);
-    lifecycle.registerGateway.mockImplementationOnce(async () => {
-      declareExternalSupervision({
-        ...DECLARATION,
-        supervisor: { ...DECLARATION.supervisor, execPath: "/opt/platform/replacement-gatewayd" },
+  it.each(["registration", "selection"] as const)(
+    "reports retained registration after authority changes during %s (#12622)",
+    async (phase) => {
+      declareExternalSupervision();
+      const { lifecycle, observer } = gatewayAdaptersForTest(MISSING_REGISTRATION);
+      const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+      const owner = runtime.getGatewayOwner();
+      const expectedProbe = await runtime.probeGatewayAttachment(owner);
+      observer.observeGatewayReuse
+        .mockResolvedValueOnce(MISSING_REGISTRATION)
+        .mockResolvedValue(MATCHING_REGISTRATION);
+      const mutation =
+        phase === "registration" ? lifecycle.registerGateway : lifecycle.selectGateway;
+      mutation.mockImplementationOnce(async () => {
+        declareExternalSupervision({
+          ...DECLARATION,
+          supervisor: { ...DECLARATION.supervisor, execPath: "/opt/platform/replacement-gatewayd" },
+        });
+        return { ok: true, state: "completed" };
       });
-      return { ok: true, state: "completed" };
-    });
 
-    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
-      /authority changed during this run/,
-    );
-    expect(lifecycle.registerGateway).toHaveBeenCalledOnce();
-    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
-    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
-    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
-  });
+      await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
+        /authority changed during this run[\s\S]*New gateway registration 'nemoclaw' was retained[\s\S]*Confirm the gateway authority[\s\S]*inspect[\s\S]*before rerunning onboarding/,
+      );
+      expect(lifecycle.registerGateway).toHaveBeenCalledOnce();
+      expect(lifecycle.selectGateway).toHaveBeenCalledTimes(phase === "registration" ? 0 : 1);
+      expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+      expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("reobserves failed registration without replacing or retrying it (#11326)", async () => {
     declareExternalSupervision();
