@@ -232,7 +232,25 @@ fn row() -> Row {
         .values
 }
 fn image() -> serde_json::Value {
-    json!({"Id":format!("sha256:{}","c".repeat(64)),"Os":"linux","Architecture":"arm64","Config":{"Entrypoint":[nemoclaw_container_inputs::ENTRYPOINT],"Env":[],"Labels":{nemoclaw_container_inputs::CONTRACT_LABEL:nemoclaw_container_inputs::CONTRACT_VERSION}}})
+    json!({"Id":format!("sha256:{}","c".repeat(64)),"Os":"linux","Architecture":"arm64","Config":{"Entrypoint":[nemoclaw_container_inputs::ENTRYPOINT],"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Labels":{nemoclaw_container_inputs::CONTRACT_LABEL:nemoclaw_container_inputs::CONTRACT_VERSION}}})
+}
+
+#[test]
+fn setup_image_accepts_only_empty_environment_or_docker_default_path_on_both_platforms() {
+    let mut spec: InputsSpec = serde_json::from_str(&row()["spec"]).unwrap();
+    for architecture in ["arm64", "amd64"] {
+        spec.process.process.as_mut().unwrap().architecture = architecture.into();
+        for environment in [
+            serde_json::Value::Null,
+            json!([]),
+            json!(["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]),
+        ] {
+            let mut observed = image();
+            observed["Architecture"] = json!(architecture);
+            observed["Config"]["Env"] = environment;
+            validate_image(&serde_json::from_value(observed).unwrap(), &spec.process).unwrap();
+        }
+    }
 }
 
 #[tokio::test]
@@ -320,6 +338,22 @@ fn setup_image_contract_rejects_wrong_platform_entrypoint_label_environment_and_
         ("/Config/Entrypoint", json!(["/bin/sh"])),
         ("/Config/Labels/io.nemoclaw.container-inputs", json!("2")),
         ("/Config/Env", json!(["TOKEN=unexpected-image-content"])),
+        ("/Config/Env", json!(["PATH=/tmp"])),
+        ("/Config/Env", json!(["LD_PRELOAD=/tmp/injected.so"])),
+        (
+            "/Config/Env",
+            json!([
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "TOKEN=unexpected-image-content"
+            ]),
+        ),
+        (
+            "/Config/Env",
+            json!([
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ]),
+        ),
     ] {
         let mut changed = valid.clone();
         *changed.pointer_mut(pointer).unwrap() = bad;
@@ -562,7 +596,9 @@ async fn serve_setup(
                 assert_eq!(config["Env"],json!([]));assert_eq!(config["HostConfig"]["NetworkMode"],"none");assert_eq!(config["HostConfig"]["LogConfig"]["Type"],"none");
                 assert_eq!(config["HostConfig"]["Mounts"][0]["VolumeOptions"]["NoCopy"],true);
                 state.creates+=1;let id=format!("helper-{}",state.creates);
-                state.helper=Some(json!({"Id":id,"Name":format!("/{}",spec.helper_name()),"Image":image()["Id"],"Config":config,"HostConfig":config["HostConfig"],"Mounts":[{"Type":"volume","Name":spec.process.volume(),"Destination":ROOT,"RW":true}],"State":{"Running":false,"Status":"created","ExitCode":0}}));
+                let mut observed_config = config.clone();
+                observed_config["Env"] = image()["Config"]["Env"].clone();
+                state.helper=Some(json!({"Id":id,"Name":format!("/{}",spec.helper_name()),"Image":image()["Id"],"Config":observed_config,"HostConfig":config["HostConfig"],"Mounts":[{"Type":"volume","Name":spec.process.volume(),"Destination":ROOT,"RW":true}],"State":{"Running":false,"Status":"created","ExitCode":0}}));
                 (201,serde_json::to_vec(&json!({"Id":id,"Warnings":[]})).unwrap())
             }
             ("POST",route) if route.ends_with("/start")=>{state.starts+=1;state.helper.as_mut().unwrap()["State"]=json!({"Running":true,"Status":"running","ExitCode":0});started.notify_waiters();(204,vec![])},
@@ -632,6 +668,45 @@ async fn setup_transfers_only_after_admission_and_unchanged_apply_does_not_resta
             .all(|(_, p)| p.starts_with("/containers/"))
     );
 }
+#[tokio::test]
+async fn setup_rejects_unexpected_container_environment_without_restart_transfer_or_cleanup() {
+    let fixture = SetupFixture::new().await;
+    let backend = fixture.backend(true);
+    let first = backend.ensure("container_inputs", &fixture.row).await;
+    assert!(first.error().is_none());
+    let row = first.state().unwrap();
+    for environment in [
+        json!(["PATH=/tmp"]),
+        json!(["LD_PRELOAD=/tmp/injected.so"]),
+        json!([
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "TOKEN=unexpected-image-content"
+        ]),
+        json!([
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ]),
+    ] {
+        fixture.state.lock().unwrap().helper.as_mut().unwrap()["Config"]["Env"] = environment;
+        assert!(backend.read("container_inputs", row, false).await.is_err());
+        assert!(
+            backend
+                .ensure("container_inputs", row)
+                .await
+                .error()
+                .is_some()
+        );
+        assert!(backend.remove("container_inputs", row, true).await.is_err());
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            (state.creates, state.starts, state.transfers, state.deletes),
+            (1, 1, 1, 0)
+        );
+        assert!(state.helper.is_some());
+        assert!(state.files.contains_key("credentials/speech"));
+    }
+}
+
 #[tokio::test]
 async fn rejected_admission_and_missing_credentials_never_transfer_secret_bytes() {
     for missing in [false, true] {

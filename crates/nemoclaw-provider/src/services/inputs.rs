@@ -29,6 +29,15 @@ use std::{
 use tokio::io::AsyncWriteExt;
 const INPUT_LABEL: &str = "nemoclaw.nvidia.com/input-spec";
 
+fn setup_environment_is_safe(environment: Option<&[String]>) -> bool {
+    // Docker supplies PATH even for scratch images; the helper uses an absolute entrypoint.
+    environment.is_none_or(|values| {
+        values.is_empty()
+            || values.len() == 1
+                && values[0] == "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    })
+}
+
 pub(crate) fn validate_image(
     image: &bollard::models::ImageInspect,
     spec: &nemoclaw_sdk::managed::Spec,
@@ -49,7 +58,7 @@ pub(crate) fn validate_image(
             .entrypoint
             .as_ref()
             .is_none_or(|parts| parts != &[ENTRYPOINT.to_owned()])
-        || config.env.as_ref().is_some_and(|v| !v.is_empty())
+        || !setup_environment_is_safe(config.env.as_deref())
         || config.volumes.as_ref().is_some_and(|v| !v.is_empty())
     {
         return Err(Error::Conflict(
@@ -546,7 +555,7 @@ fn identity(
             != Some(spec.helper_name().as_str())
         || config.image.as_deref() != Some(spec.setup.image.as_str())
         || config.user.as_deref() != Some("0:0")
-        || config.env.as_ref().is_some_and(|v| !v.is_empty())
+        || !setup_environment_is_safe(config.env.as_deref())
         || config
             .entrypoint
             .as_ref()
