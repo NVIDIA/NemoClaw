@@ -31,7 +31,11 @@ function registeredImages() {
   // Docker images are host-wide, so every gateway registry must protect its tags.
   return listHostGatewayRegistryEntries(resolveHome()).map(({ entry, registryFile }) => {
     const imageTag = entry.imageTag;
-    if (imageTag !== undefined && imageTag !== null && typeof imageTag !== "string") {
+    if (
+      imageTag !== undefined &&
+      imageTag !== null &&
+      (typeof imageTag !== "string" || imageTag.trim().length === 0)
+    ) {
       throw new Error(
         `Cannot safely inspect ${registryFile}: invalid imageTag for sandbox ${entry.name}`,
       );
@@ -143,7 +147,7 @@ export async function garbageCollectImagesWithoutPortableAuthority(
           console.log(`  ${G}✓${R} Removed ${img.tag}`);
           removed++;
         } else {
-          const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
+          const details = String(rmiResult.stderr || rmiResult.stdout || "").trim();
           console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
           failed++;
         }

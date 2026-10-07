@@ -206,9 +206,13 @@ describe("garbage collection across gateway registries", () => {
     },
   );
 
-  it("refuses deletion when a sibling image tag is malformed (#12582)", async () => {
+  it.each([
+    ["non-string", 42],
+    ["empty", ""],
+    ["whitespace-only", " \t\n"],
+  ])("refuses deletion when a sibling image tag is %s (#12582)", async (_label, imageTag) => {
     writeRegistry(8080, aliceImage);
-    writeRegistry(8090, 42);
+    writeRegistry(8090, imageTag);
 
     await expect(collect()).rejects.toThrow(/invalid imageTag/);
 
