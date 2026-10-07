@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
+import { EXTERNAL_IMAGE_AGENTS } from "../workload/source";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -55,6 +57,7 @@ import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-conta
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
+  readonly externalImagePreparation?: PodmanBoundContainerEngine;
   readonly gatewayInspection?: PodmanBoundContainerEngine;
   readonly hostLocalInference?: PodmanContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
@@ -98,9 +101,31 @@ const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
 
+const QUALIFIED_EXTERNAL_IMAGE_SUPPORT = {
+  exactDigestReferences: true,
+  platforms: MANAGED_IMAGE_PLATFORMS,
+  agents: EXTERNAL_IMAGE_AGENTS,
+} as const;
+
+const EXTERNAL_IMAGE_INSPECT_FORMAT =
+  '[{"Id":{{json .ID}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
+
+function isEmptyJsonArray(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 function acceptsManagedWorkloadReceipt(
   receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+  externalImages: boolean,
 ): boolean {
+  if (receipt?.kind === "external-image") {
+    return externalImages && cloneSandboxWorkloadReceipt(receipt)?.kind === "external-image";
+  }
   if (receipt?.kind !== "managed-image" || receipt.platform === undefined) return false;
   const support = QUALIFIED_MANAGED_WORKLOAD_PROFILE.support;
   return (
@@ -121,6 +146,7 @@ function requireEngine(
   engine: PodmanContainerEngine,
   operation:
     | "host-doctor"
+    | "external-image-preparation"
     | "gateway-inspection"
     | "host-local-inference"
     | "sandbox-lifecycle"
@@ -138,6 +164,7 @@ export function createPodmanRuntimeProviderBundle(
   const providerId = "podman";
   const {
     hostDoctor,
+    externalImagePreparation,
     gatewayInspection,
     hostLocalInference: inferenceEngine,
     sandboxLifecycle,
@@ -150,6 +177,9 @@ export function createPodmanRuntimeProviderBundle(
     PodmanContainerEngine
   >([
     ["host-doctor", hostDoctor],
+    ...(externalImagePreparation
+      ? ([["external-image-preparation", externalImagePreparation]] as const)
+      : []),
     ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
     ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
     ["sandbox-lifecycle", sandboxLifecycle],
@@ -183,6 +213,7 @@ export function createPodmanRuntimeProviderBundle(
     throw new Error("Podman published recovery operation authority is incomplete.");
   }
   for (const [engine, operation] of [
+    [externalImagePreparation, "external-image-preparation"],
     [gatewayInspection, "gateway-inspection"],
     [workloadCleanup, "workload-cleanup"],
   ] as const) {
@@ -257,9 +288,15 @@ export function createPodmanRuntimeProviderBundle(
     workload: {
       providerId,
       supported: true,
-      profile: QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+      profile: {
+        ...QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+        ...(externalImagePreparation
+          ? { externalImageSupport: QUALIFIED_EXTERNAL_IMAGE_SUPPORT }
+          : {}),
+      },
       managedStateMountDriverId: "podman",
-      acceptsReceipt: acceptsManagedWorkloadReceipt,
+      acceptsReceipt: (receipt) =>
+        acceptsManagedWorkloadReceipt(receipt, externalImagePreparation !== undefined),
     },
     hostLocalInference:
       inferenceEngine !== undefined && inferenceOptions !== undefined
@@ -368,6 +405,15 @@ export function createPodmanRuntimeProviderBundle(
           engineId: hostDoctor.engineId,
           displayName: hostDoctor.displayName,
         },
+        ...(externalImagePreparation
+          ? [
+              {
+                operation: "external-image-preparation" as const,
+                engineId: externalImagePreparation.engineId,
+                displayName: externalImagePreparation.displayName,
+              },
+            ]
+          : []),
         ...(gatewayInspection
           ? [
               {
@@ -408,6 +454,39 @@ export function createPodmanRuntimeProviderBundle(
         }
         return engine.capture(args, timeoutMs);
       },
+      externalImagePreparation: externalImagePreparation
+        ? {
+            displayName: externalImagePreparation.displayName,
+            inspectLocal: (reference, timeoutMs) => {
+              const inspection = externalImagePreparation.capture(
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                timeoutMs,
+              );
+              if (inspection.error) return { status: "failed", error: inspection.error };
+              if (inspection.status === 0) return { status: "present", inspection };
+              const absenceProbe = externalImagePreparation.capture(
+                ["image", "inspect", reference],
+                timeoutMs,
+              );
+              if (absenceProbe.error) return { status: "failed", error: absenceProbe.error };
+              return absenceProbe.status !== 0 && isEmptyJsonArray(absenceProbe.stdout)
+                ? { status: "absent" }
+                : { status: "failed" };
+            },
+            pull: (reference, timeoutMs) =>
+              externalImagePreparation.capture(["pull", "--retry=0", reference], timeoutMs),
+            inspectPulled: (reference, timeoutMs) =>
+              externalImagePreparation.capture(
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                timeoutMs,
+              ),
+            normalizeContentId: (value) => {
+              if (typeof value !== "string") return null;
+              if (/^sha256:[0-9a-f]{64}$/u.test(value)) return value;
+              return /^[0-9a-f]{64}$/u.test(value) ? `sha256:${value}` : null;
+            },
+          }
+        : undefined,
       nvidiaContainer: inferenceEngine
         ? {
             capture: (operation, input, timeoutMs) => {
@@ -479,6 +558,10 @@ export function createCurrentPodmanRuntimeProviderBundle(
   const stateRoot = resolvePodmanStateRoot(environment.HOME);
   const engines = {
     hostDoctor: createCurrentPodmanOperationEngine("host-doctor", environment),
+    externalImagePreparation: createCurrentPodmanOperationEngine(
+      "external-image-preparation",
+      environment,
+    ),
     gatewayInspection: createCurrentPodmanOperationEngine("gateway-inspection", environment),
     hostLocalInference: createCurrentPodmanOperationEngine("host-local-inference", environment),
     sandboxLifecycle: createCurrentPodmanOperationEngine("sandbox-lifecycle", environment),

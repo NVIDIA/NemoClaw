@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveExplicitGatewayPortEnv } from "./gateway-port-resolution";
+
 export interface SandboxSummary {
   defaultSandbox?: string | null;
   sandboxes?: readonly SandboxServiceTarget[];
@@ -11,13 +13,24 @@ export interface SandboxServiceTarget {
   dashboardPort?: number | null;
 }
 
+export interface CrossPortSandboxServiceTarget {
+  entry: SandboxServiceTarget;
+  gatewayPort: number | null;
+}
+
 export interface ServiceTargetDeps {
   listSandboxes: () => SandboxSummary;
+  findSandboxAcrossGatewayRoots?: (sandboxName: string) => CrossPortSandboxServiceTarget | null;
 }
 
 export interface StartCommandDeps {
   listSandboxes: () => SandboxSummary;
-  startAll: (options: { sandboxName?: string; dashboardPort?: number }) => Promise<void>;
+  findSandboxAcrossGatewayRoots?: (sandboxName: string) => CrossPortSandboxServiceTarget | null;
+  startAll: (options: {
+    sandboxName?: string;
+    dashboardPort?: number;
+    gatewayPort?: number;
+  }) => Promise<void>;
 }
 
 export interface StopCommandDeps {
@@ -48,6 +61,7 @@ export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): 
 export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
   sandboxName?: string;
   dashboardPort?: number;
+  gatewayPort?: number;
 } {
   const envName = resolveSandboxNameOverride();
   let registrySnapshot: SandboxSummary;
@@ -59,9 +73,15 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
     throw error;
   }
   const sandboxName = envName ?? resolveDefaultSandboxName(() => registrySnapshot);
-  const dashboardPort = sandboxName
-    ? registrySnapshot.sandboxes?.find((sandbox) => sandbox.name === sandboxName)?.dashboardPort
+  const localTarget = sandboxName
+    ? registrySnapshot.sandboxes?.find((sandbox) => sandbox.name === sandboxName)
     : undefined;
+  const crossPortTarget =
+    sandboxName && resolveExplicitGatewayPortEnv() === null
+      ? deps.findSandboxAcrossGatewayRoots?.(sandboxName)
+      : undefined;
+  const target = crossPortTarget?.entry ?? localTarget;
+  const dashboardPort = target?.dashboardPort;
   const validDashboardPort =
     typeof dashboardPort === "number" &&
     Number.isSafeInteger(dashboardPort) &&
@@ -69,9 +89,18 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
     dashboardPort <= 65535
       ? dashboardPort
       : undefined;
+  const gatewayPort = crossPortTarget?.gatewayPort;
+  const validGatewayPort =
+    typeof gatewayPort === "number" &&
+    Number.isSafeInteger(gatewayPort) &&
+    gatewayPort >= 1 &&
+    gatewayPort <= 65535
+      ? gatewayPort
+      : undefined;
   return {
     sandboxName,
     ...(validDashboardPort === undefined ? {} : { dashboardPort: validDashboardPort }),
+    ...(validGatewayPort === undefined ? {} : { gatewayPort: validGatewayPort }),
   };
 }
 
