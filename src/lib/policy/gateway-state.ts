@@ -10,7 +10,12 @@ import type {
   ValueStatus,
   TelemetryMetadataError,
 } from "../domain/telemetry/event";
-import type { AppliedPolicySelection } from "../domain/telemetry/provenance";
+import {
+  readAppliedPolicySelection,
+  type AppliedPolicySelection,
+} from "../domain/telemetry/provenance";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding/identity";
+import type { SandboxEntry } from "../state/registry/types";
 import {
   readSandboxTelemetryEntry,
   updateSandboxTelemetrySelections,
@@ -148,4 +153,36 @@ export function persistAppliedPolicySelection(
     { category: "policy_tier" },
   ]);
   return false;
+}
+
+/** Retain selection origin only after the captured live policy's rebuild was accepted. */
+export function restoreAppliedPolicySelection(
+  sandboxName: string,
+  previous?: SandboxEntry,
+): boolean {
+  try {
+    const entry = readSandboxTelemetryEntry(sandboxName);
+    if (!entry || entry.name !== sandboxName) return false;
+    const gatewayName = resolveSandboxGatewayName(entry);
+    // A newer verified selection owns the replacement; never replace it with history.
+    if (entry.appliedPolicySelection !== undefined)
+      return readAppliedPolicySelection(entry.appliedPolicySelection) !== null;
+    if (previous?.appliedPolicySelection === undefined) return true;
+    if (
+      previous.pendingCreateIdentity !== undefined ||
+      previous.pendingRouteReservation !== undefined ||
+      previous.name !== entry.name ||
+      (previous.agent ?? "openclaw") !== (entry.agent ?? "openclaw") ||
+      resolveSandboxGatewayName(previous) !== gatewayName
+    )
+      return false;
+    const receipt = readAppliedPolicySelection(previous.appliedPolicySelection);
+    return (
+      receipt !== null &&
+      updateSandboxTelemetrySelections(entry, { appliedPolicySelection: receipt })
+    );
+  } catch {
+    // Policy application remains successful when optional metadata cannot be saved.
+    return false;
+  }
 }

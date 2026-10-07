@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isTelemetryOperationActive, recordTelemetryTarget } from "../telemetry/operation";
-
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import { loadAgent } from "../../agent/defs";
@@ -666,55 +664,4 @@ export async function runRebuildPostRestorePhase(
   return { complete: postRestoreComplete, mutableConfigPermissionsVerified };
 }
 
-/** Clear pending configuration only after verified rebuild completion and cleanup. */
-export async function recordRebuildCompletion(
-  sandboxName: string,
-  accepted: boolean,
-  cleanupOnly: boolean,
-  previousEntry?: registry.SandboxEntry,
-): Promise<void> {
-  let metadataComplete = true;
-  let modelSelectionVerified = true;
-  const metadataErrors: NonNullable<Parameters<typeof recordTelemetryTarget>[0]["metadataErrors"]> =
-    [];
-  if (accepted && !cleanupOnly) {
-    try {
-      if (isTelemetryOperationActive()) {
-        const { verifySelectedAgentsManifest } = await import("./agents/telemetry-verification");
-        const selection = await verifySelectedAgentsManifest(sandboxName, undefined, previousEntry);
-        metadataErrors.push(...(selection.metadataErrors ?? []));
-        modelSelectionVerified = selection.verified;
-        metadataComplete = selection.status !== "collection_error";
-      }
-      if (
-        modelSelectionVerified &&
-        registry.getSandbox(sandboxName)?.configurationApplyPending === true
-      ) {
-        let cleared = false;
-        try {
-          cleared = registry.updateSandbox(sandboxName, { configurationApplyPending: undefined });
-        } catch {
-          /* Native completion remains valid when optional metadata cannot be saved. */
-        }
-        if (!cleared) {
-          metadataComplete = false;
-          metadataErrors.push({ category: "configuration_apply_state" });
-        }
-      }
-    } catch {
-      metadataComplete = false;
-    }
-  }
-  let outcome: Parameters<typeof recordTelemetryTarget>[0]["outcome"] = "failed";
-  if (accepted) outcome = cleanupOnly ? "no_change" : "completed";
-  if (accepted && !modelSelectionVerified) outcome = "unverified";
-  const state = accepted && modelSelectionVerified ? "applied" : "partial";
-  recordTelemetryTarget({
-    scope: "sandbox",
-    sandboxName,
-    outcome,
-    state,
-    verificationStatus: metadataComplete ? "reported" : "collection_error",
-    ...(metadataErrors.length ? { metadataErrors } : {}),
-  });
-}
+export { recordRebuildCompletion } from "../telemetry/upgrade";

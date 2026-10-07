@@ -3,6 +3,11 @@
 
 import type { SandboxEntry } from "../../state/registry/types";
 import {
+  readSandboxTelemetryEntry,
+  updateSandboxTelemetrySelections,
+} from "../../state/registry/telemetry-selections";
+import { restoreAppliedPolicySelection } from "../../policy/gateway-state";
+import {
   finishTelemetryOperation,
   getTelemetryTarget,
   isTelemetryOperationActive,
@@ -88,4 +93,62 @@ export function createUpgradeTelemetry(
       else setTelemetryOutcome("completed", "applied");
     },
   };
+}
+
+/** Clear pending configuration only after verified rebuild completion and cleanup. */
+export async function recordRebuildCompletion(
+  sandboxName: string,
+  accepted: boolean,
+  cleanupOnly: boolean,
+  previousEntry?: SandboxEntry,
+): Promise<void> {
+  let metadataComplete = true;
+  let modelSelectionVerified = true;
+  const metadataErrors: NonNullable<Parameters<typeof recordTelemetryTarget>[0]["metadataErrors"]> =
+    [];
+  if (accepted && !cleanupOnly) {
+    try {
+      if (isTelemetryOperationActive()) {
+        const { verifySelectedAgentsManifest } =
+          await import("../sandbox/agents/telemetry-verification");
+        const selection = await verifySelectedAgentsManifest(sandboxName, undefined, previousEntry);
+        metadataErrors.push(...(selection.metadataErrors ?? []));
+        modelSelectionVerified = selection.verified;
+        metadataComplete = selection.status !== "collection_error";
+        if (!restoreAppliedPolicySelection(sandboxName, previousEntry)) {
+          metadataComplete = false;
+          metadataErrors.push({ category: "policy_tier" });
+        }
+      }
+      const entry = modelSelectionVerified ? readSandboxTelemetryEntry(sandboxName) : null;
+      if (entry?.configurationApplyPending === true) {
+        let cleared = false;
+        try {
+          cleared = updateSandboxTelemetrySelections(entry, {
+            configurationApplyPending: undefined,
+          });
+        } catch {
+          /* Native completion remains valid when optional metadata cannot be saved. */
+        }
+        if (!cleared) {
+          metadataComplete = false;
+          metadataErrors.push({ category: "configuration_apply_state" });
+        }
+      }
+    } catch {
+      metadataComplete = false;
+    }
+  }
+  let outcome: Parameters<typeof recordTelemetryTarget>[0]["outcome"] = "failed";
+  if (accepted) outcome = cleanupOnly ? "no_change" : "completed";
+  if (accepted && !modelSelectionVerified) outcome = "unverified";
+  const state = accepted && modelSelectionVerified ? "applied" : "partial";
+  recordTelemetryTarget({
+    scope: "sandbox",
+    sandboxName,
+    outcome,
+    state,
+    verificationStatus: metadataComplete ? "reported" : "collection_error",
+    ...(metadataErrors.length ? { metadataErrors } : {}),
+  });
 }
