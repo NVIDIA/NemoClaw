@@ -116,6 +116,29 @@ describe("final onboard flow phases", () => {
     );
   });
 
+  it.each([false, null])(
+    "refuses custom-image configuration when gateway startup returns %s",
+    async (startup) => {
+      const setupOpenclaw = vi.fn();
+      const [branchPhase] = createPhases("openclaw", [], {
+        setupOpenclaw,
+        waitForStartedOpenclawGatewayProcess: vi.fn(async () => startup),
+      });
+
+      await expect(
+        branchPhase.run(
+          context({
+            fromDockerfile: "/tmp/CustomDockerfile",
+            revalidateSandboxIdentity: vi.fn(),
+          }),
+        ),
+      ).rejects.toThrow(
+        /^OpenClaw startup did not settle before configuration for sandbox 'my-sandbox'\.$/u,
+      );
+      expect(setupOpenclaw).not.toHaveBeenCalled();
+    },
+  );
+
   it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
     const revalidateSandboxIdentity = vi.fn();
     const setupOpenclaw = vi.fn(async (...args) => {

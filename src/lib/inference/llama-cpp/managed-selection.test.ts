@@ -24,6 +24,7 @@ const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
+const STATION_GB300_WSL_PRESET_ID = "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b";
 const LOCAL_DOCKER_SELECTION = {
   dockerContextIsDefault: () => true,
   runtimeProviderId: "docker",
@@ -76,6 +77,18 @@ function n1xCollectionOptions(): Omit<
       productName: "83N7",
     }),
     detectNvidiaDriverVersion: () => "580.65.06",
+  };
+}
+
+function stationGb300CollectionOptions(
+  stationGb300WslProduct = true,
+): Omit<CollectHostObservationsOptions, "detectGpu" | "containerGpuProof"> {
+  return {
+    ...n1xCollectionOptions(),
+    collectPlatformIdentity: () => ({
+      productName: "Virtual Machine",
+      stationGb300WslProduct,
+    }),
   };
 }
 
@@ -228,6 +241,94 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "selected" });
   });
 
+  it("selects managed Qwen on a qualified mixed-GPU Station GB300 WSL host (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        { name: "NVIDIA GB300", memoryMB: 256_703 },
+      ],
+      count: 2,
+      totalMemoryMB: 281_170,
+      availableMemoryMB: 270_000,
+      perGpuMB: 24_467,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "automatic",
+        preset: { metadata: { id: STATION_GB300_WSL_PRESET_ID } },
+        recipe: { metadata: { id: N1X_WSL_RECIPE_ID } },
+      },
+    });
+  });
+
+  it("rejects Station GB300 WSL when the Windows product does not match (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA GB300", memoryMB: 256_703 }],
+      count: 1,
+      totalMemoryMB: 256_703,
+      availableMemoryMB: 250_000,
+      perGpuMB: 256_703,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: false,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(false),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects Station GB300 WSL when the proved GPU set has no GB300 (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA RTX PRO 6000 Blackwell", memoryMB: 96_000 }],
+      count: 1,
+      totalMemoryMB: 96_000,
+      availableMemoryMB: 90_000,
+      perGpuMB: 96_000,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("rejects the 5120-core N1x WSL identity below the GPU-memory floor (#12282)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
@@ -261,10 +362,30 @@ describe("managed llama.cpp selection", () => {
     ).toEqual({
       kind: "rejected",
       reason:
-        "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+        "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
     });
     expect(dockerContextIsDefault).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["automatic", {}],
+    ["explicit", { [NEMOCLAW_SERVING_PRESET_ENV]: STATION_GB300_WSL_PRESET_ID }],
+  ])(
+    "rejects %s Station GB300 WSL selection for a remote runtime context (#12476)",
+    (_case, env) => {
+      const { catalog, report } = fixture(STATION_GB300_WSL_PRESET_ID);
+      const dockerContextIsDefault = vi.fn(() => false);
+
+      expect(
+        resolveManagedLlamaCppSelection(env, catalog, report, { dockerContextIsDefault }),
+      ).toEqual({
+        kind: "rejected",
+        reason:
+          "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+      });
+      expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     ["automatic N1x WSL", N1X_WSL_PRESET_ID, {}],
