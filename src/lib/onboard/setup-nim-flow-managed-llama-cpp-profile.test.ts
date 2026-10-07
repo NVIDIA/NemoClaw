@@ -87,6 +87,19 @@ function n1xCollectionOptions(): Omit<
   };
 }
 
+function stationGb300CollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "containerGpuProof"
+> {
+  return {
+    ...n1xCollectionOptions(),
+    collectPlatformIdentity: () => ({
+      productName: "Virtual Machine",
+      stationGb300WslProduct: true,
+    }),
+  };
+}
+
 function sparkCollectionOptions(): Omit<
   CollectHostObservationsOptions,
   "detectGpu" | "containerGpuProof"
@@ -438,6 +451,123 @@ describe("managed llama.cpp profile onboarding", () => {
       }),
     });
     expect(harness.getRuntimeProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it("zero-decision onboarding selects managed Qwen on Station GB300 WSL (#12476)", async () => {
+    const harness = n1xProofHarness(true, null);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux",
+      gpus: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        { name: "NVIDIA GB300", memoryMB: 256_703 },
+      ],
+      count: 2,
+      totalMemoryMB: 281_170,
+      availableMemoryMB: 270_000,
+      perGpuMB: 24_467,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    } as never;
+
+    await expect(harness.setupNim(gpu, "station-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+    });
+    expect(harness.installManagedLlamaCpp).toHaveBeenCalledWith(
+      harness.selection,
+      expect.objectContaining({
+        sandboxName: "station-agent",
+        runtimeProvider: harness.runtimeProvider,
+      }),
+    );
+  });
+
+  it("passes the real Station GB300 discovery selection directly into installation (#12476)", async () => {
+    const catalog = loadManagedInferenceCatalog();
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        { name: "NVIDIA GB300", memoryMB: 256_703 },
+      ],
+      count: 2,
+      totalMemoryMB: 281_170,
+      availableMemoryMB: 270_000,
+      perGpuMB: 24_467,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          detectedGpu,
+          catalog,
+          stationGb300CollectionOptions(),
+          {
+            ...selectionOptions,
+            dockerContextIsDefault: () => true,
+          },
+        ),
+    );
+    const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
+      async () => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: "qwen3.6-35b-a3b",
+        receipt: { schemaVersion: 1 } as never,
+      }),
+    );
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const checkpointManagedLlamaCppSelection = vi.fn();
+    const setupNim = createSetupNim(
+      makeDeps({
+        checkpointManagedLlamaCppSelection,
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        isNonInteractive: () => true,
+      }),
+    );
+
+    const result = await setupNim(gpu, "station-agent");
+    expect(result).toMatchObject({
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: {
+        preset: { id: "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b" },
+        recipe: { id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" },
+      },
+    });
+    const produced = discoverManagedLlamaCppSelections.mock.results[1]?.value;
+    const producedSelection =
+      produced?.resolution.kind === "selected" ? produced.resolution.selection : null;
+    expect(producedSelection).not.toBeNull();
+    expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toBe(producedSelection);
+    expect(handleLlamaCppSelection).toHaveBeenCalledWith(
+      expect.any(Object),
+      "qwen3.6-35b-a3b",
+      null,
+    );
+    expect(checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: expect.objectContaining({
+        preset: expect.objectContaining({
+          id: "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b",
+        }),
+        recipe: expect.objectContaining({ id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" }),
+      }),
+    });
   });
 
   it("passes the real N1x discovery selection directly into installation", async () => {
