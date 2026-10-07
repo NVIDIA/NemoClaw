@@ -5903,6 +5903,16 @@ n1x_pci_identity_is_valid() {
   [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
+# Generated from bin/lib/n1x-pci-policy.json. Update with node --no-warnings scripts/lib/generate-n1x-pci-policy.mts.
+# n1x-pci-policy:begin
+n1x_pci_device_is_known() {
+  case "${1:-}" in
+    0x2e03 | 0x2e06 | 0x2e13 | 0x2e02 | 0x2e2a) return 0 ;;
+  esac
+  return 1
+}
+# n1x-pci-policy:end
+
 n1x_has_pci_gpu() {
   local pci_root="" pci_device="" vendor="" pci_class="" device="" scanned=0
   local require_known_device="${1:-0}"
@@ -5924,10 +5934,7 @@ n1x_has_pci_gpu() {
     device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
     [ "${#device}" -le 64 ] || continue
     device="$(printf "%s" "$device" | tr '[:upper:]' '[:lower:]')"
-    # Published N1x variants and QA-observed prototype IDs (#8574, #10076).
-    case "$device" in
-      0x2e03 | 0x2e06 | 0x2e13 | 0x2e02 | 0x2e2a) return 0 ;;
-    esac
+    n1x_pci_device_is_known "$device" && return 0
   done
   return 1
 }

@@ -154,7 +154,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.n1x_wsl` | A proof-backed accepted N1x WSL GPU identity qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. The accepted identities are listed below. |
 | `host.platform.station_gb300_wsl` | A Windows product identified as Station GB300 plus a proof-backed NVIDIA GB300 GPU, qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. |
 | `host.platform.dgx_spark` | DGX Spark identity from firmware or a trusted FastOS marker on ARM64 with an available NVIDIA GPU. |
-| `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
+| `host.platform.n1x` | N1x identity from a trusted FastOS marker or, when the marker is absent, a recognized NVIDIA display PCI device on native Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station_hardware` | Station GB300 firmware identity and an exact NVIDIA GB300 display-class PCI device. |
 | `host.platform.dgx_station_software` | A qualified Station software profile. |
 | `host.platform.dgx_station_runtime` | Linux ARM64, Ubuntu 24.04, and an effective NVIDIA GPU. |
@@ -203,12 +203,17 @@ Both outcomes prevent `host.platform.supported` from becoming `present`.
 When available, `host.platform.identity` includes bounded firmware, CPU count, host memory, GPU count and memory, OS, release-name, build, OTA, and software-profile evidence.
 These capacity and display values are diagnostic evidence and do not replace the firmware and PCI hardware requirements.
 
-Native N1x FASTOS identity qualification also fails closed.
-The `host.platform.n1x` capability is `present` only when the host runs Linux ARM64, reports an effective NVIDIA GPU, and both identity sources qualify.
+Native N1x identity qualification also fails closed.
+The `host.platform.n1x` capability is `present` only on native Linux ARM64 with an effective NVIDIA GPU and qualifying marker or PCI evidence.
+The legacy path requires the trusted FastOS marker and NVIDIA display-class PCI identity.
 `/etc/fastos-release` must be a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, grants no group or world write access, contains no NUL or carriage-return byte, and contains exactly one `NAME="N1x FASTOS"` line.
 NemoClaw parses the marker as inert text and does not pin its `VERSION` value.
 A display-class PCI device must report NVIDIA vendor ID `0x10de`.
-Generic DMI values do not satisfy either requirement.
+If `/etc/fastos-release` is absent, PCI device `2e03`, `2e06`, `2e13`, `2e02`, or `2e2a` can qualify an inferred N1x identity.
+The first three are documented variants; the last two are QA-observed prototype IDs.
+Existing invalid, linked, or unreadable markers do not enable this inference.
+Physical confirmation on an absent-marker host remains pending.
+Generic DMI values do not establish either identity path.
 
 A matching identity produces a `qualified` `host.platform.n1x` qualification, but `host.platform.supported` remains `absent` while N1x is Deferred.
 The blocking `host.platform.n1x_validation_pending` finding records the remaining physical NemoClaw Express E2E gate.
@@ -221,6 +226,7 @@ Invalid marker metadata, invalid or ambiguous contents, the wrong PCI identity, 
 Unreadable marker or PCI evidence produces an `unknown` qualification and the blocking `host.platform.n1x_inconclusive` finding.
 Neither finding can be waived by onboarding intent.
 Bounded evidence appears under `host.platform.identity` with `product`, `nvidiaPlatform`, `n1xCandidate`, `n1xFastOsMarker`, and `n1xPciGpu` fields.
+The inferred path also records `n1xPciDevice`.
 
 ## Interpret NVIDIA GPU Integration
 

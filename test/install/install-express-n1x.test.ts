@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isKnownN1xPciDevice } from "../../src/lib/inference/platform-identity/n1x";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
@@ -92,6 +93,27 @@ detect_express_platform
     expect(detectN1x(true, true).result.stdout).toBe("N1x");
     expect(detectN1x(true, false).result.stdout).toBe("");
     expect(detectN1x(false, true).result.stdout).toBe("");
+  });
+
+  it("uses the complete shared PCI policy in the standalone installer (#12737)", () => {
+    const { home, result } = runInstallerSourced(`
+for ((device=0; device<=65535; device++)); do
+  printf -v candidate '0x%04x' "$device"
+  if n1x_pci_device_is_known "$candidate"; then printf '%s\\n' "$candidate"; fi
+done
+`);
+    try {
+      const accepted = result.stdout.trim().split("\n");
+      expect(result.status).toBe(0);
+      const cliAccepted = Array.from(
+        { length: 65536 },
+        (_, device) => `0x${device.toString(16).padStart(4, "0")}`,
+      ).filter(isKnownN1xPciDevice);
+      expect(cliAccepted).toEqual(accepted);
+      expect(isKnownN1xPciDevice("0x2e04")).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it.each([

@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import n1xPciPolicy from "../../../../bin/lib/n1x-pci-policy.json";
 
 export const N1X_FASTOS_RELEASE_MAX_BYTES = 4096;
 // Bound discovery so malformed sysfs state cannot create unbounded work.
@@ -10,7 +11,10 @@ const N1X_PCI_SCAN_MAX_DEVICES = 256;
 const N1X_PCI_FIELD_MAX_BYTES = 64;
 // Published RTX Spark variants, plus prototype devices recorded in #8574 and #10076.
 // Prototype IDs are best-effort identity evidence; N1x remains a Deferred preview.
-const N1X_PCI_GPU_DEVICES = new Set(["0x2e03", "0x2e06", "0x2e13", "0x2e02", "0x2e2a"]);
+const N1X_PCI_GPU_DEVICES = new Set([
+  ...n1xPciPolicy.documentedDeviceIds,
+  ...n1xPciPolicy.prototypeDeviceIds,
+]);
 const N1X_WSL_GPU_NAME_MAX_BYTES = 256;
 const N1X_WSL_GPU_NAMES = new Set([
   "NVIDIA RTX Spark N1X",

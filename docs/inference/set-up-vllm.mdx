@@ -517,12 +517,19 @@ docker container inspect \
 
 Accept the result when the command contains `--max-num-seqs 2`.
 
-NemoClaw requires all of this N1x identity evidence:
+NemoClaw requires native Linux on `arm64` and a display-class PCI device with NVIDIA vendor ID `10de`.
+It accepts either identity path:
 
-- The host runs Linux on `arm64`.
-- `/etc/fastos-release` is a regular file of 1 through 4,096 bytes that is owned by UID 0 and GID 0.
-- The marker is not a symbolic link, grants no group or world write access, and contains exactly one `NAME="N1x FASTOS"` line.
-- A display-class PCI device has NVIDIA vendor ID `10de`.
+- The legacy path requires `/etc/fastos-release` to be a regular file of 1 through 4,096 bytes, owned by UID and GID 0.
+  The marker must not be a symbolic link or grant group or world write access.
+  It must contain exactly one `NAME="N1x FASTOS"` line and no NUL or carriage-return byte.
+- If `/etc/fastos-release` is absent, the display device must report recognized PCI ID `2e03`, `2e06`, `2e13`, `2e02`, or `2e2a`.
+  The first three are documented N1x variants; the last two are QA-observed prototype IDs.
+  This path infers N1x identity from bounded PCI evidence.
+  Physical confirmation on an absent-marker host remains pending.
+
+An existing invalid, linked, or unreadable marker does not enable PCI inference.
+Recognized Spark, Station, or Jetson firmware retains its existing classification.
 
 NemoClaw parses `/etc/fastos-release` as inert text and does not source it.
 The classifier does not pin a FastOS version, kernel version, driver version, firmware version, or GPU UUID.
