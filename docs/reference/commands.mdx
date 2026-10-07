@@ -1092,7 +1092,10 @@ Sandboxes with an active SSH session are marked with a `●` indicator so you ca
 </AgentOnly>
 The default sandbox in text and JSON output honors the same environment override order as host-level
 status: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry
-default. Tunnel commands instead use `NEMOCLAW_GATEWAY_PORT` to select gateway-scoped tunnel state.
+default. An explicitly set `NEMOCLAW_GATEWAY_PORT` selects gateway-scoped tunnel state. Otherwise,
+tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default
+gateway when no sandbox resolves. If the sandbox name belongs to more than one gateway registry,
+tunnel-state selection fails closed.
 
 ```bash
 $$nemoclaw list [--json]
@@ -3394,7 +3397,7 @@ If command-line inspection is unavailable for a live cloudflared PID, Windows ca
 
 ### `$$nemoclaw tunnel status`
 
-Show the current cloudflared public-URL tunnel status for the OpenShell gateway port that `NEMOCLAW_GATEWAY_PORT` selects and the selected or default sandbox dashboard. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default. Before reporting status, when no live gateway-scoped PID record exists, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be verified safely. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel. Windows may verify and stop `cloudflared.exe` through an identity-bound process handle even when command-line inspection is unavailable; other platforms require process inspection before signaling. If safe identity verification or signaling is unavailable, restore inspection access or independently verify and stop the process before retrying. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
+Show the current cloudflared public-URL tunnel status and the selected or default sandbox dashboard. Selection honors an explicitly set `NEMOCLAW_GATEWAY_PORT`; otherwise the command uses the selected or default sandbox's owning gateway and falls back to the process-default gateway when no sandbox resolves. If the sandbox name belongs to more than one gateway registry, selection fails closed. Sandbox selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default. Before reporting status, when no live gateway-scoped PID record exists, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be verified safely. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel. Windows may verify and stop `cloudflared.exe` through an identity-bound process handle even when command-line inspection is unavailable; other platforms require process inspection before signaling. If safe identity verification or signaling is unavailable, restore inspection access or independently verify and stop the process before retrying. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
 
 When no live managed tunnel record exists, non-Windows hosts scan the current user's process list and report an unrecorded `cloudflared` executable as a conflict. On Windows, or when process listing fails, this scan reports no conflict.
 
@@ -3447,7 +3450,7 @@ When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text 
 The port suffix beside the sandbox name remains the recorded local forwarding port.
 For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
 Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
-Cloudflared PID and log lookup use the gateway-scoped state that `NEMOCLAW_GATEWAY_PORT` selects, independent of sandbox selection.
+Cloudflared PID and log lookup use the gateway-scoped state selected by an explicit `NEMOCLAW_GATEWAY_PORT`, or otherwise by the selected or default sandbox's owning gateway. If no sandbox resolves, lookup falls back to the process-default gateway; ambiguous cross-gateway sandbox ownership fails closed.
 Before reporting auxiliary services in text or JSON, root status can perform the same bounded legacy tunnel-state migration as `$$nemoclaw tunnel status`.
 
 ```bash
