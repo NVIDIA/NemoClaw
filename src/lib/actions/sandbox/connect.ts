@@ -3,7 +3,10 @@
 
 import { isDeepStrictEqual } from "node:util";
 import { formatOpenShellForwardStartFailure } from "../../adapters/openshell/forward";
-import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
+import {
+  createCliOpenShellInferenceRouteMutator,
+  createSynchronousCliOpenShellInferenceRouteObserver,
+} from "../../adapters/openshell/inference-route-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
@@ -18,11 +21,10 @@ import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sand
 import {
   captureOpenshell,
   captureResolvedOpenshell,
-  runOpenshell,
+  captureResolvedOpenshellAsync,
 } from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../agent/defs";
@@ -51,7 +53,7 @@ import {
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact, redactFull } from "../../security/redact";
+import { redact, redactFull, redactFullWithUrls } from "../../security/redact";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -74,7 +76,8 @@ import {
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
-  buildGatewayInferenceSetArgs,
+  connectInferenceRouteMutationRequest,
+  type ConnectInferenceRouteMutationResult,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -118,6 +121,8 @@ import {
   type ProbeTimingRecorder,
   publicationFromDecision,
   publishLaunchReadiness,
+  getNativeNvidiaProviderAttachment,
+  requireNativeNvidiaInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
@@ -257,7 +262,10 @@ export type ManagedInferenceRouteResetDeps = {
     provider: string,
     options: { quiet?: boolean; recordedEndpointUrl?: string | null },
   ) => boolean;
-  runInferenceSet: (provider: string, model: string) => { status: number | null };
+  runInferenceSet: (
+    provider: string,
+    model: string,
+  ) => Promise<ConnectInferenceRouteMutationResult>;
   probe: (
     sandboxName: string,
     options?: InferenceRouteProbeOptions,
@@ -269,6 +277,11 @@ export type ManagedInferenceRouteResetDeps = {
 
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS = 3;
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS = 2_000;
+
+const inferenceRouteMutator = createCliOpenShellInferenceRouteMutator(
+  captureResolvedOpenshellAsync,
+  { redactDiagnostic: redactFullWithUrls },
+);
 
 const SANDBOX_CONNECT_FLAGS = new Set([
   "--dangerously-skip-permissions",
@@ -1379,10 +1392,10 @@ async function reapplyVmInferenceRoute(
 ): Promise<SandboxInferenceRouteProbe | null> {
   const inference = sb ? registry.getSandboxEntryInference(sb) : null;
   if (inference?.kind !== "configured") return null;
-  runOpenshell(buildGatewayInferenceSetArgs(gatewayName, inference.provider, inference.model), {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
+  const applyResult = await inferenceRouteMutator.setInferenceRoute(
+    connectInferenceRouteMutationRequest(gatewayName, inference.provider, inference.model),
+  );
+  if (!applyResult.ok && applyResult.ambiguous) throw new Error(applyResult.error.message);
   return probeSandboxInferenceRoute(sandboxName, agent);
 }
 
@@ -1637,8 +1650,14 @@ export async function resetManagedInferenceRouteWithDeps(
   }
 
   if (!quiet) log(`  Resetting inference route to ${route}.`);
-  const resetResult = deps.runInferenceSet(provider, model);
-  const resetFailed = resetResult.status !== 0;
+  const resetResult = await deps.runInferenceSet(provider, model);
+  if (!resetResult.ok && resetResult.ambiguous) {
+    return fail(
+      resetResult.error.message,
+      "  Error: the OpenShell inference route result is unknown; inspect the same gateway before retrying.",
+    );
+  }
+  const resetFailed = !resetResult.ok;
   if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, dependencyOptions)) {
     return fail(detail);
   }
@@ -1672,10 +1691,9 @@ async function resetManagedInferenceRoute(
     {
       verifyLocalInferenceRouteDependencies,
       runInferenceSet: (provider, model) =>
-        runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
-          ignoreError: true,
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        }),
+        inferenceRouteMutator.setInferenceRoute(
+          connectInferenceRouteMutationRequest(gatewayName, provider, model),
+        ),
       probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       printUnrecoverableInferenceRoute,
     },
@@ -1698,6 +1716,17 @@ async function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
+    const nativeNvidiaAttachment = getNativeNvidiaProviderAttachment(sb);
+    if (nativeNvidiaAttachment) {
+      await requireNativeNvidiaInferenceHealth({
+        sandboxName,
+        gatewayName,
+        agentName: agent?.name,
+        entry: sb,
+        deps: {},
+      });
+      return { sandbox: sb, routeHealthy: true };
+    }
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
@@ -1735,11 +1764,15 @@ async function ensureSandboxInferenceRouteUnlocked(
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
         console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
-      const swapResult = runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
-        ignoreError: true,
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      });
-      if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
+      const swapResult = await inferenceRouteMutator.setInferenceRoute(
+        connectInferenceRouteMutationRequest(gatewayName, provider, model),
+      );
+      if (!swapResult.ok && swapResult.ambiguous) {
+        throw new Error(
+          `${swapResult.error.message} Inspect gateway '${gatewayName}' before retrying the route mutation.`,
+        );
+      }
+      if (!swapResult.ok && (plan.kind === "diverged" || !quiet)) {
         console.error(
           `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
         );
@@ -1845,6 +1878,9 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
+  if (getNativeNvidiaProviderAttachment(snapshot)) {
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);
   return withGatewayRouteMutationLock(gatewayName, () => {
     const lockedSnapshot = readConnectSandbox(sandboxName);

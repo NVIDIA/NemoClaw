@@ -1062,6 +1062,11 @@ export function createSandboxGpuCreateAttemptRunner(
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
+      if (input.externalImage === true) {
+        console.error(
+          "  This image is publisher-managed. Verify that it targets this NemoClaw release and satisfies the publisher's startup requirements.",
+        );
+      }
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
         console.error(
@@ -1103,6 +1108,7 @@ export function createSandboxGpuCreateAttemptRunner(
             verifyGpuOrExit: deferNativeProofFailure ? undefined : runtimePatch.verifyGpuOrExit,
             reportGpuProofFailure: !deferNativeProofFailure,
             selectedMode: runtimePatch.selectedMode,
+            openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
             runCaptureOpenshell: deps.runCaptureOpenshell,
             log: console.log,
           },

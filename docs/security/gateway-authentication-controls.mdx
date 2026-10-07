@@ -111,7 +111,7 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 | Default | Startup auto-pairing and `connect`-time approval share one policy. A lease-qualified `launch` checks current pairing state and runs the complete approval path when the stored qualification no longer matches or a relevant allowlisted request is pending. NemoClaw approves devices only when `clientId` is `cli`, `openclaw-cli`, or `openclaw-control-ui`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. An allowlisted `clientMode` alone is never sufficient; all other clients or scopes are rejected and logged. |
 | What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
-| Recommendation | NemoClaw makes bounded, best-effort approval attempts at startup, during `connect`, and through the complete `launch` fallback for late scope upgrades. If an allowlisted request remains pending, follow the [scope-upgrade recovery procedure](../reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval) to review its client, device, scopes, and matching request ID before approving it. Unknown clients and non-allowlisted scopes are never automatically approved. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+| Recommendation | NemoClaw makes bounded, best-effort approval attempts at startup, during `connect`, and through the complete `launch` fallback for late scope upgrades. If an allowlisted request remains pending, follow the [scope-upgrade recovery procedure](../../reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval) to review its client, device, scopes, and matching request ID before approving it. Unknown clients and non-allowlisted scopes are never automatically approved. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
 
 ### Approve Administrative Scopes Manually
 
@@ -152,7 +152,9 @@ Do not approve an unexpected client or an unrelated `operator.admin` request.
 Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
 Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
 
-NemoClaw still keeps provider credentials in OpenShell and routes model traffic through `inference.local`.
+NemoClaw keeps provider credentials in OpenShell.
+NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the sandbox-attached OpenShell provider.
+Other managed inference providers continue to use `inference.local`.
 Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
 
 Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.

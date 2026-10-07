@@ -8,6 +8,7 @@ import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
+import { normalizeNativeNvidiaProviderAuthorities } from "./native-nvidia-provider-authority-state";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
@@ -124,6 +125,9 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
+    data.nativeNvidiaProviderAuthorities,
+  );
   const sandboxes = Object.fromEntries(
     parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
       name,
@@ -140,11 +144,17 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeNvidiaProviderAuthorities) {
+    base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
+  }
   return base;
 }
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
+    data.nativeNvidiaProviderAuthorities,
+  );
   const sandboxes = Object.fromEntries(
     Object.entries(data.sandboxes).map(([name, entry]) => [
       name,
@@ -164,6 +174,9 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeNvidiaProviderAuthorities) {
+    base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
+  }
   return base;
 }
 
@@ -193,9 +206,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -252,9 +270,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
+  } = policyEntry as SandboxEntry & {
+    cuaRuntimeReadiness?: unknown;
+    nativeNvidiaProviderAuthority?: unknown;
+    mcp?: unknown;
+  };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),

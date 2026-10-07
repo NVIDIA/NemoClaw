@@ -367,6 +367,7 @@ check("disabled", False)
 
   it.each([
     ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
+    ["NEMOCLAW_ATTACHED_PROVIDER_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
     ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
     ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
     ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
@@ -460,6 +461,7 @@ check("disabled", False)
         PATH: process.env.PATH,
         PYTHONPATH: tempDir,
         DEEPAGENTS_CODE_OPENAI_API_KEY: "nemoclaw-managed-inference",
+        NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
         SLACK_BOT_TOKEN: ["xoxb", "1234567890abcdef"].join("-"),
         DEEPAGENTS_CODE_LANGSMITH_TRACING: "true",
         DEEPAGENTS_CODE_LANGSMITH_TRACING_V2: "true",

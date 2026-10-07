@@ -43,6 +43,7 @@ export type DestroyHarness = {
   listHostGatewayRegistryEntriesSpy: MockInstance;
   logSpy: MockInstance;
   mcpRuntimeSelectionSpy: MockInstance;
+  migrateLegacyCloudflaredStateSpy: MockInstance;
   /** In-memory pending managed vLLM retirement record; null when none is recorded. */
   pendingVllmRetirement: { sandboxName: string | null };
   clearPendingVllmRetirementSpy: MockInstance;
@@ -53,6 +54,7 @@ export type DestroyHarness = {
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
+  registry: Pick<typeof import("../../src/lib/state/registry"), "getSandbox" | "listSandboxes">;
   removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   reconstructRetainedSandboxRecoverySpy: MockInstance;
@@ -91,7 +93,7 @@ export type DestroyHarness = {
 
 type DestroyHarnessOptions = {
   callThroughGatewaySelection?: boolean;
-  agent?: "openclaw" | "hermes";
+  agent?: "openclaw" | "hermes" | "langchain-deepagents-code";
   deleteError?: Error;
   deleteConvergenceAttempts?: number;
   deleteOutput?: string;
@@ -153,8 +155,6 @@ type DestroyHarnessOptions = {
   stopInferenceError?: string;
   runtimeProviderIdentityProof?: RuntimeProviderDestroyIdentityReceipt;
   workload?: SandboxWorkloadReceipt;
-  wipeError?: Error;
-  wipeStatus?: number | null;
 };
 
 const sandboxEntry = {
@@ -260,7 +260,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const credentialStore = requireSource("../../credentials/store.js");
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireSource("../../inference/nim.js");
-  const ollamaProxy = requireSource("../../inference/ollama/proxy.js");
+  const ollamaProxy = requireSource(
+    "../../inference/ollama/proxy.js",
+  ) as typeof import("../../src/lib/inference/ollama/proxy");
   const gatewayRouteMutationLock = requireSource("../../inference/gateway-route-mutation-lock.js");
   const modelRouterProcess = requireSource("../../onboard/model-router-process.js");
   const httpsPinRuntimeAdapter = requireSource("../../inference/https-pin-runtime-adapter.js");
@@ -517,14 +519,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
-      case "sandbox:exec":
-        events.push("wipe");
-        return {
-          status: options.wipeStatus === undefined ? 0 : options.wipeStatus,
-          stdout: "",
-          stderr: "",
-          ...(options.wipeError ? { error: options.wipeError } : {}),
-        };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return (
@@ -691,10 +685,25 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const killStaleProxySpy = vi
     .spyOn(ollamaProxy, "killStaleProxy")
     .mockImplementation(() => undefined);
-  const unloadOllamaModelsSpy = vi
-    .spyOn(ollamaProxy, "unloadOllamaModels")
-    .mockImplementation(() => undefined);
+  vi.spyOn(ollamaProxy, "killStaleProxyIfUnused").mockImplementation(
+    (hasRemainingOwner: () => boolean) => {
+      if (hasRemainingOwner()) return false;
+      killStaleProxySpy();
+      return true;
+    },
+  );
+  const unloadOllamaModelsSpy = vi.spyOn(ollamaProxy, "unloadOllamaModels").mockReturnValue({
+    ok: true,
+    outcome: "released",
+    endpoint: "http://127.0.0.1:11434",
+    selectedModels: [],
+    discoveries: [],
+    requests: [],
+  });
   const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const migrateLegacyCloudflaredStateSpy = vi
+    .spyOn(tunnelServices, "migrateLegacyCloudflaredState")
+    .mockReturnValue(false);
   const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
   const resolvedMcpRuntimeSelection = options.mcpRuntimeSelection ?? {
     gatewayName: "nemoclaw-19080",
@@ -781,6 +790,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     listHostGatewayRegistryEntriesSpy,
     logSpy,
     mcpRuntimeSelectionSpy,
+    migrateLegacyCloudflaredStateSpy,
     pendingVllmRetirement,
     clearPendingVllmRetirementSpy,
     recordPendingVllmRetirementSpy,
@@ -792,6 +802,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyRevalidateSpy,
     portableDestroyVerifyAbsentSpy,
     promptSpy,
+    registry,
     removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
     reconstructRetainedSandboxRecoverySpy,

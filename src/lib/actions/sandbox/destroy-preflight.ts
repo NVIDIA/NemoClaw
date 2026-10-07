@@ -8,6 +8,7 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
   clearPendingHostLocalVllmRetirement,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
@@ -23,7 +24,11 @@ import {
   isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
-import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
+import {
+  listHostGatewayRegistryEntries,
+  registryEntryGatewayPort,
+} from "../../state/gateway-registry";
+import { resolveNemoclawStateGatewayPort } from "../../state/paths";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
@@ -36,9 +41,12 @@ import * as registry from "../../state/registry";
 import {
   findSandboxAcrossGatewayRoots,
   getSandboxAcrossGatewayRoots,
+  listInferenceRouteOwnersAcrossGatewayRoots,
   listPublishedSandboxesAcrossGatewayRoots,
   removeSandboxFromOwningGatewayRegistry,
 } from "../../state/registry/cross-port";
+
+export { listInferenceRouteOwnersAcrossGatewayRoots };
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -61,6 +69,7 @@ export type SandboxDestroyPreflight = {
 
 export type SandboxDestroyRegistryAuthority = {
   entry: SandboxEntry | null;
+  gatewayPort: number;
   getSandbox: typeof registry.getSandbox;
   listSandboxes: typeof registry.listSandboxes;
   removeSandbox: typeof registry.removeSandbox;
@@ -74,6 +83,7 @@ export function resolveSandboxDestroyRegistryAuthority(
   if (!hit) {
     return {
       entry: registry.getSandbox(sandboxName),
+      gatewayPort: resolveNemoclawStateGatewayPort(),
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
       removeSandbox: registry.removeSandbox,
@@ -81,6 +91,7 @@ export function resolveSandboxDestroyRegistryAuthority(
   }
   return {
     entry: hit.entry,
+    gatewayPort: hit.registryGatewayPort ?? sandboxGatewayPort(hit.entry),
     getSandbox: getSandboxAcrossGatewayRoots,
     listSandboxes: () => ({
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
@@ -132,14 +143,51 @@ export function stopSandboxInferenceResources(
     // Older registry entries may not record the convention-named container.
     nim.stopNimContainer(sandboxName, { silent: true });
   }
+}
 
-  // The Ollama auth proxy is per-sandbox. GPU model unload happens during
-  // post-delete host cleanup, after the live sandbox is confirmed gone.
-  if (sandbox?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy") as {
-      killStaleProxy: () => void;
-    };
-    killStaleProxy();
+function sandboxGatewayPort(entry: SandboxEntry): number {
+  return registryEntryGatewayPort({
+    name: entry.name,
+    gatewayName: entry.gatewayName,
+    gatewayPort: entry.gatewayPort,
+  });
+}
+
+/** Retire the shared proxy only after the caller confirms sandbox deletion. */
+export function stopDestroyedSandboxProxy(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
+  deps: {
+    killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
+    listInferenceRouteOwners?: () => readonly SandboxEntry[];
+  } = {},
+): void {
+  // Read remaining owners inside the proxy lifecycle lock. The destroyed
+  // sandbox's registry row still exists until post-delete cleanup completes.
+  if (
+    sandbox?.provider?.includes("ollama") ||
+    sandbox?.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
+  ) {
+    const killStaleProxyIfUnused =
+      deps.killStaleProxyIfUnused ??
+      (
+        require("../../inference/ollama/proxy") as {
+          killStaleProxyIfUnused: (hasRemainingOwner: () => boolean) => boolean;
+        }
+      ).killStaleProxyIfUnused;
+    const listInferenceRouteOwners =
+      deps.listInferenceRouteOwners ?? (() => listSandboxes().sandboxes);
+    killStaleProxyIfUnused(() =>
+      listInferenceRouteOwners().some(
+        (entry) =>
+          !(
+            entry.name === sandboxName && sandboxGatewayPort(entry) === sandboxGatewayPort(sandbox)
+          ) &&
+          (entry.provider?.includes("ollama") === true ||
+            entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV),
+      ),
+    );
   }
 }
 
@@ -327,6 +375,7 @@ function sessionMatchesDestroySnapshot(current: Session | null, expected: Sessio
     current.sandboxName === expected.sandboxName &&
     current.endpointUrl === expected.endpointUrl &&
     current.routerPid === expected.routerPid &&
+    current.routerPort === expected.routerPort &&
     current.routerCredentialHash === expected.routerCredentialHash
   );
 }
@@ -390,7 +439,8 @@ export async function stopModelRouterForDestroyedSandbox(
       }
       const sessionMatchesSandbox =
         session?.sandboxName === sandbox.name &&
-        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
+        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port &&
+        (session.routerPort == null || session.routerPort === port);
       destroyedSessionId = session?.sandboxName === sandbox.name ? session.sessionId : null;
 
       const listHostRegistryEntries =
@@ -411,6 +461,7 @@ export async function stopModelRouterForDestroyedSandbox(
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
       const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
+      const recordedRouterPort = sessionMatchesSandbox ? (session.routerPort ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
         : null;
@@ -461,20 +512,25 @@ export async function stopModelRouterForDestroyedSandbox(
         }
       }
 
-      // Clear when either field is set: a matching session with only a
+      // Clear when any field is set: a matching session with only a port or
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unresponsive port confirms that
-      // no router remains when no PID was found.
-      if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
+      // is gone. A completed process scan plus an unresponsive port confirms
+      // that no router remains when no PID was found.
+      if (
+        sessionMatchesSandbox &&
+        (recordedPid !== null || recordedRouterPort !== null || recordedCredentialHash !== null)
+      ) {
         deps.compareAndSwapSession(
           (current) =>
             current.sessionId === session.sessionId &&
             current.sandboxName === session.sandboxName &&
             current.endpointUrl === session.endpointUrl &&
             current.routerPid === recordedPid &&
+            (current.routerPort ?? null) === recordedRouterPort &&
             current.routerCredentialHash === recordedCredentialHash,
           (current) => {
             current.routerPid = null;
+            current.routerPort = null;
             current.routerCredentialHash = null;
             return current;
           },

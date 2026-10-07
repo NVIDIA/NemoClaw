@@ -455,7 +455,7 @@ export async function restartSandboxGatewayWithDeps(
   }
   const nativeCommand =
     agentName === "openclaw"
-      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
+      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH NEMOCLAW_OPENCLAW_HOST_RESTART=1 openclaw gateway restart --safe --skip-deferral --json"
       : `${agentName} gateway restart`;
   let restartResult: GatewayRestartCommandResult | null;
   try {

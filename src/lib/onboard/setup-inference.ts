@@ -21,6 +21,15 @@ import {
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
+  ensureNativeNvidiaProvider,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
+  resolveGatewayNativeNvidiaProviderAuthority,
+  type NativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
+import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
   loadPendingOllamaModelCleanup,
@@ -128,6 +137,10 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
+import type {
+  OpenShellInferenceRouteMutator,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -205,6 +218,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
+  inferenceRouteMutator: OpenShellInferenceRouteMutator;
+  inferenceRouteObserver: OpenShellInferenceRouteObserver;
   upsertProvider: (
     name: string,
     type: string,
@@ -222,6 +237,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   withOllamaModelOwnershipTransaction?: typeof withOllamaModelOwnershipTransaction;
@@ -308,13 +325,16 @@ export async function selectGatewayForFollowupOrExit(
 
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
-  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  inferenceRouteMutator: OpenShellInferenceRouteMutator,
+  gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
+  exitAmbiguousRouteResult?: (code: number) => never,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
-      runOpenshell,
+      inferenceRouteMutator,
+      gatewayName,
       isNonInteractive: deps.isNonInteractive,
       promptValidationRecovery: (label, recovery, credentialEnv, helpUrl) =>
         deps.promptValidationRecovery(
@@ -325,11 +345,10 @@ function resolveLocalInferenceRouteApplier(
           revalidateSandboxIdentity,
         ),
       classifyApplyFailure: deps.classifyApplyFailure,
-      compactText: deps.compactText,
-      redact: deps.redact,
       localInferenceTimeoutSecs: deps.localInferenceTimeoutSecs,
       error: deps.error,
       exitProcess: deps.exitProcess,
+      exitAmbiguousRouteResult,
     })
   );
 }
@@ -338,7 +357,10 @@ const HOST_LOCAL_INFERENCE_DIAGNOSTIC_LIMIT = 240;
 const RUNTIME_PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 
 class HostLocalInferenceBranchExit extends Error {
-  constructor(readonly code: number) {
+  constructor(
+    readonly code: number,
+    readonly routeMutationAmbiguous = false,
+  ) {
     super(`Host-local inference provider branch requested exit ${String(code)}.`);
   }
 }
@@ -618,6 +640,7 @@ export function createSetupInference(
   overrides: Partial<SetupInferenceDeps> = {},
 ): SetupInference {
   const deps: SetupInferenceDeps = { ...defaults, ...overrides };
+  const { inferenceRouteMutator } = deps;
 
   return async function setupInferenceWithDeps(
     sandboxName: string | null,
@@ -658,23 +681,34 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        const compatibility = deps.checkGatewayRouteCompatibility({
-          gatewayName,
-          sandboxName,
-          route: {
-            provider,
-            model,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi: options.preferredInferenceApi ?? null,
-          },
-        });
-        if (!compatibility.ok) {
-          if (!isAdvisoryGatewayRouteConflict(compatibility)) {
-            deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+        if (!isNativeNvidiaProvider(provider)) {
+          const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
+            target: { kind: "named", gatewayName },
+          });
+          if (!observedRoute.ok) {
+            deps.error(
+              `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
+            );
             return deps.exitProcess(1);
           }
-          deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
+          const compatibility = deps.checkGatewayRouteCompatibility({
+            gatewayName,
+            sandboxName,
+            route: {
+              provider,
+              model,
+              endpointUrl,
+              credentialEnv,
+              preferredInferenceApi: options.preferredInferenceApi ?? null,
+            },
+          });
+          if (!compatibility.ok) {
+            if (!isAdvisoryGatewayRouteConflict(compatibility)) {
+              deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+              return deps.exitProcess(1);
+            }
+            deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
+          }
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
@@ -723,6 +757,12 @@ export function createSetupInference(
           revalidateSandboxIdentity?.("change the OpenShell inference provider route");
           return runExactGatewayOpenshell(...args);
         };
+        const revalidatingInferenceRouteMutator: OpenShellInferenceRouteMutator = {
+          setInferenceRoute: (request) => {
+            revalidateSandboxIdentity?.("change the OpenShell inference provider route");
+            return inferenceRouteMutator.setInferenceRoute(request);
+          },
+        };
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
         let hostLocalRollbackAttempted = false;
@@ -736,6 +776,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -754,6 +795,7 @@ export function createSetupInference(
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
               : {}),
@@ -779,6 +821,11 @@ export function createSetupInference(
               throw new HostLocalInferenceBranchExit(code);
             }
           : deps.exitProcess;
+        const ambiguousRouteExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
+          ? (code: number): never => {
+              throw new HostLocalInferenceBranchExit(code, true);
+            }
+          : deps.exitProcess;
         const providerError: CommonDeps["error"] = hostLocalSelection
           ? (message: string) => {
               hostLocalProviderErrors.push(message);
@@ -791,6 +838,8 @@ export function createSetupInference(
         };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
+          inferenceRouteMutator: revalidatingInferenceRouteMutator,
+          gatewayName,
           upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
@@ -811,10 +860,15 @@ export function createSetupInference(
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
           },
+          reserveSandboxInferenceRoute: (name: string) => reserveRoute(name, provider, model),
           exitProcess: providerExitProcess,
           error: providerError,
           log: deps.log,
-        } satisfies CommonDeps;
+        } satisfies CommonDeps &
+          Pick<
+            RemoteProviderDeps,
+            "inferenceRouteMutator" | "gatewayName" | "reserveSandboxInferenceRoute"
+          >;
 
         if (options.hostLocalInference) {
           try {
@@ -910,6 +964,54 @@ export function createSetupInference(
             );
           }
 
+          if (isNativeNvidiaProvider(provider)) {
+            const resolvedCredentialEnv = credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV;
+            const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv) || null;
+            const providerAdapter = deps.providerAdapter;
+            if (!providerAdapter) {
+              throw new Error("Native NVIDIA setup is missing its OpenShell provider adapter.");
+            }
+            const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
+            const recordedAttachment = normalizeNativeNvidiaProviderAttachment(
+              recordedSandbox?.nativeNvidiaProviderAttachment,
+            );
+            if (
+              recordedSandbox &&
+              isNativeNvidiaProvider(recordedSandbox.provider) &&
+              !recordedAttachment
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
+              );
+            }
+            const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
+              gatewayName,
+              gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
+              recordedAttachment,
+            });
+            nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
+              adapter: providerAdapter,
+              target: { kind: "named", gatewayName },
+              credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              ...(providerAuthority ? { expected: providerAuthority } : {}),
+            });
+            if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
+              await persistNativeNvidiaProviderAuthority({
+                adapter: providerAdapter,
+                target: { kind: "named", gatewayName },
+                gatewayName,
+                receipt: nativeNvidiaProviderAttachment,
+                ...(providerAuthority ? { existing: providerAuthority } : {}),
+                readAuthority: deps.getNativeNvidiaProviderAuthority,
+                writeAuthority: deps.setNativeNvidiaProviderAuthority,
+              });
+            } else {
+              deps.setNativeNvidiaProviderAuthority?.(gatewayName, nativeNvidiaProviderAttachment);
+            }
+            return null;
+          }
+
           if (inferenceProviders.isRemoteProviderName(provider)) {
             const outcome = await inferenceProviders.setupRemoteProviderInference(
               {
@@ -920,6 +1022,8 @@ export function createSetupInference(
                 credentialEnv,
                 reuseGatewayCredentialWithoutLocalKey:
                   options.reuseGatewayCredentialWithoutLocalKey === true,
+                allowLegacyRecordedNoAuthEndpoint:
+                  options.allowLegacyRecordedNoAuthEndpoint === true,
                 skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
                 preferredInferenceApi: options.preferredInferenceApi ?? null,
                 pinnedAddresses: endpointPinnedAddresses,
@@ -969,8 +1073,10 @@ export function createSetupInference(
                         error: commonDeps.error,
                       }
                     : deps,
-                  runGatewayOpenshell,
+                  revalidatingInferenceRouteMutator,
+                  gatewayName,
                   revalidateSandboxIdentity,
+                  ambiguousRouteExitProcess,
                 ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
@@ -1025,8 +1131,10 @@ export function createSetupInference(
                           error: commonDeps.error,
                         }
                       : deps,
-                    runGatewayOpenshell,
+                    revalidatingInferenceRouteMutator,
+                    gatewayName,
                     revalidateSandboxIdentity,
+                    ambiguousRouteExitProcess,
                   ),
                   run: deps.run,
                   shouldFrontOllamaWithProxy: hostLocalRoute
@@ -1082,7 +1190,7 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          commonDeps.verifyInferenceRoute(provider, model);
+          if (!nativeNvidiaProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
@@ -1186,7 +1294,8 @@ export function createSetupInference(
           if (
             publicationState === "unpublished" &&
             !hostLocalRegistryPublicationEntered &&
-            !hostLocalRollbackAttempted
+            !hostLocalRollbackAttempted &&
+            !(error instanceof HostLocalInferenceBranchExit && error.routeMutationAmbiguous)
           ) {
             try {
               await rollbackHostLocalInferenceStartup(
@@ -1226,7 +1335,11 @@ export function createSetupInference(
         revalidateSandboxIdentity,
       );
       if (shouldLogSuccessfulRoute && "ok" in result) {
-        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+        deps.log(
+          isNativeNvidiaProvider(provider)
+            ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
+            : `  ✓ Inference route set: ${provider} / ${model}`,
+        );
       }
       return result;
     };

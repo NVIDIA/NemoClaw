@@ -189,7 +189,7 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use Portable Ollama">
     Hermes Portable uses a current-user rootless Podman container for the selected Ollama model.
-    Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
+    Before onboarding, complete the [Portable Ollama prerequisites](../inference/local-inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
     This path also requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
     Start fresh onboarding with an explicit Ollama model:
 
@@ -279,11 +279,10 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Manage a Hermes sandbox">
-    Use the `nemohermes` alias for lifecycle, logs, backups, rebuilds, and model changes.
+    Use the `nemohermes` alias for lifecycle, logs, rebuilds, and model changes.
 
     ```bash
     nemohermes my-hermes logs --follow
-    nemohermes my-hermes snapshot create --name before-change
     nemohermes inference set --model <model> --provider <provider> --sandbox my-hermes
     ```
 
@@ -352,7 +351,9 @@ Use these details when your first-run path needs more control.
     API-key mode is inference-only and does not enable managed tool gateways.
 
     After you select a provider and model, review the summary and apply the configuration.
-    NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+    NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
+    NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the least-privilege sandbox-attached OpenShell provider.
+    Other managed inference providers continue to use `inference.local`.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
 
@@ -448,7 +449,6 @@ Use these details when your first-run path needs more control.
     ```bash
     nemohermes my-hermes status
     nemohermes my-hermes logs --follow
-    nemohermes my-hermes snapshot create --name before-change
     nemohermes my-hermes rebuild
     ```
 
@@ -473,5 +473,5 @@ If `nemohermes` is unavailable after installing, reload your shell profile or fo
 
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Commands](../reference/commands) explains the `nemohermes` alias and its options.
-- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) explains how to preserve sandbox state.
+- [Persist Sandbox State](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) explains OpenShell persistence and whole-home rebuild transfer.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) explains how to inspect OpenShell events and sandbox logs.

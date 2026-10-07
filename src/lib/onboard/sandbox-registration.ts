@@ -13,6 +13,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
@@ -68,6 +69,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -84,6 +86,12 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL`, or null
+   * when the dashboard is a plain loopback address. Persisted so post-onboard
+   * commands can report the external origin (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
@@ -200,6 +208,14 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    input.nativeNvidiaProviderAttachment,
+  );
+  if (input.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox native NVIDIA provider attachment failed closed validation.",
+    );
+  }
   if (
     input.hostLocalInferenceProvenance !== undefined &&
     (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
@@ -249,6 +265,7 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -275,6 +292,9 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    ...(input.dashboardExternalUrl != null
+      ? { dashboardExternalUrl: input.dashboardExternalUrl }
+      : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
@@ -321,6 +341,10 @@ export function prepareCreatedSandboxRegistration(
     input.hostLocalInferenceProvenance !== undefined
       ? input.hostLocalInferenceProvenance
       : pending?.hostLocalInferenceProvenance;
+  const pendingNativeNvidiaProviderAttachment =
+    input.nativeNvidiaProviderAttachment !== undefined
+      ? input.nativeNvidiaProviderAttachment
+      : pending?.nativeNvidiaProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
     inferenceSelection: pendingRoute
@@ -332,6 +356,9 @@ export function prepareCreatedSandboxRegistration(
     ...(pendingHostLocalInferenceProvenance === undefined
       ? {}
       : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
+    ...(pendingNativeNvidiaProviderAttachment === undefined
+      ? {}
+      : { nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment }),
   });
   if (input.portableLifecycle === true) {
     if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {

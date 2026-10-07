@@ -11,6 +11,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
+import { buildManagedInferenceSafeguardCompaction } from "../../../scripts/generate-openclaw-config.mts";
+import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
@@ -486,8 +488,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         "OpenClaw real patched-dist npm runtime",
       );
       const version = readRequiredDockerArg("OPENCLAW_VERSION");
-      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_1_INTEGRITY");
-      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_1_TARBALL");
+      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_2_INTEGRITY");
+      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_2_TARBALL");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
       try {
         const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);
@@ -794,7 +796,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
               (source.includes('from "@openclaw/fs-safe/secret";') &&
                 source.includes("PRIVATE_SECRET_DIR_MODE") &&
                 source.includes("PRIVATE_SECRET_FILE_MODE") &&
-                source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic"))
+                (source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic") ||
+                  (source.includes("async function writePrivateSecretFileAtomic(params) {") &&
+                    source.includes("await tightenSecretDirectoryModes(params);") &&
+                    source.includes("await writeSecretFileAtomic(params);"))))
             );
           });
         requireRuntimeEqual(
@@ -904,6 +909,20 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           dist,
           nodeExecutable: nodeRuntime.executable,
           patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
+          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        runRealOpenClawCompactionRetryProof({
+          dist,
+          nodeExecutable: nodeRuntime.executable,
+          compaction: buildManagedInferenceSafeguardCompaction(
+            "inference",
+            "vllm-local",
+            "https://inference.local/v1",
+            "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+            32768,
+            4096,
+          ),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
         });
 

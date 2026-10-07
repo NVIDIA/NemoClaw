@@ -19,6 +19,14 @@ describe("live preset provenance", () => {
       source: "agent",
       agent: "hermes",
     });
+    expect(
+      classifyPresetProvenance("observability-otlp-local", {
+        agentName: "langchain-deepagents-code",
+      }),
+    ).toEqual({
+      source: "agent",
+      agent: "dcode",
+    });
   });
 
   it("labels every other live preset as operator-added", () => {

@@ -31,8 +31,8 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "d60ee0bb36e582f83846f41a1b7e94719fcd89f6";
+const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
+const reviewedAuditSha = "e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -147,7 +147,7 @@ describe("complete managed-image publication workflow", () => {
       "Audit exact PR production npm graphs",
     );
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction + reviewedAuditSha);
+    expect(prAudit.uses).toBe(reviewedAuditAction);
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -214,6 +214,8 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
@@ -486,28 +488,8 @@ describe("complete managed-image publication workflow", () => {
       path: "candidate",
       "persist-credentials": false,
     });
-    const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: reviewedAuditSha,
-      path: ".trusted-reviewed-npm-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-reviewed-npm-audit",
-    );
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
-    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
-    expect(verifyAuditIdentities.env).toEqual({
-      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: reviewedAuditSha,
-    });
-    expect(verifyAuditIdentities.run).toContain(
-      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
-    );
-    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
-      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      uses: "./candidate/.github/actions/ci-reviewed-npm-audit",
       with: {
         "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
@@ -522,9 +504,6 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder.needs).toEqual(["pr-reviewed-npm-audit", "publication-identity"]);
     expect(publicationIdentity.if).toBeUndefined();
-    expect(publicationIdentity.outputs).toEqual({
-      cohort: "${{ steps.identity.outputs.cohort }}",
-    });
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
@@ -532,13 +511,21 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
-    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
+    expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/reviewed-npm-audit.mts"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/npm-audit-receipt.mts"');
+    expect(prepareAuditEvidence.run).toContain('"audit", "signatures"');
+    expect(prepareAuditEvidence.run).toContain("$RUNNER_TEMP/trusted-mcporter-audit-report/");
+    expect(prBuilder.steps?.map((candidate) => candidate.name)).not.toContain(
+      "Download same-run npm audit evidence",
+    );
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
@@ -788,9 +775,12 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
+        "src/lib/adapters/container-engine.ts",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        "src/lib/adapters/podman/**",
         ...approvalFixturePaths,
+        "test/e2e/fixtures/docker-build-guard.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -806,7 +796,7 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths.join("\n")).not.toMatch(
       /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector|fresh-agent-gateway-snapshot)/u,
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.needs).toEqual(["pr-build-and-entrypoint", "publication-identity"]);
     expect(activation.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
@@ -1087,7 +1077,7 @@ fi
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
     expect(dependencies.run).toContain("npm ci --ignore-scripts --no-audit --no-fund");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
@@ -1224,7 +1214,10 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(identity?.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+      release: "${{ steps.release.outputs.value }}",
+    });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');

@@ -22,10 +22,14 @@ const upstreamServiceShow =
   "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart";
 const stoppedServicePrefix = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
 
-function runStopScript(installerPath: string, env: NodeJS.ProcessEnv) {
+function runStopScript(
+  installerPath: string,
+  env: NodeJS.ProcessEnv,
+  options: { permanent?: boolean } = {},
+) {
   return spawnSync(
     "bash",
-    ["-c", buildOpenShellGatewayUserServiceStopScript(), "stop-service", installerPath],
+    ["-c", buildOpenShellGatewayUserServiceStopScript(options), "stop-service", installerPath],
     { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
   );
 }
@@ -1412,6 +1416,41 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("Failed to connect to bus");
+      expect(fs.readFileSync(log, "utf8").trim()).toBe("--user show-environment");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("treats an unavailable Linux user manager as PID cleanup fallback in permanent mode", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-permanent-stop-manager-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'printf "Failed to connect to bus: No medium found\\n" >&2',
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = runStopScript(installer, env, { permanent: true });
+
+      expect(result.status).toBe(75);
+      expect(result.stderr).toBe("");
       expect(fs.readFileSync(log, "utf8").trim()).toBe("--user show-environment");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });

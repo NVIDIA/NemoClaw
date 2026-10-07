@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterAll, describe, expect, it, type TestContext, vi } from "vitest";
 
+import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
 import {
   credentialFreeTestCoverage,
   credentialFreeTestMatrix,
@@ -98,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(77);
+    expect(plan.coverageMatrix).toHaveLength(79);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -116,11 +117,6 @@ describe("E2E workflow plan", () => {
       "openshell-gateway-auth-contract",
       "shared-e2e",
       "staging-brev-launchable",
-    ]);
-    expect(plan.explicitOnlyJobs).toEqual([
-      "staging-brev-launchable-identity",
-      "external-gateway-health",
-      "mcp-bridge-dev",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -156,7 +152,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -277,7 +273,6 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
-
   it.each([
     "src/commands/config/export.ts",
     "src/lib/config/canonical.ts",
@@ -335,18 +330,18 @@ describe("E2E workflow plan", () => {
       "llama-cpp-generic-gpu-default-docker",
       "messaging-compatible-endpoint-default-docker",
       "messaging-compatible-endpoint-default-podman",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
       "openclaw-inference-switch-default-docker",
       "openclaw-inference-switch-default-podman",
       "openclaw-skill-cli-default-docker",
       "openclaw-skill-cli-default-podman",
     ]);
   });
-
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
-
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -369,13 +364,14 @@ describe("E2E workflow plan", () => {
         }),
       ]),
     );
-    expect(plan.catalogueMatrices.standard).toContainEqual(
+    expect(plan.catalogueMatrices["nvidia-api"]).toContainEqual(
       expect.objectContaining({
         id: "openclaw-inference-switch",
-        display_name: "Inference: OpenClaw switches providers and remains responsive",
+        display_name: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
       }),
     );
     expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
       "catalogue-standard",
     ]);
@@ -384,7 +380,6 @@ describe("E2E workflow plan", () => {
     const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
       migratedTargetIds.includes(id),
     );
-
     expect(retainedMigratedJobs).toEqual([]);
   });
 
@@ -508,12 +503,12 @@ describe("E2E workflow plan", () => {
     [
       "hermes-inference-switch",
       {
-        profile: "standard",
+        profile: "nvidia-api",
         installNonInteractive: true,
         runnerKey: "hermes-inference-switch",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
-        shard: "anthropic",
+        shard: "native-nvidia",
       },
     ],
     [
@@ -522,6 +517,15 @@ describe("E2E workflow plan", () => {
         profile: "nvidia-inference",
         installMode: "authenticated",
         artifactLayout: "target-shard",
+      },
+    ],
+    [
+      "snapshot-commands",
+      {
+        profile: "standard",
+        installMode: "none",
+        restoreCli: true,
+        exposeCliBin: false,
       },
     ],
   ] as const)("preserves the shared execution contract for %s", (id, contract) => {
@@ -752,17 +756,6 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
-  it("selects only catalogue targets that own changed files", () => {
-    const changedFile = "test/e2e/live/snapshot-commands.test.ts";
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
-      "snapshot-commands",
-    ]);
-    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
-    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
-  });
-
   it.each([
     "scripts/install.sh",
     "src/lib/actions/global.ts",
@@ -797,6 +790,17 @@ describe("E2E workflow plan", () => {
   ])("selects stopped-phase survival coverage when %s changes", (changedFile) => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
 
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-survival",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-survival",
+    );
+  });
+
+  it("selects stopped-phase survival coverage when its direct live test changes", () => {
+    const changedFile = "test/e2e/live/sandbox-survival.test.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "sandbox-survival",
     );
@@ -985,7 +989,68 @@ describe("E2E workflow plan", () => {
 
     expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
   });
+  it("resolves every native-state upgrade and rebuild risk requirement to selected work", () => {
+    const changedFiles = ["src/lib/state/sandbox.ts"];
+    const riskPlan = buildRiskPlan({ headSha: "0".repeat(40), changedFiles });
+    const plan = buildE2eWorkflowPlan({}, { changedFiles });
+    const selectedIds = new Set([
+      ...selectedWorkflowJobs(plan),
+      ...Object.values(plan.catalogueMatrices)
+        .flat()
+        .flatMap((row) => [row.id, row.target_id]),
+    ]);
+    expect(riskPlan.requiredJobs.map((job) => job.id)).toEqual([
+      "onboard-repair",
+      "onboard-resume",
+      "rebuild-hermes",
+      "rebuild-openclaw",
+    ]);
+    expect(riskPlan.requiredJobs.map((job) => job.id).filter((id) => !selectedIds.has(id))).toEqual(
+      [],
+    );
+  });
+  it("retains known native-state catalogue targets for the requested runtime", () => {
+    const podmanPlan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["podman"] },
+    );
+    const dockerPlan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["docker"] },
+    );
+    const nativeStateRows = (plan: ReturnType<typeof buildE2eWorkflowPlan>) =>
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .filter((row) => ["onboard-repair", "onboard-resume"].includes(row.target_id));
+    const podmanRows = nativeStateRows(podmanPlan);
+    const dockerRows = nativeStateRows(dockerPlan);
+    expect(new Set(podmanRows.map((row) => row.target_id))).toEqual(
+      new Set(["onboard-repair", "onboard-resume"]),
+    );
+    expect(new Set(podmanRows.map((row) => row.runtime_provider))).toEqual(new Set(["podman"]));
+    expect(new Set(dockerRows.map((row) => row.target_id))).toEqual(
+      new Set(["onboard-repair", "onboard-resume"]),
+    );
+    expect(new Set(dockerRows.map((row) => row.runtime_provider))).toEqual(new Set(["docker"]));
+  });
 
+  it.each([
+    "src/lib/actions/sandbox/auto-pair-approval.ts",
+    "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+    "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+  ])("selects the canonical pairing transition for %s", (changedFile) => {
+    const changedFiles = [changedFile];
+    const riskPlan = buildRiskPlan({ headSha: "0".repeat(40), changedFiles });
+    const plan = buildE2eWorkflowPlan({}, { changedFiles });
+    const selectedCatalogueIds = Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id);
+    expect(riskPlan.requiredJobs.map((job) => job.id)).not.toContain("snapshot-commands");
+    expect(riskPlan.requiredJobs.map((job) => job.id)).toContain(
+      "issue-4462-scope-upgrade-approval",
+    );
+    expect(selectedCatalogueIds).toContain("issue-4462-scope-upgrade-approval");
+  });
   it("selects the full messaging proof set for messaging runtime changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},

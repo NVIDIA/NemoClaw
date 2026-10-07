@@ -73,6 +73,8 @@ export type ConnectHarness = {
   requalifyPortableAgentAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
+  verifyNativeNvidiaProviderAttachmentSpy: MockInstance;
+  nativeInferenceInvocationSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
@@ -93,6 +95,11 @@ export type ConnectHarnessOptions = {
   sessionOutcome?: OpenShellSandboxSessionOutcome;
   agentName?: string;
   inferenceGetOutput?: string;
+  inferenceSetResult?: {
+    status: number | null;
+    output?: string;
+    signal?: NodeJS.Signals | null;
+  };
   isWsl?: boolean;
   frontOllamaWithProxy?: boolean;
   inferenceProbeResponses?: Array<
@@ -244,6 +251,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
+  const nativeNvidia = requireDist("../../src/lib/inference/native-nvidia/index.js");
+  const inferenceRouteHealth = requireDist(
+    "../../src/lib/actions/sandbox/inference-route-health.js",
+  );
   const portableAgentLifecycle = requireDist(
     "../../src/lib/onboard/experimental/portable-agent-lifecycle.js",
   );
@@ -448,6 +459,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const publishLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "publishLaunchReadiness")
     .mockResolvedValue(options.readinessPublicationResult ?? { kind: "published" });
+  const verifyNativeNvidiaProviderAttachmentSpy = vi
+    .spyOn(nativeNvidia, "verifyNativeNvidiaProviderAttachment")
+    .mockImplementation(async (...args: unknown[]) => (args[0] as { expected: unknown }).expected);
+  const nativeInferenceInvocationSpy = vi
+    .spyOn(inferenceRouteHealth, "runSandboxInferenceInvocationProbe")
+    .mockResolvedValue({ ok: true });
   const launchReadinessMutationGateSpy = vi
     .spyOn(launchReadiness, "withLaunchReadinessMutationGate")
     .mockImplementation((async (...args: unknown[]) => {
@@ -575,6 +592,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
             : "Provider: unknown\nModel: unknown\n"),
       };
     }
+    if (argv[0] === "inference" && argv[1] === "set" && options.inferenceSetResult) {
+      return options.inferenceSetResult;
+    }
     if (argv[0] === "forward" && argv[1] === "list") {
       const sandboxName = String(registryEntries[0]?.name ?? "alpha");
       const port = String(registryEntries[0]?.dashboardPort ?? 18_789);
@@ -639,6 +659,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(runtime, "captureResolvedOpenshell")
     .mockImplementation(captureOpenshellImplementation);
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockReturnValue({ status: 0 });
+  vi.spyOn(runtime, "captureResolvedOpenshellAsync").mockImplementation(async (args, options) => {
+    runtime.runOpenshell(args, {
+      ignoreError: true,
+      timeout: (options as { timeout?: number }).timeout,
+    });
+    return captureOpenshellImplementation(args);
+  });
   const withGatewayRouteMutationLockSpy = vi
     .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
     .mockImplementation(
@@ -868,6 +895,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     requalifyPortableAgentAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
+    verifyNativeNvidiaProviderAttachmentSpy,
+    nativeInferenceInvocationSpy,
     registryUpdateSpy,
     registryEntries,
     resolveAgentConfigSpy,

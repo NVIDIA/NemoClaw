@@ -3,14 +3,19 @@
 
 import { describe, expect, it } from "vitest";
 
+import { startTestProgress } from "../fixtures/progress.ts";
+
 import {
   agentReplyContainsToken,
   anthropicToolCount,
+  classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
+  classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
+  startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
@@ -96,6 +101,54 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
       }),
     ).toEqual({ outcome: "failed", failureClass: "malformed-input" });
   });
+
+  it("fails closed when required native-provider evidence exhausts retries", () => {
+    expect(
+      classifyExhaustedPostSwitchEvidence({
+        required: true,
+        lastFailure: "HTTP 503: unavailable",
+      }),
+    ).toEqual({
+      outcome: "failed",
+      message:
+        "Required native provider evidence failed: Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
+    });
+
+    expect(
+      classifyExhaustedPostSwitchEvidence({
+        required: false,
+        lastFailure: "HTTP 503: unavailable",
+      }),
+    ).toEqual({
+      outcome: "skipped",
+      reason:
+        "Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
+    });
+  });
+
+  it("fails closed when required native-provider validation is unavailable during onboarding", () => {
+    expect(
+      classifyUnavailableInitialProviderEvidence({
+        required: true,
+        detail: "HTTP 429: rate limited",
+      }),
+    ).toEqual({
+      outcome: "failed",
+      message:
+        "Required native provider evidence failed: External provider validation was unavailable during onboarding: HTTP 429: rate limited",
+    });
+
+    expect(
+      classifyUnavailableInitialProviderEvidence({
+        required: false,
+        detail: "HTTP 429: rate limited",
+      }),
+    ).toEqual({
+      outcome: "skipped",
+      reason:
+        "External provider validation was unavailable during onboarding: HTTP 429: rate limited",
+    });
+  });
 });
 
 describe("openclaw-inference-switch agent reply matching", () => {
@@ -167,6 +220,55 @@ describe("openclaw-inference-switch gateway model-run output", () => {
 });
 
 describe("openclaw-inference-switch mock-Anthropic baseline", () => {
+  it("serves authenticated PONG replies for the lifecycle gateway checks", async () => {
+    const progress = startTestProgress("OpenClaw baseline", ["serve baseline", "verify baseline"], {
+      logLine: () => undefined,
+    });
+    const baseline = await startMockOpenClawBaselineProvider(progress);
+    try {
+      const endpoint = new URL(`${baseline.baseUrl}/chat/completions`);
+      expect(endpoint.hostname).toBe("host.openshell.internal");
+      endpoint.hostname = "127.0.0.1";
+      const payload = {
+        model: MOCK_BASELINE_MODEL,
+        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+        stream: true,
+      };
+      const denied = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(denied.status).toBe(401);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${MOCK_BASELINE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(200);
+      const chunks = (await response.text())
+        .split("\n\n")
+        .filter((chunk) => chunk.startsWith("data: {"))
+        .map((chunk) => JSON.parse(chunk.slice("data: ".length)));
+      expect(chunks.map((chunk) => chunk.choices[0].delta.content ?? "").join("")).toBe("PONG");
+      expect(baseline.requests()).toContainEqual(
+        expect.objectContaining({
+          auth: "ok",
+          method: "POST",
+          path: "/v1/chat/completions",
+          model: MOCK_BASELINE_MODEL,
+          stream: true,
+        }),
+      );
+    } finally {
+      await baseline.close();
+      progress.stop();
+    }
+  });
+
   it("uses an authenticated local baseline with the compatible env wiring", () => {
     expect(mockBaselineInference("http://127.0.0.1:34567/v1")).toEqual({
       apiKey: MOCK_BASELINE_API_KEY,

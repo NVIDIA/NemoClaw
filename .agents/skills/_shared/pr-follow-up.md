@@ -47,22 +47,26 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 
 | Result | Action |
 |---|---|
-| Candidate-owned valid finding or failed check that is in scope and not ambiguous, risky, broad, or design-changing | Group by cause and repair the complete group. |
+| Candidate-owned valid finding or failed check whose required outcome is established by the accepted scope | Group by cause and repair the complete group. |
 | Inherited finding or failed check | Leave the candidate unchanged. Preserve the base evidence and report the disposition. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
-| New scope or ambiguous, risky, broad, or design-changing feedback | Ask the user. Do not add the new surface as a repair. |
+| A finding requires new product scope or leaves materially different outcomes inside the accepted scope | Ask the user. Do not select or add the new behavior as a repair. |
 | Required review or check is still pending | Report it. Do not classify the collection as complete. |
 | Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Keep the candidate unchanged and ask a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for that commit or defer the PR. Do not rerun before that decision. |
 | No actionable finding after collection completes | Report the remaining checks. |
 
 Apply [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to valid code or CI findings, and record the operation and failure class.
 
+A changed workflow or E2E file can change validation requirements. Its path does not create a user
+approval requirement or revoke authority already granted for the PR lifecycle.
+
 ## Integrate the base branch
 
 Fetching the canonical base into a local comparison ref does not change the candidate. Continue to
 fetch it when trusted validation requires current base evidence.
 
-Merge or rebase the base branch into the candidate only for one of these reasons:
+Use a merge or GitHub's Update branch operation. Do not rebase or rewrite published commits.
+Integrate the base branch only for one of these reasons:
 
 - resolve a current merge conflict;
 - consume a required dependency that has merged;

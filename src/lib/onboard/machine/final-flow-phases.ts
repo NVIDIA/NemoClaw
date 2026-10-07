@@ -63,8 +63,8 @@ export function shouldInitializeNativeOpenclawInferenceRoute(
 ): boolean {
   return (
     context.agent === null &&
-    context.fromDockerfile !== null &&
-    !preserveRebuildLivePolicy &&
+    (context.fromDockerfile !== null || Boolean(context.session?.metadata?.fromImage)) &&
+    (!preserveRebuildLivePolicy || Boolean(context.session?.metadata?.fromImage)) &&
     context.session?.steps.openclaw?.status !== "complete"
   );
 }
@@ -94,6 +94,7 @@ export function createFinalOnboardFlowPhases<
       context,
       options.preserveRebuildLivePolicy === true,
     );
+    const settleOpenclawStartupBeforeConfiguration = initializeNativeInferenceRoute;
     if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
       throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
     }
@@ -109,6 +110,7 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
       initializeNativeInferenceRoute,
+      settleOpenclawStartupBeforeConfiguration,
       revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,
     });
@@ -170,6 +172,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
@@ -211,6 +214,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
       deferRuntimeVerification: options.preserveRebuildLivePolicy === true,

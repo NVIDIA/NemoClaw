@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it, vi } from "vitest";
+import { testTimeout } from "../../helpers/timeouts";
 import {
   observeWithOwnerDiagnostic,
   withPodmanOwnerDiagnostic,
@@ -303,41 +304,49 @@ it("accepts a complete boolean fact report", async () => {
   );
 });
 
-it("loads the real collector from an unrelated child working directory", async () => {
-  const fs = await import("node:fs");
-  const os = await import("node:os");
-  const path = await import("node:path");
-  const { spawnSync } = await import("node:child_process");
-  const { captureBoundedPodmanOwnerDiagnostic } =
-    await import("../fixtures/podman-owner-diagnostic");
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "owner-diagnostic-cwd-"));
-  let child: ReturnType<typeof spawnSync> | undefined;
-  try {
-    const command = async (executable: string, args: string[]) => {
-      child = spawnSync(executable, args, {
-        cwd: directory,
-        env: { PATH: process.env.PATH, HOME: directory, NEMOCLAW_GATEWAY_RUNTIME: "docker" },
-        encoding: "utf8",
-        timeout: 10_000,
-        killSignal: "SIGKILL",
-      });
-      return {
-        exitCode: child.status,
-        timedOut: false,
-        stdout: String(child.stdout),
-        stderr: String(child.stderr),
+it(
+  "loads the real collector from an unrelated child working directory",
+  async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawnSync } = await import("node:child_process");
+    const { captureBoundedPodmanOwnerDiagnostic } =
+      await import("../fixtures/podman-owner-diagnostic");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "owner-diagnostic-cwd-"));
+    let child: ReturnType<typeof spawnSync> | undefined;
+    try {
+      const command = async (
+        executable: string,
+        args: string[],
+        options: { timeoutMs: number },
+      ) => {
+        child = spawnSync(executable, args, {
+          cwd: directory,
+          env: { PATH: process.env.PATH, HOME: directory, NEMOCLAW_GATEWAY_RUNTIME: "docker" },
+          encoding: "utf8",
+          timeout: options.timeoutMs,
+          killSignal: "SIGKILL",
+        });
+        return {
+          exitCode: child.status,
+          timedOut: false,
+          stdout: String(child.stdout),
+          stderr: String(child.stderr),
+        };
       };
-    };
-    expect(await captureBoundedPodmanOwnerDiagnostic({ command } as never, {}, "before")).toEqual(
-      unavailable,
-    );
-    // An unavailable report alone could hide a loader failure. Require successful
-    // child execution and the collector's exact serialized return as well.
-    expect(child?.error).toBeUndefined();
-    expect(child?.status).toBe(0);
-    expect(child?.stderr).toBe("");
-    expect(JSON.parse(String(child?.stdout))).toEqual(unavailable);
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
+      expect(await captureBoundedPodmanOwnerDiagnostic({ command } as never, {}, "before")).toEqual(
+        unavailable,
+      );
+      // An unavailable report alone could hide a loader failure. Require successful
+      // child execution and the collector's exact serialized return as well.
+      expect(child?.error).toBeUndefined();
+      expect(child?.status).toBe(0);
+      expect(child?.stderr).toBe("");
+      expect(JSON.parse(String(child?.stdout))).toEqual(unavailable);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+  testTimeout(65_000),
+);
