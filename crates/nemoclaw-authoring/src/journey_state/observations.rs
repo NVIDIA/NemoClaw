@@ -72,7 +72,7 @@ impl JourneyState {
             return Ok(resolution);
         };
         let Some(observed) = observations
-            .inference(&request)
+            .get(&request)
             .filter(|observed| observed.status == ObservationStatus::Available)
         else {
             return Ok(resolution);
@@ -193,7 +193,7 @@ impl JourneyState {
                 )
             })?;
         let endpoint = observations
-            .inference(&request)
+            .get(&request)
             .ok_or_else(|| diagnostic("delegation", "Model discovery is missing or stale."))?;
         if endpoint.status != ObservationStatus::Available
             || endpoint.reachable != Some(true)
@@ -222,7 +222,9 @@ impl JourneyState {
         }
         if document.credential_names().iter().any(|reference| {
             observations
-                .credential(reference)
+                .get(&CredentialRequest {
+                    reference: (*reference).into(),
+                })
                 .is_none_or(|credential| credential.status != ObservationStatus::Available)
         }) {
             return Err(diagnostic(

@@ -8,7 +8,7 @@ use nemoclaw_sdk::{
     compile,
     config::{ComputeDriver, Document, ExternalGateway, Gateway},
     discovery::DiscoveryRequest,
-    discovery::{DiscoveryQuery, plan_queries},
+    discovery::{DiscoveryQuery, FabricRequest, GatewayRequest, HardwareRequest, plan_queries},
     fabric_capabilities::FabricRequirements,
     inference_discovery::endpoint_requests,
     services::{
@@ -134,10 +134,10 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
     let engine = "unix:///var/run/docker.sock";
     assert_eq!(
         queries[0],
-        DiscoveryQuery::Gateway {
+        DiscoveryQuery::Gateway(GatewayRequest {
             gateway: document.spec.gateway.clone(),
             compute_drivers: vec![ComputeDriver::Docker],
-        }
+        })
     );
     assert_eq!(
         queries[1],
@@ -145,9 +145,9 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
     );
     assert_eq!(
         queries[2],
-        DiscoveryQuery::Hardware {
+        DiscoveryQuery::Hardware(HardwareRequest {
             engine: engine.into()
-        }
+        })
     );
     let platform = DiscoveryRequest {
         engine: engine.into(),
@@ -157,13 +157,13 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
     let sandbox = &document.spec.sandboxes[0];
     assert_eq!(
         queries[4],
-        DiscoveryQuery::Fabric {
+        DiscoveryQuery::Fabric(FabricRequest {
             engine: engine.into(),
             image: sandbox.image.ref_.clone(),
             requirements: FabricRequirements::for_sandbox(&document, sandbox).unwrap(),
             platform: Some(platform),
             metadata_env: None,
-        }
+        })
     );
 }
 
@@ -183,13 +183,13 @@ fn plan_queries_read_service_engines_and_an_unset_image_engine_for_an_external_g
     assert_eq!(kinds(&queries), ["gateway", "hardware", "fabric"]);
     assert_eq!(
         queries[1],
-        DiscoveryQuery::Hardware {
+        DiscoveryQuery::Hardware(HardwareRequest {
             engine: "ssh://operator@192.168.1.50".into()
-        }
+        })
     );
     // An external gateway's image store does not establish its platform.
     assert!(matches!(
         &queries[2],
-        DiscoveryQuery::Fabric { engine, platform: None, .. } if engine.is_empty()
+        DiscoveryQuery::Fabric(FabricRequest { engine, platform: None, .. }) if engine.is_empty()
     ));
 }

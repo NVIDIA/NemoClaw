@@ -7,7 +7,8 @@ use crate::{
     config::{ComputeDriver, ConfigError, Document, Gateway},
     fabric_capabilities::FabricRequirements,
     fabric_catalog::FabricCatalog,
-    inference_discovery::EndpointRequest,
+    hardware_discovery::HardwareObservation,
+    inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,31 +17,43 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DiscoveryQuery {
     Engine(DiscoveryRequest),
-    Hardware {
-        engine: String,
-    },
+    Hardware(HardwareRequest),
     /// An image read, judged against what its sandbox requires.
-    Fabric {
-        engine: String,
-        image: String,
-        requirements: FabricRequirements,
-        /// The engine whose platform the image must run on: a managed
-        /// gateway's. An external gateway's image store does not establish it.
-        platform: Option<DiscoveryRequest>,
-        /// On Kubernetes and OpenShift, where no engine can inspect the image,
-        /// the environment variable naming its metadata bundle.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        metadata_env: Option<String>,
-    },
+    Fabric(FabricRequest),
     Inference(EndpointRequest),
-    Gateway {
-        gateway: Gateway,
-        compute_drivers: Vec<ComputeDriver>,
-    },
+    Gateway(GatewayRequest),
     /// Whether a credential reference resolves locally; never its value.
-    Credential {
-        reference: String,
-    },
+    Credential(CredentialRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareRequest {
+    pub engine: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FabricRequest {
+    pub engine: String,
+    pub image: String,
+    pub requirements: FabricRequirements,
+    /// The engine whose platform the image must run on: a managed
+    /// gateway's. An external gateway's image store does not establish it.
+    pub platform: Option<DiscoveryRequest>,
+    /// On Kubernetes and OpenShift, where no engine can inspect the image,
+    /// the environment variable naming its metadata bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_env: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayRequest {
+    pub gateway: Gateway,
+    pub compute_drivers: Vec<ComputeDriver>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CredentialRequest {
+    pub reference: String,
 }
 
 /// The reads a plan makes of the target for `document`, in the order it names
@@ -50,10 +63,10 @@ pub enum DiscoveryQuery {
 /// sandbox name, because each carries that sandbox's own requirements, and a
 /// managed gateway's image reads run on its engine's platform.
 pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
-    let mut queries = vec![DiscoveryQuery::Gateway {
+    let mut queries = vec![DiscoveryQuery::Gateway(GatewayRequest {
         gateway: document.spec.gateway.clone(),
         compute_drivers: vec![document.spec.gateway.runtime().provider],
-    }];
+    })];
     queries.extend(
         crate::inference_discovery::endpoint_requests(document)
             .map_err(|_| ConfigError::new("inference discovery inputs are invalid"))?
@@ -67,7 +80,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     queries.extend(
         engines
             .into_iter()
-            .map(|engine| DiscoveryQuery::Hardware { engine }),
+            .map(|engine| DiscoveryQuery::Hardware(HardwareRequest { engine })),
     );
     // A cluster has no engine to read images from; their metadata bundles
     // answer instead.
@@ -89,7 +102,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
     for sandbox in sandboxes {
-        queries.push(DiscoveryQuery::Fabric {
+        queries.push(DiscoveryQuery::Fabric(FabricRequest {
             engine: engine.into(),
             image: sandbox.image.ref_.clone(),
             requirements: FabricRequirements::for_sandbox(document, sandbox)?,
@@ -99,7 +112,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
                 .metadata
                 .as_ref()
                 .map(|metadata| metadata.env.clone()),
-        });
+        }));
     }
     Ok(queries)
 }
@@ -137,6 +150,141 @@ impl DiscoveryObservation {
             Self::Credential(value) => value.status,
         }
     }
+}
+
+/// A kind of read and the observation type that answers it.
+pub trait Query: PartialEq + Sized {
+    type Observation;
+
+    /// This query, if `query` is of this kind.
+    fn from_query(query: &DiscoveryQuery) -> Option<&Self>;
+
+    /// The answer, if `observation` is of this kind.
+    fn from_observation(observation: &DiscoveryObservation) -> Option<&Self::Observation>;
+}
+
+macro_rules! query_kinds {
+    ($($variant:ident($request:ty) => $observation:ty),+ $(,)?) => {$(
+        impl Query for $request {
+            type Observation = $observation;
+
+            fn from_query(query: &DiscoveryQuery) -> Option<&Self> {
+                match query {
+                    DiscoveryQuery::$variant(request) => Some(request),
+                    _ => None,
+                }
+            }
+
+            fn from_observation(observation: &DiscoveryObservation) -> Option<&$observation> {
+                match observation {
+                    DiscoveryObservation::$variant(observed) => Some(observed),
+                    _ => None,
+                }
+            }
+        }
+    )+};
+}
+
+query_kinds! {
+    Engine(DiscoveryRequest) => EngineObservation,
+    Hardware(HardwareRequest) => HardwareObservation,
+    Fabric(FabricRequest) => FabricObservation,
+    Inference(EndpointRequest) => EndpointObservation,
+    Gateway(GatewayRequest) => GatewayObservation,
+    Credential(CredentialRequest) => CredentialObservation,
+}
+
+/// Any kind of read, answered by any kind of observation.
+impl Query for DiscoveryQuery {
+    type Observation = DiscoveryObservation;
+
+    fn from_query(query: &DiscoveryQuery) -> Option<&Self> {
+        Some(query)
+    }
+
+    fn from_observation(observation: &DiscoveryObservation) -> Option<&Self::Observation> {
+        Some(observation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Entry {
+    query: DiscoveryQuery,
+    observation: DiscoveryObservation,
+}
+
+/// Observations keyed by the query that produced them. A query absent from the
+/// collection was never asked; one that failed holds an unknown observation.
+/// Queries are not orderable, so the collection keeps them in the order recorded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DiscoveryObservations {
+    entries: Vec<Entry>,
+}
+
+impl DiscoveryObservations {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with(mut self, query: DiscoveryQuery, observation: DiscoveryObservation) -> Self {
+        self.record(query, observation);
+        self
+    }
+
+    /// Record an observation; a later record of the same query replaces the earlier one.
+    pub fn record(&mut self, query: DiscoveryQuery, observation: DiscoveryObservation) {
+        match self.entries.iter_mut().find(|entry| entry.query == query) {
+            Some(entry) => entry.observation = observation,
+            None => self.entries.push(Entry { query, observation }),
+        }
+    }
+
+    pub fn merge(&mut self, other: DiscoveryObservations) {
+        for entry in other.entries {
+            self.record(entry.query, entry.observation);
+        }
+    }
+
+    /// Whether nothing has been asked yet.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Whether `query` was asked, whatever kind its recorded answer is.
+    pub fn contains<Q: Query>(&self, query: &Q) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| Q::from_query(&entry.query) == Some(query))
+    }
+
+    /// The answer to `query`; a query of a kind the answer does not match is unanswered.
+    pub fn get<Q: Query>(&self, query: &Q) -> Option<&Q::Observation> {
+        self.entries
+            .iter()
+            .find(|entry| Q::from_query(&entry.query) == Some(query))
+            .and_then(|entry| Q::from_observation(&entry.observation))
+    }
+
+    /// The distinct queries not yet asked, in the order given.
+    pub fn missing(&self, queries: &[DiscoveryQuery]) -> Vec<DiscoveryQuery> {
+        distinct(queries)
+            .into_iter()
+            .filter(|query| !self.contains(*query))
+            .cloned()
+            .collect()
+    }
+}
+
+/// The queries without repeats, in the order first given.
+pub fn distinct(queries: &[DiscoveryQuery]) -> Vec<&DiscoveryQuery> {
+    let mut distinct: Vec<&DiscoveryQuery> = Vec::new();
+    for query in queries {
+        if !distinct.contains(&query) {
+            distinct.push(query);
+        }
+    }
+    distinct
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

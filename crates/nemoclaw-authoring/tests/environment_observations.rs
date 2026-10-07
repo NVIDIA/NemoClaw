@@ -5,7 +5,7 @@
 //! names Docker and one that names Podman, so a suggestion that ignored the host
 //! could not pass by agreeing with the template.
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument};
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::ComputeDriver,
     discovery::{
