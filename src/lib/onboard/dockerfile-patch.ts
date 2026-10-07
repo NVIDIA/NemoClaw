@@ -74,11 +74,18 @@ function replaceExactHermesPortableDockerArg(source: string, name: string, value
   if (sanitized !== value || /[\p{Cc}\p{Cf}]/u.test(value)) {
     throw new Error(`Hermes portable ${name} build setting is invalid.`);
   }
-  const pattern = new RegExp(`^ARG ${name}=.*$`, "gmu");
-  if ((source.match(pattern) ?? []).length !== 1) {
+  const declarationPrefix = `ARG ${name}=`;
+  const lines = source.split("\n");
+  const matches = lines.flatMap((line, index) =>
+    line.startsWith(declarationPrefix) ? [index] : [],
+  );
+  if (matches.length !== 1) {
     throw new Error(`Hermes Dockerfile must declare exactly one ${name} build argument.`);
   }
-  return source.replace(pattern, `ARG ${name}=${sanitized}`);
+  const matchIndex = matches[0] as number;
+  const suffix = lines[matchIndex]?.endsWith("\r") ? "\r" : "";
+  lines[matchIndex] = `${declarationPrefix}${sanitized}${suffix}`;
+  return lines.join("\n");
 }
 
 function pinHermesPortableTargetArchitecture(source: string): string {
@@ -400,6 +407,11 @@ export function patchStagedDockerfile(
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
     `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,
+  );
+  // Legacy image builds need the same selected preset as managed startup.
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_SERVING_PRESET=.*$/m,
+    () => `ARG NEMOCLAW_SERVING_PRESET=${sanitizeDockerArg(process.env.NEMOCLAW_SERVING_PRESET)}`,
   );
   const upstreamEndpointUrl = normalizeOptionalEndpointUrlArg(
     options.upstreamEndpointUrl,

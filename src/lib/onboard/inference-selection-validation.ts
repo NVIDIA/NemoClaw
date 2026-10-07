@@ -46,6 +46,7 @@ import {
   type ProbeLike,
 } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
+import { formatOnboardEndpointDiagnostic } from "./diagnostics/redaction";
 import { normalizeReasoningFlag } from "./reasoning-mode";
 import { OnboardDeferredExitError } from "./session-bootstrap";
 
@@ -196,8 +197,12 @@ export function createInferenceSelectionValidationHelpers(
   function printValidationFailure(
     label: string,
     probe?: { failures?: unknown[]; message?: unknown; advisory?: unknown },
+    endpointUrl?: string,
   ): void {
     console.error(`  ${label} endpoint validation failed.`);
+    if (endpointUrl) {
+      console.error(`  Endpoint: ${formatOnboardEndpointDiagnostic(endpointUrl)}`);
+    }
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
     if (!probe) return;
@@ -350,7 +355,7 @@ export function createInferenceSelectionValidationHelpers(
         },
       ],
     };
-    printValidationFailure(label, syntheticProbe);
+    printValidationFailure(label, syntheticProbe, endpointUrl);
     if (deps.isNonInteractive()) {
       await exitNonInteractiveValidationFailure();
     }
@@ -526,7 +531,7 @@ export function createInferenceSelectionValidationHelpers(
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };
     }
-    printValidationFailure(label, probe);
+    printValidationFailure(label, probe, endpointUrl);
     if (deps.isNonInteractive()) {
       await exitNonInteractiveValidationFailure();
     }
@@ -609,7 +614,7 @@ export function createInferenceSelectionValidationHelpers(
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };
     }
-    printValidationFailure(label, probe);
+    printValidationFailure(label, probe, endpointUrl);
     const recovery = getProbeRecovery(probe, { allowModelRetry: true });
     if (intendedApi === "openai-completions" && recovery.kind === "endpoint") {
       printOpenAiSurfaceGuidance();

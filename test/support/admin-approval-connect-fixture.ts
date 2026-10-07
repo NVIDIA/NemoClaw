@@ -31,6 +31,31 @@ case "$2" in
 esac
 `;
 
+export const ADMIN_APPROVAL_TEST_OPENSHELL_SH = `#!/bin/sh
+set -eu
+if [ -n "\${FAKE_OPENSHELL_ARGV_LOG:-}" ]; then
+  : >"$FAKE_OPENSHELL_ARGV_LOG"
+  for arg in "$@"; do printf '%s\\n' "$arg" >>"$FAKE_OPENSHELL_ARGV_LOG"; done
+fi
+[ "$1" = sandbox ]
+[ "$2" = exec ]
+shift 2
+while [ "$1" != -- ]; do shift; done
+shift
+[ "$1" = /bin/bash ]
+[ "$2" = -i ]
+approval_program="$(cat)"
+case "$approval_program" in
+  *'
+'*) echo "ADMIN_CONNECT_INPUT_NOT_SINGLE_LINE" >&2; exit 96 ;;
+esac
+if [ -n "\${ADMIN_CONNECT_TERMINAL_PROBE:-}" ]; then
+  printf '%s\n' "$approval_program" | python3 "$ADMIN_CONNECT_TERMINAL_PROBE"
+  exit $?
+fi
+printf '%s\n' "$approval_program" | /bin/bash -c 'openclaw() { command openclaw "$@"; }; if [ -n "\${ADMIN_CONNECT_RC:-}" ]; then . "$ADMIN_CONNECT_RC"; fi; . /dev/stdin'
+`;
+
 export const ADMIN_APPROVAL_TEST_PTY_PY = `
 """Run the fixture's connect input through a real interactive shell terminal."""
 

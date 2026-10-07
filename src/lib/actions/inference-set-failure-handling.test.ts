@@ -97,8 +97,8 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true }, deps),
-    ).rejects.toThrow(/OpenShell inference route update failed/);
+      runInferenceSet({ provider: "openai-api", model: "openai/model-a" }, deps),
+    ).rejects.toThrow(/OpenShell inference route update with verification failed/);
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
@@ -108,7 +108,7 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+      runInferenceSet({ provider: "openai-api", model: "openai/model-a" }, deps),
     ).rejects.toThrow(
       /route state is unknown.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
     );
@@ -123,7 +123,7 @@ describe("runInferenceSet failure handling", () => {
     const createProvider = vi.fn();
     const base = createDeps({
       config: {},
-      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old-model" }],
+      entries: [{ name: "alpha", agent: "openclaw", provider: "openai-api", model: "old-model" }],
       inferenceRouteMutator: { setInferenceRoute },
       inferenceRouteObserver: {
         observeInferenceRoute: vi.fn(async () => ({
@@ -142,7 +142,7 @@ describe("runInferenceSet failure handling", () => {
     };
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
+      runInferenceSet({ provider: "openai-api", model: "new-model" }, deps),
     ).rejects.toThrow(/Cannot reconcile.*gateway 'nemoclaw'.*gateway unavailable/su);
 
     expect(createProvider).not.toHaveBeenCalled();
@@ -162,7 +162,7 @@ describe("runInferenceSet failure handling", () => {
         ok: true as const,
         value: {
           state: "configured" as const,
-          route: { provider: "nvidia-prod", model: "old-model" },
+          route: { provider: "openai-api", model: "old-model" },
         },
       };
     });
@@ -185,13 +185,13 @@ describe("runInferenceSet failure handling", () => {
       });
     const deps = createDeps({
       config: {},
-      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old-model" }],
+      entries: [{ name: "alpha", agent: "openclaw", provider: "openai-api", model: "old-model" }],
       inferenceRouteObserver: { observeInferenceRoute },
       inferenceRouteMutator: { setInferenceRoute },
     });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
+      runInferenceSet({ provider: "openai-api", model: "new-model" }, deps),
     ).rejects.toThrow(
       /gateway schema mismatch.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
     );
@@ -199,8 +199,8 @@ describe("runInferenceSet failure handling", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
-    ).resolves.toMatchObject({ provider: "nvidia-prod", model: "new-model" });
+      runInferenceSet({ provider: "openai-api", model: "new-model" }, deps),
+    ).resolves.toMatchObject({ provider: "openai-api", model: "new-model" });
 
     expect(events).toEqual([
       "observe:nemoclaw",
@@ -317,13 +317,15 @@ describe("runInferenceSet failure handling", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true },
+      { provider: "openai-api", model: "openai/model-a" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    expect(message).toMatch(/OpenShell inference route update failed with exit 42/);
+    expect(message).toMatch(
+      /OpenShell inference route update with verification failed with exit 42/,
+    );
     expect(message).toMatch(/network timeout connecting to gateway/);
     expect(message).not.toContain("nvapi-secret-value");
     expect(message).not.toMatch(/Registered providers/);

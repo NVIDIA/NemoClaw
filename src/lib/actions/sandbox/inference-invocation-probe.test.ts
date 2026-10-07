@@ -133,6 +133,20 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("-o /dev/null");
   });
 
+  it("probes native NVIDIA through the attached provider without exposing the host credential", () => {
+    const command = buildSandboxInferenceInvocationCommand({
+      ...input,
+      provider: "nvidia-prod",
+      nativeProvider: true,
+    });
+
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).not.toContain("https://inference.local");
+    expect(command).not.toContain("NVIDIA_API_KEY");
+    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+  });
+
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
     const execute = vi.fn(async () => ({
       status: 1,

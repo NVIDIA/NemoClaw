@@ -349,7 +349,7 @@ describe("credentials oclif commands", () => {
 
     expect(calls).toEqual([
       {
-        args: ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
+        args: ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
         opts: {
           env: expect.any(Object),
           ignoreError: true,

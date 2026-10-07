@@ -115,10 +115,9 @@ describe("inference set sandbox configuration read failures", () => {
       expect(output).not.toContain("Setting OpenShell inference route");
       expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
       const openshellCalls = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
-      expect(openshellCalls).toHaveLength(2);
-      expect(openshellCalls[0]).toContain("inference get -g nemoclaw");
-      expect(openshellCalls[1]).toContain("sandbox exec");
-      expect(openshellCalls[1]).toContain("cat /sandbox/.openclaw/openclaw.json");
+      expect(openshellCalls).toHaveLength(1);
+      expect(openshellCalls[0]).toContain("sandbox exec");
+      expect(openshellCalls[0]).toContain("cat /sandbox/.openclaw/openclaw.json");
       expect(openshellCalls).not.toContainEqual(expect.stringMatching(/\binference set\b/u));
       expect(result.status).toBe(1);
     },

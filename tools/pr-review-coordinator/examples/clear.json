@@ -23,6 +23,7 @@
     "productScope": "accepted"
   },
   "history": {
+    "contractEvidence": "none",
     "frozenContractKeys": [],
     "writes": []
   }

@@ -1,17 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  verifyNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../inference/openrouter";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
   classifyInferenceRouteFailureLabel,
+  DCODE_MANAGED_EXEC_LAUNCHER,
   isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
@@ -22,9 +31,34 @@ import {
   type SandboxInferenceInvocationInput,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
+
+export type VerifyNativeNvidiaStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeNvidiaStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeNvidiaProviderAttachment;
+  verify?: VerifyNativeNvidiaStatusAttachment;
+}): Promise<void> {
+  if (input.verify) {
+    await input.verify(input);
+    return;
+  }
+  await verifyNativeNvidiaProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
@@ -32,6 +66,66 @@ export type SandboxInferenceRouteHealth = {
   httpStatus: number;
   detail: string;
 };
+
+const NATIVE_NVIDIA_MODELS_ENDPOINT = `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/models`;
+const NATIVE_NVIDIA_MODELS_PROBE_SCRIPT = [
+  "AUTH_HEADER=$(printf 'Authorization: %s %s' 'Bearer' 'nemoclaw-openshell-provider')",
+  `HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" --connect-timeout 3 --max-time 15 ${NATIVE_NVIDIA_MODELS_ENDPOINT} 2>/dev/null) || HTTP_CODE=000`,
+  'case "$HTTP_CODE" in 2[0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
+].join("; ");
+
+/** Probe the exact attached native NVIDIA provider from inside one sandbox. */
+export async function probeSandboxNativeNvidiaModelsHealth(
+  sandboxName: string,
+  options: {
+    gatewayName: string;
+    agentName?: string | null;
+    commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  },
+): Promise<SandboxInferenceRouteHealth | null> {
+  const commandExecutor =
+    options.commandExecutor ??
+    createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT });
+  const dcode = options.agentName === DCODE_AGENT_NAME;
+  try {
+    const completed = await commandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "named", gatewayName: options.gatewayName },
+      command: dcode
+        ? [DCODE_MANAGED_EXEC_LAUNCHER, "/bin/sh", "-c", NATIVE_NVIDIA_MODELS_PROBE_SCRIPT]
+        : ["sh", "-c", NATIVE_NVIDIA_MODELS_PROBE_SCRIPT],
+      ...(dcode
+        ? {
+            sandboxEnvironment: { BASH_ENV: "", ENV: "", HOME: "/usr/local/lib/nemoclaw" },
+            tty: false,
+          }
+        : {}),
+      environment: buildSandboxCommandEnvironment(),
+      timeoutMilliseconds: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    });
+    if (completed.outcome.kind !== "completed") return null;
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: completed.outcome.exitCode,
+      output: completed.stdout,
+      stderr: completed.stderr,
+    });
+    if (!parsed.healthy && !parsed.broken) return null;
+    const httpStatus = parsed.httpStatus;
+    const ok = parsed.healthy;
+    return {
+      ok,
+      endpoint: NATIVE_NVIDIA_MODELS_ENDPOINT,
+      httpStatus,
+      detail: ok
+        ? `The attached native NVIDIA provider returned HTTP ${httpStatus} on ${NATIVE_NVIDIA_MODELS_ENDPOINT}.`
+        : httpStatus === 0
+          ? `The attached native NVIDIA provider was unreachable on ${NATIVE_NVIDIA_MODELS_ENDPOINT}.`
+          : `The attached native NVIDIA provider returned HTTP ${httpStatus} on ${NATIVE_NVIDIA_MODELS_ENDPOINT}.`,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Probe the authoritative `https://inference.local/v1/models` route from
@@ -239,6 +333,7 @@ function buildInvokedRouteHealth(
 
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
+  nativeNvidia?: boolean;
 };
 
 // A models route that answers but is credential-gated (401/403) stays
@@ -271,6 +366,32 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
+  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+    const endpoint =
+      invocation && !invocation.ok && invocation.endpoint
+        ? invocation.endpoint
+        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+    const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
+    const nativeHealth: ProviderHealthStatus = invocation?.ok
+      ? {
+          ok: true,
+          probed: true,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+        }
+      : {
+          ok: false,
+          probed: invocation !== null,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: invocation
+            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
+            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+          failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+        };
+    return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
+  }
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
   const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
   const accepted =
