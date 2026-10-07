@@ -190,14 +190,14 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 <AgentOnly variant="openclaw,hermes">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
-Their models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+Their models probe must return HTTP 2xx.
 Fixed hosted providers verify their sandbox-attached OpenShell provider and run the bounded model request at their native endpoint without the shared-route models probe.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
-The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`.
+Shared-route providers require HTTP 2xx from the models probe. Fixed hosted providers verify their sandbox-attached provider and send the model request to its native endpoint.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">

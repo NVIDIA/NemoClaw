@@ -122,6 +122,7 @@ import {
   publicationFromDecision,
   publishLaunchReadiness,
   getNativeHostedProviderAttachment,
+  LaunchReadinessEvidenceError,
   requireNativeHostedInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
@@ -1878,7 +1879,20 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
-  if (getNativeHostedProviderAttachment(snapshot)) {
+  let nativeAttachment: ReturnType<typeof getNativeHostedProviderAttachment>;
+  try {
+    nativeAttachment = getNativeHostedProviderAttachment(snapshot);
+  } catch (error) {
+    if (!(error instanceof LaunchReadinessEvidenceError)) throw error;
+    if (!quiet) {
+      console.error(
+        `  Error: sandbox '${sandboxName}' has no valid native hosted provider attachment receipt. Recreate the sandbox to restore native inference.`,
+      );
+      console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
+    }
+    return { sandbox: snapshot, routeHealthy: false };
+  }
+  if (nativeAttachment) {
     return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);

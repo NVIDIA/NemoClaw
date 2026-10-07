@@ -136,8 +136,8 @@ export class LaunchReadinessObservationError extends Error {
 
 /** The required observation could not produce authoritative evidence. */
 export class LaunchReadinessEvidenceError extends Error {
-  constructor() {
-    super("launch readiness evidence unavailable");
+  constructor(message = "launch readiness evidence unavailable") {
+    super(message);
   }
 }
 
@@ -214,7 +214,9 @@ export function getNativeHostedProviderAttachment(
   );
   const profile = nativeHostedProfile(entry.provider);
   if ((profile && !receipt) || (receipt && profile?.profileId !== receipt.profileId)) {
-    throw new LaunchReadinessEvidenceError();
+    throw new LaunchReadinessEvidenceError(
+      "No valid native hosted provider attachment receipt. Recreate the sandbox to restore native inference.",
+    );
   }
   return receipt ?? null;
 }

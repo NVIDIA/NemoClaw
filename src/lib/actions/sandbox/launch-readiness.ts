@@ -86,7 +86,7 @@ import {
 } from "./launch-readiness/openclaw-pairing-qualification";
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
-export { createBoundLaunchReadinessDeps };
+export { createBoundLaunchReadinessDeps, LaunchReadinessEvidenceError };
 export {
   getNativeHostedProviderAttachment,
   requireNativeHostedInferenceHealth,

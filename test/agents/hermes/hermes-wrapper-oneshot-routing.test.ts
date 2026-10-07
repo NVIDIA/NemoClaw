@@ -156,6 +156,8 @@ with tempfile.TemporaryDirectory() as root:
     run = subprocess.run(command + ["gateway", "run"], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     config.write_text("model: {api_key: raw-secret-do-not-print}")
+    hash_text, _, _ = guard._hash_text(str(config), str(env))
+    hashes.write_text(hash_text)
     marker.unlink(missing_ok=True)
     run = subprocess.run(command + ["chat", "--query", "hello"], capture_output=True, text=True)
     assert run.returncode == 1

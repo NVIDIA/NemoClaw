@@ -9,6 +9,23 @@ import { isHostWsl, runConnect, setupFixture } from "./helpers";
 
 describe("sandbox connect inference route swap (#1248)", () => {
   it(
+    "refuses a legacy hosted selection without an attachment receipt",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        { name: "my-sandbox", model: "gpt-4o", provider: "openai-api", gpuEnabled: false },
+        "openai-api",
+        "gpt-4o",
+      );
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Recreate the sandbox to restore native inference");
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls).toEqual([]);
+    },
+  );
+
+  it(
     "swaps inference route when live route does not match sandbox provider",
     testTimeoutOptions(20_000),
     () => {

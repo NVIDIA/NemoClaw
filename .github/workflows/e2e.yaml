@@ -677,6 +677,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
+            if [[ -n "${HOSTED_MODEL:-}" ]]; then
+              echo "::error::hosted_model requires an explicit fixed hosted qualification target" >&2
+              exit 1
+            fi
             {
               echo 'matrix=[]'
               echo 'test_matrix=[]'

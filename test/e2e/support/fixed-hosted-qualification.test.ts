@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { readWorkflow, readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 import {
   FIXED_HOSTED_CREDENTIAL_PREDICATE,
   validateStandardProfileWorkflowBoundary,
@@ -30,6 +30,37 @@ const explicit = {
 };
 
 describe("fixed hosted qualification planning", () => {
+  it.each([
+    ["", 0, true],
+    ["approved/model", 1, false],
+  ] as const)(
+    "rejects unrelated hosted model selections before native runtime planning [%s]",
+    (hostedModel, status, outputExists) => {
+      const workflow = readYaml(".github/workflows/e2e.yaml") as Workflow;
+      const script = workflow.jobs["generate-matrix"].steps?.find(
+        (step) => step.name === "Generate E2E target matrix",
+      )?.run;
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-runtime-plan-"));
+      try {
+        const output = path.join(directory, "output");
+        const result = spawnSync("bash", ["-c", script!], {
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH,
+            JOBS: "native-runtime-qualification-producer",
+            TARGETS: "",
+            HOSTED_MODEL: hostedModel,
+            GITHUB_OUTPUT: output,
+          },
+        });
+        expect(result.status).toBe(status);
+        expect(fs.existsSync(output)).toBe(outputExists);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each(FIXED_HOSTED_QUALIFICATIONS)(
     "selects only the requested protocol representative [$id]",
     ({ id, agent }) => {

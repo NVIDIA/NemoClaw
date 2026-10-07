@@ -25,7 +25,6 @@ import {
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
   patchOpenClawSlackProxyAddrPackageGraph,
-  patchOpenClawSlackProxyPackageGraph,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -581,29 +580,34 @@ describe("OpenClaw npm remediation", () => {
     expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-archive-marker");
   });
 
+  it.each(["@slack/bolt", "@slack/bolt/node_modules/express"])(
+    "rejects changed Slack %s contracts before replacing proxy bytes",
+    (dependency) => {
+      const { packageDirectory, replacementDirectory } = writeSlackProxyAddrFixture();
+      const metadataPath = path.join(packageDirectory, "node_modules", dependency, "package.json");
+      const metadata = readJson<Record<string, unknown>>(metadataPath);
+      writeJson(metadataPath, { ...metadata, license: "unexpected" });
+      expect(() =>
+        patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacementDirectory),
+      ).toThrow("contract changed after review");
+      expect(
+        readFileSync(
+          path.join(packageDirectory, "node_modules/@slack/bolt/node_modules/proxy-addr/index.js"),
+          "utf8",
+        ),
+      ).toContain("vulnerable");
+    },
+  );
   it("replaces bundled Slack proxy-addr bytes and rejects an unexpected source version", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-slack-proxy-"));
-    temporaryDirectories.push(directory);
+    const { packageDirectory: directory, replacementDirectory: replacement } =
+      writeSlackProxyAddrFixture();
     const target = path.join(directory, "node_modules/@slack/bolt/node_modules/proxy-addr");
-    const replacement = path.join(directory, "replacement");
-    mkdirSync(target, { recursive: true });
-    mkdirSync(replacement);
-    writeJson(path.join(directory, "package.json"), {
-      name: "@openclaw/slack",
-      version: "2026.9.2",
-    });
-    const metadata = {
-      name: "proxy-addr",
-      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    };
-    writeJson(path.join(target, "package.json"), { ...metadata, version: "2.0.7" });
-    writeJson(path.join(replacement, "package.json"), { ...metadata, version: "2.0.8" });
-    writeFileSync(path.join(target, "index.js"), "vulnerable");
-    writeFileSync(path.join(replacement, "index.js"), "patched");
-    patchOpenClawSlackProxyPackageGraph(directory, replacement);
-    expect(readFileSync(path.join(target, "index.js"), "utf8")).toBe("patched");
+    patchOpenClawSlackProxyAddrPackageGraph(directory, replacement);
+    expect(readFileSync(path.join(target, "index.js"), "utf8")).toBe(
+      readFileSync(path.join(replacement, "index.js"), "utf8"),
+    );
     expect(readJson(path.join(target, "package.json"))).toMatchObject({ version: "2.0.8" });
-    expect(() => patchOpenClawSlackProxyPackageGraph(directory, replacement)).toThrow(
+    expect(() => patchOpenClawSlackProxyAddrPackageGraph(directory, replacement)).toThrow(
       "must be proxy-addr@2.0.7",
     );
   });
@@ -1046,7 +1050,11 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "tar", version: "7.5.21" });
     expect(
-      readJson<{ dependencies?: Record<string, string>; name?: string; version?: string }>(
+      readJson<{
+        dependencies?: Record<string, string>;
+        name?: string;
+        version?: string;
+      }>(
         path.join(
           extracted,
           "package",

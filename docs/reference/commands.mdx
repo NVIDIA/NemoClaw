@@ -1133,7 +1133,7 @@ During that lease, another `launch` still verifies these conditions:
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
   Shared-route providers use `inference.local`.
   Fixed hosted providers verify the recorded sandbox-attached provider and send the request to the selected native endpoint.
-  The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+  The shared-route models probe must return HTTP 2xx.
   A failed model request rejects readiness before the agent starts.
   This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 
@@ -1141,7 +1141,7 @@ During that lease, another `launch` still verifies these conditions:
 <AgentOnly variant="deepagents">
 
 - The recorded inference selection matches the live route, and every configured route serves a valid response to a bounded request for the recorded model.
-  The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`.
+  Shared-route providers require HTTP 2xx from the models probe. Fixed hosted providers verify their sandbox-attached provider and send the model request to its native endpoint.
   A failed model request rejects readiness before the agent starts.
 
 </AgentOnly>
@@ -1642,7 +1642,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Fixed hosted providers use native endpoints through sandbox-attached OpenShell providers; custom, local, and Model Router selections use `https://inference.local`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Fixed hosted providers use native endpoints through sandbox-attached OpenShell providers; custom, local, and Model Router selections use `https://inference.local`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. Native hosted doctor checks require a 2xx models response for NVIDIA Endpoints, or a valid inference response for other fixed hosted providers. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 

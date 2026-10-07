@@ -1327,6 +1327,18 @@ function recordNativeProviderAuthority(
   else deps.setNativeHostedProviderAuthority(gatewayName, attachment);
 }
 
+function inferenceSelectionRecoveryDetail(
+  selectingNativeHosted: boolean,
+  previousNativeAttachment: NativeHostedProviderAttachment | null | undefined,
+  previousProvider: string,
+  previousModel: string,
+): string {
+  if (selectingNativeHosted || previousNativeAttachment) {
+    return "The shared OpenShell inference selection was not changed.";
+  }
+  return `The previous OpenShell inference selection was restored to '${previousProvider}' / '${previousModel}'.`;
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1832,7 +1844,12 @@ async function runInferenceSetWithoutHostLock(
         }
         throw new InferenceSetError(
           `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
-            `The previous OpenShell inference selection was restored to '${rollbackRoute?.provider ?? previousProvider}' / '${rollbackRoute?.model ?? previousModel}'.`,
+            inferenceSelectionRecoveryDetail(
+              selectingNativeHosted,
+              previousNativeHostedAttachment,
+              rollbackRoute?.provider ?? previousProvider,
+              rollbackRoute?.model ?? previousModel,
+            ),
         );
       }
     }
