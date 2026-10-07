@@ -74,6 +74,46 @@ describe("N1x NVIDIA platform detection", () => {
     });
   });
 
+  it("selects N1x for PCI-inferred hardware with generic firmware (#12737)", () => {
+    withFirmwareModel("SKU 1", () => {
+      expect(
+        detectNvidiaPlatform({
+          hostPlatform: "linux",
+          architecture: "arm64",
+          collectN1xIdentityImpl: () => ({
+            candidate: true,
+            fastOsMarker: false,
+            pciGpu: true,
+            pciDevice: "0x2e2a",
+            qualified: true,
+          }),
+        }),
+      ).toBe("n1x");
+    });
+  });
+
+  it.each(["DGX Spark", "NVIDIA DGX Station GB300", "NVIDIA Jetson Orin"])(
+    "does not replace %s firmware identity with N1x inference (#12737)",
+    (model) => {
+      withFirmwareModel(model, () => {
+        expect(
+          detectNvidiaPlatform({
+            hostPlatform: "linux",
+            architecture: "arm64",
+            stationGb300PciGpu: true,
+            collectN1xIdentityImpl: () => ({
+              candidate: true,
+              fastOsMarker: false,
+              pciGpu: true,
+              pciDevice: "0x2e2a",
+              qualified: true,
+            }),
+          }),
+        ).not.toBe("n1x");
+      });
+    },
+  );
+
   it.each([
     ["the wrong operating system", "darwin", "arm64"],
     ["the wrong architecture", "linux", "x64"],
