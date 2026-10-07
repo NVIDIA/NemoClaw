@@ -19,8 +19,9 @@
 #   E2E_USERS=5 ./scripts/client.sh
 # Both paths send chat.send from this client to published :18789+i.
 # They do not copy a load helper into the sandbox.
-# Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA ramps 2048 tokens until 6 GPUs, then 32, then stops at 8.
+# Workload: inflight stays 1.
+# Latency: 2048 tokens until 6 GPUs, then 32, then 0 at 8.
+# GPU util: 2048 tokens until 8 GPUs, then 0 new chats.
 
 set -euo pipefail
 
@@ -52,7 +53,7 @@ export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
-# Latency HPA stops new chats at 8 GPUs. GPU-util keeps sending for DURATION_SEC.
+# Both metrics stop new chats at 8 GPUs. GPU util keeps 2048 until then.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
@@ -64,7 +65,7 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:18789 … $((18789 + E2E_USERS - 1))"
-  echo "Sends chats for ${DURATION_SEC}s. Latency HPA: 2048 tokens until 6 GPUs, then 32, then stop at 8."
+  echo "Sends chats for ${DURATION_SEC}s. Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0."
   python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" <<'PY'
 import sys, urllib.error, urllib.request
 host, users = sys.argv[1], int(sys.argv[2])
@@ -118,7 +119,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1)."
-echo "Sends chats for ${DURATION_SEC}s. Latency HPA: 2048 tokens until 6 GPUs, then 32, then stop at 8."
+echo "Sends chats for ${DURATION_SEC}s. Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

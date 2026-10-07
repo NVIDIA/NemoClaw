@@ -220,9 +220,46 @@ def metric_kind(name):
         return "latency"
     return "other"
 
+def pod_gpu_values():
+    try:
+        raw = subprocess.check_output(
+            [
+                "kubectl",
+                "get",
+                "--raw",
+                f"/apis/custom.metrics.k8s.io/v1beta1/namespaces/{ns}/pods/*/gpu_utilization_percent",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        items = json.loads(raw).get("items") or []
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError, OSError):
+        return []
+    vals = []
+    for item in items:
+        value = qty(item.get("value"))
+        if value is not None:
+            vals.append(value)
+    return vals
+
+def gpu_display_current(cur_raw, replicas):
+    """Do not print 0% when live per-pod DCGM still has busy GPUs."""
+    cur = qty(cur_raw)
+    pods = pod_gpu_values()
+    if pods:
+        mean = sum(pods) / len(pods)
+        if cur is None or (cur == 0 and mean > 0):
+            return mean
+        return cur
+    if cur == 0 and replicas is not None and int(replicas) > 1:
+        return None
+    return cur
+
 def targets(h):
     spec_metrics = h.get("spec", {}).get("metrics") or []
     current = h.get("status", {}).get("currentMetrics") or []
+    replicas = (h.get("status") or {}).get("currentReplicas")
     parts = []
     for i, sm in enumerate(spec_metrics):
         mtype = sm.get("type")
@@ -235,7 +272,7 @@ def targets(h):
             cur_raw = (cm.get("pods") or {}).get("current", {})
             cur_raw = cur_raw.get("averageValue") or cur_raw.get("value")
             if kind == "gpu_utilization":
-                parts.append(f"{fmt_pct(qty(cur_raw))}/{fmt_pct(qty(tgt_raw))}")
+                parts.append(f"{fmt_pct(gpu_display_current(cur_raw, replicas))}/{fmt_pct(qty(tgt_raw))}")
             elif kind == "latency":
                 parts.append(f"{fmt_ms(qty(cur_raw))}/{fmt_ms(qty(tgt_raw))}")
             elif kind == "rate":

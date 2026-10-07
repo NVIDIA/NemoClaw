@@ -206,7 +206,7 @@ E2E_USERS=5 ./scripts/client.sh
 ```
 
 
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps **current** GPUs at **1** replica (`maxReplicas=8`). OpenClaw start must not scale. `client.sh` then sends chats for `DURATION_SEC` (default 900s); users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Chats keep running at 8 GPUs. The 30s latency window lets HPA scale down when current latency is below 3000 ms. Do not pass `DURATION_SEC=180` — that stopped an earlier run at 5 GPUs.
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps **current** GPUs at **1** replica (`maxReplicas=8`). OpenClaw start must not scale. `client.sh` then sends chats; users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Latency load is 2048 tokens through 5 GPUs, 32 at 6 and 7, then 0 new chats at 8. The 30s latency window lets HPA scale down when current latency is below 3000 ms. Do not pass `DURATION_SEC=180` — that stopped an earlier run at 5 GPUs.
 
 ```bash
 # Terminal A 
@@ -225,7 +225,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
-# Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
+# Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
 ```
 <img width="671" height="288" alt="Screenshot 2026-10-06 at 8 59 44 PM" src="https://github.com/user-attachments/assets/1065ffe2-af3e-467b-9d66-e08a0472050d" />
@@ -325,7 +325,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
-# Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
+# Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 
 
@@ -422,7 +422,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 
 ```bash
 # Terminal C — from the same DGX in another terminal
-# Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
+# Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0.
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 

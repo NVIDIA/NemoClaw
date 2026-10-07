@@ -394,15 +394,23 @@ async def run_test(args: argparse.Namespace) -> int:
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         pass
     last_ramp_tokens: object = "unset"
-    if os.environ.get("E2E_LATENCY_RAMP") != "0" and latency_ramp.is_latency_metric(metric):
+    if os.environ.get("E2E_LATENCY_RAMP") != "0":
         RAMP_STATE["enabled"] = True
-        RAMP_STATE["tokens"] = latency_ramp.token_bands()[0]
-        last_ramp_tokens = RAMP_STATE["tokens"]
-        print(
-            f"[load] latency ramp: max_tokens={RAMP_STATE['tokens']} until 6 GPUs, "
-            f"then {latency_ramp.token_bands()[1]}, stop at {args.target_pods}",
-            flush=True,
-        )
+        start_load = latency_ramp.scale_load(metric, 1, target=args.target_pods)
+        start_tokens = latency_ramp.load_tokens(start_load) or latency_ramp.token_bands()[0]
+        RAMP_STATE["tokens"] = start_tokens
+        last_ramp_tokens = start_tokens
+        if latency_ramp.is_latency_metric(metric):
+            print(
+                f"[load] max_tokens={start_tokens} until 6 GPUs, "
+                f"then {latency_ramp.token_bands()[1]}, then 0 at {args.target_pods}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[load] max_tokens={start_tokens} until {args.target_pods} GPUs, then 0 new chats",
+                flush=True,
+            )
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, last_ramp_tokens
@@ -419,10 +427,12 @@ async def run_test(args: argparse.Namespace) -> int:
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
             if RAMP_STATE.get("enabled"):
-                tokens = latency_ramp.latency_tokens_for_replicas(
+                load = latency_ramp.scale_load(
+                    metric,
                     latency_ramp.effective_replicas(current, desired),
                     target=args.target_pods,
                 )
+                tokens = latency_ramp.load_tokens(load)
                 if tokens != last_ramp_tokens:
                     last_ramp_tokens = tokens
                     if tokens is None:

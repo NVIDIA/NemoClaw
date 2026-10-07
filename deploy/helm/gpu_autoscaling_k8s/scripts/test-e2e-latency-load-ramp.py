@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Contract: same client ramps latency down and GPU-util inflight up."""
+"""Contract: latency ramps 2048→32→0 at 8; GPU-util stays 2048 until 8 then stops."""
 
 from __future__ import annotations
 
@@ -43,10 +43,14 @@ latency_at_8 = scale_load("nemoclaw_llm_latency_avg_milliseconds", 8)
 assert latency_at_8["stop"] is True
 assert latency_at_8["max_tokens"] == 0
 
+gpu_at_5 = scale_load("gpu_utilization_percent", 5)
+assert gpu_at_5["stop"] is False
+assert gpu_at_5["max_tokens"] == 2048
+gpu_at_6 = scale_load("gpu_utilization_percent", 6)
+assert gpu_at_6["stop"] is False
+assert gpu_at_6["max_tokens"] == 2048
 gpu_at_8 = scale_load("gpu_utilization_percent", 8)
-assert gpu_at_8["stop"] is False
-assert gpu_at_8["max_tokens"] == 2048
-assert gpu_at_8["inflight"] == 2
-assert gpu_at_8["short"] is False
+assert gpu_at_8["stop"] is True
+assert gpu_at_8["max_tokens"] == 0
 
-print("OK: latency ramps 2048→32→stop; GPU-util keeps 2048 and raises inflight")
+print("OK: latency ramps 2048→32→stop at 8; GPU-util keeps 2048 until 8 then stops")

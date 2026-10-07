@@ -24,7 +24,9 @@ rules:
       name:
         matches: "^(.*)$"
         as: "gpu_utilization_percent"
-      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+      # 45s window: one DCGM 0 scrape while a new GPU pod starts must not
+      # publish HPA average 0% when other GPUs are still busy.
+      metricsQuery: 'avg(avg_over_time(<<.Series>>{<<.LabelMatchers>>}[45s])) by (<<.GroupBy>>)'
 
     # metrics-proxy /metrics rolling avg latency (idle-expires when traffic stops).
     - seriesQuery: 'nemoclaw_llm_latency_avg_milliseconds{namespace!="",pod!=""}'

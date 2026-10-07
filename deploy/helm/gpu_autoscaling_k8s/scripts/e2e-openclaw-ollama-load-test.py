@@ -271,8 +271,38 @@ def read_hpa_http(host: str, port: int) -> tuple[int, int]:
     return current, desired
 
 
+# Kill leftover OpenClaw exec children (sleep 10000 / stuck cat). Do not
+# pkill -f shell-snapshots: kubectl exec uses that same bash wrapper.
+KILL_LEFTOVER_OPENCLAW_EXEC = r"""
+python3 -c '
+# KILL_OPENCLAW_EXEC
+import os, signal, pathlib
+self, ppid = os.getpid(), os.getppid()
+needle = "shell" + "-snapshots"
+for proc in pathlib.Path("/proc").iterdir():
+    if not proc.name.isdigit():
+        continue
+    pid = int(proc.name)
+    if pid in (0, 1, self, ppid):
+        continue
+    try:
+        cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        continue
+    if "KILL_OPENCLAW_EXEC" in cmd or "openclaw-gateway" in cmd or "nemoclaw-start" in cmd:
+        continue
+    leftover = needle in cmd or cmd.strip().startswith("sleep 10000")
+    if leftover:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+' || true
+"""
+
 # argv from exec -a. Also TERM leftover python3 that still has NEMOCLAW_E2E_LOAD=1.
-TERM_SANDBOX_HELPERS = r"""
+TERM_SANDBOX_HELPERS = (
+    r"""
 pkill -TERM -f '[e]2e-openclaw-load' || true
 pkill -TERM -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
 for env in /proc/[0-9]*/environ; do
@@ -282,7 +312,11 @@ for env in /proc/[0-9]*/environ; do
   fi
 done
 """
-KILL_SANDBOX_HELPERS = TERM_SANDBOX_HELPERS + r"""
+    + KILL_LEFTOVER_OPENCLAW_EXEC
+)
+KILL_SANDBOX_HELPERS = (
+    TERM_SANDBOX_HELPERS
+    + r"""
 sleep 1
 pkill -KILL -f '[e]2e-openclaw-load' || true
 pkill -KILL -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
@@ -293,6 +327,8 @@ for env in /proc/[0-9]*/environ; do
   fi
 done
 """
+    + KILL_LEFTOVER_OPENCLAW_EXEC
+)
 
 
 def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str) -> None:
@@ -782,25 +818,32 @@ async def run_test(args: argparse.Namespace) -> int:
             ).strip()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
             metric = os.environ.get("HPA_METRIC", "")
-    ramp_enabled = os.environ.get("E2E_LATENCY_RAMP") != "0" and latency_ramp.is_latency_metric(metric)
+    ramp_enabled = os.environ.get("E2E_LATENCY_RAMP") != "0"
     ramp_path = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or str(output_dir / "latency-ramp.json"))
     last_ramp_tokens: object = "unset"
     if ramp_enabled:
         os.environ["E2E_LATENCY_RAMP"] = "1"
         os.environ["E2E_LATENCY_RAMP_FILE"] = str(ramp_path)
-        os.environ["MAX_TOKENS"] = str(latency_ramp.token_bands()[0])
+        start_load = latency_ramp.scale_load(metric, 1, target=args.target_pods)
+        start_tokens = latency_ramp.load_tokens(start_load) or latency_ramp.token_bands()[0]
+        os.environ["MAX_TOKENS"] = str(start_tokens)
         os.environ["E2E_CHAT_PAUSE_SEC"] = os.environ.get("E2E_CHAT_PAUSE_SEC") or "0"
         os.environ["E2E_USER_STAGGER_SEC"] = os.environ.get("E2E_USER_STAGGER_SEC") or "0"
-        start_tokens = latency_ramp.token_bands()[0]
-        latency_ramp.write_ramp_file(start_tokens, ramp_path)
+        latency_ramp.write_scale_load(start_load, ramp_path)
         if not endpoints:
             publish_ramp_to_sandboxes(args.prefix, args.users, latency_ramp.ramp_payload(start_tokens))
         last_ramp_tokens = start_tokens
-        print(
-            f"[load] latency ramp: max_tokens={start_tokens} until 6 GPUs, "
-            f"then {latency_ramp.token_bands()[1]}, stop at {args.target_pods}",
-            flush=True,
-        )
+        if latency_ramp.is_latency_metric(metric):
+            print(
+                f"[load] max_tokens={start_tokens} until 6 GPUs, "
+                f"then {latency_ramp.token_bands()[1]}, then 0 at {args.target_pods}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[load] max_tokens={start_tokens} until {args.target_pods} GPUs, then 0 new chats",
+                flush=True,
+            )
     elif not endpoints:
         os.environ["E2E_LATENCY_RAMP"] = "0"
         clear_ramp_from_sandboxes(args.prefix, args.users)
@@ -825,13 +868,15 @@ async def run_test(args: argparse.Namespace) -> int:
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
             if ramp_enabled:
-                tokens = latency_ramp.latency_tokens_for_replicas(
+                load = latency_ramp.scale_load(
+                    metric,
                     latency_ramp.effective_replicas(current, desired),
                     target=args.target_pods,
                 )
+                tokens = latency_ramp.load_tokens(load)
                 if tokens != last_ramp_tokens:
                     last_ramp_tokens = tokens
-                    latency_ramp.write_ramp_file(tokens, ramp_path)
+                    latency_ramp.write_scale_load(load, ramp_path)
                     if not endpoints:
                         publish_ramp_to_sandboxes(
                             args.prefix, args.users, latency_ramp.ramp_payload(tokens)

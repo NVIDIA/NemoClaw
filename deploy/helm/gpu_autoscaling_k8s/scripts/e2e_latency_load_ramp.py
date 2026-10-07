@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Same client.sh load for both HPA metrics.
 
-Latency: 2048-token answers from 1 GPU through 5 GPUs, 32 at 6 and 7, stop at 8.
-GPU util: 2048-token answers the whole time. Inflight per user rises with replica
-count so average utilization can stay above 40% when a new GPU is still at 0%.
+Latency: 2048-token answers through 5 GPUs, 32 at 6 and 7, then 0 new chats at 8.
+GPU util: 2048-token answers until 8 GPUs, then 0 new chats. Do not drop to 32
+at 6 GPUs — that load cannot hold 40% util, so HPA never reaches 8.
 A leftover MAX_TOKENS=32/64 flag must not starve GPU-util.
 A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
 """
@@ -117,11 +117,12 @@ def scale_load(metric: str, replicas: int, target: int = DEFAULT_TARGET) -> dict
         }
     if is_gpuutil_metric(metric):
         tokens, inflight = gpuutil_load_for_replicas(replicas)
+        stop = replicas >= target
         return {
             "mode": "gpuutil",
-            "max_tokens": tokens,
-            "inflight": inflight,
-            "stop": False,
+            "max_tokens": 0 if stop else int(tokens),
+            "inflight": 1 if stop else inflight,
+            "stop": stop,
             "short": False,
         }
     return {
@@ -155,14 +156,14 @@ def prompt_for_tokens(max_tokens: int, agent: str = "openclaw", start: int | Non
     third = "vLLM" if agent == "hermes" else "Ollama"
     if short:
         return [
-            "In one sentence, what is Kubernetes HPA?",
-            "In one sentence, what is GPU utilization?",
-            f"In one sentence, what is {third}?",
+            "Do not use tools. In one sentence, what is Kubernetes HPA?",
+            "Do not use tools. In one sentence, what is GPU utilization?",
+            f"Do not use tools. In one sentence, what is {third}?",
         ]
     return [
-        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
-        "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
-        f"Write a detailed 2000-word description of how {third} serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+        f"Do not use tools. Write a detailed 2000-word description of how {third} serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
     ]
 
 
@@ -194,6 +195,16 @@ def write_ramp_file(
     dest = path or RAMP_FILE
     dest.write_text(json.dumps(ramp_payload(max_tokens, start, inflight, stop)) + "\n", encoding="utf-8")
     return dest
+
+
+def load_tokens(load: dict[str, object]) -> int | None:
+    """max_tokens for the helper, or None when new chats must stop."""
+    if load.get("stop"):
+        return None
+    try:
+        return int(load.get("max_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def write_scale_load(load: dict[str, object], path: Path | None = None) -> Path:
