@@ -533,7 +533,7 @@ async function collectDoctorChecks(
     ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
-    cloudflaredDoctorCheck(sandboxName),
+    cloudflaredDoctorCheck(sandboxName, sb?.gatewayPort ?? GATEWAY_PORT),
   ];
 }
 

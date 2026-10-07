@@ -13,6 +13,7 @@ import {
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../../inference/ollama/contract";
+import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
@@ -522,6 +523,7 @@ async function resolveHostLocalResumeSetup(input: {
 
 function canResumeInferenceRoute(input: {
   needsBedrockRuntimeAdapter: boolean;
+  provider: string;
   hasHostLocalInference: boolean;
   forceProviderSelection: boolean;
   forceInferenceSetup: boolean;
@@ -530,11 +532,24 @@ function canResumeInferenceRoute(input: {
 }): boolean {
   return (
     !input.needsBedrockRuntimeAdapter &&
+    input.provider !== OPENROUTER_PROVIDER_NAME &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
     input.effectiveResume &&
     input.routeReady()
+  );
+}
+
+function shouldReuseRetainedOpenRouterCredential(input: {
+  provider: string | null;
+  forceInferenceSetup: boolean;
+  hydratedCredential: string | null | undefined;
+}): boolean {
+  return (
+    input.provider === OPENROUTER_PROVIDER_NAME &&
+    !input.forceInferenceSetup &&
+    !input.hydratedCredential
   );
 }
 
@@ -1476,6 +1491,17 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         );
       }
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      // A retained OpenRouter gateway provider still owns the credential,
+      // while the host adapter needs only its persisted authorization hash
+      // to recover a stopped process. Do not export the gateway credential
+      // merely to restart that adapter.
+      const reuseRetainedOpenRouterCredential = shouldReuseRetainedOpenRouterCredential({
+        provider,
+        forceInferenceSetup: recovery.forceInferenceSetup,
+        hydratedCredential,
+      });
+      reuseGatewayCredentialWithoutLocalKey ||= reuseRetainedOpenRouterCredential;
+      skipHostInferenceSmoke ||= reuseRetainedOpenRouterCredential;
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
       // `inference.local` route is not actually wired to the compatible
@@ -1750,6 +1776,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
     const resumeInference = canResumeInferenceRoute({
       needsBedrockRuntimeAdapter,
+      provider: selectedProvider,
       hasHostLocalInference: Boolean(resumeHostLocalInferenceSetupOptions.hostLocalInference),
       forceProviderSelection,
       forceInferenceSetup,

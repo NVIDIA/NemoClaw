@@ -181,7 +181,7 @@ describe("fixed catalog vLLM installs", () => {
     mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
       actualSelection.resolveHostLocalVllmSelection(...args),
     );
-    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes. Host: host.os.architecture=arm64, host.docker.runtime=docker. Choose another inference provider or an explicitly compatible serving profile.`;
 
     const result = await installVllm(profile, {
       hasImage: false,

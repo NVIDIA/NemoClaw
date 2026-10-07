@@ -22,6 +22,8 @@ import {
 } from "./portable-agent-runtime";
 
 export type ManagedImageSelectionPolicy = "prefer-managed" | "require-managed";
+export const EXTERNAL_IMAGE_AGENTS = ["openclaw", "hermes"] as const;
+export type ExternalImageAgent = (typeof EXTERNAL_IMAGE_AGENTS)[number];
 
 /**
  * Capabilities are advertised by the selected OpenShell compute driver.
@@ -49,7 +51,7 @@ export interface SandboxWorkloadRuntimeCapabilities {
   readonly externalImages?: {
     readonly exactDigestReferences: boolean;
     readonly platforms: readonly ManagedImagePlatform[];
-    readonly agents: readonly ("openclaw" | "hermes")[];
+    readonly agents: readonly ExternalImageAgent[];
   } | null;
 }
 
@@ -76,8 +78,6 @@ export interface PortableAgentRuntimeWorkloadSource {
   readonly reference: PortableAgentRuntimeContractV1["image"]["reference"];
   readonly contract: PortableAgentRuntimeContractV1;
 }
-
-export type ExternalImageAgent = "openclaw" | "hermes";
 
 export interface ExternalImageWorkloadSource {
   readonly kind: "external-image";
