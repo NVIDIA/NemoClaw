@@ -218,10 +218,7 @@ fn managed_podman_with_an_explicit_gateway_port_should_work() {
         desired["spec"]["gateway"]["endpoint"],
         "http://127.0.0.1:17891"
     );
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["runtime"]["provider"],
-        "podman"
-    );
+    assert_eq!(desired["spec"]["gateway"]["runtime"]["provider"], "podman");
 }
 
 #[test]
@@ -481,13 +478,13 @@ impl DesiredState {
     }
 
     fn sandbox_gpu(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["runtime"]["gpu"] =
+        self.value["spec"]["gateway"]["runtime"]["gpu"] =
             json!({"required": true, "device": "nvidia.com/gpu=0"});
         self
     }
 
     fn host_mount(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["runtime"]["hostMounts"] = json!([{
+        self.value["spec"]["gateway"]["runtime"]["hostMounts"] = json!([{
             "source": "/home/user/project",
             "target": "/sandbox/project",
             "readOnly": true

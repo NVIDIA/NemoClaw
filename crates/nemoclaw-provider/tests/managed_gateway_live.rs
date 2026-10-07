@@ -27,7 +27,7 @@ fn gateway_spec(variable: &str) -> Spec {
     assert!(document.spec.gateway.as_managed().is_some());
     assert!(document.spec.services.is_empty());
     assert_eq!(
-        document.spec.sandboxes[0].runtime.provider,
+        document.spec.gateway.runtime().provider,
         ComputeDriver::Docker
     );
     let mut random = [0_u8; 16];

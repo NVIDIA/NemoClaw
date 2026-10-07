@@ -2,9 +2,71 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::managed::GATEWAY_STORAGE_KIND;
+use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND};
 
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
+
+#[test]
+fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {
+    let (document, generations) = kubernetes_context();
+    let targets = compile::runtime_targets(&document, &generations).unwrap();
+    let bindings = kubernetes_bindings(&targets);
+    let mut plan: Plan = serde_json::from_value(json!({"resource_changes": targets.iter().map(|target| {
+        let mut before = serde_json::to_value(&target.values).unwrap();
+        before["id"] = json!(bindings[&target.address].id);
+        before["running"] = json!("true");
+        json!({"address":target.address, "change":{"actions":["no-op"], "before":before, "after":before}})
+    }).collect::<Vec<_>>()})).unwrap();
+    let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
+    assert!(checked.gateway_running);
+    assert!(
+        check_runtime_plan(&plan, &checked.expected, &bindings)
+            .unwrap()
+            .is_empty()
+    );
+    let gateway = plan
+        .resource_changes
+        .iter_mut()
+        .find(|change| change.address == "nemoclaw_kubernetes_gateway.runtime")
+        .unwrap();
+    gateway.change.before["running"] = json!("false");
+    assert!(
+        !runtime_observations(&document, &targets, &bindings, &plan)
+            .unwrap()
+            .gateway_running
+    );
+    let mut missing = bindings.clone();
+    missing.remove(KUBERNETES_STORAGE);
+    assert!(runtime_bindings(&targets, &missing).is_err());
+    let mut drift = bindings.clone();
+    drift.get_mut(KUBERNETES_STORAGE).unwrap().spec = "changed".into();
+    assert!(runtime_bindings(&targets, &drift).is_err());
+    for change in &mut plan.resource_changes {
+        if change.address == "nemoclaw_kubernetes_gateway.runtime" {
+            change.change.actions = vec!["delete".into(), "create".into()];
+        }
+    }
+    assert!(check_runtime_plan(&plan, &checked.expected, &bindings).is_err());
+}
+
+#[test]
+fn interrupted_kubernetes_platform_apply_cannot_move_to_another_namespace() {
+    let (document, _) = kubernetes_context();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.begin_runtime_apply(&document);
+    assert!(record.validate_pending_intent(&document).is_ok());
+    let mut changed = document.clone();
+    changed
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .kubernetes
+        .as_mut()
+        .unwrap()
+        .namespace = "another-target".into();
+    assert!(record.validate_pending_intent(&changed).is_err());
+}
 
 fn context() -> (Document, crate::compile::Generations) {
     let document =
@@ -301,4 +363,50 @@ fn podman_gateway_replacement_depends_on_protected_storage_in_the_compiled_graph
         graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
         true
     );
+}
+
+fn kubernetes_bindings(targets: &[Target]) -> BTreeMap<String, StateBinding> {
+    targets
+        .iter()
+        .map(|target| {
+            let mut values = serde_json::to_value(&target.values).unwrap();
+            values["id"] = json!(if target.address == crate::kubernetes::gateway::ADDRESS {
+                target.values["name"].clone()
+            } else {
+                format!("physical-{}", target.kind)
+            });
+            (
+                target.address.clone(),
+                serde_json::from_value(values).unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
+    let (document, generations) = kubernetes_context();
+    let targets = compile::runtime_targets(&document, &generations).unwrap();
+    let bindings = kubernetes_bindings(&targets);
+    runtime_bindings(&targets, &bindings).unwrap();
+    for prerequisite in [
+        KUBERNETES_STORAGE,
+        "nemoclaw_kubernetes_auth.runtime",
+        crate::kubernetes::gateway::ADDRESS,
+    ] {
+        let mut missing = bindings.clone();
+        missing.remove(prerequisite);
+        assert!(runtime_bindings(&targets, &missing).is_err());
+    }
+    let mut changed = bindings.clone();
+    changed
+        .get_mut(crate::kubernetes::gateway::ADDRESS)
+        .unwrap()
+        .id = "foreign-release".into();
+    assert!(runtime_bindings(&targets, &changed).is_err());
+    // Interrupted initial installation can retain just storage and authentication.
+    let mut partial = bindings;
+    partial.remove("nemoclaw_kubernetes_gateway.runtime");
+    partial.remove(crate::kubernetes::gateway::ADDRESS);
+    runtime_bindings(&targets, &partial).unwrap();
 }

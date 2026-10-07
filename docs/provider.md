@@ -134,8 +134,8 @@ It selects installed-package records using Fabric's provenance, without editing 
 Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
 With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
 The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
-See [source notices and regeneration](../image/NOTICE.md).
-Older images and direct Bake builds without labels remain unverified.
+See the [image metadata contract](design/fabric-management.md#image-metadata) and [catalog regeneration](build.md#regenerate-the-bundled-catalog).
+Direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 
@@ -343,8 +343,7 @@ The Docker provider has a fixed release version and checksum-pinned native archi
 
 ## Direct OpenTofu Usage
 
-Public provider distribution and installation instructions: **TBD**.
-Supported user-authored HCL examples and their lifecycle/retention contract: **TBD**.
-Import, adoption, remote-state backends, and compatibility across provider releases: **TBD**.
+The provider is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

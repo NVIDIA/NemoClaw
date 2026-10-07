@@ -35,6 +35,17 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
             json!({"mode":"service","interfaces":interfaces}),
         );
     }
+    // v0 images ran agents as 1000:1000; v1 images use 10001:10001.
+    if let Some(process) = sandbox
+        .get_mut("network")
+        .and_then(|network| network.pointer_mut("/policy/explicit/process"))
+    {
+        for field in ["run_as_user", "run_as_group"] {
+            if process[field] == "1000" {
+                process[field] = json!("10001");
+            }
+        }
+    }
     if !sandbox.contains_key("image") {
         let image = match sandbox["harness"]["kind"].as_str().unwrap() {
             "nvidia.fabric.hermes" => {
@@ -99,13 +110,16 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let sandbox = &document.spec.sandboxes[0];
     assert!(sandbox.image.ref_.contains("@sha256:"));
     assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
-    assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
+    assert_eq!(
+        document.spec.gateway.runtime().provider,
+        ComputeDriver::Docker
+    );
     let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {
         panic!("expected explicit policy");
     };
     let process = explicit.process.as_ref().unwrap();
-    assert_eq!(process.run_as_user.as_deref(), Some("1000"));
-    assert_eq!(process.run_as_group.as_deref(), Some("1000"));
+    assert_eq!(process.run_as_user.as_deref(), Some("10001"));
+    assert_eq!(process.run_as_group.as_deref(), Some("10001"));
     let read_only = explicit
         .filesystem_policy
         .as_ref()

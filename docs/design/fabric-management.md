@@ -94,6 +94,32 @@ The SDK's pre-provisioning path has not yet migrated: it still uses the compiled
 Connecting that consumer to image validation and replacing revision equality with agreed contract compatibility remains NemoClaw work.
 The Docker reference tests do not establish an OpenShell recovery or deployment integration.
 
+### Image Metadata
+
+`cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) runs Fabric discovery in each installed image without starting an adapter and attaches the result as `io.nemoclaw.fabric.catalog`.
+It selects installed-package records using Fabric provenance and preserves the descriptor contents.
+Direct Docker Bake builds attach no metadata.
+
+| Image file | Contents |
+|---|---|
+| [`/opt/nemoclaw/runtime.json`](../../image/fabric/runtime.json) | Bridge command, environment, required read paths, and default filesystem and process policy; `schema_version: 1` |
+| `/opt/nemoclaw/runtime-files.json` | Additional runtime directories for each adapter, written by its Dockerfile stage; the catalog records them as `runtime_files` |
+| `/opt/nemoclaw/bridge.json` | Bridge capabilities, also embedded in the catalog |
+
+Installed catalog generation records the runtime manifest under `runtime`.
+[`runtime_metadata.py`](../../image/fabric/runtime_metadata.py) resolves each descriptor's `requirements.binaries` through the declared `PATH` and records canonical executable paths beside the unchanged descriptor.
+Each adapter also records the `ADAPTER_PYTHON` interpreter path, because the host runs Python adapters in-process.
+A missing manifest, required path, or executable fails catalog generation; image tests check that runtime directories exist and are readable by the runtime user.
+
+The SDK validates this metadata during image discovery and compiles it into each sandbox's launch and policy, retaining the binding in state and OpenShell annotations for refresh and teardown.
+Explicit filesystem grants are checked against the image-owned paths without adding requirements to Fabric descriptors.
+Provider profiles use the selected adapter's executable list; inference and search registrations are scoped by image and adapter identity, so different images never combine executable permissions.
+An explicit sandbox policy replaces the image's filesystem and process defaults while keeping deployment-managed endpoint grants.
+
+The bundled [`catalog.json`](../../image/fabric/catalog.json) is an offline Fabric discovery snapshot at the revision and checksum pinned in the Dockerfile.
+It records canonical descriptors and provenance only, and supports offline authoring; it says nothing about an installed bridge, health, credentials, or inference readiness.
+[Regenerate it](../build.md#regenerate-the-bundled-catalog) when the Fabric pin changes.
+
 ## Upstream Ownership
 
 All implementation changes for this reference and rollout remain in NemoClaw.

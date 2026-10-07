@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::config::ComputeDriver;
 #[cfg(all(test, unix))]
 #[path = "gateway_storage_tests.rs"]
 mod tests;
@@ -78,40 +77,6 @@ fn verify_initializer(
     Ok(())
 }
 impl Engine {
-    /// Read the engine and check existing gateway prerequisites without changing resources.
-    /// Passing this check does not establish image, GPU, or deployment readiness.
-    pub async fn gateway_engine_info(
-        &self,
-        driver: ComputeDriver,
-    ) -> Result<bollard::models::SystemInfo, Error> {
-        if driver == ComputeDriver::Podman {
-            #[cfg(unix)]
-            {
-                let native = self.podman_json("info").await?;
-                let rootless = native["host"]["security"]["rootless"]
-                    .as_bool()
-                    .ok_or(ObservationError::Incomplete)?;
-                if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
-                    return Err(Error::Conflict(
-                        "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
-                    ));
-                }
-            }
-            let version = self.api.version().await.map_err(|error| remote(&error))?;
-            if !version
-                .components
-                .unwrap_or_default()
-                .iter()
-                .any(|part| part.name == "Podman Engine")
-            {
-                return Err(Error::Conflict(
-                    "Podman sandbox driver requires a Podman engine socket",
-                ));
-            }
-        }
-        self.info().await
-    }
-
     pub async fn gateway_storage(
         &self,
         spec: &Spec,

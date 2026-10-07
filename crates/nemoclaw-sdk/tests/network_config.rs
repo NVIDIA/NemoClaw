@@ -14,7 +14,7 @@ fn input() -> Value {
             "version": 1,
             "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
             "landlock": {"compatibility": "best_effort"},
-            "process": {"run_as_user": "1000", "run_as_group": "1000"},
+            "process": {"run_as_user": "10001", "run_as_group": "10001"},
             "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
         }}
     });

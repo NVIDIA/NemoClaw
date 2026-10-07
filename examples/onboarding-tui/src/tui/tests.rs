@@ -5,14 +5,20 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::observe_models,
+    terminal::{ask_target, local_engine_probe, model_catalog_probe},
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
-    Capabilities, DiscoveryEvidence, EndpointEvidence, JourneyDefinition, PartialDocument,
-    TargetPrerequisite, discovery_key_for_document, inference_request_for_document,
+    Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
+    discovery_queries, inference_request_for_document,
 };
-use nemoclaw_sdk::{CancellationToken, config::Document};
+use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::{
+    CancellationToken, Error,
+    config::{ComputeDriver, Document},
+    discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation},
+    inference_discovery::EndpointObservation,
+};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
 
@@ -479,9 +485,13 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         .document()
         .unwrap()
         .clone();
-    wizard.facts.endpoint = Some(EndpointEvidence {
-        request: inference_request_for_document(&document, wizard.state.current_route()).unwrap(),
-        observation: EndpointObservation {
+    wizard.observations.record(
+        DiscoveryQuery::Inference(
+            inference_request_for_document(&document, wizard.state.current_route())
+                .unwrap()
+                .unwrap(),
+        ),
+        DiscoveryObservation::Inference(EndpointObservation {
             status: ObservationStatus::Available,
             reason: None,
             source: "fixture".into(),
@@ -489,8 +499,8 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             authentication: AuthenticationStatus::Accepted,
             models: vec!["vendor/discovered".into()],
             api_verified: false,
-        },
-    });
+        }),
+    );
     let question = wizard.question().unwrap().unwrap();
     assert!(
         question
@@ -518,7 +528,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
         {
             break;
         }
@@ -536,6 +546,71 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
     assert_eq!(
         wizard.state.values().pointer(question.id()),
         Some(&serde_json::json!("podman"))
+    );
+}
+
+/// A host as onboarding found it: the engines its environment named, and what
+/// each said when asked.
+#[derive(serde::Deserialize)]
+struct RecordedHost {
+    candidates: Vec<DiscoveryRequest>,
+    observations: DiscoveryObservations,
+}
+
+#[tokio::test]
+async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    // Only Podman answered when this machine was read, but the template says Docker.
+    let host: RecordedHost = serde_json::from_str(include_str!(
+        "../../../../crates/nemoclaw-authoring/tests/fixtures/observations/podman-only.json"
+    ))
+    .unwrap();
+    let podman = host
+        .candidates
+        .iter()
+        .find(|candidate| candidate.compute_driver.as_str() == "podman")
+        .unwrap()
+        .engine
+        .clone();
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(host.candidates.clone());
+    let queries = local_engine_probe(&wizard);
+    let replay = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| Ok(host.observations);
+    assert!(
+        ask_target(
+            &mut wizard,
+            replay,
+            queries,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+        )
+        .await
+        .unwrap()
+    );
+    for _ in 0..5 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    wizard.advance();
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(
+        wizard
+            .state
+            .values()
+            .pointer("/spec/gateway/runtime/provider"),
+        Some(&serde_json::json!("podman"))
+    );
+    assert_eq!(
+        wizard.state.values().pointer("/spec/gateway/engine"),
+        Some(&serde_json::json!(podman))
     );
 }
 
@@ -561,9 +636,14 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
         .unwrap()
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
-    wizard.discovery = Some(DiscoveryEvidence {
-        key: discovery_key_for_document(&document).unwrap(),
-        engine: Some(nemoclaw_sdk::discovery::EngineObservation {
+    let engine = discovery_queries(&document, None)
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Engine(_)))
+        .expect("a managed gateway reads its engine");
+    wizard.observations.record(
+        engine,
+        DiscoveryObservation::Engine(nemoclaw_sdk::discovery::EngineObservation {
             status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
             reason: Some("target rejected engine".into()),
             source: "fixture".into(),
@@ -573,8 +653,7 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
             memory_bytes: None,
             cpus: None,
         }),
-        fabric: None,
-    });
+    );
     wizard.started = true;
     wizard.advance();
 
@@ -587,21 +666,109 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     );
 }
 
+/// A target that cannot be reached: every read is recorded as unknown,
+/// deterministically and without any process or network.
+async fn unreachable(
+    queries: Vec<DiscoveryQuery>,
+    _: &CancellationToken,
+) -> Result<DiscoveryObservations, Error> {
+    let mut observed = DiscoveryObservations::new();
+    for query in queries {
+        let observation = match &query {
+            DiscoveryQuery::Engine(_) => {
+                DiscoveryObservation::Engine(EngineObservation::unknown("unreachable"))
+            }
+            DiscoveryQuery::Inference(_) => {
+                DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
+            }
+            other => panic!("unexpected read {other:?}"),
+        };
+        observed.record(query, observation);
+    }
+    Ok(observed)
+}
+
+/// Ask the target without a terminal: nobody types during the read.
+async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
+    ask_target(
+        wizard,
+        unreachable,
+        queries,
+        &CancellationToken::new(),
+        &mut std::collections::VecDeque::new(),
+        || Ok(None),
+    )
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
-async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
+async fn a_new_questionnaire_asks_which_engines_this_machine_has_exactly_once() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let document = state
-        .resolve(&capabilities)
+    let candidates = [
+        "unix:///home/me/.colima/docker.sock",
+        "unix:///run/user/501/podman/podman.sock",
+    ]
+    .into_iter()
+    .zip([ComputeDriver::Docker, ComputeDriver::Podman])
+    .map(|(engine, compute_driver)| DiscoveryRequest {
+        engine: engine.into(),
+        compute_driver,
+    })
+    .collect::<Vec<_>>();
+    let mut wizard =
+        JourneyWizard::new(capabilities, state).with_local_engine_candidates(candidates.clone());
+    let asked: Vec<DiscoveryQuery> = candidates.into_iter().map(DiscoveryQuery::Engine).collect();
+    assert_eq!(local_engine_probe(&wizard), asked);
+
+    let queries = local_engine_probe(&wizard);
+    assert!(ask(&mut wizard, queries).await);
+
+    // Each read is recorded, even though none could be made, so none is repeated.
+    assert!(local_engine_probe(&wizard).is_empty());
+    for query in &asked {
+        assert!(wizard.observations.contains(query));
+    }
+}
+
+#[tokio::test]
+async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    assert_eq!(model_catalog_probe(&wizard), None, "no model question yet");
+
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let document = wizard
+        .state
+        .resolve(&wizard.capabilities)
         .unwrap()
         .assessment()
         .document()
         .unwrap()
         .clone();
-    let request = inference_request_for_document(&document, state.current_route()).unwrap();
-    let missing = std::path::Path::new("/definitely/missing/nemoclaw-bundle");
-    let observed = observe_models(missing, request, &CancellationToken::new())
-        .await
+    let request = inference_request_for_document(&document, wizard.state.current_route())
+        .unwrap()
         .unwrap();
-    assert!(observed.is_none());
+    let query = model_catalog_probe(&wizard).expect("the model question needs its catalog");
+    assert_eq!(query, DiscoveryQuery::Inference(request.clone()));
+
+    assert!(ask(&mut wizard, vec![query]).await);
+
+    assert_eq!(
+        model_catalog_probe(&wizard),
+        None,
+        "the catalog is read once"
+    );
+    assert!(wizard.observations.inference(&request).is_some());
 }

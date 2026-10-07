@@ -5,7 +5,7 @@
 
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then access its native dashboard.
 This development procedure uses a source-built bundle and agent image.
-Published installer/release downloads and an end-to-end rehearsal of this procedure on the current revision: **TBD**.
+This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)); its access steps have not been rehearsed end to end ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ## 1. Prepare the Hosts and Bundle
 
@@ -71,7 +71,7 @@ Edit the copied YAML before executing it:
 | `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
 | `spec.inferenceProviders[0].credential` | An environment reference when the endpoint needs a key |
 | `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
-| `spec.sandboxes[0].runtime.provider` | `docker` or `podman`, matching the gateway's compute driver |
+| `spec.gateway.runtime.provider` | `docker` or `podman`, matching your gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |
 | Other route `overrides` | Limits and reasoning settings supported by that model; remove optional tuning you have not verified |
 
@@ -127,13 +127,12 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 
 [Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) in each terminal used for native access.
 Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to forward port `18800`.
-Native authentication and browser pairing must follow the selected Fabric adapter's contract; a qualified procedure for the migrated adapter remains **TBD**.
+Native authentication and browser pairing follow the selected Fabric adapter's contract; a rehearsed procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 Keep the forward bound to loopback.
 
 In the native dashboard, send a short prompt such as `Reply with a short greeting.`
 Verify an agent reply, which tests this endpoint/model/harness interaction beyond dashboard access or readiness.
 It does not establish general model quality or tool reliability.
-Browser and first-message rehearsal of this exact procedure: **TBD**.
 
 Stop forwarding with Ctrl-C when finished.
 The deployment continues running after the client exits.

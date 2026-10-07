@@ -33,7 +33,11 @@ pub fn compile_teardown(
         .flat_map(|plan| plan.retained)
         .collect();
     retained.insert(if runtime {
-        "nemoclaw_gateway_storage.runtime".into()
+        if document.spec.gateway.as_kubernetes().is_some() {
+            "nemoclaw_kubernetes_storage.runtime".into()
+        } else {
+            "nemoclaw_gateway_storage.runtime".into()
+        }
     } else {
         "nemoclaw_workspace.deployment".into()
     });
@@ -196,6 +200,48 @@ mod tests {
                 assert!(
                     spec.contains("$${engine}%%{literal}"),
                     "literal templates must survive OpenTofu evaluation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kubernetes_teardown_retains_only_established_storage_without_gateway_dependencies() {
+        let document = Document::parse(
+            include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+        )
+        .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let storage = "nemoclaw_kubernetes_storage.runtime".to_owned();
+        for established in [
+            BTreeSet::new(),
+            BTreeSet::from([storage.clone()]),
+            BTreeSet::from([
+                storage.clone(),
+                "nemoclaw_kubernetes_gateway.runtime".into(),
+            ]),
+        ] {
+            let compiled =
+                compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+            let expected = established
+                .into_iter()
+                .filter(|address| address == &storage)
+                .collect();
+            assert_eq!(compiled.retained, expected);
+            assert_eq!(addresses(&compiled.graph), expected);
+            assert_eq!(
+                compiled.graph["provider"]["nemoclaw"]["platform_only"],
+                true
+            );
+            assert_eq!(compiled.graph["provider"]["nemoclaw"]["destroy"], true);
+            assert!(compiled.graph.get("data").is_none());
+            assert!(compiled.graph.get("output").is_none());
+            if compiled.retained.contains(&storage) {
+                assert_eq!(
+                    compiled.graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"],
+                    json!({"prevent_destroy":true})
                 );
             }
         }

@@ -68,6 +68,8 @@ spec:
               maxSearchLimit: 20
   gateway:
     management: managed
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17695
     engine: unix:///var/run/docker.sock
     image:
@@ -127,8 +129,6 @@ spec:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: docker
       network:
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
@@ -142,8 +142,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation
@@ -196,8 +196,6 @@ spec:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: docker
       network:
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
@@ -211,8 +209,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation
@@ -265,8 +263,6 @@ spec:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: docker
       network:
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
@@ -280,8 +276,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation

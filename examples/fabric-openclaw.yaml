@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
     - name: local
@@ -17,8 +19,6 @@ spec:
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     - name: assistant
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

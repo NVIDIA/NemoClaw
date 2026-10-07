@@ -33,3 +33,8 @@ impl Connections {
         }
     }
 }
+impl nemoclaw_discovery::Engines for Connections {
+    fn engine(&self, endpoint: &str) -> Result<nemoclaw_discovery::Engine, Error> {
+        self.resolve(endpoint).map(|engine| (*engine).clone())
+    }
+}

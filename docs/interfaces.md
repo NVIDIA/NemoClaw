@@ -23,7 +23,7 @@ The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
-Provisioning a new authenticated profile, including its issuer or mTLS client certificates, remains **TBD** pending a qualified operator procedure.
+Creating a new authenticated profile, including its issuer or mTLS client certificates, is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 
@@ -95,7 +95,7 @@ Open `http://127.0.0.1:18800` in your browser after verifying that the native se
 Stop forwarding with Ctrl-C.
 
 Native token provisioning, browser pairing, and token rotation belong to the selected Fabric adapter.
-A qualified browser-access procedure for the migrated adapter is **TBD**; older NemoClaw token-file paths and `interfaces.py` commands are not part of this runtime contract.
+A rehearsed browser-access procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 Do not disable native authentication to work around an incomplete procedure.
 Keep credentials out of YAML, command arguments, recorded terminals, and shared URLs.
 
@@ -155,5 +155,5 @@ openshell forward service assistant --target-port 8643 --local 127.0.0.1:8643
 
 Keep forwarding bound to loopback.
 Follow the installed Fabric adapter's authentication contract before using either service.
-Native browser login, session continuity, and credential rotation for this migration remain **TBD** pending qualification.
+Native browser login, session continuity and credential rotation have not been tested ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 Stopping a client forward does not stop the managed sandbox or Fabric runtime.

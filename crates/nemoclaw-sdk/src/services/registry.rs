@@ -58,6 +58,21 @@ pub struct ResourceSchema {
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
+            kind: crate::kubernetes::STORAGE_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::GATEWAY_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::AUTH_KIND,
+            fields: &["spec", "running", "release_present", "gateway_values"],
+            mutable: &["running", "release_present", "gateway_values"],
+        },
+        ResourceSchema {
             kind: "ollama_proxy_storage",
             fields: &["name", "owner", "generation", "engine"],
             mutable: &[],
@@ -92,7 +107,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
         retained_storage: matches!(
             kind,
-            installers::ollama::STORAGE_KIND | installers::vllm::STORAGE_KIND
+            installers::ollama::STORAGE_KIND
+                | installers::vllm::STORAGE_KIND
+                | crate::kubernetes::STORAGE_KIND
         ),
         runtime_process: matches!(
             kind,
@@ -153,11 +170,7 @@ impl ServiceDefinition {
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
                 && crate::config::validate_engine_endpoint(&gateway.engine).is_ok()
-        }) && document
-            .spec
-            .sandboxes
-            .iter()
-            .all(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker);
+        }) && gateway.runtime().provider == ComputeDriver::Docker;
         let (placement, package) = match self {
             Self::Ollama(service) => (service.published_placement()?, "Ollama"),
             Self::Vllm(service) => (service.published_placement()?, "vLLM"),

@@ -13,7 +13,7 @@ fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
         serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
     value["spec"]["gateway"] =
         json!({"management":"managed","engine":"unix:///run/user/1000/podman/podman.sock"});
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
         jsonschema::validator_for(&input_schema())

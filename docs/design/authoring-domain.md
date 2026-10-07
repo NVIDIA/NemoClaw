@@ -25,7 +25,7 @@ flowchart TD
     Rules[SDK schema and Fabric Capabilities] --> Resolver
     Resolver --> Policy[QuestionPolicy: dependencies and order]
     Policy --> Result[JourneyResolution: questions and assessments]
-    Evidence[DiscoveryEvidence and AuthoringFacts] -->|resolve_with_evidence| Result
+    Observations[DiscoveryObservations from nemoclaw-discovery] -->|resolve_with_observations| Result
     Result --> Question[JourneyQuestion: one applicable decision]
     Question --> UI[TUI or other consumer]
     UI -->|answer or omit| State
@@ -141,15 +141,24 @@ Successful materialization covers the resolver's supported surface; Fabric's pla
 Without a configured target prerequisite, unknown target compatibility permits ordinary authoring; an observed conflict blocks `ready_document()`.
 An SDK document or a ready authoring result does not establish successful deployment or working inference.
 
-## Evidence and Consumer Responsibilities
+## Observations and Consumer Responsibilities
 
-[DiscoveryEvidence](../../crates/nemoclaw-authoring/src/evidence.rs) holds engine and image observations keyed to the selected discovery inputs.
-[AuthoringFacts](../../crates/nemoclaw-authoring/src/facts.rs) holds endpoint, hardware, gateway, and credential-availability observations.
+An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-discovery/src/lib.rs) holds what each query returned: engine, hardware, image, inference endpoint, gateway, and credential-availability observations.
+Each observation is keyed by its query, so an observation about one engine, image, or endpoint is never read as one about another.
+A read that could not be made is recorded as an unknown observation with its reason, so it stays distinct from a query never asked and is not repeated on every pass.
+`nemoclaw_discovery::observe` reads the real target; tests build or deserialize recorded observations, so decisions can be tested for any hardware without owning it.
+`discovery_queries` returns the queries a journey asks for an SDK-valid document.
+They are the SDK's `plan_queries`, the list a plan compiles into its discovery data sources, so onboarding and planning cannot ask different questions, plus the credential checks.
+Three exclusions are deliberate and tested: only the selected route's inference catalog is read, onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
+`JourneyState::use_local_engines` keeps the candidate engines this machine has that answered; the caller supplies the candidates, so authoring holds no socket paths.
+A runtime they offer becomes the suggestion when it is the only one, and choosing a runtime targets the managed gateway at the engine that answered for it.
+A runtime no engine answered for gets no engine, and the target assessment's first reason says so unless an engine is authored.
+Hosts are built from the engines they named and what each answered, and one recorded host in `tests/fixtures/observations` pins the replay format.
 Hardware and gateway observations do not affect questions or readiness yet.
-Both types need an SDK-valid document, because discovery reads its inputs from a `Document`.
-`resolve_with_evidence` supplements current model suggestions with matching endpoint observations and assesses target compatibility.
+`resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
+An empty `DiscoveryObservations` leaves the resolution unchanged.
 Observations do not silently replace authored values.
-`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target evidence, advertised model, and available credential references.
+`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, an advertised model, and available credential references.
 
 The [TUI](../../examples/onboarding-tui/README.md) owns keys, rendering, state snapshots for Back, discovery calls, cancellation, and saving the returned document.
 Authoring owns question resolution and answer transitions; the SDK owns discovery operations and subsequent plan/apply behavior.

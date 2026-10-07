@@ -9,7 +9,8 @@
         {"title": "Check prerequisites", "source": "docs/prerequisites.md", "slug": "prerequisites"},
         {"title": "Deploy OpenClaw with existing services", "source": "docs/get-started.md", "slug": "get-started"},
         {"title": "Assess migration", "source": "docs/migration.md", "slug": "migration"},
-        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"}
+        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"},
+        {"title": "Check current limits", "source": "docs/limits.md", "slug": "limits"}
       ]
     },
     {
@@ -17,6 +18,7 @@
       "pages": [
         {"title": "Build local artifacts", "source": "docs/build.md", "slug": "build"},
         {"title": "Use desired state", "source": "docs/usage.md", "slug": "usage"},
+        {"title": "Deploy to Kubernetes or OpenShift", "source": "docs/kubernetes.md", "slug": "kubernetes"},
         {"title": "Definitions and references", "source": "docs/configuration-references.md", "slug": "configuration-references"},
         {"title": "Locate and preserve state", "source": "docs/state.md", "slug": "state"},
         {"title": "Troubleshoot deployment operations", "source": "docs/troubleshooting.md", "slug": "troubleshooting"},

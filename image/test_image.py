@@ -203,6 +203,9 @@ class AgentImage(unittest.TestCase):
             self.assertFalse(list(Path("/app/dist/state").glob("*.sqlite*")))
             self.assertFalse(Path("/app/dist/config-journal-fingerprint.key").exists())
             self.assertFalse(Path("/tmp/plugin-build").exists())
+            # The agent reads OpenClaw but must not change it.
+            self.assertEqual(Path("/app").stat().st_uid, 0)
+            self.assertFalse(os.access("/app/dist/extensions", os.W_OK))
             for name in ("brave", "tavily"):
                 self.assertIn(name, set(plugins))
                 self.assertEqual(plugins[name]["origin"], "bundled")
@@ -228,8 +231,25 @@ class AgentImage(unittest.TestCase):
         )
         for path in root.glob("*.py"):
             self.assertEqual(path.read_bytes(), (sources / "local" / path.name).read_bytes())
-        self.assertEqual(os.getuid(), 1000)
-        self.assertEqual(Path("/sandbox").stat().st_uid, 1000)
+        # OpenShell's Kubernetes driver runs sandboxes as 10001:10001, and
+        # Docker and Podman use the image's own user, so one ID fits all three.
+        self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))
+        self.assertEqual(Path("/sandbox").stat().st_uid, 10001)
+        # OpenShell seeds a Kubernetes workspace by copying the image's
+        # /sandbox, and its supervisor makes probe directories under TMPDIR
+        # before Fabric starts; the seed must already hold that directory.
+        runtime = json.loads(Path("/opt/nemoclaw/runtime.json").read_text())
+        temporary = Path(runtime["environment"]["TMPDIR"])
+        self.assertTrue(temporary.is_relative_to("/sandbox"), temporary)
+        self.assertTrue(temporary.is_dir(), temporary)
+        self.assertEqual(temporary.stat().st_uid, 10001)
+        # On OpenShift, OpenShell copies that seed as the namespace's own UID,
+        # not 10001, so every directory in it must be readable by others.
+        # The copy itself is private: OpenShell creates each directory 0700.
+        for path in [Path("/sandbox"), *Path("/sandbox").rglob("*")]:
+            mode = path.lstat().st_mode
+            needed = 0o005 if path.is_dir() else 0o004
+            self.assertEqual(mode & needed, needed, f"{path} is not readable by another UID")
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 

@@ -183,11 +183,11 @@ The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc
 The selected Fabric settings determine Hermes' native runtime mode.
 [Relay trace artifacts](agents.md#hermes-relay-tracing) alone do not establish a native API process or `api.log`.
 
-Collection procedures for other harnesses, Hermes dashboard logs, and an inaccessible sandbox: **TBD** pending verification of each process and access path.
+Log collection for other harnesses, Hermes dashboard logs and an inaccessible sandbox is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## Traces and Web Search
 
 OpenClaw tracing and Brave search have their own [configuration and verification limits](agents.md#openclaw-tracing).
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
-Production collector troubleshooting and end-to-end hosted search diagnostics: **TBD**.
+Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

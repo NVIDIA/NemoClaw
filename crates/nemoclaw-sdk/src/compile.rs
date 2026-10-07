@@ -342,17 +342,18 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
+    if gateway.as_kubernetes().is_some() {
+        provider["credential_env"] = json!("NEMOCLAW_MANAGED_K8S_TOKEN");
+        provider["tls_ca_env"] = json!("NEMOCLAW_MANAGED_K8S_CA");
+        provider["tls_certificate_env"] = json!("NEMOCLAW_MANAGED_K8S_CERT");
+        provider["tls_key_env"] = json!("NEMOCLAW_MANAGED_K8S_KEY");
+    }
     provider
 }
 
 fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
     let provider = gateway_provider(&document.spec.gateway);
-    let drivers: std::collections::BTreeSet<_> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| &sandbox.runtime.provider)
-        .collect();
+    let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":{},

@@ -56,9 +56,9 @@ See [service constraints](inference.md#combine-local-and-hosted-providers) for m
 ## Use a Managed Podman Gateway
 
 Use a local rootless Linux Podman engine through its Unix API socket.
-Rootful operation, remote Podman engines, and other operating systems remain unqualified.
+Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Select `runtime.provider: podman` for every sandbox and set `gateway.engine` to the local Podman API service's Unix socket.
+Set `gateway.runtime.provider: podman` and set `gateway.engine` to the local Podman API service's Unix socket.
 See [the Podman example](../examples/managed-podman.yaml).
 The API service is an operator prerequisite; NemoClaw manages its gateway, network, and credential storage through that service.
 Load the harness image into the selected Podman image store and use the digest reported there.
@@ -87,7 +87,7 @@ The pinned Fabric has no health API, so the bridge returns unsupported with its 
 The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
 **Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
 A reachable bridge or remembered runtime handle does not establish agent health.
-Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
+Real adapters report health as unsupported until Fabric's health API is pinned ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
 
 Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
@@ -319,6 +319,37 @@ An explicit apply reconciles the resource graph and performs bounded readiness c
 The installer contract has no separate recovery operation and does not create an automatic restart loop.
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
+
+### Recover an Interrupted Helm Removal
+
+This procedure applies to managed Kubernetes and OpenShift deployments using the native Helm provider graph.
+For deployments using the earlier combined gateway resource, follow the [migration policy](migration.md#move-from-the-combined-kubernetes-gateway-resource) with their original tooling.
+
+During destroy, the pinned Helm provider can lose a release binding when its release lookup fails, even though the release remains in the cluster.
+Before removing a bound release, NemoClaw saves a private checkpoint at `runtime/helm-recovery.json` under the deployment state directory.
+If removal fails or is interrupted, recovery can restore only that missing binding while preserving the current authentication and storage bindings and any completed removals.
+Restoring the binding does not reinstall the release or undo cluster changes.
+If authentication cleanup already confirmed that the release and gateway are absent, recovery does not restore the deleted binding.
+
+Keep the bundle that started this destroy, the deployment YAML, and the entire state directory, including the checkpoint under `runtime/` and the receipt and retained key material under `kubernetes/`.
+Correct the reported Kubernetes API connectivity or permission failure before resuming destroy.
+From the directory containing the deployment YAML, use the retained bundle and the same state directory:
+
+```sh
+deployment_bundle=/absolute/path/to/retained-bundle
+"$deployment_bundle/bin/nemoclaw" --bundle "$deployment_bundle" \
+  destroy --state-dir .local/deployment
+```
+
+Destroy validates the checkpoint against the original bundle, intent, and state before restoring a missing binding.
+It then obtains a fresh plan, verifies resource identities, and continues the remaining removal; authentication cleanup still requires confirmed release and gateway absence.
+Cancellation or a process interruption can leave the checkpoint for the next destroy attempt.
+
+If `plan --destroy` reports that Helm binding recovery is pending, run the destroy command above; preview does not restore bindings.
+Apply and export remain unavailable while destroy is unfinished.
+If the checkpoint is missing, unreadable, or inconsistent with the current state, retain all evidence and resolve the error; recovery does not infer ownership or adopt an existing release.
+Do not edit OpenTofu state, import the release, delete the checkpoint, or replace the current state with an older copy.
+After destroy succeeds, the namespace, encryption key, and persistent volumes remain subject to the existing [retention rules](state.md#deletion-and-retention).
 
 ## Destroy
 

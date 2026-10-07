@@ -73,3 +73,23 @@ fn malformed_and_external_schemas_remain_unknown_without_io() {
         None
     );
 }
+
+#[test]
+fn a_proven_platform_mismatch_is_unsupported_even_when_the_catalog_is_unknown() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, assess_image};
+    let image = ImageMetadata {
+        architecture: Some("amd64".into()),
+        operating_system: Some("linux".into()),
+        ..Default::default()
+    };
+    let request = FabricRequirements::default();
+    let report = assess_image(
+        None,
+        &request,
+        &image,
+        "fixture",
+        Some("aarch64"),
+        Some("linux"),
+    );
+    assert_eq!(report.status, Support::Unsupported);
+}

@@ -66,16 +66,14 @@ See [connections and identity](#connections-and-identity).
 OpenShell calls remain bounded without automatic mutation retries.
 Sandbox deletion has a longer deadline than reads to allow the native driver's graceful stop; a lost response retains state for explicit reconciliation.
 
-## Accepted Scope and Qualification
+## Scope and Qualification
 
-cvillela accepted execution-target preparation and independent inference placement, retaining ownership of their validation gates.
-The preparation preserved existing YAML, resource addresses, and binding encodings; optional service placement and publication subsequently extended configuration.
-These changes introduce neither a generic provider framework nor a remote observation agent.
+Execution targets add no generic provider framework and no remote observation agent.
 
 The [SSH service fixtures](../contributing/integration-tests.md#ssh-service-fixtures) and [live SSH transport tests](../contributing/live-tests.md#ssh-engine-transport) cover SSH identity, observation failures, recovery, export, and retained teardown.
-Separate-host capacity, WAN behavior, and other operating systems are unqualified; a separate-host GPU apply and agent response remain required before claiming that qualification.
+Separate-host capacity, WAN behavior, and other operating systems are untested; a separate-host GPU apply and agent response are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
-Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are unqualified.
+Podman support is limited to local rootless Linux; managed Podman inference, rootful operation, and remote Podman placement are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 
 ## Implementation Constraints
@@ -108,7 +106,7 @@ Managed Podman gateway bindings combine the retained network UUID with container
 | SDK `managed/spec.rs`; provider `managed/mutation.rs` and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
 | Provider `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
 | Docker provider; NemoClaw provider `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
-| SDK `config/` and `compile.rs`; provider `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. |
+| SDK `config/` and `compile.rs`; provider `openshell/transport.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. |
 | Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
 
 Podman gateway observation checks the native effective and bounding capability sets before normalizing the compatibility API representation of `CapDrop=ALL`; missing or nonempty sets fail observation.

@@ -132,7 +132,7 @@ For a local external Ollama daemon, use the [managed proxy](#use-external-ollama
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
-Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until their endpoint/API/model combinations are qualified.
+Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
 
 ## Use an Image Built from This Revision
 
@@ -231,7 +231,7 @@ Verified cached snapshots can be reused without querying a subsequently changed 
 There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by deterministic fixtures.
-Live image builds, GPU inference, tools, and agent responses with this new adapter remain **TBD**; earlier CPU Ollama results do not qualify it.
+Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Authenticate a Managed vLLM Service
 
@@ -418,7 +418,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-provider/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/nemoclaw-provider/src/openshell/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/openshell/agent_configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/openshell/agent.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result
@@ -452,15 +452,6 @@ The [offline harness fixture](contributing/integration-tests.md#inference-api-fi
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-| Workflow or claim | Documentation status |
-|---|---|
-| Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
-| Managed model router and model-pool lifecycle | **TBD** — requires an implementation and lifecycle test results |
-| Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
-| Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
-| Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
-| End-to-end hosted-provider guides for NVIDIA, OpenAI, Anthropic, Gemini, OpenRouter, and Nous | **TBD** — qualify the specific endpoint, API, harness, and model before promising compatibility |
-| Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | **TBD** — outside the current [managed-model contract](models.md) |
-
-These gaps do not prevent use of a separately verified external endpoint with an accepted API.
-They do prevent treating an old provider or platform guide as verification of the current implementation.
+Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
+None of these limits prevents using a separately verified external endpoint with an accepted API.

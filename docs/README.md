@@ -4,8 +4,7 @@
 # Documentation
 
 These guides describe the v1 development branch.
-Sections marked **TBD** need a verified implementation, test results, or a completed procedure before they can describe supported use.
-TBD is not a support claim or a delivery commitment.
+[Current limits](limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## Get Started
 
@@ -15,7 +14,8 @@ TBD is not a support claim or a delivery commitment.
 | Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
 | Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
 | Assess a move from an earlier version | [Migration](migration.md) |
-| Find release information and untested configurations | [Release notes](release-notes.md) |
+| Find release information | [Release notes](release-notes.md) |
+| Check what v1 does not do yet | [Current limits](limits.md) |
 
 ## Build and Deploy
 
@@ -23,6 +23,7 @@ TBD is not a support claim or a delivery commitment.
 |---|---|
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
+| Run sandboxes on an existing Kubernetes or OpenShift cluster | [Deploy to Kubernetes or OpenShift](kubernetes.md) |
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |

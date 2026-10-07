@@ -193,11 +193,15 @@ fn an_anonymous_local_provider_is_lossless_without_a_credential_reference() {
     let reopened = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
     assert_eq!(reopened, document);
     assert_eq!(
-        inference_request_for_document(&document, None).unwrap().api,
+        inference_request_for_document(&document, None)
+            .unwrap()
+            .unwrap()
+            .api,
         InferenceApi::OpenaiCompletions
     );
     assert!(
         inference_request_for_document(&document, None)
+            .unwrap()
             .unwrap()
             .credential_env
             .is_none()

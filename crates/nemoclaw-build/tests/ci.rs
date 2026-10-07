@@ -16,6 +16,61 @@ fn unknown_steps_and_platforms_are_rejected_before_any_work() {
 fn live_docker_is_an_explicit_step_outside_the_default_run() {
     assert_eq!(Step::parse("live-docker"), Some(Step::LiveDocker));
     assert!(!Step::ALL.contains(&Step::LiveDocker));
+    assert_eq!(Step::parse("live-kind"), Some(Step::LiveKind));
+    assert!(!Step::ALL.contains(&Step::LiveKind));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for (name, script) in [
+        ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.1\\n'\n"),
+        (
+            "cargo",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'nextest --version' ]; then printf 'cargo-nextest 0.9.144\\n'; exit 0; fi\nexit 71\n",
+        ),
+        (
+            "docker",
+            "#!/bin/sh\nprintf accessed > cluster-accessed\nexit 72\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(
+        root.path().join("versions.json"),
+        serde_json::json!({
+            "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
+            "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
+            "platforms":{}, "images":{"kindNode":"kindest/node@sha256:fixture"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "live-kind"])
+        .current_dir(root.path())
+        .env("CARGO", bin.join("cargo"))
+        .env("PROTOC", bin.join("protoc"))
+        .env("PATH", &bin)
+        .env("TEST_PLATFORM", "linux_amd64")
+        .env_remove("GITHUB_ENV")
+        .env_remove("GITHUB_PATH")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("build the bundle first: cargo ci bundle"),
+        "{error}"
+    );
+    assert!(!root.path().join(".build/downloads").exists());
+    assert!(!root.path().join("cluster-accessed").exists());
 }
 
 #[test]
@@ -67,6 +122,28 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
         "nvidia.fabric.pi"
     );
     assert!(value["spec"].get("services").is_none());
+}
+
+/// The live-docker gateway tests read this document, so it must be one the
+/// SDK accepts; a field-by-field check missed a stale shape before.
+#[cfg(feature = "sdk")]
+#[test]
+fn gateway_documents_parse_as_current_configuration() {
+    use ci::live::{GatewayInputs, gateway_document, uuid};
+    let uid = uuid().unwrap();
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &uid,
+        port: 17950,
+        subnet: "172.30.202.0/24",
+        image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+        harness: "nvidia.fabric.pi",
+    });
+    let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
+    assert_eq!(
+        parsed.spec.gateway.runtime().provider,
+        nemoclaw_sdk::config::ComputeDriver::Docker
+    );
 }
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {

@@ -19,6 +19,8 @@ They are implementation details for identifying retained state, not a manual edi
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
 | `runtime/` | Separate managed-runtime stage and its retained state, when applicable |
+| `runtime/helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the runtime state until recovery or removal completes |
+| `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs) and [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs) define these files.
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
@@ -43,7 +45,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
 Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
-File/history locations and restoration procedures for the other harnesses: **TBD**.
+File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
 
 ## Configuration Export and Native Data
 
@@ -51,8 +53,7 @@ Export produces checked desired-state YAML with credential references.
 It does not copy agent files, histories, native settings, or model weights.
 Use [the export workflow](usage.md) for configuration and [native agent access](agents.md) to identify agent-owned state.
 
-Native-data backup and restore procedures for each harness: **TBD**.
-Portable snapshots and restore into another deployment: **TBD**.
+Backup, restore and portable snapshots of native data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
 The current CLI has no snapshot or lost-state adoption command.
 
 ## Deletion and Retention
@@ -64,7 +65,7 @@ The retained OpenShell workspace resource does not imply that sandbox files surv
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](inference.md#use-external-ollama-through-a-managed-proxy), and [security](security.md) before retiring storage.
 
-A complete inventory and verified manual removal procedure for retained resources: **TBD**.
+A complete inventory and removal procedure for retained resources are tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
 There is no current purge command.
 
 ### Understand the Retained Resources
@@ -89,5 +90,6 @@ Record those addresses and keep the state directory if you need to account for r
 ## Recovery and Transfer
 
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
+For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recover-an-interrupted-helm-removal); preserve the checkpoint and current state together.
 For a move from an earlier product version, use [migration](migration.md).
-Cross-host state transfer and a verified old-to-new native-data migration procedure: **TBD**.
+Moving state to another host and migrating native data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).

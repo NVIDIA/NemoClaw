@@ -5,42 +5,58 @@ mod tests;
 
 use crate::{Error, ObservationError};
 use bollard::{
-    models::{ContainerInspectResponse, ImageInspect, NetworkInspect, SystemInfo, Volume},
+    models::{ContainerInspectResponse, NetworkInspect, Volume},
     query_parameters::{DownloadFromContainerOptions, UploadToContainerOptions},
 };
 use futures_util::StreamExt;
+use nemoclaw_discovery::optional;
+pub(crate) use nemoclaw_discovery::{is_missing, remote};
 use std::{io::Read, time::Duration};
 
+/// The shared read client, with the host observer and container operations
+/// that resources need.
 #[derive(Clone)]
 pub struct Engine {
-    pub(crate) api: bollard::Docker,
-    endpoint: String,
+    read: nemoclaw_discovery::Engine,
     pub(crate) host_observer_explicit: bool,
     pub(crate) host_observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
 }
+impl std::ops::Deref for Engine {
+    type Target = nemoclaw_discovery::Engine;
+    fn deref(&self) -> &Self::Target {
+        &self.read
+    }
+}
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
-        crate::config::validate_engine_endpoint(endpoint)?;
-        if endpoint.starts_with("ssh://") {
-            return Self::connect_ssh(endpoint);
-        }
+        let read = nemoclaw_discovery::Engine::connect(endpoint)?;
         #[cfg(unix)]
         {
-            let api =
-                bollard::Docker::connect_with_unix(endpoint, 120, bollard::API_DEFAULT_VERSION)
-                    .map_err(|_| Error::State("cannot configure Docker engine client"))?;
+            let host_observer: std::sync::Arc<dyn crate::hardware::HostObserver> =
+                if endpoint.starts_with("ssh://") {
+                    std::sync::Arc::new(ssh::RemoteHost)
+                } else {
+                    std::sync::Arc::new(crate::hardware::LocalHost)
+                };
             Ok(Self {
-                api,
-                endpoint: endpoint.into(),
+                read,
                 host_observer_explicit: false,
-                host_observer: std::sync::Arc::new(crate::hardware::LocalHost),
+                host_observer,
             })
         }
         #[cfg(not(unix))]
         {
+            let _ = read;
             Err(Error::Conflict(
-                "local container-engine connections are unsupported on this platform",
+                "container-engine connections are unsupported on this platform",
             ))
+        }
+    }
+    /// The same engine reported under another endpoint.
+    pub fn relabel(self, endpoint: &str) -> Self {
+        Self {
+            read: self.read.relabel(endpoint),
+            ..self
         }
     }
     /// Replace host collection explicitly; failures never fall back to local data.
@@ -52,16 +68,6 @@ impl Engine {
         self.host_observer = observer;
         self
     }
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-    pub async fn info(&self) -> Result<SystemInfo, Error> {
-        let info = self.api.info().await.map_err(|error| remote(&error))?;
-        if info.id.as_ref().is_none_or(String::is_empty) {
-            return Err(ObservationError::Incomplete.into());
-        }
-        Ok(info)
-    }
     pub async fn container(&self, name: &str) -> Result<Option<ContainerInspectResponse>, Error> {
         optional(self.api.inspect_container(name, None).await)
     }
@@ -70,9 +76,6 @@ impl Engine {
     }
     pub async fn network(&self, name: &str) -> Result<Option<NetworkInspect>, Error> {
         optional(self.api.inspect_network(name, None).await)
-    }
-    pub async fn image(&self, name: &str) -> Result<Option<ImageInspect>, Error> {
-        optional(self.api.inspect_image(name).await)
     }
     /// Offline archive reads also work for stopped containers. A missing path
     /// is distinct from a failed transport or incomplete archive.
@@ -150,33 +153,6 @@ impl Engine {
             .map_err(|error| remote(&error))
     }
 }
-pub(crate) fn is_missing(error: &bollard::errors::Error) -> bool {
-    matches!(
-        error,
-        bollard::errors::Error::DockerResponseServerError {
-            status_code: 404,
-            ..
-        }
-    )
-}
-pub(crate) fn remote(error: &bollard::errors::Error) -> Error {
-    match error {
-        bollard::errors::Error::DockerResponseServerError {
-            status_code: 401, ..
-        } => ObservationError::Authentication.into(),
-        bollard::errors::Error::DockerResponseServerError {
-            status_code: 403, ..
-        } => ObservationError::Permission.into(),
-        _ => ObservationError::Transport.into(),
-    }
-}
-fn optional<T>(result: Result<T, bollard::errors::Error>) -> Result<Option<T>, Error> {
-    match result {
-        Ok(value) => Ok(Some(value)),
-        Err(error) if is_missing(&error) => Ok(None),
-        Err(error) => Err(remote(&error)),
-    }
-}
 fn read_archive(bytes: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
     let mut archive = tar::Archive::new(bytes);
     let mut entries = archive
@@ -225,7 +201,8 @@ mod two_engines;
 mod connections;
 pub use connections::Connections;
 
+#[cfg(unix)]
 mod ssh;
 
 #[cfg(unix)]
-pub(crate) use ssh::command as ssh_command;
+pub(crate) use nemoclaw_discovery::ssh_command;

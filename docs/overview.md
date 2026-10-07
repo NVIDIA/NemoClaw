@@ -17,7 +17,7 @@ Start with [prerequisites](prerequisites.md) and [deploy OpenClaw with existing 
 | OpenShell and native agent interfaces | Access the running agent and its native services | [Agents](agents.md), [interfaces](interfaces.md) |
 
 NemoClaw's CLI has no agent invocation, channel-management, or snapshot command.
-See [migration](migration.md) for earlier workflows and remaining documentation gaps.
+See [migration](migration.md) for earlier workflows and [current limits](limits.md) for what v1 does not do yet.
 
 ## Understand the Deployment
 
@@ -57,4 +57,4 @@ Use the [documentation index](README.md) to find other tasks.
 The [accepted scope](design/scope.md) defines the product contract; the [test guides](contributing/testing.md) describe what each test covers.
 Parser acceptance or a reachable endpoint does not establish working inference.
 
-Enterprise deployment qualification and service-level support commitments: **TBD**.
+v1 has no support policy or enterprise deployment qualification yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).

@@ -23,9 +23,10 @@ Run the bundle builder:
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The builder downloads and verifies the OpenTofu archive, builds the CLI and production provider with the lockfile, and writes `dist/<platform>`.
-The manifest records each shipped file’s hash, including the OpenTofu license.
+The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and NemoClaw provider with the lockfile, and writes `dist/<platform>`.
+The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
+Managed Kubernetes deployment uses the bundled Helm provider and requires no host Helm CLI.
 
 Each bundle includes `schemas/nemoclaw-v1alpha1.schema.json`, generated from its SDK contract and covered by the manifest hash.
 Use that file for [editor assistance](usage.md#editor-schema-assistance) with the bundled CLI.
@@ -35,6 +36,7 @@ The builder records its source fingerprint at compilation and rejects changed in
 If it reports `build tool source inputs changed`, rebuild and run it with the `cargo run` command above.
 The builder also rejects source changes during assembly.
 Bundles created before schema packaging must be rebuilt; the SDK rejects a manifest that omits the schema or a schema file that fails its recorded hash.
+It also rejects bundles missing the pinned Helm provider or its license, or whose recorded hashes fail verification.
 
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 
@@ -62,7 +64,7 @@ Then remove that dedicated bundle directory using your host's file manager and r
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
+There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images
@@ -98,7 +100,7 @@ The commands build and load local images; they do not publish images or launch a
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
-See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
+See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
@@ -123,6 +125,11 @@ The proxy and its `proxy-tests` target use the same explicit platform selector.
 The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary from [its crate](../crates/nemoclaw-ollama-proxy) and its license, with no shell or interpreter.
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
+A Kubernetes or OpenShift sandbox names a metadata bundle in `image.metadata`, since no local engine can be inspected there.
+Write one for a local image with `cargo images export-metadata IMAGE --platform linux/arm64 --output PATH`, where `PATH` is a new file.
+The bundle holds the image's index, the manifest for that platform and its configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+Run it before pushing the image, and use the same digest in `image.ref`.
+
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
 Hermes retains a separate native dependency supplement, described in the [source notice](../image/NOTICE.md).
@@ -132,6 +139,18 @@ The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
 Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
+
+### Regenerate the Bundled Catalog
+
+The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+
+```sh
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+```
+
+Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).
+The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
 ### Reference Contract Image
 

@@ -69,13 +69,13 @@ When a verified bundle supplies target observations, a confirmed compatibility c
 An external gateway runs on its own host, and the questionnaire preserves its selected runtime.
 The preset does not configure Podman Machine or a remote Linux host.
 
-The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
+The CLI reads the target while you answer:
 
 ```sh
-nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
+nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
+Onboarding reads the selected Fabric image and the inference model catalog through the same functions the provider's plan data sources use; it needs no bundle and starts no OpenTofu process.
 For a managed gateway, it also checks engine prerequisites and reads hardware advertisements.
 Hardware observations do not affect questions or readiness yet.
 For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
@@ -83,17 +83,15 @@ Onboarding uses that engine only to inspect the image; the image store's compute
 Observations for a different engine or image are ignored.
 Omitting `spec.gateway.engine` leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
 Image compatibility does not verify the external gateway's execution platform or readiness.
-Independent requests share a plan, and duplicate requests are read once.
+Independent reads run concurrently, and duplicate requests are read once.
 It reads the model catalog when a model question opens for a new endpoint request.
 It reads target observations again each time you delegate with **Ctrl+D** or enter review.
 Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
-Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
+Each engine, image, hardware, and catalog read has a five-second timeout; a gateway capability call has thirty seconds.
 Discovery supports cancellation and does not pull images or start containers.
-An ordinary discovery plan has a 30-second overall bound; the separate gateway query has a 35-second bound.
 The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
-Without a usable bundle, onboarding cannot inspect the target and marks it unverified.
-The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
+The standalone example does not read the target, so target compatibility remains unverified.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.
