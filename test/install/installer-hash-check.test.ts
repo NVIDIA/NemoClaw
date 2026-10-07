@@ -942,21 +942,20 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
+  // source-shape-contract: security -- Exact absence of the retired Brev digest prevents a stale installer template from regaining authorization
   it("does not base-trust the obsolete Brev npm replacement digest", () => {
+    const parserSource = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+      "utf8",
+    );
+    expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
+
     const untrustedTemplate = `${BREV_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
     const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
 
     expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
     expect(result.stderr).not.toContain(OBSOLETE_NPM_REPLACEMENT_DIGEST);
-
-    const restored = parseNpmReplacement(
-      untrustedTemplate,
-      NPM_CLEANUP_TEMPLATE_DIGEST,
-      OBSOLETE_NPM_REPLACEMENT_DIGEST,
-    );
-    expect(restored.status, restored.stderr).toBe(1);
-    expect(restored.stderr).toContain(OBSOLETE_NPM_REPLACEMENT_DIGEST);
   });
 
   describe("bootstrap npm cleanup trust", () => {
