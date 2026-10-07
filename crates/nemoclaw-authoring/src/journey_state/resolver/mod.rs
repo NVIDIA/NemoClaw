@@ -94,6 +94,7 @@ impl<'a> QuestionResolver<'a> {
             questions: work.questions,
             omitted: work.omitted,
             warnings: work.warnings,
+            information: Vec::new(),
             unverified: work.unverified,
             assessment,
             target_required: !self.definition.target_prerequisites.is_empty(),

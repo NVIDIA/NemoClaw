@@ -109,6 +109,30 @@ impl JourneyWizard {
         Ok(())
     }
 
+    pub(super) fn delegate(&mut self) {
+        match self
+            .state
+            .delegate_remaining(&self.capabilities, &self.observations)
+        {
+            Ok(delegated) => {
+                self.history.push(self.state.clone());
+                self.state = delegated;
+                self.error = None;
+            }
+            // The resolver already supplies a catalog credential note. Keep
+            // its deferred model check separate from compatibility failures.
+            Err(error)
+                if error
+                    .items()
+                    .iter()
+                    .all(|item| item.field() == "inference:catalog:credential") =>
+            {
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
     pub(super) fn back(&mut self) {
         if let Some(previous) = self.history.pop() {
             self.state = previous;
