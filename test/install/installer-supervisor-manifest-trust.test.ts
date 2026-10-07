@@ -14,6 +14,8 @@ import {
   V00116_SUPERVISOR_MANIFEST_DIGEST,
 } from "../helpers/openshell-release-fixtures";
 
+import { supervisorV00116Fixtures } from "../helpers/openshell-installer-template";
+
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -72,7 +74,34 @@ function selectSharedGatewayStateResolver(source: string): string {
   return prospective;
 }
 
+function selectThreadGroupExecutableRuntime(source: string): string {
+  const sharedImport = 'import { readGatewayProcEntry } from "./gateway/process-proc-entry";';
+  const withImport = source.includes(sharedImport)
+    ? source
+    : source.replace(
+        "import { HOST_GATEWAY_PGREP_PATTERN }",
+        `${sharedImport}\nimport { HOST_GATEWAY_PGREP_PATTERN }`,
+      );
+  const leaderReader = `  function readProcessExe(pid: number): string | null {
+    try {
+      const procExePath = \`/proc/\${pid}/exe\`;
+      if (!fs.existsSync(procExePath)) return null;
+      return fs.readlinkSync(procExePath);
+    } catch {
+      return null;
+    }
+  }`;
+  const threadReader = `  function readProcessExe(pid: number): string | null {
+    return readGatewayProcEntry(pid, "exe");
+  }`;
+  const prospective = withImport.replace(leaderReader, threadReader);
+  assert(prospective.includes(threadReader), "prospective thread-group executable reader");
+  return prospective;
+}
+
 type RunOptions = {
+  selectedRelease?: boolean;
+  allowUnchangedSupervisor?: boolean;
   candidateParserBypass?: boolean;
   supervisorSymlink?: boolean;
   transformSupervisor?: (source: string) => string;
@@ -103,17 +132,24 @@ function runParser(options: RunOptions = {}) {
   fs.mkdirSync(blueprintDir, { recursive: true });
   fs.mkdirSync(supervisorRuntimeDir, { recursive: true });
 
-  const selected = {
+  const canonical = {
     blueprint: BLUEPRINT_TEMPLATE,
     brevInstaller: BREV_TEMPLATE,
     installer: INSTALLER_TEMPLATE,
     supervisorRuntime: SUPERVISOR_RUNTIME_TEMPLATE,
   };
+  const selected = options.selectedRelease ? canonical : supervisorV00116Fixtures(canonical);
   fs.writeFileSync(installer, selected.installer);
   fs.writeFileSync(brevInstaller, selected.brevInstaller);
   fs.writeFileSync(blueprint, selected.blueprint);
   const supervisorSource =
     options.transformSupervisor?.(selected.supervisorRuntime) ?? selected.supervisorRuntime;
+  assert.ok(
+    !options.transformSupervisor ||
+      options.allowUnchangedSupervisor ||
+      supervisorSource !== selected.supervisorRuntime,
+    "supervisor mutation must change its input",
+  );
   const writeSupervisorRuntime = options.supervisorSymlink
     ? writeSymlinkedSupervisorRuntime
     : writeRegularSupervisorRuntime;
@@ -171,11 +207,50 @@ describe("OpenShell supervisor manifest trust", () => {
 
   // source-shape-contract: security -- Exact prospective supervisor runtime bytes must be base-authorized before trusted CI can admit the dependent state-resolver change
   it("accepts the prospective shared gateway state resolver template (#10544)", () => {
-    const prospective = selectSharedGatewayStateResolver(SUPERVISOR_RUNTIME_TEMPLATE);
+    const prospective = selectSharedGatewayStateResolver(
+      supervisorV00116Fixtures({
+        blueprint: BLUEPRINT_TEMPLATE,
+        brevInstaller: BREV_TEMPLATE,
+        installer: INSTALLER_TEMPLATE,
+        supervisorRuntime: SUPERVISOR_RUNTIME_TEMPLATE,
+      }).supervisorRuntime,
+    );
     expect(prospective).toContain("gatewayBinding.resolveGatewayStateDirForPort({");
-    const result = runParser({ transformSupervisor: () => prospective });
+    const result = runParser({
+      transformSupervisor: () => prospective,
+      allowUnchangedSupervisor: true,
+    });
 
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("accepts the prospective same-thread-group executable runtime (#12614)", () => {
+    const result = runParser({ transformSupervisor: selectThreadGroupExecutableRuntime });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects a repository mutation of the thread-group executable runtime", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectThreadGroupExecutableRuntime(source).replace(
+          "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+          "registry.invalid/openshell/supervisor@${manifestDigest}",
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
+  });
+
+  it("rejects a replacement image digest in the thread-group executable runtime", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectThreadGroupExecutableRuntime(source).replace(
+          V00116_SUPERVISOR_MANIFEST_DIGEST,
+          REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST,
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted identities");
   });
 
   it("rejects an operational mutation of the base-trusted prospective supervisor fixture", () => {
@@ -338,5 +413,61 @@ const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";
     expect(result.stderr).toContain(
       "supervisor runtime input must be a regular file and not a symbolic link",
     );
+  });
+});
+
+describe("selected OpenShell supervisor identity", () => {
+  const selectedVersion = /QUALIFIED_STABLE_OPENSHELL_VERSION = "([^"]+)"/.exec(
+    SUPERVISOR_RUNTIME_TEMPLATE,
+  )?.[1];
+  assert.ok(selectedVersion, "selected supervisor version must exist");
+  const selectedPin = new RegExp(
+    '  "' + selectedVersion.replaceAll(".", "\\.") + '": "sha256:[a-f0-9]{64}",\\n',
+  );
+
+  it("accepts the selected runtime without fixture conversion", () => {
+    const result = runParser({ selectedRelease: true });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects removal of the selected supervisor identity", () => {
+    const result = runParser({
+      selectedRelease: true,
+      transformSupervisor: (source) => source.replace(selectedPin, ""),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "missing=[ghcr.io/nvidia/openshell/supervisor|" + selectedVersion + "|",
+    );
+  });
+
+  it("rejects replacement of the selected supervisor digest", () => {
+    const result = runParser({
+      selectedRelease: true,
+      transformSupervisor: (source) =>
+        source.replace(
+          selectedPin,
+          '  "' + selectedVersion + '": "' + REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST + '",\n',
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted identities");
+  });
+
+  it("rejects a post-map assignment in the selected runtime", () => {
+    const result = runParser({
+      selectedRelease: true,
+      transformSupervisor: (source) =>
+        source.replace(
+          "const QUALIFIED_STABLE_OPENSHELL_VERSION =",
+          '(OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS as Record<string, string>)["' +
+            selectedVersion +
+            '"] = "' +
+            REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST +
+            '";\nconst QUALIFIED_STABLE_OPENSHELL_VERSION =',
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
   });
 });

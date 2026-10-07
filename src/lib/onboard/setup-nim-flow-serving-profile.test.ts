@@ -83,6 +83,7 @@ describe("serving profile onboarding against a running vLLM", () => {
       expect.objectContaining({ managedInstall: false, servingProfileModel }),
     );
     expect(result).toMatchObject({ provider: "vllm", model: "muse-glimmer" });
+    expect(result.servingProfileProvenance).toBeUndefined();
   });
 
   it("passes no profile model when the run requested no profile", async () => {

@@ -67,6 +67,7 @@ export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
+  tlsFailures: string[];
   activeLegacySessionCount(): number;
 }
 
@@ -467,8 +468,8 @@ export async function startPublicMcpHttpsTunnel(options: {
           !probeCompleted || probeSpawnError || probeChild.exitCode !== 0
             ? {
                 ready: false,
-                // curl stderr can contain proxy details. Keep transport failures opaque.
-                diagnostic: `public HEAD ${readinessPath} failed (curl transport error)`,
+                // Retain process status only; curl stderr can contain proxy details.
+                diagnostic: `public HEAD ${readinessPath} failed (curl exit=${String(probeChild.exitCode)}, deadline=${!probeCompleted}, spawnError=${probeSpawnError})`,
               }
             : probeOutputExceededLimit ||
                 !/^\d{3}$/u.test(probeOutput) ||
@@ -1076,6 +1077,7 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
+  const tlsFailures: string[] = [];
   const diagnostics: FakeMcpHttpsDiagnostics = {
     secureConnections: 0,
     requestHeaders: 0,
@@ -1476,6 +1478,16 @@ export async function startFakeMcpHttpsServer(options: {
         ? (code as keyof FakeMcpHttpsDiagnostics["tlsClientErrors"])
         : "OTHER";
     diagnostics.tlsClientErrors[bucket] = increment(diagnostics.tlsClientErrors[bucket]);
+
+    if (tlsFailures.length >= 8) return;
+    const knownCodes = new Set([
+      "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
+      "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
+      "ERR_SSL_SSLV3_ALERT_CERTIFICATE_EXPIRED",
+      "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+      "ECONNRESET",
+    ]);
+    tlsFailures.push(code && knownCodes.has(code) ? code : "OTHER");
   });
   const port = await listenOnRandomPort(server);
   return {
@@ -1483,6 +1495,7 @@ export async function startFakeMcpHttpsServer(options: {
     port,
     observations,
     requests,
+    tlsFailures,
     activeLegacySessionCount: () => legacySessions.size,
     setSecret: (secret: string) => {
       expectedSecret = secret;

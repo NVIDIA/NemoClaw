@@ -44,7 +44,6 @@ import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
-import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
@@ -53,10 +52,13 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
   startStoppedSandboxContainerForBackup,
+  startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline,
 } from "./stopped-sandbox-backup";
 
 export { removeStaleRebuildDockerOrphan };
@@ -75,21 +77,21 @@ export type RebuildLiveState = {
   terminalPhase?: boolean;
 };
 
-/** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
-export async function prepareRebuildStoppedOpenClawState(
+/** Select complete stopped native state for supported fresh terminal-state rebuilds. */
+export async function prepareRebuildStoppedAgentState(
   entry: RebuildSandboxEntry,
   liveState: RebuildLiveState,
   hasRecoveryManifest: boolean,
-  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
-): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
+): Promise<PreparedStoppedNativeState | null> {
   if (
     !liveState.terminalPhase ||
     liveState.staleRecovery ||
     hasRecoveryManifest ||
-    (entry.agent ?? "openclaw") !== "openclaw"
+    !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
   )
     return null;
-  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+  return snapshotBackup.prepareStoppedAgentState(entry.name, getSandbox);
 }
 
 export type RebuildLiveStateOptions = {
@@ -111,6 +113,8 @@ export type RebuildAgentBaseImagePreflight = {
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
+
+const INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS = 30_000;
 
 const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
 
@@ -520,19 +524,31 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
-  log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
-    sandboxName,
-    capturedOpenClawState ? { capturedOpenClawState } : {},
-    {
-      getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
-    },
-  );
+  log(`Agent type: ${sb.agent || "openclaw"}, complete native home/workspace transfer`);
+  const initialTransactionDeadlineMs = startedSandboxBackupTransactionDeadline();
+  const backupDeadlineOptions = {
+    deadlineMs: startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs),
+  };
+  const backupAuthority = {
+    getSandbox: (name: string) => loadRegistry().sandboxes[name] ?? null,
+  };
+  let backup = stoppedNativeState
+    ? snapshotBackup.backupSandboxStateWithManagedAuthority(
+        sandboxName,
+        backupDeadlineOptions,
+        backupAuthority,
+        stoppedNativeState,
+      )
+    : snapshotBackup.backupSandboxStateWithManagedAuthority(
+        sandboxName,
+        backupDeadlineOptions,
+        backupAuthority,
+      );
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
@@ -541,24 +557,51 @@ export async function backupSandboxStateForRebuild(
   // already recovers a stopped container (#6500): start it, retry, then return
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
-  if (!backup.success && backup.unreachable) {
-    const started = await startStoppedSandboxContainerForBackup(sandboxName);
+  if (!stoppedNativeState && !backup.success && backup.unreachable) {
+    // Recovery, retry, and stopped-state restoration remain part of the
+    // original backup transaction. Do not start a stopped container after the
+    // work budget is exhausted: there would be no bounded time left to prove
+    // readiness and preserve state before the cleanup reserve begins.
+    const workDeadlineMs = startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs);
+    const started =
+      Date.now() < workDeadlineMs
+        ? await startStoppedSandboxContainerForBackup(sandboxName, {
+            deadlineMs: initialTransactionDeadlineMs,
+          })
+        : null;
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
       let returnedToStopped = false;
       try {
-        backup = await backupStartedSandboxState(sandboxName);
+        backup = await backupStartedSandboxState(sandboxName, {
+          deadlineMs: initialTransactionDeadlineMs,
+          deferSanitizationDeadlineCleanup: true,
+        });
         log(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = await returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started, {
+          deadlineMs: initialTransactionDeadlineMs,
+        });
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,
           );
         }
+      }
+      // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
+      // until after the attempt to return the container to Stopped, even when
+      // that attempt fails, so an unpublished partial snapshot is not retained.
+      if (!backup.success) {
+        const cleanupDeadlineMs = Date.now() + INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS;
+        backup = snapshotBackup.discardIncompleteBackup(
+          sandboxName,
+          backup,
+          cleanupDeadlineMs,
+          "rebuild",
+        );
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.
@@ -573,6 +616,9 @@ export async function backupSandboxStateForRebuild(
         console.error("  but could not return it to its stopped state.");
         if (!backup.success) {
           console.error("  The retried backup also failed, so no sandbox state was preserved.");
+          if (backup.error) {
+            console.error(`  Backup failure: ${backup.error}`);
+          }
         }
         console.error(
           `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
@@ -621,19 +667,24 @@ export async function backupSandboxStateForRebuild(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     if (backup.manifest?.backupPath) {
       console.error(
-        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+        `  Incomplete snapshot retained for manual inspection and cleanup only: ${backup.manifest.backupPath}`,
       );
-      console.error("  It is excluded from snapshot restore selection.");
+      console.error("  It is excluded from automatic rebuild recovery.");
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
     return undefined;
   }
   const backupManifest = backup.manifest ?? null;
-  if (!backupManifest) {
+  if (!backupManifest?.nativeState || backupManifest.version !== 2) {
     console.error("  Failed to record backup metadata.");
+    if (backupManifest?.backupPath) {
+      if (!sandboxState.removeSandboxStateBackup(sandboxName, backupManifest.backupPath)) {
+        console.error(`  Remove the unusable backup manually: ${backupManifest.backupPath}`);
+      }
+    }
     console.error("  Aborting rebuild to prevent data loss.");
-    bail("Failed to record backup metadata.");
+    bail("Failed to record complete native-state backup metadata.");
     return undefined;
   }
   console.log(
@@ -641,41 +692,4 @@ export async function backupSandboxStateForRebuild(
   );
   console.log(`    Backup: ${backupManifest.backupPath}`);
   return backupManifest;
-}
-
-/**
- * Warn only after MCP rebuild preparation has scrubbed NemoClaw-owned adapter
- * entries. In particular, a managed-only Deep Agents `.mcp.json` is removed by
- * that transaction; if the file still exists at this point it contains
- * additional user-owned content that the state backup intentionally excludes.
- */
-export function warnUnpreservedUserManagedFiles(
-  sandboxName: string,
-  log: (msg: string) => void,
-  runtimeSelection?: OpenShellRuntimeSelection,
-): void {
-  let probe: userManagedFilesProbe.UserManagedFilesProbe;
-  try {
-    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName, runtimeSelection);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`User-managed file probe errored: ${message}`);
-    console.warn(
-      `  ${YW}⚠${R} Could not check declared user-managed files before rebuild (probe failed).`,
-    );
-    console.warn(
-      "    Re-add any user-managed files you keep in the sandbox after rebuild, or manage them from the host.",
-    );
-    return;
-  }
-  if (probe.existing.length === 0) {
-    if (probe.declared.length > 0) {
-      log(`User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`);
-    }
-    return;
-  }
-  console.warn(
-    `  ${YW}⚠${R} User-managed files will not be preserved if rebuild replaces this sandbox: ${probe.existing.join(", ")}`,
-  );
-  console.warn("    After a successful rebuild, re-add them or manage them from the host.");
 }

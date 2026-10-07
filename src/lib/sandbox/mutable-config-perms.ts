@@ -4,38 +4,13 @@
 import { validateName } from "../runner";
 import { withMcpLifecycleLockSync } from "../state/mcp-lifecycle-lock-acquisition";
 import { resolveAgentConfig, type AgentConfigTarget } from "./agent-config";
-import { verifyOpenClawConfigPosture } from "./openclaw-config-guard";
-import {
-  capturePrivilegedSandboxCommand,
-  executePrivilegedSandboxCommand,
-  resolvePrivilegedSandboxTarget,
-} from "./privileged-exec";
+import { capturePrivilegedSandboxCommand } from "./privileged-exec";
 
 export interface MutableHermesConfigVerification {
   readonly verified: boolean;
   readonly errors: readonly string[];
 }
 
-export type MutableConfigPermsInspection =
-  | { applies: false; skipReason: "agent" | "unavailable"; reason: string }
-  | {
-      applies: true;
-      ok: boolean;
-      issues: string[];
-    };
-
-export type MutableConfigRepairResult =
-  | { applied: false; skipReason: "agent"; reason: string }
-  | { applied: true; verified: boolean; errors: string[] };
-
-const MUTABLE_CONFIG_NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
-const MUTABLE_CONFIG_NORMALIZER_HOST_TIMEOUT_MS = 25_000;
-const MUTABLE_CONFIG_NORMALIZER_WATCHDOG = [
-  "/usr/bin/timeout",
-  "--signal=TERM",
-  "--kill-after=5s",
-  "15s",
-] as const;
 const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 20_000;
 const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
 import os
@@ -120,126 +95,6 @@ export function verifyMutableHermesConfigForTarget(
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }
-}
-
-function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g", resourceHandle: string): string {
-  const id = capturePrivilegedSandboxCommand(sandboxName, ["/usr/bin/id", flag, "sandbox"], {
-    sanitizeEnvironment: true,
-    expectedResourceHandle: resourceHandle,
-    timeout: 15_000,
-  })
-    .toString("utf8")
-    .trim();
-  if (!/^[1-9][0-9]*$/.test(id)) {
-    throw new Error(`sandbox identity lookup returned an invalid ${flag === "-u" ? "UID" : "GID"}`);
-  }
-  return id;
-}
-
-function normalizeMutableOpenClawConfig(
-  sandboxName: string,
-  configDir: string,
-  resourceHandle: string,
-): void {
-  const sandboxUid = sandboxIdentityId(sandboxName, "-u", resourceHandle);
-  const sandboxGid = sandboxIdentityId(sandboxName, "-g", resourceHandle);
-  capturePrivilegedSandboxCommand(
-    sandboxName,
-    [
-      ...MUTABLE_CONFIG_NORMALIZER_WATCHDOG,
-      "/usr/bin/python3",
-      "-I",
-      MUTABLE_CONFIG_NORMALIZER,
-      configDir,
-      sandboxUid,
-      sandboxGid,
-    ],
-    {
-      sanitizeEnvironment: true,
-      expectedResourceHandle: resourceHandle,
-      timeout: MUTABLE_CONFIG_NORMALIZER_HOST_TIMEOUT_MS,
-    },
-  );
-}
-
-function verifyOpenClawPosture(sandboxName: string, resourceHandle: string) {
-  return verifyOpenClawConfigPosture({
-    run(command) {
-      const result = executePrivilegedSandboxCommand(sandboxName, command, {
-        sanitizeEnvironment: true,
-        expectedResourceHandle: resourceHandle,
-        timeout: 35_000,
-        maxOutputBytes: 32 * 1024,
-      });
-      return {
-        ...result,
-        stdout: result.stdout.toString("utf8"),
-        stderr: result.stderr.toString("utf8"),
-        error: result.error?.message,
-      };
-    },
-  });
-}
-
-export function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspection {
-  validateName(sandboxName, "sandbox name");
-  return withMcpLifecycleLockSync(sandboxName, () => {
-    const target = resolveAgentConfig(sandboxName);
-    if (target.agentName !== "openclaw") {
-      return {
-        applies: false,
-        skipReason: "agent",
-        reason: `agent ${target.agentName} does not use the mutable OpenClaw config contract`,
-      };
-    }
-    try {
-      const result = verifyOpenClawPosture(
-        sandboxName,
-        resolvePrivilegedSandboxTarget(sandboxName).resourceHandle,
-      );
-      if (result.issues.length > 0 && !result.repairable) {
-        return { applies: false, skipReason: "unavailable", reason: result.issues.join("; ") };
-      }
-      return { applies: true, ok: result.issues.length === 0, issues: result.issues };
-    } catch (error) {
-      return {
-        applies: false,
-        skipReason: "unavailable",
-        reason: `could not verify config posture (${error instanceof Error ? error.message : String(error)})`,
-      };
-    }
-  });
-}
-
-export function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResult {
-  validateName(sandboxName, "sandbox name");
-  return withMcpLifecycleLockSync(sandboxName, () => {
-    const target = resolveAgentConfig(sandboxName);
-    if (target.agentName !== "openclaw") {
-      return {
-        applied: false,
-        skipReason: "agent",
-        reason: `agent ${target.agentName} does not use the mutable OpenClaw config contract`,
-      };
-    }
-    try {
-      const { resourceHandle } = resolvePrivilegedSandboxTarget(sandboxName);
-      const before = verifyOpenClawPosture(sandboxName, resourceHandle);
-      if (before.issues.length > 0) {
-        if (!before.repairable) throw new Error(before.issues.join("; "));
-        normalizeMutableOpenClawConfig(sandboxName, target.configDir, resourceHandle);
-        const after = verifyOpenClawPosture(sandboxName, resourceHandle);
-        if (after.issues.length > 0) throw new Error(after.issues.join("; "));
-      }
-      return { applied: true, verified: true, errors: [] };
-    } catch (error) {
-      return {
-        applied: true,
-        verified: false,
-        errors: [error instanceof Error ? error.message : String(error)],
-      };
-    }
-  });
 }
 
 export function inspectMutableHermesConfigPerms(

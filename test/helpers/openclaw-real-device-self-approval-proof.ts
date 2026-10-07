@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 
 interface ProofOptions {
   dist: string;
@@ -76,6 +77,11 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
     ),
   );
   if (sqliteGatewayLayout) {
+    const dispatcherSignature = sources.some(({ source }) =>
+      source.includes("async function handleGatewayRequest(opts, diagnostics)"),
+    )
+      ? "async function handleGatewayRequest(opts, diagnostics)"
+      : "async function handleGatewayRequest(opts)";
     const producer = requireExactlyOneDistSource(sources, "SQLite device-token session producer", [
       'const loadGatewayServerMethods = createLazyPromise(() => import("./authenticated-request-dispatch.server-methods.runtime.js"))',
       "const nextClient = {",
@@ -86,7 +92,7 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
     ]);
     const dispatcher = requireExactlyOneDistSource(sources, "SQLite gateway request dispatcher", [
       "function createLazyCoreHandlers(params)",
-      "async function handleGatewayRequest(opts)",
+      dispatcherSignature,
       'devices: () => import("./devices-',
     ]);
     const handler = requireExactlyOneDistSource(sources, "SQLite device pairing gateway handler", [
@@ -122,7 +128,7 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
       [
         "function createLazyCoreHandlers(params)",
         `devices: () => import("./${path.basename(handler.file)}")`,
-        "async function handleGatewayRequest(opts)",
+        dispatcherSignature,
       ],
       "SQLite dispatcher-to-device-handler linkage",
     );
@@ -298,7 +304,11 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
           "const requestedStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
           "const hasExplicitAuth = Boolean(context.explicitAuth.token || context.explicitAuth.password);",
           "const useStoredDeviceAuth = requestedStoredDeviceAuth && !hasExplicitAuth;",
-          "skipImplicitAuth: useStoredDeviceAuth,",
+          gatewayCall.source.includes(
+            "skipImplicitAuth: useStoredDeviceAuth || opts.skipImplicitAuth === true,",
+          )
+            ? "skipImplicitAuth: useStoredDeviceAuth || opts.skipImplicitAuth === true,"
+            : "skipImplicitAuth: useStoredDeviceAuth,",
           "storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope, opts.sharedStateMode);",
           "opts.requiredStoredDeviceAuthScopes",
           "scopes: requestedStoredDeviceAuth && hasExplicitAuth && opts.requiredStoredDeviceAuthScopes ? opts.requiredStoredDeviceAuthScopes : useStoredDeviceAuth ? void 0 : scopes,",
@@ -1189,8 +1199,19 @@ const exactlyOne = (pattern, label, sourceMarker) => {
   return pathToFileURL(path.join(dist, files[0])).href;
 };
 const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
-const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairingWithOptions"));
+const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)"));
 const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]js$/, "stored auth", "function loadDeviceAuth"));
+const { deviceHandlers } = await import(exactlyOne(/^devices-[^.]+[.]js$/, "device handlers", '"device.pair.approve": async'));
+const clientSource = fs.readFileSync(new URL(exactlyOne(/^client-[^.]+[.]js$/, "client authentication", "function buildGatewayConnectAuth(selected)")), "utf8");
+const clientLines = clientSource.split(String.fromCharCode(10));
+const authFunctions = ["normalized", "selectGatewayConnectAuth", "buildGatewayConnectAuth"].map((name) => {
+  const start = clientLines.findIndex((line) => line.startsWith("function " + name + "("));
+  const end = clientLines.findIndex((line, index) => index > start && line === "}");
+  if (start < 0 || end < start) throw new Error("native client authentication function missing: " + name);
+  return clientLines.slice(start, end + 1).join(String.fromCharCode(10));
+});
+const { runInNewContext } = await import("node:vm");
+const nativeConnectAuth = runInNewContext(authFunctions.join(String.fromCharCode(10)) + "; token => buildGatewayConnectAuth(selectGatewayConnectAuth({ storedToken: token }))");
 if (typeof pairing.h !== "function" || typeof pairing.c !== "function" || typeof approval.n !== "function" || typeof auth.l !== "function" || typeof auth.r !== "function") {
   throw new Error("reviewed SQLite device-pairing exports missing");
 }
@@ -1228,12 +1249,25 @@ const identity = {
   clientMode: "cli",
   deviceToken: initialToken.token,
 };
-const upgraded = await approval.n(upgrade.requestId, {
-  callerScopes: ["operator.pairing"],
-  nemoclawSelfApprovalIdentity: identity,
-}, stateDir);
-if (upgraded?.status !== "approved") throw new Error("bounded SQLite self-approval failed");
-const nextToken = upgraded.device?.tokens?.operator;
+const approveThroughGateway = async (isDeviceTokenAuth) => {
+  let response;
+  await deviceHandlers["device.pair.approve"]({
+    params: { requestId: upgrade.requestId },
+    client: { isDeviceTokenAuth, connect: {
+      role: "operator", scopes: ["operator.pairing"],
+      device: { id: deviceId, publicKey }, client: { id: "cli", mode: "cli" },
+      auth: nativeConnectAuth(initialToken.token),
+    } },
+    context: { logGateway: { info() {}, warn() {} }, broadcast() {} },
+    respond: (ok, payload, error) => { response = { ok, payload, error }; },
+  });
+  return response;
+};
+if ((await approveThroughGateway(false))?.ok !== false) throw new Error("shared auth was allowed to self-approve");
+const upgraded = await approveThroughGateway(true);
+if (upgraded?.ok !== true) throw new Error("bounded SQLite gateway self-approval failed: " + upgraded?.error?.message);
+const approvedDevice = (await pairing.c(stateDir)).paired.find((device) => device.deviceId === deviceId);
+const nextToken = approvedDevice?.tokens?.operator;
 const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
 if (!nextToken?.token || nextToken.token === initialToken.token || JSON.stringify([...nextToken.scopes].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("bounded SQLite token rotation invalid");
 const afterList = await pairing.c(stateDir);
@@ -1276,6 +1310,263 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
 }
 
+export function proveRealOpenClawAgentScopes(dist: string): void {
+  const sources = readDistSources(dist);
+  const agent = requireExactlyOneDistSource(sources, "CLI agent gateway request", [
+    "async function agentViaGatewayCommand(opts, runtime, signalBridge, runContext) {",
+    "const gatewayIdentity =",
+    "...gatewayIdentity",
+  ]).source;
+  const policy = requireExactlyOneDistSource(sources, "agent method scope policy", [
+    "function resolveDynamicLeastPrivilegeOperatorScopesForMethod(method, params) {",
+    "const AGENT_SESSION_RESET_COMMAND_RE =",
+  ]).source;
+  const identity = agent.match(/^\tconst gatewayIdentity = [\s\S]*?^\t};/m)?.[0];
+  const reset = agent.match(/^function isSessionResetCommand\(message\) \{[\s\S]*?^}/m)?.[0];
+  const policyReset = policy.match(/^const AGENT_SESSION_RESET_COMMAND_RE = [\s\S]*?^}/m)?.[0];
+  const methodScopes = policy.match(
+    /^function resolveDynamicLeastPrivilegeOperatorScopesForMethod\(method, params\) \{[\s\S]*?^}/m,
+  )?.[0];
+  if (!identity || !reset || !policyReset || !methodScopes) {
+    throw new Error("reviewed OpenClaw agent scope selection could not be isolated");
+  }
+  const observe = runInNewContext(
+    `${reset}\n${policyReset}\n${methodScopes}\n(remoteGateway, modelOverride, body) => {\n${identity}\nreturn gatewayIdentity.scopes ?? resolveDynamicLeastPrivilegeOperatorScopesForMethod("agent", { message: body });\n}`,
+    {
+      ADMIN_SCOPE: "operator.admin",
+      WRITE_SCOPE: "operator.write",
+      GATEWAY_CLIENT_NAMES: { CLI: "cli", GATEWAY_CLIENT: "gateway-client" },
+      GATEWAY_CLIENT_MODES: { CLI: "cli", BACKEND: "backend" },
+    },
+  ) as (remote: boolean, model: string, message: string) => string[];
+  for (const remote of [false, true]) {
+    for (const [model, message, scope] of [
+      ["", "Reply with only 4", "operator.write"],
+      ["override-model", "Reply with only 4", "operator.admin"],
+      ["", "/new", "operator.admin"],
+      ["", "/reset", "operator.admin"],
+    ]) {
+      if (JSON.stringify(observe(remote, model, message)) !== JSON.stringify([scope])) {
+        throw new Error(
+          `OpenClaw agent scope mismatch: remote=${remote} model=${model} message=${message}; expected ${scope}`,
+        );
+      }
+    }
+  }
+}
+
+export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promise<void> {
+  const sources = readDistSources(dist);
+  const cli = requireExactlyOneDistSource(sources, "explicit device approval command", [
+    "async function runDevicesApproveCommand(requestId, opts) {",
+  ]).source;
+  const command = cli.match(
+    /^async function runDevicesApproveCommand\(requestId, opts\) \{[\s\S]*?^}/m,
+  )?.[0];
+  const client = requireExactlyOneDistSource(sources, "gateway client token cache", [
+    "const scopes = tokenRole === role && authInfo.deviceToken === assembled.storedToken",
+  ]).source;
+  const cache = client.match(
+    /const scopes = tokenRole === role && authInfo\.deviceToken === assembled\.storedToken[^;]+;/,
+  )?.[0];
+  const deviceCall = cli.match(/^const callGatewayCli = async [\s\S]*?^}\);/m)?.[0];
+  const storage = client.match(/^function createOpenClawGatewayClientHostDeps\([\s\S]*?^}/m)?.[0];
+  const transportSource = requireExactlyOneDistSource(sources, "gateway CLI transport", [
+    "async function callGatewayFromCliRuntime(method, opts, params, extra) {",
+  ]).source;
+  const transport = transportSource.match(
+    /^async function callGatewayFromCliRuntime\([\s\S]*?^}/m,
+  )?.[0];
+  if (!command || !cache || !deviceCall || !storage || !transport)
+    throw new Error("reviewed device approval handoff could not be isolated");
+  const receiveToken = runInNewContext(`(assembled, connectionScopes) => {
+    const role = "operator", tokenRole = role;
+    const authInfo = { deviceToken: "rotated-token", scopes: connectionScopes };
+    ${cache}
+    return { storedToken: authInfo.deviceToken, storedScopes: scopes };
+  }`) as (
+    stored: { storedToken: string; storedScopes: string[] },
+    scopes: string[],
+  ) => { storedToken: string; storedScopes: string[] };
+  const adminScopes = ["operator.admin", "operator.read", "operator.write"];
+  for (const outcome of [
+    "admin",
+    "remote-admin",
+    "other-device",
+    "missing-identity",
+    "unreadable-identity",
+    "baseline",
+    "missing",
+    "confirmation-denied",
+  ] as const) {
+    const events: string[] = [];
+    const approved = !["baseline", "missing"].includes(outcome);
+    const confirmationRequired = ["admin", "remote-admin", "confirmation-denied"].includes(outcome);
+    const options = { json: true, url: "wss://reviewed-gateway.example" };
+    let cached = {
+      storedToken: "previous-token",
+      storedScopes: ["operator.pairing", "operator.read", "operator.write"],
+    };
+    let cacheWrites = 0;
+    const noop = () => {};
+    const runtime = runInNewContext(
+      `${storage}\n${transport}\nconst callGatewayFromCliWithTransport = callGatewayFromCliRuntime;\n${deviceCall}\n${command}\n({ run: runDevicesApproveCommand, read: callGatewayCli, storage: (mode) => createOpenClawGatewayClientHostDeps(void 0, void 0, false, mode) })`,
+      {
+        ADMIN_SCOPE: "operator.admin",
+        DEFAULT_DEVICES_TIMEOUT_MS: 10_000,
+        GATEWAY_CLIENT_NAMES: { CLI: "cli" },
+        GATEWAY_CLIENT_MODES: { CLI: "cli" },
+        resolveGatewayLocalPortOverride: noop,
+        parseTimeoutMsWithFallback: (_value: unknown, fallback: number) => fallback,
+        withProgress: (_options: unknown, operation: () => Promise<unknown>) => operation(),
+        loadDeviceAuthToken: noop,
+        loadDeviceAuthTokenReadOnly: noop,
+        clearDeviceAuthToken: noop,
+        loadOrCreateDeviceIdentity: noop,
+        signDevicePayload: noop,
+        publicKeyRawBase64UrlFromPem: noop,
+        ensureInheritedManagedProxyRoutingActive: noop,
+        registerManagedProxyGatewayLoopbackBypass: noop,
+        logDebug: noop,
+        logError: noop,
+        redactToolPayloadText: noop,
+        storeDeviceAuthToken: (value: { token: string; scopes: string[] }) => {
+          cacheWrites += 1;
+          cached = { storedToken: value.token, storedScopes: value.scopes };
+        },
+        loadDeviceIdentityIfPresent: () => {
+          if (outcome === "unreadable-identity") throw new Error("identity unavailable");
+          return outcome === "missing-identity" ? null : { deviceId: "calling-device" };
+        },
+        resolveApprovePairingGatewayContext: async () => ({}),
+        approvePairingWithFallback: async (
+          _opts: unknown,
+          _id: string,
+          context: Record<string, unknown>,
+        ) => {
+          events.push("approve-exact-request");
+          if (outcome !== "remote-admin")
+            context.nemoclawLocallyApprovedDevice = {
+              deviceId: outcome === "other-device" ? "other-device" : "calling-device",
+              tokens: {
+                operator: {
+                  role: "operator",
+                  token: "rotated-token",
+                  scopes: approved ? adminScopes : ["operator.write"],
+                },
+              },
+            };
+          return outcome === "missing"
+            ? null
+            : {
+                device: {
+                  deviceId: outcome === "other-device" ? "other-device" : "calling-device",
+                  scopes: approved ? ["operator.admin"] : ["operator.write"],
+                },
+              };
+        },
+        callGateway: async (call: {
+          method: string;
+          url: string;
+          scopes: string[];
+          timeoutMs: number;
+          token?: string;
+          sharedStateMode?: string;
+        }) => {
+          requireLiveProof(
+            call.url === options.url && call.timeoutMs === 10_000,
+            "approval confirmation changed gateway or timeout",
+          );
+          requireJsonEqual(call.scopes, ["operator.admin"], "approval confirmation scope");
+          if (call.sharedStateMode !== "read-only")
+            requireLiveProof(
+              call.token === (outcome === "remote-admin" ? undefined : "rotated-token"),
+              "local approval confirmation did not use its newly issued token",
+            );
+          events.push(call.method);
+          if (outcome === "confirmation-denied") throw new Error("confirmation denied");
+          const next = receiveToken(cached, adminScopes);
+          runtime
+            .storage(call.sharedStateMode)
+            .storeDeviceAuthToken({ token: next.storedToken, scopes: next.storedScopes });
+        },
+        isScopeUpgradePendingApproval: () => false,
+        sanitizeForLog: (value: string) => value,
+        formatCliCommand: (value: string) => value,
+        findQueryPendingNodeApprovalNotices: () => [],
+        defaultRuntime: {
+          writeJson: (value: unknown) => {
+            requireLiveProof(
+              !JSON.stringify(value).includes("rotated-token"),
+              "approval output exposed the private token",
+            );
+            events.push("output");
+          },
+          error: () => events.push("error"),
+          exit: (code: number) => events.push(`exit-${code}`),
+        },
+        process: {
+          env: {},
+          stdout: { write: (_value: string, done: () => void) => done() },
+          stderr: { write: (_value: string, done: () => void) => done() },
+        },
+        setTimeout,
+        clearTimeout,
+      },
+    ) as {
+      run: (request: string, opts: typeof options) => Promise<void>;
+      read: (
+        method: string,
+        opts: typeof options,
+        params: object,
+        call: { scopes: string[] },
+      ) => Promise<void>;
+      storage: (mode?: string) => {
+        storeDeviceAuthToken: (value: { token: string; scopes: string[] }) => void;
+      };
+    };
+    let failure = "";
+    try {
+      await runtime.run("exact-approved-request", options);
+    } catch (error) {
+      failure = String(error);
+    }
+    const expected =
+      outcome === "missing"
+        ? ["approve-exact-request", "error", "exit-1"]
+        : outcome === "unreadable-identity"
+          ? ["approve-exact-request"]
+          : outcome === "confirmation-denied"
+            ? ["approve-exact-request", "device.pair.list"]
+            : [
+                "approve-exact-request",
+                ...(confirmationRequired ? ["device.pair.list"] : []),
+                "output",
+                "exit-0",
+              ];
+    requireJsonEqual(events, expected, `explicit approval handoff ${outcome}`);
+    requireLiveProof(
+      outcome === "confirmation-denied"
+        ? failure.includes("confirmation denied")
+        : outcome === "unreadable-identity"
+          ? failure.includes("Admin approval completed") &&
+            failure.includes("Repair local OpenClaw state")
+          : failure === "",
+      `explicit approval handoff ${outcome}: unexpected failure ${failure}`,
+    );
+    if (outcome === "admin") {
+      requireJsonEqual(
+        receiveToken(cached, ["operator.write"]).storedScopes,
+        adminScopes,
+        "ordinary agent retains explicitly approved token metadata",
+      );
+      requireLiveProof(cacheWrites === 1, "admin confirmation did not persist exactly one token");
+      await runtime.read("device.pair.list", options, {}, { scopes: ["operator.admin"] });
+      requireLiveProof(cacheWrites === 1, "ordinary device query changed the stored token");
+    }
+  }
+}
+
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
   const patch = spawnSync(options.nodeExecutable, [options.patchScript, options.dist], {
     encoding: "utf8",
@@ -1294,7 +1585,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   });
   requireSuccess(audit, "audit bounded device self-approval patch");
   const auditSummary = audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
-    ? "Summary: 7 OK · 0 missing"
+    ? "Summary: 9 OK · 0 missing"
     : "Summary: 6 OK · 0 missing";
   for (const marker of [
     "gateway call device-identity runtime:",
@@ -1314,7 +1605,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "gateway-handler",
     "pairing-state",
     ...(audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
-      ? ["pairing-state-sqlite-persistence"]
+      ? ["pairing-state-sqlite-persistence", "agent-cli-method-scopes"]
       : []),
   ];
   for (const id of auditSpecIds) {
@@ -1389,7 +1680,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     sqlitePairingLayout
       ? [
           "nemoclaw: validate bounded self-approval inside pairing lock",
-          "approveDevicePairingWithOptions",
+          "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)",
           "nemoclawSelfApprovalIdentity",
         ]
       : [
@@ -1401,6 +1692,23 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const deviceHandlerFile = requireRealDeviceTokenAuthLinkage(sources);
   if (sqlitePairingLayout) {
+    if (pairingStateSource.source.includes("async function withPendingDevicePairingApproval")) {
+      requireOrderedMarkers(
+        pairingStateSource.source,
+        [
+          "async function withPendingDevicePairingApproval",
+          "return await withDevicePairingLock(async () => {",
+          "const state = await loadDevicePairingState(baseDir);",
+          "return approve(state, pending, existing);",
+          "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)",
+          "return await withPendingDevicePairingApproval(requestId, options, baseDir, (state, pendingRecord, existing) => {",
+          "const nemoclawSelfApprovalScopes = resolveNemoClawSelfApprovalScopes(pendingRecord,",
+        ],
+        "self-approval classifier remains inside the native pairing lock",
+      );
+    }
+    proveRealOpenClawAgentScopes(options.dist);
+    await proveRealOpenClawAdminApprovalHandoff(options.dist);
     requireExactlyOneDistSource(sources, "patched atomic SQLite pairing persistence runtime", [
       "function persistDevicePairingStoreState(state, baseDir, target, options)",
       "nemoclaw: recover bounded self-approval state transaction",

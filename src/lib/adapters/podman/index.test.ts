@@ -271,6 +271,42 @@ describe("Podman container engine command adapter", () => {
     expect(assertAuthority).toHaveBeenCalledTimes(2);
   });
 
+  it("passes only the ambient Podman auth-file path to guarded external image commands", () => {
+    const assertAuthority = vi.fn();
+    const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const engine = createPodmanContainerEngine({
+      operation: "external-image-preparation",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertAuthority,
+      commandEnvironment: {
+        HOME: "/home/tester",
+        PATH: "/usr/bin",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        REGISTRY_AUTH_FILE: "/run/user/1000/containers/auth.json",
+      },
+      capture,
+    });
+
+    engine.capture(["pull", "--retry=0", `ghcr.io/example/image@sha256:${"a".repeat(64)}`]);
+
+    expect(capture.mock.calls[0]?.[4]).toEqual({
+      HOME: "/home/tester",
+      PATH: "/usr/bin",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      REGISTRY_AUTH_FILE: "/run/user/1000/containers/auth.json",
+    });
+    expect(assertAuthority).toHaveBeenCalledTimes(2);
+    expect(() => engine.captureHost(["info"])).toThrow(
+      "Podman external-image-preparation forbids ambient host command capture",
+    );
+  });
+
   it("requires a resolvable canonical absolute executable for host-local inference", () => {
     expect(() =>
       createPodmanContainerEngine({

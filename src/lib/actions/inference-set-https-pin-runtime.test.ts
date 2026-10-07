@@ -6,7 +6,12 @@ import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/
 import type { ConfigObject } from "../security/credential-filter";
 import type { InferenceSetDeps } from "./inference-set";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import {
+  baseSession,
+  createDeps,
+  HERMES_TARGET,
+  type CaptureOpenshell,
+} from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 const ADAPTER_TOKEN = "test-route-token";
@@ -43,7 +48,7 @@ function providerCapture(options: {
   providerName: string;
   providerType: "openai" | "anthropic";
   credentialEnv: string;
-}): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
+}): CaptureOpenshell & ReturnType<typeof vi.fn> {
   let resourceVersion = 4;
   const configKey = options.providerType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
   const output = () =>
@@ -77,7 +82,7 @@ function providerCapture(options: {
       default:
         return { status: 0, stdout: "", stderr: "", output: "" };
     }
-  }) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
+  }) as CaptureOpenshell & ReturnType<typeof vi.fn>;
 }
 
 function failRegistryRead(): never {
@@ -149,15 +154,14 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       expect(adapter).toHaveBeenCalledWith(
         expect.objectContaining({ credentialValue: "real-upstream-secret", providerType }),
       );
-      expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      expect(
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
+      ).toEqual([
         "alpha",
         expect.objectContaining({ provider, endpointUrl: ADAPTER_BASE_URL, credentialEnv }),
       ]);
-      expect(deps.getSession()).toMatchObject({
-        provider,
-        endpointUrl: ADAPTER_BASE_URL,
-        credentialEnv,
-      });
       expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain(
         "compatible.example",
       );
@@ -245,7 +249,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     capture.mockImplementation((args, opts) =>
       args[0] === "inference" && args[1] === "set"
         ? { status: 1, stdout: "", stderr: "selection failed", output: "selection failed" }
@@ -354,9 +358,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       capture.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
     ).toHaveLength(0);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
@@ -367,7 +369,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     capture.mockImplementation((args, opts) =>
       args[0] === "provider" && args[1] === "update"
         ? {
@@ -542,9 +544,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       ]),
     ]);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
@@ -618,7 +618,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       providerType: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
     });
-    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    const original = capture.getMockImplementation() as CaptureOpenshell;
     let inferenceSetCalls = 0;
     const restoreFailure = {
       status: 1,
@@ -696,9 +696,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
     );
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
@@ -818,7 +816,11 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       deps,
     );
 
-    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(2);
+    // Two route commits precede revocation; successful config synchronization then clears its receipt.
+    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(3);
+    expect(deps.calls.updateSandbox).toHaveBeenLastCalledWith("alpha", {
+      openClawConfigSyncPending: undefined,
+    });
     expect(deps.calls.revokeHttpsPinRuntimeAdapterRoute).toHaveBeenCalledWith(OLD_ROUTE_ID);
     expect(
       deps.calls.revokeHttpsPinRuntimeAdapterRoute.mock.invocationCallOrder[0],
@@ -930,7 +932,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         deps,
       ),
     ).resolves.toMatchObject({ sandboxName: "alpha", provider: "compatible-endpoint" });
-    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(2);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(3);
+    expect(deps.calls.updateSandbox).toHaveBeenLastCalledWith("alpha", {
+      openClawConfigSyncPending: undefined,
+    });
     expect(deps.calls.log).toHaveBeenCalledWith(expect.stringContaining("could not be revoked"));
   });
 
