@@ -575,7 +575,55 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(errorOutput()).toContain("Verify that it targets this NemoClaw release");
   });
 
-  it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {
+  it("does not retry a signal-terminated recreated-sandbox readiness probe (#12758)", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.persistStartupCommand = true;
+    input.externalImage = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+      ]),
+    );
+    vi.mocked(deps.commandExecutor.runBuffered).mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 143, signal: "SIGTERM" },
+      stdout: "",
+      stderr: "",
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("probe_failed");
+      return {
+        ready: false,
+        reason: "identity_probe_failed",
+        failurePhase: null,
+      };
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(1);
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("keeps an empty recreated-sandbox executable response inside the readiness wait (#12698)", async () => {
     const input = createInput();
     const patch = createPatch();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
@@ -604,9 +652,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       .mockResolvedValueOnce({
         outcome: { kind: "completed", exitCode: 1, signal: null },
         stdout: "",
-        stderr:
-          `Error:   × code: 'The system is not in a state required for the operation's\n` +
-          '  │ execution\', message: "sandbox is not ready"\n',
+        stderr: "",
       })
       .mockResolvedValueOnce({
         outcome: { kind: "completed", exitCode: 0, signal: null },

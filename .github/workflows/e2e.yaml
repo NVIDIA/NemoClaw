@@ -2966,7 +2966,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
 
       - name: Record immutable Deep Agents Code base evidence
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
@@ -3554,7 +3554,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3835,7 +3835,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
@@ -5284,7 +5284,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
