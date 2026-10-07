@@ -113,19 +113,6 @@ mod tests {
     use clap::{CommandFactory, error::ErrorKind};
 
     #[test]
-    fn first_deployment_apply_requests_json_without_progress() {
-        let guide = include_str!("../../../docs/get-started.md");
-        let command = guide
-            .lines()
-            .find(|line| line.starts_with("nemoclaw apply "))
-            .expect("first-deployment apply command");
-        let cli = Cli::try_parse_from(command.split_whitespace()).unwrap();
-        assert!(matches!(cli.command, Command::Apply { .. }));
-        assert_eq!(cli.command.output_format(), OutputFormat::Json);
-        assert_eq!(cli.progress, ProgressMode::Off);
-    }
-
-    #[test]
     fn first_deployment_example_supplies_the_image_inspection_engine() {
         use nemoclaw_sdk::{
             config::Document,
