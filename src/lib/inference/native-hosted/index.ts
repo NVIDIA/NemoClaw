@@ -217,19 +217,7 @@ export async function ensureNativeHostedProvider(input: {
 }): Promise<NativeHostedProviderAttachment> {
   const { adapter, target, profile } = input;
   assertExpectedProfile(profile, input.expected);
-  const imported = await adapter.importProviderProfile({
-    target,
-    profilePath: input.profilePath ?? nativeHostedProviderProfilePath(profile),
-  });
-  if (!imported.ok) {
-    const collision =
-      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
-    throw new NativeHostedProviderError(
-      collision
-        ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
-        : `Could not prepare OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
-    );
-  }
+  await requireNativeHostedProviderProfileBoundary(adapter, target, profile, input.profilePath);
 
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
@@ -311,6 +299,27 @@ export async function ensureNativeHostedProvider(input: {
   return attachmentFromMetadata(observed, profile);
 }
 
+async function requireNativeHostedProviderProfileBoundary(
+  adapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+  profile: NativeHostedProfile,
+  profilePath = nativeHostedProviderProfilePath(profile),
+): Promise<void> {
+  const imported = await adapter.importProviderProfile({
+    target,
+    profilePath: profilePath,
+  });
+  if (!imported.ok) {
+    const collision =
+      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
+    throw new NativeHostedProviderError(
+      collision
+        ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
+        : `Could not prepare OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
+    );
+  }
+}
+
 /** Prove that the exact NemoClaw-owned hosted provider is attached to one sandbox. */
 export async function verifyNativeHostedProviderAttachment(input: {
   profile?: NativeHostedProfile;
@@ -329,6 +338,7 @@ export async function verifyNativeHostedProviderAttachment(input: {
   if (!profile)
     throw new NativeHostedProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
+  await requireNativeHostedProviderProfileBoundary(input.adapter, input.target, profile);
   const provider = await inspectNativeProvider(input.adapter, input.target, profile);
   if (!provider) {
     throw new NativeHostedProviderError(
@@ -376,6 +386,7 @@ export async function ensureNativeHostedProviderAttached(input: {
   if (!profile)
     throw new NativeHostedProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
+  await requireNativeHostedProviderProfileBoundary(input.adapter, input.target, profile);
   const before = await input.adapter.listProviderAttachments({
     target: input.target,
     sandboxName: input.sandboxName,

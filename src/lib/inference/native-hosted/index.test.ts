@@ -52,6 +52,35 @@ describe.each(NATIVE_HOSTED_PROFILES)("native $label OpenShell provider", (profi
     } as OpenShellProviderAdapter;
   }
 
+  it.each([verifyNativeHostedProviderAttachment, ensureNativeHostedProviderAttached])(
+    "refuses a widened profile before observing or attaching a provider (%s)",
+    async (operation) => {
+      const providerAdapter = adapter({
+        importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
+          ok: false,
+          error: { kind: "command", reason: "profile_incompatible", message: "wider live profile" },
+        })),
+      });
+      await expect(
+        operation({
+          profile,
+          adapter: providerAdapter,
+          target,
+          sandboxName: "alpha",
+          expected: {
+            schemaVersion: 1,
+            profileId: profile.profileId,
+            providerName: profile.providerName,
+            providerId: "provider-id",
+          },
+        }),
+      ).rejects.toThrow(/conflicts with NemoClaw's checked-in security boundary/);
+      expect(providerAdapter.getProvider).not.toHaveBeenCalled();
+      expect(providerAdapter.listProviderAttachments).not.toHaveBeenCalled();
+      expect(providerAdapter.attachProvider).not.toHaveBeenCalled();
+    },
+  );
+
   it("limits the profile to its fixed TLS endpoint and exact executable paths (#12589)", () => {
     const source = fs.readFileSync(nativeHostedProviderProfilePath(profile), "utf8");
     const contract = parseCheckedInProviderProfileContract(source);

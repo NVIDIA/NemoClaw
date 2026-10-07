@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { NATIVE_HOSTED_PROFILES } from "../../inference/native-hosted/profiles";
+import {
+  NATIVE_HOSTED_PROFILES,
+  type NativeHostedProfile,
+} from "../../inference/native-hosted/profiles";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -14,11 +17,11 @@ import {
   NAME_VALID_PATTERN,
   PROVIDER_NAME_VALID_PATTERN,
 } from "../../name-validation";
-import { CLI_NAME } from "../../cli/branding";
 import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
 } from "../../inference/native-nvidia/contract";
+import { CLI_NAME } from "../../cli/branding";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
@@ -26,6 +29,11 @@ import {
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
 import { clearNativeHostedProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
 import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import {
+  listNativeNvidiaProviderAttachmentSandboxNames,
+  listNativeHostedProviderAttachmentSandboxNames,
+} from "../../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -41,6 +49,9 @@ export type CredentialsResetResult = {
 
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
+  listNativeHostedProviderAttachmentSandboxNames?: typeof listNativeHostedProviderAttachmentSandboxNames;
+  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   clearNativeHostedProviderAuthority?: typeof clearNativeHostedProviderAuthority;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
 }>;
@@ -94,6 +105,46 @@ function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): str
       ];
 }
 
+function nativeHostedResetBlockers(
+  deps: CredentialsResetDeps,
+  profile: NativeHostedProfile,
+  gatewayName: string,
+): { ok: true; sandboxes: readonly string[] } | { ok: false } {
+  try {
+    return {
+      ok: true,
+      sandboxes:
+        profile.logicalProvider !== "nvidia-prod"
+          ? (
+              deps.listNativeHostedProviderAttachmentSandboxNames ??
+              listNativeHostedProviderAttachmentSandboxNames
+            )(profile.profileId, gatewayName)
+          : (
+              deps.listNativeNvidiaProviderAttachmentSandboxNames ??
+              listNativeNvidiaProviderAttachmentSandboxNames
+            )(gatewayName),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function nativeHostedResetBlockedResult(
+  sandboxes: readonly string[],
+  profile: NativeHostedProfile,
+): CredentialsResetResult {
+  return fail([
+    `  Could not remove provider '${profile.logicalProvider}'.`,
+    "",
+    `  '${profile.logicalProvider}' is recorded by sandbox(es): ${sandboxes.join(", ")}.`,
+    "  No provider or ownership authority was changed.",
+    `  To rotate the credential in place, set ${profile.hostCredentialEnv ?? profile.credentialEnv} and rerun '${CLI_NAME} onboard --name <sandbox>'.`,
+    "  To remove the provider completely, preserve any required sandbox state, destroy every recorded sandbox,",
+    `  then rerun '${CLI_NAME} credentials reset ${profile.logicalProvider}'.`,
+    ...sandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} destroy`),
+  ]);
+}
+
 export async function runCredentialsResetAction(
   input: CredentialsResetInput,
   deps: CredentialsResetDeps = {},
@@ -135,53 +186,71 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: !nativeProfile,
-  });
-
-  if (
-    !recovery.ok &&
-    !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
-    recovery.error?.kind === "command" &&
-    recovery.error.reason === "not_found"
-  ) {
-    if (nativeProfile?.logicalProvider === "nvidia-prod") {
-      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-        target.gatewayName,
-      );
+  const resetProvider = async (): Promise<CredentialsResetResult> => {
+    if (nativeProfile) {
+      const blockers = nativeHostedResetBlockers(deps, nativeProfile, target.gatewayName);
+      if (!blockers.ok)
+        return fail([
+          `  Could not safely inspect native ${nativeProfile.label} inference ownership on gateway '${target.gatewayName}'.`,
+          "  No provider or ownership authority was changed.",
+          "  Repair the existing NemoClaw state and retry.",
+        ]);
+      if (blockers.sandboxes.length > 0)
+        return nativeHostedResetBlockedResult(blockers.sandboxes, nativeProfile);
     }
+    const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+      detachAttached: !nativeProfile,
+    });
+
+    if (
+      !recovery.ok &&
+      !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
+      recovery.error?.kind === "command" &&
+      recovery.error.reason === "not_found"
+    ) {
+      if (nativeProfile?.logicalProvider === "nvidia-prod") {
+        (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+          target.gatewayName,
+        );
+      }
+      if (nativeProfile && nativeProfile.logicalProvider !== "nvidia-prod") {
+        (deps.clearNativeHostedProviderAuthority ?? clearNativeHostedProviderAuthority)(
+          target.gatewayName,
+          nativeProfile.profileId,
+        );
+      }
+      const removedLocal = forgetExtraProvider(key);
+      return ok([
+        removedLocal
+          ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
+          : `  Provider '${key}' is already absent from the OpenShell gateway.`,
+        `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+      ]);
+    }
+
+    const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
+    if (!outcome.ok) return fail(outcome.lines);
+
+    forgetExtraProvider(publicKey);
     if (nativeProfile && nativeProfile.logicalProvider !== "nvidia-prod") {
       (deps.clearNativeHostedProviderAuthority ?? clearNativeHostedProviderAuthority)(
         target.gatewayName,
         nativeProfile.profileId,
       );
     }
-    const removedLocal = forgetExtraProvider(key);
-    return ok([
-      removedLocal
-        ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
-        : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-      `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
-      ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
-    ]);
-  }
-
-  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
-  if (!outcome.ok) return fail(outcome.lines);
-
-  forgetExtraProvider(publicKey);
-  if (nativeProfile && nativeProfile.logicalProvider !== "nvidia-prod") {
-    (deps.clearNativeHostedProviderAuthority ?? clearNativeHostedProviderAuthority)(
-      target.gatewayName,
-      nativeProfile.profileId,
-    );
-  }
-  if (nativeProfile?.logicalProvider === "nvidia-prod") {
-    (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-      target.gatewayName,
-    );
-  }
-  return ok(outcome.lines);
+    if (nativeProfile?.logicalProvider === "nvidia-prod") {
+      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+        target.gatewayName,
+      );
+    }
+    return ok(outcome.lines);
+  };
+  if (!nativeProfile) return resetProvider();
+  return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+    target.gatewayName,
+    resetProvider,
+  );
 }
 
 /** Build the user-facing result after a provider delete attempt. */

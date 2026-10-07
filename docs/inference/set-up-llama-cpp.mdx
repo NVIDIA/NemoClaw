@@ -18,7 +18,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
 | Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
+| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -101,12 +101,12 @@ That path supports operator-selected endpoints and ports without claiming llama.
 
 ## Install Managed llama.cpp on an NVIDIA GPU Host
 
-Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on a qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x host.
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on a qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host.
 On DGX Spark, the recommended recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
 The Meta Muse Glimmer 30B recipe remains available by explicit selection, and existing Muse-owned installations are not migrated.
-Windows WSL N1x Express leaves provider selection to onboarding.
+Windows WSL N1x and Station GB300 Express leave provider selection to onboarding.
 Accepting Windows Express and its third-party software notice is the explicit opt-in to this Experimental surface.
-During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the N1x readiness requirements pass.
+During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the applicable N1x or Station GB300 readiness requirements pass.
 
 <Note>
 This path is an experimental implementation.
@@ -119,7 +119,7 @@ The Muse Glimmer profile remains Experimental after bounded physical DGX Spark q
 
 Before you start, confirm these prerequisites:
 
-- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x host.
+- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x or Station GB300 host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
 - Confirm that Docker is operational on the host.
 - Confirm that the NVIDIA Container Toolkit is operational.
@@ -136,9 +136,18 @@ For Windows WSL N1x, also confirm these requirements:
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
-If N1x readiness does not match, Windows Express selects WSL-local Ollama during onboarding.
-If a required N1x readiness check fails after selection starts, onboarding stops before installation.
-Managed N1x WSL selection rejects any other Docker selector.
+For Windows WSL Station GB300, also confirm these requirements:
+
+- Use Arm64 WSL on a Windows product identified as Station GB300.
+- Require the Docker Desktop proof to reconcile every reported GPU and include an `NVIDIA GB300` device.
+- Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
+- Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
+- Provide at least 48,000 MiB of aggregate GPU memory.
+- Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
+
+If neither readiness contract matches, Windows Express selects WSL-local Ollama during onboarding.
+If a required readiness check fails after selection starts, onboarding stops before installation.
+Managed WSL selection rejects any other Docker selector.
 
 NemoClaw uses `HF_TOKEN` only while it acquires the model.
 It does not write the value to managed llama.cpp state, the receipt, the serving container environment, or the sandbox registry.
@@ -161,8 +170,8 @@ NemoClaw lists compatible managed llama.cpp profiles with automatic selection in
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and `NEMOCLAW_SERVING_PRESET` and marks the unique highest-priority compatible profile as `(recommended)`.
 On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
 On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
-During Windows Express or non-interactive onboarding, a qualifying Windows WSL N1x host selects managed llama.cpp without a provider prompt when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset.
-With `NEMOCLAW_LLAMACPP_RECIPE` unset, it selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)**; a compatible explicit recipe selects that managed recipe.
+During Windows Express or non-interactive onboarding, a qualifying Windows WSL N1x or Station GB300 host selects managed llama.cpp without a provider prompt when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset.
+With `NEMOCLAW_LLAMACPP_RECIPE` unset, it selects the compatible **Qwen 3.6 35B-A3B** managed profile for that host; a compatible explicit recipe selects the same managed recipe.
 Ordinary interactive onboarding lists the same recommended profile but allows another provider selection.
 The explicit-only Meta Muse Glimmer profile does not appear in the menu.
 Select any listed profile to install its exact repository-owned recipe.
@@ -189,7 +198,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 ```
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
-For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset for automatic managed-provider selection.
+For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x or Station GB300 host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset for automatic managed-provider selection.
 Leave `NEMOCLAW_LLAMACPP_RECIPE` unset for the automatic Qwen recipe, or set `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1` when automation must make the selected recipe explicit.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.

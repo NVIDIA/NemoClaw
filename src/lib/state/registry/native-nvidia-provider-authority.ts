@@ -109,3 +109,28 @@ function removeHostedAuthority(
   }
   return changed;
 }
+
+export function listNativeHostedProviderAttachmentSandboxNames(
+  profileId: string,
+  gatewayName?: string,
+): readonly string[] {
+  return Object.values(load().sandboxes)
+    .filter((sandbox) => !gatewayName || sandbox.gatewayName === gatewayName)
+    .filter(
+      (sandbox) =>
+        sandbox.nativeHostedProviderAttachment?.profileId === profileId ||
+        sandbox.nativeNvidiaProviderAttachment?.profileId === profileId ||
+        sandbox.nativeHostedProviderAuthorities?.some((receipt) => receipt.profileId === profileId),
+    )
+    .map((sandbox) => sandbox.name)
+    .sort();
+}
+
+export function listNativeNvidiaProviderAttachmentSandboxNames(
+  gatewayName?: string,
+): readonly string[] {
+  return listNativeHostedProviderAttachmentSandboxNames(
+    "nemoclaw-nvidia-inference-v1",
+    gatewayName,
+  );
+}
