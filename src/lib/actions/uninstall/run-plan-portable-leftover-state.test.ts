@@ -333,6 +333,55 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
+  it.each<[string, (session: Record<string, unknown>) => void]>([
+    [
+      "session machine is incomplete",
+      (session) => {
+        (session.machine as Record<string, unknown>).state = "preflight";
+      },
+    ],
+    [
+      "checkpoint machine is incomplete",
+      (session) => {
+        (session.checkpoint as Record<string, unknown>).machineState = "preflight";
+      },
+    ],
+    [
+      "machine snapshot version is unsupported",
+      (session) => {
+        (session.machine as Record<string, unknown>).version = 2;
+      },
+    ],
+    [
+      "machine snapshot revision is invalid",
+      (session) => {
+        (session.machine as Record<string, unknown>).revision = -1;
+      },
+    ],
+  ])("refuses post-destroy ordinary uninstall when %s", async (_case, corruptSession) => {
+    const host = scope("nemoclaw-uninstall-incomplete-ordinary-machine-");
+    completedOpenClawAuthority(host, "default");
+    mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), (session) => {
+      session.sandboxName = null;
+      corruptSession(session);
+    });
+    mutateJsonFile(path.join(host.stateDir, "sandboxes.json"), (registry) => {
+      registry.defaultSandbox = null;
+      registry.sandboxes = {};
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
   it("refuses a cleared session identity while any registry row remains", async () => {
     const host = scope("nemoclaw-uninstall-cleared-session-with-registry-");
     completedOpenClawAuthority(host, "default");

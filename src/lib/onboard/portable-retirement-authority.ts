@@ -321,11 +321,20 @@ function assertOrdinaryOnboardAuthority(
   deps: PortableAuthorityAdmissionDeps,
 ): void {
   const { sandboxIdentity, gatewayAuthority } = checkpoint.checkpoint;
+  const rawMachine = rawSession.machine;
   const sandboxNameCleared = rawSession.sandboxName === null;
   if (
     rawSession.version !== 1 ||
     typeof rawSession.sessionId !== "string" ||
     checkpoint.checkpoint.sessionId !== rawSession.sessionId ||
+    !rawMachine ||
+    typeof rawMachine !== "object" ||
+    Array.isArray(rawMachine) ||
+    (rawMachine as Record<string, unknown>).version !== 1 ||
+    (rawMachine as Record<string, unknown>).state !== "complete" ||
+    !Number.isSafeInteger((rawMachine as Record<string, unknown>).revision) ||
+    ((rawMachine as Record<string, unknown>).revision as number) < 0 ||
+    checkpoint.checkpoint.machineState !== "complete" ||
     (!sandboxNameCleared &&
       (typeof rawSession.sandboxName !== "string" || !rawSession.sandboxName)) ||
     (rawSession.agent !== null && typeof rawSession.agent !== "string") ||
