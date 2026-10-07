@@ -275,8 +275,9 @@ docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
 On native Linux, the Docker inspection output must be `{}`.
-On Docker Desktop WSL, it must show one `8081/tcp` binding with `HostIp` set to `127.0.0.1` and `HostPort` set to `0`.
-Docker assigns the runtime port; inspect `.NetworkSettings.Ports` to see it.
+On Docker Desktop WSL, it must show one `8081/tcp` binding with `HostIp` set to `127.0.0.1`.
+The configured `HostPort` may be empty or `0` when Docker assigns the port.
+Inspect `.NetworkSettings.Ports` to confirm a nonzero assigned port bound to `127.0.0.1`.
 The host-owned private bridge still listens on loopback.
 These checks do not establish agent and model qualification.
 

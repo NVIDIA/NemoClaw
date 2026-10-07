@@ -31,6 +31,7 @@ import {
   MODEL_CONTENT,
   MODEL_DIGEST,
   MODEL_FILENAME,
+  modelFilesystemIdentity,
   NETWORK_ID,
   PROBE_IMAGE,
   RECEIPT_TARGET_SHA256,
@@ -41,6 +42,8 @@ import {
 } from "./docker-llama-cpp-managed-lifecycle.test-support";
 import {
   createDockerFixture,
+  dockerCommandPrefixes,
+  hostNetworkRuns,
   type DockerFixture,
 } from "./docker-llama-cpp-managed-lifecycle-engine.test-support";
 import {
@@ -98,17 +101,6 @@ beforeEach(() => {
 
 afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
 
-function identity() {
-  const status = fs.lstatSync(modelPath, { bigint: true });
-  return {
-    ctimeNs: status.ctimeNs,
-    dev: status.dev,
-    ino: status.ino,
-    mtimeNs: status.mtimeNs,
-    size: status.size,
-  };
-}
-
 function keyRootIdentitySha256(): string {
   const status = fs.lstatSync(apiKeyRoot, { bigint: true });
   return rawDigest({
@@ -136,7 +128,7 @@ function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
     imageReference: IMAGE,
     model: {
       digest: MODEL_DIGEST,
-      filesystemIdentity: identity(),
+      filesystemIdentity: modelFilesystemIdentity(modelPath),
       hostPath: modelPath,
       sizeBytes: MODEL_CONTENT.length,
     },
@@ -274,9 +266,6 @@ function dockerFixture(
     publishedBindingCount,
   );
 }
-function dockerCommandPrefixes(fixture: DockerFixture): unknown[] {
-  return fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2));
-}
 
 function options(
   fixture: DockerFixture,
@@ -323,12 +312,6 @@ function hostProbeLifecycle(
   return { fixture, hostLoopbackProbe, lifecycle, store };
 }
 
-function hostNetworkRuns(fixture: DockerFixture): readonly (readonly string[])[] {
-  return fixture.capture.mock.calls
-    .map(([argv]) => argv as readonly string[])
-    .filter((argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host");
-}
-
 function preparedJournal(): HostLocalCreateJournalRecord {
   return {
     schemaVersion: 1,
@@ -349,11 +332,11 @@ function preparedJournal(): HostLocalCreateJournalRecord {
         recipeId: plan().recipeId,
         digest: MODEL_DIGEST,
         filesystemIdentitySha256: rawDigest({
-          dev: identity().dev.toString(),
-          ino: identity().ino.toString(),
-          size: identity().size.toString(),
-          mtimeNs: identity().mtimeNs.toString(),
-          ctimeNs: identity().ctimeNs.toString(),
+          dev: modelFilesystemIdentity(modelPath).dev.toString(),
+          ino: modelFilesystemIdentity(modelPath).ino.toString(),
+          size: modelFilesystemIdentity(modelPath).size.toString(),
+          mtimeNs: modelFilesystemIdentity(modelPath).mtimeNs.toString(),
+          ctimeNs: modelFilesystemIdentity(modelPath).ctimeNs.toString(),
         }),
         sizeBytes: MODEL_CONTENT.length,
       },
@@ -672,35 +655,40 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
-  it("resumes an already-running receipt without creating or starting resources (#8144)", () => {
-    const fixture = dockerFixture();
-    const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(receiptWriter());
-    fixture.capture.mockClear();
-
-    expect(lifecycle.resume(receipt)).toEqual(receipt);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls).toContainEqual(expect.arrayContaining(["container", "inspect", RUNTIME_ID]));
-    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["start"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
-  });
-
-  it("resumes only the receipt-bound stopped runtime and rechecks readiness (#8144)", () => {
-    const fixture = dockerFixture();
-    const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(receiptWriter());
-    lifecycle.runtime.stopManaged(receipt);
-    fixture.capture.mockClear();
-
-    expect(lifecycle.resume(receipt)).toEqual(receipt);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
-    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
-  });
+  it.each([
+    [true, undefined],
+    [false, undefined],
+    [false, true],
+  ] as const)(
+    "resumes an owned runtime with running=%s and requested WSL publication=%s (#12285)",
+    (running, loopbackUpstream) => {
+      const fixture = dockerFixture();
+      const input = options(fixture);
+      const bridge = privateBridgeFixture();
+      const receipt = createLifecycle(input, {}, bridge).start(receiptWriter());
+      fixture.setContainerState(running, running ? "running" : "exited");
+      fixture.capture.mockClear();
+      const updated = createLifecycle(
+        { ...input, bindings: { ...input.bindings, loopbackUpstream } },
+        {},
+        bridge,
+      );
+      expect(updated.resume(receipt)).toEqual(receipt);
+      const calls = fixture.capture.mock.calls.map((call) => call[0]);
+      expect(calls).toContainEqual(expect.arrayContaining(["container", "inspect", RUNTIME_ID]));
+      expect(calls.filter((args) => args[0] === "start")).toEqual(
+        running ? [] : [["start", RUNTIME_ID]],
+      );
+      expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+      expect(updated.runtime.inspectManaged(receipt).running).toBe(true);
+      updated.runtime.preserveForRebuild(receipt);
+      updated.runtime.stopManaged(receipt);
+      updated.runtime.prepareDestroy(receipt);
+      expect(updated.runtime.destroy(receipt).status).toBe("removed");
+    },
+  );
 
   it("preserves receipt-bound resources after bridge refusal during resume (#8712)", () => {
     const fixture = dockerFixture();
@@ -1024,24 +1012,32 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
   });
 
-  it("preserves and replays when receipt preparation commits then throws (#8414)", () => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const writer = receiptWriter();
-    const lifecycle = controller(fixture, store);
-    store.failNextPrepareReceiptAfterCommit();
+  it.each([undefined, true] as const)(
+    "replays a prepared receipt with requested WSL publication %s (#12285)",
+    (loopbackUpstream) => {
+      const fixture = dockerFixture();
+      const store = journalStore();
+      const writer = receiptWriter();
+      const base = options(fixture, store);
+      const lifecycle = createLifecycle(base);
+      store.failNextPrepareReceiptAfterCommit();
 
-    expect(() => lifecycle.start(writer)).toThrow("prepare receipt outcome unknown");
-    expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
-    expect(writer.writeExact).not.toHaveBeenCalled();
-    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
-    expect(lifecycle.recoverUnfinished(writer)).toEqual({
-      recovered: [TRANSACTION_ID],
-      failures: [],
-    });
-    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
-    expect(writer.writeExact).toHaveBeenCalledTimes(1);
-  });
+      expect(() => lifecycle.start(writer)).toThrow("prepare receipt outcome unknown");
+      expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
+      expect(writer.writeExact).not.toHaveBeenCalled();
+      expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
+      const updated = createLifecycle({
+        ...base,
+        bindings: { ...base.bindings, loopbackUpstream },
+      });
+      expect(updated.recoverUnfinished(writer)).toEqual({
+        recovered: [TRANSACTION_ID],
+        failures: [],
+      });
+      expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+      expect(writer.writeExact).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("preserves and replays a receipt when the exact writer commits then throws (#8414)", () => {
     const fixture = dockerFixture();

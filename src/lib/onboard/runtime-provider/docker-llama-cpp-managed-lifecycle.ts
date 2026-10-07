@@ -1455,7 +1455,7 @@ function writePreparedReceipt(
   return committed;
 }
 
-export function createDockerLlamaCppManagedLifecycle(
+function createDockerLlamaCppLifecycleForTopology(
   options: DockerLlamaCppManagedLifecycleOptions,
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
 ): DockerLlamaCppManagedLifecycle {
@@ -2156,6 +2156,64 @@ export function createDockerLlamaCppManagedLifecycle(
       return Object.freeze({
         recovered: Object.freeze(recovered),
         failures: Object.freeze(failures),
+      });
+    },
+  });
+}
+
+/** Keep recorded no-publication runtimes controllable without changing their pinned image or receipt. */
+export function createDockerLlamaCppManagedLifecycle(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
+): DockerLlamaCppManagedLifecycle {
+  const current = createDockerLlamaCppLifecycleForTopology(options, dependencies);
+  if (!options.bindings.loopbackUpstream) return current;
+  const legacy = { ...options, bindings: { ...options.bindings, loopbackUpstream: undefined } };
+  const isLegacy = (journal: HostLocalCreateJournalRecord): boolean =>
+    journal.specSha256 ===
+    specificationDigest(legacy, journal.apiKeyRootIdentitySha256, journal.receiptTargetSha256);
+  const forReceipt = (value: HostLocalInferenceReceipt): DockerLlamaCppManagedLifecycle => {
+    const receipt = normalizeHostLocalInferenceReceipt(value);
+    const journal =
+      receipt.runtime.kind === "container" && receipt.runtime.model !== undefined
+        ? options.journalStore.load(receipt.runtime.model.generation)
+        : null;
+    return journal !== null && isLegacy(journal)
+      ? createDockerLlamaCppLifecycleForTopology(legacy, dependencies)
+      : current;
+  };
+  const recoverTopology = (writer: HostLocalInferenceReceiptWriter, old: boolean) =>
+    createDockerLlamaCppLifecycleForTopology(
+      {
+        ...(old ? legacy : options),
+        journalStore: {
+          ...options.journalStore,
+          list: () => options.journalStore.list().filter((journal) => isLegacy(journal) === old),
+        },
+      },
+      dependencies,
+    ).recoverUnfinished(writer);
+  return Object.freeze({
+    ...current,
+    runtime: Object.freeze({
+      ...current.runtime,
+      inspectManaged: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.inspectManaged(receipt),
+      stopManaged: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.stopManaged(receipt),
+      preserveForRebuild: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.preserveForRebuild(receipt),
+      prepareDestroy: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.prepareDestroy(receipt),
+      destroy: (receipt: HostLocalInferenceReceipt) => forReceipt(receipt).runtime.destroy(receipt),
+    }),
+    resume: (receipt: HostLocalInferenceReceipt) => forReceipt(receipt).resume(receipt),
+    recoverUnfinished: (writer: HostLocalInferenceReceiptWriter) => {
+      const previous = recoverTopology(writer, true);
+      const next = recoverTopology(writer, false);
+      return Object.freeze({
+        recovered: Object.freeze([...previous.recovered, ...next.recovered]),
+        failures: Object.freeze([...previous.failures, ...next.failures]),
       });
     },
   });

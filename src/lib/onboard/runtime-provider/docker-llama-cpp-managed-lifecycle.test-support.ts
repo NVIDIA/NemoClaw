@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { createHash } from "node:crypto";
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
@@ -136,5 +138,16 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       slotInspection: "disabled",
       ui: "disabled",
     },
+  };
+}
+
+export function modelFilesystemIdentity(modelPath: string) {
+  const status = fs.lstatSync(modelPath, { bigint: true });
+  return {
+    ctimeNs: status.ctimeNs,
+    dev: status.dev,
+    ino: status.ino,
+    mtimeNs: status.mtimeNs,
+    size: status.size,
   };
 }

@@ -448,3 +448,13 @@ export function createDockerFixture(
     },
   };
 }
+
+export function dockerCommandPrefixes(fixture: DockerFixture): unknown[] {
+  return fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2));
+}
+
+export function hostNetworkRuns(fixture: DockerFixture): readonly (readonly string[])[] {
+  return fixture.capture.mock.calls
+    .map(([argv]) => argv as readonly string[])
+    .filter((argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host");
+}
