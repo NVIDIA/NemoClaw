@@ -41,5 +41,5 @@ what each script in this directory does — it has no instructions of its own.
 | `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Called by the e2e setup scripts. Do not run them as the HPA demo path. |
 | `agent-common.sh` | Per-agent config table sourced by the scripts above |
 | `test-inference-auth-contract.ts` | Local contract: metrics-proxy requires the inference API key and rejects non-object chat bodies |
-| `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` gauge idle-expires so HPA can scale down |
-| `test-e2e-load-stop.py` | Local contract: sandbox clients stop when HPA current or desired replicas hit 8 |
+| `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` uses a 30s sample window and idle-expires so HPA can scale down |
+| `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; a failed poll is not treated as 8 |

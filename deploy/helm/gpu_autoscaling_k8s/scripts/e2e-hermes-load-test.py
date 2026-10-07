@@ -92,7 +92,7 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
 
 
 def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
-    """Stop load when HPA wants or has target GPUs. 0/0 means the poll failed."""
+    """True when HPA current or desired replicas reached the demo target. 0/0 is a failed poll."""
     return max(current, desired) >= target
 
 
@@ -329,7 +329,6 @@ async def run_test(args: argparse.Namespace) -> int:
     hpa_rows: list[dict[str, object]] = []
     max_replicas = 0
     reached_target = False
-    hold_started: float | None = None
 
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} Hermes agents (1:1)")
@@ -338,7 +337,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
 
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target, hold_started
+        nonlocal max_replicas, reached_target
         last_line = ""
         zero_polls = 0
         while not stop_load.is_set():
@@ -359,24 +358,12 @@ async def run_test(args: argparse.Namespace) -> int:
                 zero_polls += 1
                 if zero_polls == 1 or zero_polls % 15 == 0:
                     print(
-                        "[hpa] replica counts are 0 (kubectl failed); "
-                        "workload will not stop at 8 GPUs",
+                        "[hpa] replica counts are 0 (kubectl failed)",
                         file=sys.stderr,
                         flush=True,
                     )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
-                if hold_started is None:
-                    hold_started = time.monotonic()
-                if time.monotonic() - hold_started >= args.hold_sec:
-                    reached_target = True
-                    print(
-                        f"[load] HPA current={current} desired={desired} "
-                        f"(target {args.target_pods}); stopping workload",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    stop_load.set()
-                    return
+                reached_target = True
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:

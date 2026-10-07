@@ -321,6 +321,8 @@ spec:
                   key: {{ .Values.inference.auth.key | quote }}
             - name: LLM_LATENCY_IDLE_EXPIRE_MS
               value: {{ .Values.metrics.llmLatencyIdleExpireMs | default 15000 | quote }}
+            - name: LLM_LATENCY_WINDOW_MS
+              value: {{ .Values.metrics.llmLatencyWindowMs | default 30000 | quote }}
           volumeMounts:
             - name: app
               mountPath: /app

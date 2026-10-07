@@ -170,7 +170,7 @@ def _hpa_int(value: object) -> int:
 
 
 def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
-    """Stop load when HPA wants or has target GPUs. 0/0 means the poll failed."""
+    """True when HPA current or desired replicas reached the demo target. 0/0 is a failed poll."""
     return max(current, desired) >= target
 
 
@@ -598,7 +598,7 @@ async def simulate_user(
         log_handle.close()
     rc = proc.returncode if proc.returncode is not None else 1
     chats_ok, chats_err, tokens = parse_load_counts(log_path)
-    # run_test stops load early (HPA target or deadline) and SIGTERM the exec.
+    # run_test may SIGTERM the exec when DURATION_SEC elapses.
     # Count the user from chat.send results, not from the killed process exit code.
     if chats_ok > 0 and (rc == 0 or stop_event.is_set()):
         ok = 1
@@ -627,7 +627,6 @@ async def run_test(args: argparse.Namespace) -> int:
     hpa_rows: list[dict[str, object]] = []
     max_replicas = 0
     reached_target = False
-    hold_started: float | None = None
 
     endpoints: list[dict[str, object]] = []
     if args.host:
@@ -658,15 +657,7 @@ async def run_test(args: argparse.Namespace) -> int:
 
     skip_hpa = bool(args.chat_only and not args.host)
     if args.host:
-        current, desired, metric = read_hpa_http_status(args.host, args.discovery_port)
-        if max(current, desired) < 1:
-            print(
-                f"ERROR: http://{args.host}:{args.discovery_port}/hpa did not report replicas "
-                f"(current={current} desired={desired}). The laptop client cannot stop at "
-                f"{args.target_pods} GPUs.",
-                file=sys.stderr,
-            )
-            return 2
+        _current, _desired, metric = read_hpa_http_status(args.host, args.discovery_port)
         if (
             not os.environ.get("MAX_TOKENS_FROM_USER", "").strip()
             and "latency" in metric.lower()
@@ -675,7 +666,7 @@ async def run_test(args: argparse.Namespace) -> int:
             print("[load] latency HPA on laptop: MAX_TOKENS=64", flush=True)
 
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target, hold_started
+        nonlocal max_replicas, reached_target
         last_line = ""
         zero_polls = 0
         while not stop_load.is_set():
@@ -701,26 +692,12 @@ async def run_test(args: argparse.Namespace) -> int:
                 zero_polls += 1
                 if zero_polls == 1 or zero_polls % 15 == 0:
                     print(
-                        "[hpa] replica counts are 0 (kubectl or /hpa failed); "
-                        "workload will not stop at 8 GPUs",
+                        "[hpa] replica counts are 0 (kubectl or /hpa failed)",
                         file=sys.stderr,
                         flush=True,
                     )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
-                if hold_started is None:
-                    hold_started = time.monotonic()
-                if time.monotonic() - hold_started >= args.hold_sec:
-                    reached_target = True
-                    print(
-                        f"[load] HPA current={current} desired={desired} "
-                        f"(target {args.target_pods}); stopping workload",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    stop_load.set()
-                    if not args.host:
-                        await asyncio.to_thread(stop_new_sandbox_chats, args.prefix, args.users)
-                    return
+                reached_target = True
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:

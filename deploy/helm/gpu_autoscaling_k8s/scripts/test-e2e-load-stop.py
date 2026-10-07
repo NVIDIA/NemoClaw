@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Contract: e2e clients stop when HPA current or desired replicas hit the target."""
+"""Contract: HPA helper reports 8 GPUs; 0/0 polls are not treated as 8."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ reached = mod.hpa_replicas_reached_target
 assert reached(0, 0, 8) is False, "failed HPA poll must not look like 8 GPUs"
 assert reached(1, 1, 8) is False
 assert reached(7, 7, 8) is False
-assert reached(7, 8, 8) is True, "stop as soon as HPA wants 8"
+assert reached(7, 8, 8) is True, "desired 8 is at the demo target"
 assert reached(8, 7, 8) is True
 assert reached(8, 8, 8) is True
 assert reached(2, 3, 8) is False
-print("OK: e2e load stops when HPA current or desired replicas reach the target")
+print("OK: HPA helper reports the 8 GPU target without treating a failed poll as 8")

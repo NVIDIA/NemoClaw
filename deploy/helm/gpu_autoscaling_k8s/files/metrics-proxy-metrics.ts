@@ -2,20 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Shared Prometheus helpers for metrics-proxy /metrics (LLM latency, HTTP counters).
-// HPA latency_avg is the mean of every sample since the last idle reset.
+// HPA latency_avg is the mean of samples in the recent window (not all-time).
 
 // After this many ms with no new samples, clear the HPA average so it reports 0
 // (below target) instead of retaining the last high latency. 0 disables idle
-// expiration. Clients stop the workload at max GPUs; this only affects the HPA
-// gauge after those in-flight replies finish. It does not drop in-flight chats.
+// expiration. This does not drop in-flight chats.
 const configuredIdleExpireMs = Number(process.env.LLM_LATENCY_IDLE_EXPIRE_MS ?? "15000");
 const LLM_LATENCY_IDLE_EXPIRE_MS =
   Number.isFinite(configuredIdleExpireMs) && configuredIdleExpireMs >= 0
     ? configuredIdleExpireMs
     : 15_000;
 
-let hpaLatencySumMs = 0;
-let hpaLatencyCount = 0;
+// Drop samples older than this so HPA tracks current latency while chats continue.
+// 0 keeps every sample until idle expire. No 128-sample cap.
+const configuredWindowMs = Number(process.env.LLM_LATENCY_WINDOW_MS ?? "30000");
+const LLM_LATENCY_WINDOW_MS =
+  Number.isFinite(configuredWindowMs) && configuredWindowMs >= 0 ? configuredWindowMs : 30_000;
+
+type HpaSample = { atMs: number; durationMs: number };
+
+let hpaSamples: HpaSample[] = [];
 let llmDurationSumSec = 0;
 let llmDurationCount = 0;
 let llmRequestsOk = 0;
@@ -27,17 +33,22 @@ const llmHistogramBucketsSec = [0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300];
 const llmHistogramCounts = Array.from({ length: llmHistogramBucketsSec.length + 1 }, () => 0);
 
 function clearHpaLatencyAvg() {
-  hpaLatencySumMs = 0;
-  hpaLatencyCount = 0;
+  hpaSamples = [];
   lastLlmSampleAtMs = 0;
 }
 
-function expireIdleHpaLatencyAvg(nowMs = nowMsProvider()) {
-  if (!hpaLatencyCount || LLM_LATENCY_IDLE_EXPIRE_MS <= 0 || lastLlmSampleAtMs <= 0) {
+function pruneHpaSamples(nowMs = nowMsProvider()) {
+  if (!hpaSamples.length) {
     return;
   }
-  if (nowMs - lastLlmSampleAtMs >= LLM_LATENCY_IDLE_EXPIRE_MS) {
-    clearHpaLatencyAvg();
+  if (LLM_LATENCY_IDLE_EXPIRE_MS > 0 && lastLlmSampleAtMs > 0) {
+    if (nowMs - lastLlmSampleAtMs >= LLM_LATENCY_IDLE_EXPIRE_MS) {
+      clearHpaLatencyAvg();
+      return;
+    }
+  }
+  if (LLM_LATENCY_WINDOW_MS > 0) {
+    hpaSamples = hpaSamples.filter((sample) => nowMs - sample.atMs <= LLM_LATENCY_WINDOW_MS);
   }
 }
 
@@ -51,10 +62,11 @@ export function recordLlmLatency(durationMs, ok) {
   if (ok) llmRequestsOk += 1;
   else llmRequestsError += 1;
 
-  hpaLatencySumMs += normalizedMs;
-  hpaLatencyCount += 1;
-  lastLlmSampleAtMs = nowMsProvider();
+  const atMs = nowMsProvider();
+  hpaSamples.push({ atMs, durationMs: normalizedMs });
+  lastLlmSampleAtMs = atMs;
   llmEverSampled = true;
+  pruneHpaSamples(atMs);
 
   let bucketIdx = llmHistogramBucketsSec.findIndex((bound) => sec <= bound);
   if (bucketIdx === -1) bucketIdx = llmHistogramBucketsSec.length;
@@ -64,9 +76,10 @@ export function recordLlmLatency(durationMs, ok) {
 }
 
 function llmLatencyAvgMs() {
-  expireIdleHpaLatencyAvg();
-  if (!hpaLatencyCount) return 0;
-  return hpaLatencySumMs / hpaLatencyCount;
+  pruneHpaSamples();
+  if (!hpaSamples.length) return 0;
+  const sum = hpaSamples.reduce((total, sample) => total + sample.durationMs, 0);
+  return sum / hpaSamples.length;
 }
 
 export function llmMetricsLines() {
@@ -96,7 +109,7 @@ export function llmMetricsLines() {
   // scale-down can proceed.
   if (llmEverSampled) {
     lines.push(
-      "# HELP nemoclaw_llm_latency_avg_milliseconds Average LLM latency of all samples since last idle reset",
+      "# HELP nemoclaw_llm_latency_avg_milliseconds Average LLM latency of samples in the recent window",
       "# TYPE nemoclaw_llm_latency_avg_milliseconds gauge",
       `nemoclaw_llm_latency_avg_milliseconds ${Math.round(avg)}`,
     );

@@ -2,14 +2,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Focused contract for rolling LLM latency_avg idle-expiration used by HPA.
-// After load stops, the gauge must drop to 0 so scale-down is not blocked by stale samples.
+// Focused contract for rolling LLM latency_avg used by HPA.
+// Recent samples replace old high values while chats continue. After load
+// stops, the gauge must drop to 0 so scale-down is not blocked by stale samples.
 
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 process.env.LLM_LATENCY_IDLE_EXPIRE_MS = "100";
+process.env.LLM_LATENCY_WINDOW_MS = "100";
 
 const metricsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../files/metrics-proxy-metrics.ts");
 const {
@@ -62,8 +64,15 @@ recordLlmLatency(4000, true);
 lines = llmMetricsLines();
 assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 4000);
 
+// Continued chats drop aged high samples so HPA follows current latency.
+recordLlmLatency(16000, true);
+nowMs += 101;
+recordLlmLatency(2500, true);
+lines = llmMetricsLines();
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 2500);
+
 // Cumulative request counters are not cleared by idle expiration.
-assert.match(lines.join("\n"), /nemoclaw_llm_requests_total\{result="success"\} 23/);
+assert.match(lines.join("\n"), /nemoclaw_llm_requests_total\{result="success"\} 25/);
 
 setLlmMetricsClockForTests(null);
-console.log("OK: rolling LLM latency_avg gauge idle-expires for HPA scale-down");
+console.log("OK: rolling LLM latency_avg gauge windows recent samples and idle-expires");
