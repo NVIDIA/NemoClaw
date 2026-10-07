@@ -11,6 +11,10 @@ import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshe
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
+  ensureNativeNvidiaProviderAttached,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia";
+import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
@@ -58,6 +62,31 @@ function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProvide
       run: (args, options) => deps.runOpenshell(args, options),
     })
   );
+}
+
+export function usesNativeNvidiaProvider(inferenceProvider: string | null): boolean {
+  return inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER;
+}
+
+export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inferenceProvider: string | null;
+  readonly expected: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!usesNativeNvidiaProvider(input.inferenceProvider)) return;
+  if (!input.expected) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+    );
+  }
+  await ensureNativeNvidiaProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
 }
 
 type ExpectedMessagingBindingInspection =

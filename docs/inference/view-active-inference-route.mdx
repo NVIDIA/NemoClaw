@@ -1,24 +1,28 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "View the Active Inference Route"
-sidebar-title: "View the Active Route"
-description: "Inspect the provider and model on the live NemoClaw-managed OpenShell inference route and the persisted URL for a compatible custom endpoint."
-description-agent: "Shows the live inference provider and model, plus the persisted URL for a compatible custom endpoint. Use when checking or reproducing the active route."
+title: "View the Selected Inference Path"
+sidebar-title: "View the Inference Path"
+description: "Inspect a sandbox-attached NVIDIA provider or the live NemoClaw-managed OpenShell inference route."
+description-agent: "Shows the selected sandbox's native NVIDIA provider path or the live shared route for another provider. Use when checking the active inference path."
 keywords:
   ["nemoclaw inference get", "active inference provider", "active inference model", "compatible endpoint URL"]
 content:
   type: "how_to"
 ---
 
-Use the NemoClaw CLI to read the provider and model on the live OpenShell inference route.
+Use the NemoClaw CLI to read the selected inference provider and model.
+When the selected sandbox has a valid native NVIDIA provider attachment, the command reports the sandbox's recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+For other providers, the command reads the live OpenShell inference route.
 For a compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 This command reports configuration state and does not authenticate a model request.
 
-## Read the Live Route
+## Read the Selected Inference Path
 
 Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
-The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+The direct form first checks the default sandbox in the registry that `NEMOCLAW_GATEWAY_PORT` selects.
+It reports that sandbox's native NVIDIA provider path when a valid attachment exists.
+Otherwise, it reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
 $$nemoclaw inference get
@@ -29,6 +33,7 @@ Expected output:
 ```text
 Provider: nvidia-prod
 Model:    nvidia/nemotron-3-super-120b-a12b
+Endpoint: https://integrate.api.nvidia.com/v1
 ```
 
 Pass `--json` for machine-readable output.
@@ -42,7 +47,8 @@ Expected output:
 ```json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "endpointUrl": "https://integrate.api.nvidia.com/v1"
 }
 ```
 
@@ -66,7 +72,8 @@ Endpoint: https://inference.example.com/v1
 }
 ```
 
-Managed providers keep the existing provider-and-model output.
+A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the provider-and-model output.
+Other managed providers keep the provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, uses another path shape, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
@@ -80,7 +87,7 @@ These endpoint-omission fields never include a stored URL, registry path, or und
 If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
 If the requested sandbox has an invalid gateway binding, the error names that sandbox and tells you to repair or remove its registration without displaying the rejected gateway value or port.
 
-The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
+A shared-route lookup exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
 For lookup failures, the error names the gateway without rendering command output.
 It reports a timeout, a nonzero exit status, no exit status, or output NemoClaw cannot interpret after a command exits successfully.
@@ -96,10 +103,11 @@ $$nemoclaw <name> inference get
 ```
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
+When the named sandbox has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+Otherwise, when that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
 For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
-OpenShell exposes one inference route to every sandbox registered on the same gateway.
+For other providers, OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
 ## Include Sandbox Health
 

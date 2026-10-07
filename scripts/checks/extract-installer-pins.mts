@@ -152,6 +152,45 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // supervisor runtime template. Its prospective digest is repeated only for
 // release records with a supervisor identity, and its trust test constructs
 // the exact follow-up template before the runtime change can land.
+const V00116_BREV_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+  "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+  "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+  // Exact #11251 template after immutable stable-channel enforcement.
+  "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+  // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
+  "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+  // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
+  "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+  // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
+  "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+  // Exact #12192 secure npm diagnostics; release pins stay unchanged.
+  "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+  // Exact #12192 shared npm diagnostics; release pins stay unchanged.
+  "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+  // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
+  "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+] as const);
+
+const V00116_INSTALLER_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+  // Exact #11251 template after immutable stable-override validation.
+  "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+  // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+  "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
+] as const);
+
+const V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  // Exact #11251 gateway-preparation runtime template.
+  "6093aa5b0f20988cfc59e0613cdf1fb21f814b43cc3ec95bb17da14dc0620b60",
+  // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
+  "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
+  // Exact #11251 template after stable supervisor override binding.
+  "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
+  // Exact #11251 template after fail-closed gateway recovery validation.
+  "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+] as const);
+
 const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
     brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
@@ -502,23 +541,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   },
   {
     brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-      "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
-      "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
-      // Exact #11251 template after immutable stable-channel enforcement.
-      "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
-      // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
-      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
-      // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
-      "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
-      // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
-      "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
-      // Exact #12192 secure npm diagnostics; release pins stay unchanged.
-      "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
-      // Exact #12192 shared npm diagnostics; release pins stay unchanged.
-      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
-      // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
-      "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+      ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
       // Exact #12239 control-normalized npm diagnostics for #12192; release pins stay unchanged.
       "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
       // Exact #12376 npm replacement; base trust must precede runtime adoption.
@@ -532,13 +555,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // The v0.0.116 release publishes only MUSL standalone sandbox archives.
     // Trust only the exact full-cutover installer template whose stable Linux
     // path selects that ABI. The historical v0.0.106 record retains the GNU templates.
-    installerTemplateSha256: [
-      "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
-      // Exact #11251 template after immutable stable-override validation.
-      "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
-      // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
-      "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
-    ],
+    installerTemplateSha256: [...V00116_INSTALLER_TEMPLATE_BASELINE_SHA256],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -568,20 +585,68 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
       required: false,
       runtimeTemplateSha256: [
-        // Exact #11251 gateway-preparation runtime template.
-        "6093aa5b0f20988cfc59e0613cdf1fb21f814b43cc3ec95bb17da14dc0620b60",
-        // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
-        "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
-        // Exact #11251 template after stable supervisor override binding.
-        "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
-        // Exact #11251 template after fail-closed gateway recovery validation.
-        "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+        // Preserve the reviewed 0.0.116 supervisor templates.
+        ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
         // Exact #12376 thread-group template from #12614; base trust precedes runtime adoption.
         "2fb91b00c15aad1e5780a9e4199ca8ad944e849e3a32ad2b9bbb54c0255c0318",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
     version: "0.0.116",
+  },
+  {
+    brevTemplateSha256: [
+      ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
+      // Exact 0.1.2 pin selection with the merged main bootstrap diagnostics.
+      "bef651219365f79cfd3543fb7506bc941265e7580be164d916ff1efff9026fc5",
+      "7e9c35c5610f151345bb996a5e475af95e25c83ab9d95497f502002f74a1497b",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "a8ceb321f3d397a7ff9d07b0ffd6c06ad5d78021b9e477f5aca898ba98aa9bb8",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell.rb",
+    },
+    // OpenShell 0.1.2 retains the MUSL standalone sandbox layout.
+    installerTemplateSha256: [
+      ...V00116_INSTALLER_TEMPLATE_BASELINE_SHA256,
+      // Exact 0.1.2 pinned-sandbox feature check; runtime policy checks remain required.
+      "610fa58bc4242f23e6ce5e22444dd595995c5a9466bf406a34e5a548869377bc",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "13ed9929ef1a9bc0dbbbbddfd13f14870cea2f64bee3786d848c7b1836785dc7",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "df589be474d16af9cd38b22ab6738241d9a45a9caa5fa4847c3aa51de8b7c8aa",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "8475250201e4f72180c0d49b7898c7b33c28412f0373ef002a58c87c734255ae",
+      },
+    ],
+    sandboxBuilds: [
+      {
+        required: false,
+        sha256: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      },
+      {
+        required: false,
+        sha256: "9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa",
+      },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+      required: false,
+      runtimeTemplateSha256: [
+        ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
+        "dceba5ee9bf6d9cd20adf637d63d008c932f751c073bbb0a83cdce087518e917",
+      ],
+    },
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    version: "0.1.2",
   },
 ] as const;
 function fail(message: string): never {

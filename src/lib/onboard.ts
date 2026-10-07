@@ -2321,7 +2321,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     unloadOllamaModels,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
-    providerExistsInGateway,
+    ...onboardProviders.setupInferenceProviderDeps(runOpenshell),
     normalizeHermesAuthMethod,
     resolveHermesNousApiKey,
     checkHermesProviderStoreReachable,

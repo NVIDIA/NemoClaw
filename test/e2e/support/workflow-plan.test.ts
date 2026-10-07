@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(77);
+    expect(plan.coverageMatrix).toHaveLength(79);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -152,7 +152,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -330,18 +330,18 @@ describe("E2E workflow plan", () => {
       "llama-cpp-generic-gpu-default-docker",
       "messaging-compatible-endpoint-default-docker",
       "messaging-compatible-endpoint-default-podman",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
       "openclaw-inference-switch-default-docker",
       "openclaw-inference-switch-default-podman",
       "openclaw-skill-cli-default-docker",
       "openclaw-skill-cli-default-podman",
     ]);
   });
-
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
-
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -364,13 +364,14 @@ describe("E2E workflow plan", () => {
         }),
       ]),
     );
-    expect(plan.catalogueMatrices.standard).toContainEqual(
+    expect(plan.catalogueMatrices["nvidia-api"]).toContainEqual(
       expect.objectContaining({
         id: "openclaw-inference-switch",
-        display_name: "Inference: OpenClaw switches providers and remains responsive",
+        display_name: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
       }),
     );
     expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
       "catalogue-standard",
     ]);
@@ -379,7 +380,6 @@ describe("E2E workflow plan", () => {
     const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
       migratedTargetIds.includes(id),
     );
-
     expect(retainedMigratedJobs).toEqual([]);
   });
 
@@ -503,12 +503,12 @@ describe("E2E workflow plan", () => {
     [
       "hermes-inference-switch",
       {
-        profile: "standard",
+        profile: "nvidia-api",
         installNonInteractive: true,
         runnerKey: "hermes-inference-switch",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
-        shard: "anthropic",
+        shard: "native-nvidia",
       },
     ],
     [
