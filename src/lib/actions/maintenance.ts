@@ -413,9 +413,13 @@ export async function backupAllUnderPortableHostFence(
     }
     if (!result) throw new Error(`Backup for '${sb.name}' completed without a result`);
     if (result.success) {
-      console.log(
-        `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
-      );
+      const nativeArchive = result.manifest?.nativeState
+        ? path.join(result.manifest.backupPath, result.manifest.nativeState.archive)
+        : null;
+      const backupDescription = nativeArchive
+        ? `native state archived in ${nativeArchive} (files are inside the archive)`
+        : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
+      console.log(`  ${G}✓${R} ${sb.name}: ${backupDescription}`);
       backed++;
     } else {
       if (result.unreachable) {
