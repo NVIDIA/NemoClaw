@@ -65,7 +65,17 @@ describe("OpenClaw rebuild restoration verification", () => {
     }
     fs.writeFileSync(
       path.join(directory, "openclaw"),
-      '#!/bin/sh\nif [ "$1" = config ]; then printf "119\\n"; exit "$CONFIG_EXIT"; fi\nprintf "%s\\n" "$PLUGIN_JSON"\nexit "$PLUGIN_EXIT"\n',
+      `#!/bin/sh
+if [ "$#" -eq 4 ] && [ "$*" = "config get agents.defaults.timeoutSeconds --json" ]; then
+  printf '119\\n'
+  exit "$CONFIG_EXIT"
+fi
+if [ "$#" -eq 5 ] && [ "$*" = "plugins inspect e2e-rebuild-plugin --runtime --json" ]; then
+  printf '%s\\n' "$PLUGIN_JSON"
+  exit "$PLUGIN_EXIT"
+fi
+exit 2
+`,
       { mode: 0o700 },
     );
   });
@@ -74,10 +84,13 @@ describe("OpenClaw rebuild restoration verification", () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  function runRestoration(overrides: Record<string, string> = {}) {
+  function runRestoration(
+    overrides: Record<string, string> = {},
+    restoration = restorationScript(liveSource("rebuild-openclaw.test.ts")),
+  ) {
     const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
     const openclaw = quote(path.join(directory, "openclaw"));
-    const script = restorationScript(liveSource("rebuild-openclaw.test.ts"))
+    const script = restoration
       .replaceAll("/sandbox", quote(directory))
       .replaceAll("openclaw config", `${openclaw} config`)
       .replaceAll("openclaw plugins", `${openclaw} plugins`)
@@ -100,6 +113,40 @@ describe("OpenClaw rebuild restoration verification", () => {
 
   it("accepts restored state and a loaded plugin", () => {
     expect(runRestoration()).toEqual({ status: 0, stdout: "expected-marker\n119\n" });
+  });
+
+  it.each([
+    [
+      "wrong plugin ID",
+      "plugins inspect e2e-rebuild-plugin --runtime --json",
+      "plugins inspect other --runtime --json",
+    ],
+    [
+      "missing runtime inspection",
+      "plugins inspect e2e-rebuild-plugin --runtime --json",
+      "plugins inspect e2e-rebuild-plugin --json",
+    ],
+    [
+      "extra plugin argument",
+      "plugins inspect e2e-rebuild-plugin --runtime --json",
+      "plugins inspect e2e-rebuild-plugin --runtime --json extra",
+    ],
+    [
+      "wrong config key",
+      "config get agents.defaults.timeoutSeconds --json",
+      "config get other --json",
+    ],
+    [
+      "missing config JSON flag",
+      "config get agents.defaults.timeoutSeconds --json",
+      "config get agents.defaults.timeoutSeconds",
+    ],
+  ])("rejects %s in the restoration command", (_name, command, replacement) => {
+    const script = restorationScript(liveSource("rebuild-openclaw.test.ts")).replace(
+      command,
+      replacement,
+    );
+    expect(runRestoration({}, script)).toEqual({ status: 2, stdout: "" });
   });
 
   it.each(RESTORED_MARKERS)("rejects a missing %s", (marker) => {
