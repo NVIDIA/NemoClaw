@@ -27,6 +27,7 @@ import {
 
 const temporaryRoots: string[] = [];
 const archiveBytes = Buffer.from("reviewed OpenShell SDK fixture");
+const replacementArchiveBytes = Buffer.from("reviewed replacement OpenShell SDK fixture");
 const artifactName = "nvidia-openshell-sdk-0.0.106.tgz";
 const reviewed: ReviewedSourceRegistryPackage = {
   artifactName,
@@ -37,6 +38,7 @@ const reviewed: ReviewedSourceRegistryPackage = {
 };
 const replacement: ReviewedSourceRegistryPackage = {
   ...reviewed,
+  integrity: `sha512-${createHash("sha512").update(replacementArchiveBytes).digest("base64")}`,
   artifactName: "nvidia-openshell-sdk-0.0.116.tgz",
   label: "OpenShell TypeScript SDK 0.0.116",
   packageSpec: "@nvidia/openshell-sdk@0.0.116",
@@ -115,7 +117,12 @@ function fixture(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
   const lockfilePath = join(root, "package-lock.json");
   mkdirSync(artifactDirectory);
   mkdirSync(cacheDirectory);
-  writeFileSync(join(artifactDirectory, packageIdentity.artifactName), archiveBytes);
+  writeFileSync(
+    join(artifactDirectory, packageIdentity.artifactName),
+    packageIdentity.packageSpec === replacement.packageSpec
+      ? replacementArchiveBytes
+      : archiveBytes,
+  );
   writeFileSync(lockfilePath, JSON.stringify(reviewedLock(packageIdentity)));
   return { artifactDirectory, cacheDirectory, lockfilePath, root };
 }
@@ -287,24 +294,27 @@ describe("trusted OpenShell SDK archive preparation", () => {
   });
 
   it.each([
-    ["root", reviewed],
-    ["root", replacement],
-    ["nemoclaw", reviewed],
-    ["nemoclaw", replacement],
+    ["root", reviewed, archiveBytes],
+    ["root", replacement, replacementArchiveBytes],
+    ["nemoclaw", reviewed, archiveBytes],
+    ["nemoclaw", replacement, replacementArchiveBytes],
   ] as const)(
     "stages only the SDK selected by the %s lock from a dual archive",
-    async (location, selected) => {
+    async (location, selected, selectedBytes) => {
       const source = installFixture(location, selected);
       const stage = cacheStageMock();
       writeFileSync(join(source.artifactDirectory, reviewed.artifactName), archiveBytes);
-      writeFileSync(join(source.artifactDirectory, replacement.artifactName), archiveBytes);
+      writeFileSync(
+        join(source.artifactDirectory, replacement.artifactName),
+        replacementArchiveBytes,
+      );
       await prepareCiNpmInstallWithReviewedConfig(
         installRequest(source, "artifact"),
         reviewedConfigSource(reviewed, replacement),
         stage,
       );
       expect(stage).toHaveBeenCalledExactlyOnceWith({
-        archive: archiveBytes,
+        archive: selectedBytes,
         artifactName: selected.artifactName,
         cacheDirectory: source.cacheDirectory,
       });
@@ -320,7 +330,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
       stage,
     );
     expect(stage).toHaveBeenCalledExactlyOnceWith({
-      archive: archiveBytes,
+      archive: replacementArchiveBytes,
       artifactName: replacement.artifactName,
       cacheDirectory: source.cacheDirectory,
     });
@@ -357,7 +367,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
       const source = installFixture("root");
       const stage = cacheStageMock();
       const other = join(source.artifactDirectory, replacement.artifactName);
-      writeFileSync(other, archiveBytes);
+      writeFileSync(other, replacementArchiveBytes);
       mutate(other, join(source.artifactDirectory, artifactName));
       await expect(
         prepareCiNpmInstallWithReviewedConfig(
