@@ -22,6 +22,87 @@ const DOCKER_MANIFEST: &str = "application/vnd.docker.distribution.manifest.v2+j
 const OCI_CONFIG: &str = "application/vnd.oci.image.config.v1+json";
 const DOCKER_CONFIG: &str = "application/vnd.docker.container.image.v1+json";
 
+/// Verify declared cluster runtime images before reconciling runtime resources.
+pub fn verify_cluster_runtime_images(
+    document: &crate::config::Document,
+    secrets: &dyn Secrets,
+) -> Result<(), ObservationError> {
+    use crate::services::ServiceDefinition;
+    use nemoclaw_runtime::RuntimeSpec;
+    for service in document.spec.services.values() {
+        let Some(settings) = service.kubernetes() else {
+            continue;
+        };
+        let (image, architecture, runtime) = match service {
+            ServiceDefinition::Vllm(service) => (
+                service.image.as_str(),
+                service.architecture().map_err(|_| invalid())?,
+                RuntimeSpec::Vllm(Box::new(service.runtime.clone())),
+            ),
+            ServiceDefinition::Ollama(service) => (
+                service.image.as_str(),
+                service.architecture().map_err(|_| invalid())?,
+                RuntimeSpec::Ollama(Box::new(service.runtime.clone())),
+            ),
+            ServiceDefinition::OllamaProxy(_) => return Err(invalid()),
+        };
+        observe_runtime(
+            secrets,
+            &settings.image_metadata.env,
+            image,
+            architecture,
+            &runtime,
+        )?;
+    }
+    Ok(())
+}
+
+/// Verify one service image using its explicitly referenced local metadata bundle.
+pub fn observe_runtime(
+    secrets: &dyn Secrets,
+    name: &str,
+    image: &str,
+    architecture: &str,
+    runtime: &nemoclaw_runtime::RuntimeSpec,
+) -> Result<(), ObservationError> {
+    let verified = read_bundle(secrets, name).and_then(|bytes| verify_config(&bytes, image, Some(architecture)))
+        .map_err(|_| ObservationError::Backend("runtime image metadata is missing, invalid, or does not match the immutable image; export its metadata bundle and set the imageMetadata environment reference"))?;
+    let (backend, mut required) = match runtime {
+        nemoclaw_runtime::RuntimeSpec::Vllm(service) => {
+            let mut labels = service
+                .recipe
+                .as_ref()
+                .map(|recipe| recipe.compatibility.image_labels.clone())
+                .unwrap_or_default();
+            if service.authentication.is_some() {
+                labels.insert(
+                    "org.nemoclaw.inference.authentication".into(),
+                    "bearer-v1".into(),
+                );
+            }
+            ("vllm", labels)
+        }
+        nemoclaw_runtime::RuntimeSpec::Ollama(_) => ("ollama", BTreeMap::new()),
+    };
+    // Mandatory labels override recipe declarations, matching the Docker installer.
+    required.insert(
+        nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
+        nemoclaw_runtime::SPEC_VERSION.into(),
+    );
+    required.insert("org.nemoclaw.backend".into(), backend.into());
+    let labels = &verified.config["config"]["Labels"];
+    if verified.architecture != architecture
+        || required
+            .iter()
+            .any(|(key, value)| labels[key].as_str() != Some(value.as_str()))
+    {
+        return Err(ObservationError::Backend(
+            "runtime image platform or required runtime, backend, recipe, or authentication labels are incompatible; rebuild the runtime image and update its digest and metadata bundle",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Bundle {
@@ -80,9 +161,20 @@ fn manifest(value: &Value) -> bool {
         && value["layers"].is_array()
 }
 
-/// Validate the reference-to-config digest chain before interpreting its Fabric label.
-/// Only one Linux platform is selected. No layer, URL, path, or remote reference is read.
-pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, ObservationError> {
+struct VerifiedConfig {
+    digest: String,
+    architecture: String,
+    config: Value,
+}
+
+/// Validate the reference-to-config digest chain before interpreting image labels.
+/// Without an explicit architecture, the index must contain exactly one Linux platform.
+/// No layer, URL, path, or remote reference is read.
+fn verify_config(
+    bytes: &[u8],
+    image: &str,
+    required_architecture: Option<&str>,
+) -> Result<VerifiedConfig, ObservationError> {
     if bytes.len() > MAX_BUNDLE_BYTES {
         return Err(invalid());
     }
@@ -112,13 +204,14 @@ pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, Observatio
             return Err(invalid());
         }
         let candidates = root["manifests"].as_array().ok_or_else(invalid)?;
-        // The gateway receives the authored index reference. Until per-platform
-        // runtime contracts are modeled, it must have only one Linux child.
-        if candidates
-            .iter()
-            .filter(|entry| entry["platform"]["os"] == "linux")
-            .count()
-            != 1
+        // Fabric sandboxes do not pin a scheduler architecture. Cluster model
+        // services do, so their index may contain other Linux architectures.
+        if required_architecture.is_none()
+            && candidates
+                .iter()
+                .filter(|entry| entry["platform"]["os"] == "linux")
+                .count()
+                != 1
         {
             return Err(invalid());
         }
@@ -163,14 +256,28 @@ pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, Observatio
     let architecture = config["architecture"].as_str().ok_or_else(invalid)?;
     if config["os"] != "linux"
         || !matches!(architecture, "amd64" | "arm64")
+        || required_architecture.is_some_and(|required| required != architecture)
         || selected_platform.as_ref().is_some_and(|platform| {
             platform["architecture"] != architecture || platform["os"] != config["os"]
         })
     {
         return Err(invalid());
     }
+    Ok(VerifiedConfig {
+        digest: selected["config"]["digest"]
+            .as_str()
+            .ok_or_else(invalid)?
+            .into(),
+        architecture: architecture.into(),
+        config,
+    })
+}
+
+/// Validate the reference-to-config digest chain and the image's Fabric catalog.
+pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, ObservationError> {
+    let verified = verify_config(bytes, image, None)?;
     let catalog = FabricCatalog::from_json(
-        config["config"]["Labels"][IMAGE_CATALOG_LABEL]
+        verified.config["config"]["Labels"][IMAGE_CATALOG_LABEL]
             .as_str()
             .ok_or_else(invalid)?,
     )
@@ -182,10 +289,10 @@ pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, Observatio
         status: ObservationStatus::Available,
         reason: None,
         source: SOURCE.into(),
-        image_id: selected["config"]["digest"].as_str().map(String::from),
+        image_id: Some(verified.digest),
         catalog: Some(catalog),
         image: ImageMetadata {
-            architecture: Some(architecture.into()),
+            architecture: Some(verified.architecture),
             operating_system: Some("linux".into()),
             repo_digests: vec![image.into()],
             size_bytes: None,
@@ -195,35 +302,39 @@ pub fn verify(bytes: &[u8], image: &str) -> Result<FabricObservation, Observatio
 }
 
 /// Read the explicitly referenced local bundle, without reporting its path or contents.
+fn read_bundle(secrets: &dyn Secrets, name: &str) -> Result<Vec<u8>, ObservationError> {
+    let location = secrets.resolve(name)?;
+    let path = Path::new(&location);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(invalid());
+    }
+    let file = File::open(path).map_err(|_| invalid())?;
+    if !file.metadata().map_err(|_| invalid())?.is_file() {
+        return Err(invalid());
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_BUNDLE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    Ok(bytes)
+}
+
+/// Read the explicitly referenced local bundle, without reporting its path or contents.
 pub fn observe(secrets: &dyn Secrets, name: &str, image: &str) -> FabricObservation {
-    let read = || {
-        let location = secrets.resolve(name)?;
-        let path = Path::new(&location);
-        if !path.is_absolute() || !path.is_file() {
-            return Err(invalid());
-        }
-        let file = File::open(path).map_err(|_| invalid())?;
-        if !file.metadata().map_err(|_| invalid())?.is_file() {
-            return Err(invalid());
-        }
-        let mut bytes = Vec::new();
-        file.take((MAX_BUNDLE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| invalid())?;
-        verify(&bytes, image)
-    };
-    read().unwrap_or_else(|_| FabricObservation {
-        status: ObservationStatus::Unknown,
-        reason: Some(
-            "image metadata bundle is missing, invalid, or does not match the immutable image"
-                .into(),
-        ),
-        source: SOURCE.into(),
-        image_id: None,
-        catalog: None,
-        image: ImageMetadata::default(),
-        compatibility: None,
-    })
+    read_bundle(secrets, name)
+        .and_then(|bytes| verify(&bytes, image))
+        .unwrap_or_else(|_| FabricObservation {
+            status: ObservationStatus::Unknown,
+            reason: Some(
+                "image metadata bundle is missing, invalid, or does not match the immutable image"
+                    .into(),
+            ),
+            source: SOURCE.into(),
+            image_id: None,
+            catalog: None,
+            image: ImageMetadata::default(),
+            compatibility: None,
+        })
 }
 
 #[cfg(test)]

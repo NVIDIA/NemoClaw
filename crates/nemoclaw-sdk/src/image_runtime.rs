@@ -130,11 +130,10 @@ impl PolicyInput {
             managed.insert(rule.name.clone(), rule);
         }
         for provider in document.sandbox_inference_providers(sandbox)? {
-            let connection = document.provider_connection(provider.definition)?;
-            let profile = crate::config::inference_profile(
+            let profile = crate::config::inference_profile_for_provider(
+                document,
+                provider.definition,
                 &provider.key,
-                &connection.endpoint,
-                provider.definition.provider,
                 false,
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;

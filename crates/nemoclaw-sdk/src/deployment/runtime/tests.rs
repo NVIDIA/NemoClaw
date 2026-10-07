@@ -7,6 +7,42 @@ use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 
 #[test]
+fn cluster_service_changes_keep_bound_storage_and_require_all_recorded_prerequisites() {
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let targets = compile::runtime_targets(&document, &record.generations).unwrap();
+        let bindings = kubernetes_bindings(&targets);
+        runtime_bindings(&targets, &bindings).unwrap();
+        for prerequisite in [
+            KUBERNETES_STORAGE,
+            "nemoclaw_kubernetes_gateway.runtime",
+            "nemoclaw_kubernetes_service_storage.qwen",
+        ] {
+            let mut missing = bindings.clone();
+            missing.remove(prerequisite);
+            assert!(runtime_bindings(&targets, &missing).is_err());
+        }
+        let mut input = serde_json::to_value(&document).unwrap();
+        input["spec"]["services"]["qwen"]["kubernetes"]["cpuLimitMillis"] = json!(8000);
+        let changed = Document::parse(input.to_string().as_bytes()).unwrap();
+        let updated = compile::runtime_targets(&changed, &record.generations).unwrap();
+        let expected = runtime_bindings(&updated, &bindings).unwrap();
+        assert_eq!(
+            expected["nemoclaw_kubernetes_service.qwen"]["spec"],
+            bindings["nemoclaw_kubernetes_service.qwen"].spec
+        );
+        input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(200);
+        let resized = Document::parse(input.to_string().as_bytes()).unwrap();
+        let updated = compile::runtime_targets(&resized, &record.generations).unwrap();
+        assert!(runtime_bindings(&updated, &bindings).is_err());
+    }
+}
+
+#[test]
 fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {
     let (document, generations) = kubernetes_context();
     let targets = compile::runtime_targets(&document, &generations).unwrap();

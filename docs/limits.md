@@ -28,7 +28,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| Managed model services with a Kubernetes or OpenShift gateway | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| [Managed vLLM and Ollama on Kubernetes or OpenShift](kubernetes.md#run-a-managed-model-service) have no real-cluster inference qualification; external gateways, host IPC, PVC adoption/resize, and distributed serving are unsupported | [#12732](https://github.com/NVIDIA/NemoClaw/issues/12732) |
 | A managed Kubernetes gateway authenticating through an existing identity provider; only the development profile exists | [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) |
 | Images from private registries; every runtime pulls anonymously, so images must be public or already present | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |

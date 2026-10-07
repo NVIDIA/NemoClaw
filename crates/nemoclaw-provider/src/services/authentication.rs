@@ -3,7 +3,7 @@
 use crate::{Error, ObservationError, docker::Engine};
 use nemoclaw_sdk::services::authentication::Source;
 async fn container_id(source: &Source, engine: &Engine) -> Result<String, Error> {
-    let (storage, name, _) = source.fields();
+    let (storage, name, _) = source.fields().ok_or(ObservationError::BindingMismatch)?;
     crate::managed::observe_storage(storage, engine, "")
         .await?
         .ok_or(Error::Conflict("credential storage is absent"))?;
@@ -11,6 +11,7 @@ async fn container_id(source: &Source, engine: &Engine) -> Result<String, Error>
     let destination = match source {
         Source::ManagedService { .. } => "/credentials",
         Source::OllamaProxy { .. } => "/data",
+        Source::ClusterService { .. } => return Err(ObservationError::BindingMismatch.into()),
     };
     let container = engine
         .container(name)
@@ -49,12 +50,22 @@ async fn container_id(source: &Source, engine: &Engine) -> Result<String, Error>
         .ok_or(ObservationError::Incomplete.into())
 }
 pub async fn resolve(source: &Source) -> Result<String, ObservationError> {
+    if let Source::ClusterService { storage, .. } = source {
+        return crate::cluster_services::resolve_credential(storage).await;
+    }
     let work = async {
-        let engine = Engine::connect(&source.fields().0.engine)?;
+        let engine = Engine::connect(
+            &source
+                .fields()
+                .ok_or(ObservationError::BindingMismatch)?
+                .0
+                .engine,
+        )?;
         let id = container_id(source, &engine).await?;
         match source {
             Source::ManagedService { .. } => read_service_key(&engine, &id).await,
             Source::OllamaProxy { .. } => read_proxy_key(&engine, &id).await,
+            Source::ClusterService { .. } => Err(ObservationError::BindingMismatch.into()),
         }
     };
     work.await.map_err(|_| ObservationError::Authentication)

@@ -9,6 +9,11 @@
 #[doc(hidden)]
 pub mod authentication;
 pub(crate) mod capacity;
+pub(crate) mod cluster_config;
+pub use cluster_config::{
+    KubernetesService, ServiceToleration, TolerationEffect, TolerationOperator,
+};
+mod cluster;
 mod contract;
 pub mod installers;
 pub mod placement;
@@ -28,7 +33,7 @@ pub use registry::{
     ResourceBehavior, ResourceSchema, ServiceDefinition, resource_behavior, resource_schemas,
 };
 pub(crate) use registry::{
-    constrain_schema, credential_source_json, defaults, discovery_engines, generation_kinds,
-    has_runtime, install_plans, provider_authenticated, remove_plans, required_storage_address,
-    resolve, resource_label, validate, validate_provider, validate_route,
+    cluster_source_json, constrain_schema, credential_source_json, defaults, discovery_engines,
+    generation_kinds, has_runtime, install_plans, provider_authenticated, remove_plans,
+    required_storage_address, resolve, resource_label, validate, validate_provider, validate_route,
 };

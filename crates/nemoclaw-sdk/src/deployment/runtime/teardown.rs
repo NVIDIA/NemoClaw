@@ -10,6 +10,18 @@ pub(super) fn destroy_environment(document: &Document) -> Document {
     for provider in environment.provider_definitions_mut() {
         provider.credential = None;
     }
+    for service in environment.spec.services.values_mut() {
+        let settings = match service {
+            crate::services::ServiceDefinition::Vllm(service) => service.kubernetes.as_mut(),
+            crate::services::ServiceDefinition::Ollama(service) => service.kubernetes.as_mut(),
+            crate::services::ServiceDefinition::OllamaProxy(_) => None,
+        };
+        if let Some(settings) = settings {
+            // This clone selects subprocess references only. Keep the required
+            // metadata reference intact in the retained deployment document.
+            settings.image_metadata.env.clear();
+        }
+    }
     for sandbox in &mut environment.spec.sandboxes {
         // Destroy never reads the image, so it needs no metadata path.
         sandbox.image.metadata = None;
@@ -274,6 +286,14 @@ fn bind_teardown_processes(
 ) -> Result<(), Error> {
     for target in targets {
         kubernetes_binding(target, bindings)?;
+        if target.kind == crate::kubernetes::services::SERVICE_KIND {
+            let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
+            target.values.insert(
+                "spec".into(),
+                bound_cluster_spec(&want, bindings.get(&target.address))?.encode()?,
+            );
+            continue;
+        }
         if target.address == crate::kubernetes::gateway::ADDRESS {
             continue;
         }
@@ -366,12 +386,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cluster_teardown_uses_the_recorded_process_configuration_and_retained_storage() {
+        let document = Document::parse(
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut record = Record::new(document).unwrap();
+        let targets = compile::runtime_targets(&record.document, &record.generations).unwrap();
+        let bindings: BTreeMap<String, StateBinding> = targets
+            .iter()
+            .map(|target| {
+                let mut values = serde_json::to_value(&target.values).unwrap();
+                values["id"] = json!(if target.address == crate::kubernetes::gateway::ADDRESS {
+                    target.values["name"].clone()
+                } else {
+                    format!("physical-{}", target.kind)
+                });
+                (
+                    target.address.clone(),
+                    serde_json::from_value(values).unwrap(),
+                )
+            })
+            .collect();
+        let mut input = serde_json::to_value(&record.document).unwrap();
+        input["spec"]["services"]["qwen"]["kubernetes"]["cpuLimitMillis"] = json!(8000);
+        record.document = Document::parse(input.to_string().as_bytes()).unwrap();
+        let expected = teardown_expected(&record, &bindings, true).unwrap();
+        assert_eq!(
+            expected["nemoclaw_kubernetes_service.qwen"]["spec"],
+            bindings["nemoclaw_kubernetes_service.qwen"].spec
+        );
+        let mut missing = bindings;
+        missing.remove("nemoclaw_kubernetes_service_storage.qwen");
+        assert!(teardown_expected(&record, &missing, true).is_err());
+    }
+
+    #[test]
     fn teardown_keeps_provisioning_identity_without_requesting_image_metadata() {
         let (document, _) = crate::deployment::tests::kubernetes_context();
         assert!(document.credential_names().contains(&"TEST_IMAGE_METADATA"));
         let environment = destroy_environment(&document);
         assert_eq!(environment.credential_names(), ["TEST_KUBECONFIG"]);
         assert!(document.spec.sandboxes[0].image.metadata.is_some());
+    }
+
+    #[test]
+    fn teardown_preserves_cluster_service_metadata_without_requesting_its_file() {
+        for source in [
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = Document::parse(source).unwrap();
+            assert!(
+                document
+                    .credential_names()
+                    .contains(&"NEMOCLAW_MODEL_IMAGE_METADATA")
+            );
+            let environment = destroy_environment(&document);
+            assert_eq!(
+                environment.credential_names(),
+                ["NEMOCLAW_CLUSTER_KUBECONFIG"]
+            );
+            assert_eq!(
+                document.spec.services["qwen"]
+                    .kubernetes()
+                    .unwrap()
+                    .image_metadata
+                    .env,
+                "NEMOCLAW_MODEL_IMAGE_METADATA"
+            );
+        }
     }
 
     #[tokio::test]

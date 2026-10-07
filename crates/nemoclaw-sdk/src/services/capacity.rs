@@ -28,7 +28,9 @@ pub(crate) fn groups<'a>(
             .split_once('.')
             .map(|(kind, _)| kind.trim_start_matches("nemoclaw_"))
             .unwrap_or("");
-        if !super::resource_behavior(kind).runtime_process {
+        if !super::resource_behavior(kind).runtime_process
+            || kind == crate::kubernetes::services::SERVICE_KIND
+        {
             continue;
         }
         let encoded = row

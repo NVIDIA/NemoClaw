@@ -76,13 +76,15 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "kubernetes_storage",
         "kubernetes_auth",
         "kubernetes_gateway",
+        "kubernetes_service_storage",
+        "kubernetes_service",
     ] {
         assert!(resources.contains_key(name));
     }
     let profile = resources["provider_profile"]
         .schema(&mut diagnostics)
         .unwrap();
-    for name in ["endpoint", "authenticated"] {
+    for name in ["endpoint", "authenticated", "cluster_source"] {
         assert!(
             matches!(
                 profile.block.attributes[name].constraint,
@@ -147,6 +149,8 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
                     | "kubernetes_storage"
                     | "kubernetes_auth"
                     | "kubernetes_gateway"
+                    | "kubernetes_service_storage"
+                    | "kubernetes_service"
             ),
             "{kind}"
         );

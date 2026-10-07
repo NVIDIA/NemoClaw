@@ -360,6 +360,7 @@ impl Provider for NemoClawProvider {
                     "provider_type",
                     "authenticated",
                     "binaries_json",
+                    "cluster_source",
                 ],
                 &[],
             ),

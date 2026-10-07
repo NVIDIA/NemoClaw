@@ -81,7 +81,11 @@ impl ResourceAdapter {
     }
 
     fn protected_binding(&self) -> bool {
-        if self.definition.kind == nemoclaw_sdk::kubernetes::STORAGE_KIND {
+        if matches!(
+            self.definition.kind,
+            nemoclaw_sdk::kubernetes::STORAGE_KIND
+                | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
+        ) {
             return true;
         }
         match openshell_lifecycle(self.definition.kind) {
@@ -92,7 +96,7 @@ impl ResourceAdapter {
     }
     fn optional(&self, field: &str) -> bool {
         (self.definition.kind == "provider_profile"
-            && matches!(field, "endpoint" | "authenticated"))
+            && matches!(field, "endpoint" | "authenticated" | "cluster_source"))
             || matches!(
                 field,
                 "image_pull_policy"
@@ -212,6 +216,18 @@ impl ResourceAdapter {
             .collect()
     }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
+        if self.definition.kind == "provider_profile"
+            && prior
+                .get("cluster_source")
+                .map(String::as_str)
+                .unwrap_or("")
+                != observed
+                    .get("cluster_source")
+                    .map(String::as_str)
+                    .unwrap_or("")
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
         for field in self
             .definition
             .fields
@@ -431,6 +447,7 @@ impl Resource for ResourceAdapter {
             "image_pull_policy",
             "credential_env",
             "credential_source",
+            "cluster_source",
             "provider_type",
         ] {
             if self.definition.fields.contains(&field)
@@ -443,7 +460,11 @@ impl Resource for ResourceAdapter {
             .await?;
         let (mut state, replacements) = plan_update(&self.definition, &prior, proposed);
         if self.destroying.load(Ordering::Acquire)
-            && self.definition.kind == nemoclaw_sdk::kubernetes::STORAGE_KIND
+            && matches!(
+                self.definition.kind,
+                nemoclaw_sdk::kubernetes::STORAGE_KIND
+                    | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
+            )
             && let Some(running) = prior.get("running")
         {
             // Teardown retains incomplete platform storage without retrying its
@@ -455,7 +476,10 @@ impl Resource for ResourceAdapter {
             Some(OpenShellLifecycle::Retained | OpenShellLifecycle::Stateful)
         ) || matches!(
             self.definition.kind,
-            nemoclaw_sdk::kubernetes::STORAGE_KIND | nemoclaw_sdk::kubernetes::GATEWAY_KIND
+            nemoclaw_sdk::kubernetes::STORAGE_KIND
+                | nemoclaw_sdk::kubernetes::GATEWAY_KIND
+                | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
+                | nemoclaw_sdk::kubernetes::services::SERVICE_KIND
         )) && !replacements.is_empty()
         {
             let name = match prior.get("name") {
@@ -597,6 +621,29 @@ fn download_resource(kind: &str, row: &Row) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn profile_refresh_preserves_the_bound_cluster_source() {
+        let adapter = ResourceAdapter::new(
+            Definition::new(
+                "provider_profile",
+                &["name", "workspace", "cluster_source"],
+                &[],
+            ),
+            Arc::new(crate::cluster_services::ClusterServicesBackend::new()),
+        );
+        let prior: Row = [
+            ("id", "profile/1"),
+            ("name", "model"),
+            ("workspace", "owned"),
+            ("cluster_source", "bound-service"),
+        ]
+        .map(|(key, value)| (key.into(), value.into()))
+        .into();
+        assert!(adapter.checked(&prior, prior.clone()).is_ok());
+        let mut changed = prior.clone();
+        changed.insert("cluster_source".into(), "substituted-service".into());
+        assert!(adapter.checked(&prior, changed).is_err());
+    }
     #[test]
     fn download_labels_distinguish_named_specs_and_models() {
         for name in ["first", "second"] {

@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Source {
+    ClusterService {
+        storage: Box<crate::kubernetes::services::StorageSpec>,
+        endpoint: String,
+    },
     OllamaProxy {
         storage: crate::managed::Storage,
         container: String,
@@ -17,7 +21,7 @@ pub enum Source {
     },
 }
 impl Source {
-    pub fn fields(&self) -> (&crate::managed::Storage, &str, &str) {
+    pub fn fields(&self) -> Option<(&crate::managed::Storage, &str, &str)> {
         match self {
             Self::OllamaProxy {
                 storage,
@@ -28,7 +32,8 @@ impl Source {
                 storage,
                 container,
                 endpoint,
-            } => (storage, container, endpoint),
+            } => Some((storage, container, endpoint)),
+            Self::ClusterService { .. } => None,
         }
     }
     pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
@@ -44,7 +49,6 @@ impl Source {
     pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
         let source: Self = serde_json::from_str(value).map_err(|_| ObservationError::Incomplete)?;
         use sha2::{Digest, Sha256};
-        let (storage, container, published) = source.fields();
         let prefix = format!(
             "nc-{}-",
             Sha256::digest(owner.as_bytes())[..8]
@@ -52,9 +56,39 @@ impl Source {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
         );
+        if let Self::ClusterService {
+            storage,
+            endpoint: published,
+        } = &source
+        {
+            storage
+                .validate()
+                .map_err(|_| ObservationError::BindingMismatch)?;
+            let url = url::Url::parse(published).map_err(|_| ObservationError::BindingMismatch)?;
+            let host = format!("{}.{}.svc", storage.name, storage.namespace());
+            if storage.owner != owner
+                || !storage.authenticated
+                || !storage.name.starts_with(&format!("{prefix}model-"))
+                || published != endpoint
+                || url.scheme() != "http"
+                || url.host_str() != Some(host.as_str())
+                || url.port().is_none_or(|port| port == 0)
+                || url.path() != "/v1"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+            return Ok(source);
+        }
+        let (storage, container, published) =
+            source.fields().ok_or(ObservationError::BindingMismatch)?;
         let (kind, suffix, local) = match source {
             Self::OllamaProxy { .. } => ("ollama-proxy-", "auth", true),
             Self::ManagedService { .. } => ("inference-", "auth", false),
+            Self::ClusterService { .. } => unreachable!("cluster sources validated above"),
         };
         let namespace = format!("{prefix}{kind}");
         let name = container.strip_prefix(&namespace);
@@ -144,8 +178,8 @@ mod durable_source_tests {
             &row["endpoint"],
         )
         .unwrap();
-        assert!(source.fields().0.engine.starts_with("ssh://"));
-        assert_eq!(source.fields().2, row["endpoint"]);
+        assert!(source.fields().unwrap().0.engine.starts_with("ssh://"));
+        assert_eq!(source.fields().unwrap().2, row["endpoint"]);
         assert!(!row["credential_source"].contains("sha256:"));
     }
     #[test]

@@ -487,7 +487,7 @@ fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
 }
 
 #[test]
-fn kubernetes_rejects_managed_services_even_when_no_route_selects_them() {
+fn kubernetes_services_require_cluster_settings_even_when_no_route_selects_them() {
     let managed =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
     for mut input in [external_document(), managed_document()] {

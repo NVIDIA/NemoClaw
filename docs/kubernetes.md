@@ -3,7 +3,7 @@
 
 # Deploy to Kubernetes or OpenShift
 
-Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
+Run agent sandboxes and managed vLLM or Ollama services on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
@@ -16,15 +16,16 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
-  The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
+  Managed inference also needs Pods, pod execution, and PersistentVolumeClaims in that namespace.
+  The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces, plus RuntimeClasses when `runtimeClassName` is set.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** an endpoint reachable from inside the sandboxes.
-  Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+- **Inference:** an endpoint reachable from inside the sandboxes, or a [managed model service](#run-a-managed-model-service) in the managed gateway's namespace.
+  Managed services require a GPU node, a compatible runtime image, and persistent storage; real-cluster inference remains unqualified ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
 
@@ -83,6 +84,93 @@ The resources stay in place, and a later apply with the same state checks them a
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
+## Run a Managed Model Service
+
+With a managed Kubernetes or OpenShift gateway, declare `kind: vllm` or `kind: ollama` under `spec.services` and add the service's `kubernetes` resource settings.
+The service inherits the gateway's cluster, context, and namespace.
+An external gateway cannot provision a managed model service.
+Start from [local vLLM](../examples/kubernetes/local-vllm.yaml) or [local Ollama](../examples/kubernetes/local-ollama.yaml).
+These examples are configuration templates; neither establishes a qualified GPU, model, storage driver, or OpenShift security profile.
+
+Before applying, the platform operator must provide:
+
+- A Linux GPU node whose CPU architecture, NVIDIA driver, GPU family, and memory meet the service's [hardware contract](models.md#choose-a-hardware-profile).
+  Each service requests one `nvidia.com/gpu` device; the runtime must observe exactly one GPU inside its Pod.
+  Multiple services need sufficient independently allocatable GPU capacity.
+- A device plugin and container runtime that make that device available to the Pod.
+  Set `runtimeClassName` if the cluster requires a GPU runtime class; NemoClaw does not install drivers, device plugins, or runtime classes.
+- A CSI provisioner with a usable `ReadWriteOnce` StorageClass and enough storage for model files and prepared data.
+  Set `storageClass` to select it, or omit the field to use the cluster's default class.
+- A network plugin that enforces NetworkPolicies, working cluster DNS, and permitted outbound access for the selected public model registry.
+  Managed Ollama has no native bearer authentication; its access boundary depends on the cluster network policy.
+- Runtime and agent images the selected nodes can pull by digest.
+  Build the hosted runtime from this checkout using [the runtime image procedure](build.md#build-a-runtime-image); bare upstream vLLM and Ollama images lack the required supervisor.
+  The hosted runtime must run as UID/GID 1000 on Kubernetes or the namespace-assigned identity on OpenShift, and the storage driver must make its mounted directories writable by that identity.
+  Export its metadata with `cargo images export-metadata IMAGE --platform linux/amd64 --output model.metadata.json`, selecting the service's architecture, and set `NEMOCLAW_MODEL_IMAGE_METADATA` to that file's absolute path.
+  The SDK verifies its image digest, platform, and runtime labels before provisioning; every service requires `kubernetes.imageMetadata` naming that environment reference.
+
+The same [vLLM model](models.md) and [managed Ollama](inference.md#run-managed-ollama) contracts apply to Docker and cluster services.
+vLLM takes a public Hugging Face repository and exact commit; Ollama takes a public library model name and manifest digest.
+Models, image digests, hardware profiles, serving budgets, and storage sizes remain deployment settings.
+There is no cluster-specific model allowlist.
+
+The cluster settings below reserve CPU and memory and limit their use for one service:
+
+```yaml
+# Under spec.services.<name>:
+kubernetes:
+  imageMetadata: {env: NEMOCLAW_MODEL_IMAGE_METADATA}
+  cpuRequestMillis: 1000
+  cpuLimitMillis: 4000
+  memoryRequestGiB: 32
+  memoryLimitGiB: 64
+  storageGiB: 100
+  nodeSelector:
+    inference.example.com/pool: gpu
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+```
+
+Replace or omit the example's pool selector to match labels the platform operator assigned.
+The Pod always selects Linux and the service hardware's CPU architecture; authored selectors must agree.
+CPU and memory requests must not exceed their limits.
+The required `storageGiB` field sizes the model PVC; optional `storageClass`, `runtimeClassName`, `nodeSelector`, and `tolerations` select the cluster resources.
+The [generated field reference](reference/configuration.md) defines accepted values.
+Pod memory limits include memory-backed shared memory; size them for the model's loading and serving needs as well as `container.sharedMemoryGiB`.
+The runtime's hardware, capacity, and resident memory checks still apply.
+Its resident monitor observes host memory through `/proc`; it does not measure cgroup memory pressure.
+A Pod can therefore reach its Kubernetes memory limit and be OOM-killed before the host-memory watchdog stops inference.
+
+Each service has its own retained model PVC mounted at `/data`.
+For vLLM with `authentication: bearer`, a separate retained 1 GiB credential PVC mounts at `/credentials`; the runtime creates the key and the deployment registers it through the existing credential path.
+The key is not stored in the service ConfigMap or authored YAML.
+Keep the deployment state and both PVCs together for recovery; deleting a bound credential PVC or substituting another PVC does not authorize generating a replacement identity.
+PVC resize, storage-class changes, changes to vLLM authentication mode, existing-volume adoption, and transfer between clusters are not supported.
+
+Use `serviceRef` to connect providers to the service, and `provider: openai` with `api: openai-completions` for the examples' OpenClaw adapter.
+The SDK derives an internal cluster DNS endpoint; do not set a provider endpoint or credential alongside `serviceRef`.
+Multiple agents and providers may share a service.
+The provider creates a ClusterIP Service and a NetworkPolicy; no host port, NodePort, or LoadBalancer is published.
+The NetworkPolicy allows inference connections from Pods in the gateway's namespace; workloads in that namespace share this access boundary.
+The imported inference profile grants only the verified Service's assigned IP addresses; general authored HTTP DNS endpoints remain rejected.
+Model, image, and resource changes preserve the Service and its addresses while replacing compute.
+Changing `serving.port` requires explicit destroy and reapply with the retained PVCs; ordinary apply rejects a port change before mutation.
+Docker `placement` and `publication`, host IPC, `ollamaProxy`, CPU-only serving, CPU offload in Ollama, and distributed or multi-GPU serving are outside this cluster path.
+
+Use the same plan and apply commands as [the managed gateway procedure](#deploy-with-a-managed-gateway).
+Plan validates intent and observes bound resources without starting a model or changing cluster resources.
+Apply creates retained storage and disposable service resources, starts the hosted runtime, and checks its bounded readiness before configuring dependent agents.
+The Pod does not automatically restart a stopped inference process.
+On failed model startup or protective shutdown, preserve the state and PVCs, correct the resource or runtime condition, and use [explicit recovery](usage.md#recover-an-interrupted-operation).
+Recovery can recreate compute only after verifying retained storage and ownership.
+
+A ready model service does not establish a real agent reply.
+The current Fabric pin still reports agent health as unsupported, so apply stops at agent readiness even when model startup succeeds.
+Use [inference verification](inference.md#verify-the-result) to distinguish service readiness, adapter health, and an explicit model request.
+The [compatibility baseline](design/cluster-inference-compatibility.md) records exact inputs and the remaining Fabric, authentication, and qualification gaps.
+
 ## Deploy to OpenShift
 
 Set `gateway.runtime.provider: openshift`; everything else matches the managed Kubernetes deployment above.
@@ -95,6 +183,8 @@ If the range never appears, apply stops before installing the gateway with `Open
 
 The SDK records the range in its receipt, and a later apply refuses a namespace whose range has changed.
 The agent images need no OpenShift variant: any UID can read their workspace seed.
+Managed model Pods use the recorded namespace UID and group, private IPC, dropped capabilities, and the runtime's default seccomp profile.
+The selected runtime image and storage driver must support that assigned identity; OpenShift admitting and running these workloads remains unqualified.
 
 ## Use an Existing Gateway
 
@@ -113,7 +203,7 @@ nemoclaw plan --destroy --state-dir .local/kubernetes
 nemoclaw destroy --state-dir .local/kubernetes
 ```
 
-Destroy removes the sandboxes, the gateway release and the development issuer.
-It keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
+Destroy removes the sandboxes, managed model Pods and their disposable service resources, the gateway release, and the development issuer.
+It keeps the namespace, the credential key Secret, the gateway's persistent volumes, and each model and credential PVC, as described in [deletion and retention](state.md#deletion-and-retention).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).
 Deployments made before the Helm provider graph keep their original bundle and state; see [the migration policy](migration.md#move-from-the-combined-kubernetes-gateway-resource).

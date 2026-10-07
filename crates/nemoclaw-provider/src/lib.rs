@@ -31,6 +31,8 @@ impl Definition {
                     | nemoclaw_sdk::kubernetes::GATEWAY_KIND
                     | nemoclaw_sdk::kubernetes::STORAGE_KIND
                     | nemoclaw_sdk::kubernetes::AUTH_KIND
+                    | nemoclaw_sdk::kubernetes::services::SERVICE_KIND
+                    | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
             ),
         }
     }
@@ -116,6 +118,7 @@ mod resource;
 pub use nemoclaw_sdk::backend::{Backend, Mutation, Row};
 pub use resource::ResourceAdapter;
 mod capacity;
+pub mod cluster_services;
 mod discovery;
 mod gateway;
 pub mod hardware;

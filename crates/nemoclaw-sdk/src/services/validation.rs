@@ -10,6 +10,12 @@ use crate::{
 /// Validate a compiled resource without opening connections or reading secrets.
 /// Parse errors deliberately omit serialized source values.
 pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
+    if kind == crate::kubernetes::services::SERVICE_KIND {
+        return crate::kubernetes::services::Spec::decode(encoded).map(|_| ());
+    }
+    if kind == crate::kubernetes::services::STORAGE_KIND {
+        return crate::kubernetes::services::StorageSpec::decode(encoded).map(|_| ());
+    }
     if matches!(
         kind,
         crate::kubernetes::STORAGE_KIND

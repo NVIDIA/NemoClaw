@@ -232,7 +232,7 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
     // Authored configuration cannot be exported as unchanged intent when the
     // provider reports drift. Compare JSON semantically, without harness dispatch.
     for (field, expected) in &target.values {
-        if field.ends_with("_json") {
+        if field.ends_with("_json") || field == "cluster_source" {
             let expected: Value = serde_json::from_str(expected)
                 .map_err(|_| Error::State("invalid authored export configuration"))?;
             let actual: Value = serde_json::from_str(observed[field].as_str().unwrap_or(""))
@@ -535,6 +535,22 @@ mod tests {
         };
         validate_projection(&target, &json!({"name":"expected-proxy"})).unwrap();
         assert!(validate_projection(&target, &json!({"name":"renamed-proxy"})).is_err());
+    }
+
+    #[test]
+    fn export_rejects_cluster_endpoint_provenance_drift() {
+        let target = Target {
+            address: "nemoclaw_provider_profile.inference_qwen".into(),
+            kind: "provider_profile".into(),
+            values: Row::from([(
+                "cluster_source".into(),
+                r#"{"name":"owned-service","generation":"bound"}"#.into(),
+            )]),
+        };
+        let mut observed = serde_json::to_value(&target.values).unwrap();
+        validate_projection(&target, &observed).unwrap();
+        observed["cluster_source"] = json!(r#"{"name":"another-service","generation":"bound"}"#);
+        assert!(validate_projection(&target, &observed).is_err());
     }
 
     #[tokio::test]

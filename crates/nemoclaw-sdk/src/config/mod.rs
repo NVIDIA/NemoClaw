@@ -25,6 +25,9 @@ mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 mod inference_profile;
 pub use inference_profile::definition as inference_profile;
+pub use inference_profile::{
+    cluster_definition as cluster_inference_profile, for_provider as inference_profile_for_provider,
+};
 mod sandbox_policy;
 pub use sandbox_policy::policy_json;
 mod network;
@@ -174,6 +177,13 @@ impl Document {
                 if let Some(credential) = &provider.credential {
                     names.push(credential.env.as_str());
                 }
+            }
+        }
+        for service in self.spec.services.values() {
+            if let Some(settings) = service.kubernetes()
+                && !settings.image_metadata.env.is_empty()
+            {
+                names.push(settings.image_metadata.env.as_str());
             }
         }
         for sandbox in &self.spec.sandboxes {

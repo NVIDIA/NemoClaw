@@ -266,6 +266,9 @@ fn inference_targets(
         "authenticated".into(),
         crate::services::provider_authenticated(document, provider)?.to_string(),
     );
+    if let Some(source) = crate::services::cluster_source_json(document, provider, generations)? {
+        profile.insert("cluster_source".into(), source);
+    }
     Ok([
         Target {
             kind: "provider_profile".into(),
@@ -404,9 +407,10 @@ fn compile_with_plans(
         if target.values.contains_key("workspace") {
             attributes["workspace"] = json!("${nemoclaw_workspace.deployment.name}");
         }
-        if let Some(value) = attributes["credential_source"].as_str() {
-            attributes["credential_source"] =
-                json!(value.replace("${", "$${").replace("%{", "%%{"));
+        for field in ["credential_source", "cluster_source"] {
+            if let Some(value) = attributes[field].as_str() {
+                attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+            }
         }
         if target.kind == "agent_configuration" {
             let model = attributes["config_json"]

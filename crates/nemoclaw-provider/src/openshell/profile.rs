@@ -81,6 +81,23 @@ fn definition(
         ..Default::default()
     })
 }
+pub(super) fn cluster_source(
+    want: &Row,
+) -> Result<Option<nemoclaw_sdk::kubernetes::services::StorageSpec>, ObservationError> {
+    let Some(source) = want
+        .get("cluster_source")
+        .filter(|source| !source.is_empty())
+    else {
+        return Ok(None);
+    };
+    let storage = nemoclaw_sdk::kubernetes::services::StorageSpec::decode(source)
+        .map_err(|_| ObservationError::BindingMismatch)?;
+    if want.get("owner") != Some(&storage.owner) {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok(Some(storage))
+}
+
 fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
     let name = want["name"]
         .strip_prefix("nemoclaw-inference-")
@@ -90,29 +107,52 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         Some("false") => false,
         _ => return Err(ObservationError::Query),
     };
-    let mut profile = inference_profile(
-        name,
-        &want["endpoint"],
-        if want.get("provider_type").is_some_and(|s| s == "anthropic") {
-            nemoclaw_sdk::config::InferenceProviderKind::Anthropic
-        } else {
-            nemoclaw_sdk::config::InferenceProviderKind::Openai
-        },
-        authenticated,
-    )?;
+    let kind = if want.get("provider_type").is_some_and(|s| s == "anthropic") {
+        nemoclaw_sdk::config::InferenceProviderKind::Anthropic
+    } else {
+        nemoclaw_sdk::config::InferenceProviderKind::Openai
+    };
+    let storage = cluster_source(want)?;
+    let mut profile = if let Some(storage) = &storage {
+        let addresses: Vec<std::net::IpAddr> = serde_json::from_str(
+            want.get("cluster_addresses")
+                .ok_or(ObservationError::Incomplete)?,
+        )
+        .map_err(|_| ObservationError::BindingMismatch)?;
+        if addresses.is_empty() {
+            return Err(ObservationError::Incomplete);
+        }
+        nemoclaw_sdk::config::cluster_inference_profile(
+            name,
+            &want["endpoint"],
+            kind,
+            authenticated,
+            storage,
+            &addresses,
+        )?
+    } else {
+        inference_profile(name, &want["endpoint"], kind, authenticated)?
+    };
     profile.binaries = binaries(want)?;
-    profile.annotations = annotations(
-        [
-            "owner",
-            "generation",
-            "endpoint",
-            "provider_type",
-            "authenticated",
-            "binaries_json",
-        ]
-        .map(|key| (key.into(), want.get(key).cloned().unwrap_or_default()))
-        .into(),
-    );
+    let mut metadata: Row = [
+        "owner",
+        "generation",
+        "endpoint",
+        "provider_type",
+        "authenticated",
+        "binaries_json",
+    ]
+    .into_iter()
+    .map(|key| (key.into(), want.get(key).cloned().unwrap_or_default()))
+    .collect();
+    if storage.is_some() {
+        metadata.insert("cluster_source".into(), want["cluster_source"].clone());
+        metadata.insert(
+            "cluster_addresses".into(),
+            want["cluster_addresses"].clone(),
+        );
+    }
+    profile.annotations = annotations(metadata);
     Ok(profile)
 }
 
@@ -149,9 +189,14 @@ fn row(
     profile.resource_version = 0;
     profile.source.clear();
     profile.scope.clear();
-    let mut fields: Row = ["endpoint", "provider_type", "authenticated"]
-        .map(|key| (key.into(), String::new()))
-        .into();
+    let mut fields: Row = [
+        "endpoint",
+        "provider_type",
+        "authenticated",
+        "cluster_source",
+    ]
+    .map(|key| (key.into(), String::new()))
+    .into();
     fields.extend([
         ("name".into(), name.into()),
         ("owner".into(), owner.clone()),
@@ -179,6 +224,16 @@ fn row(
                     .ok_or(ObservationError::Incomplete)?,
             );
         }
+        if let Some(source) = metadata.get("cluster_source") {
+            fields.insert("cluster_source".into(), source.clone());
+            fields.insert(
+                "cluster_addresses".into(),
+                metadata
+                    .get("cluster_addresses")
+                    .cloned()
+                    .ok_or(ObservationError::Incomplete)?,
+            );
+        }
         native_definition(&fields)?
     } else {
         definition(search.ok_or(ObservationError::Query)?, &fields)?
@@ -186,6 +241,7 @@ fn row(
     if profile != expected {
         return Err(ObservationError::BindingMismatch);
     }
+    fields.remove("cluster_addresses");
     fields.extend(
         [
             ("id", id),
@@ -236,12 +292,35 @@ pub(super) fn provider_row(
     Ok(result)
 }
 impl ConnectedOpenShellGateway {
+    async fn checked_profile_row(
+        &self,
+        profile: proto::ProviderProfile,
+        workspace: &str,
+        name: &str,
+        catalog_entry: bool,
+    ) -> Result<Row, ObservationError> {
+        let fields = row(profile.clone(), workspace, name, catalog_entry)?;
+        if let Some(storage) = cluster_source(&fields)? {
+            let addresses =
+                crate::cluster_services::endpoint_addresses(&storage, &fields["endpoint"]).await?;
+            let mut current = fields.clone();
+            current.insert(
+                "cluster_addresses".into(),
+                serde_json::to_string(&addresses).map_err(|_| ObservationError::Incomplete)?,
+            );
+            if native_definition(&current)?.endpoints != profile.endpoints {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
+        Ok(fields)
+    }
+
     pub(super) async fn observe_profile(
         &self,
         workspace: &str,
         name: &str,
     ) -> Result<Option<Row>, ObservationError> {
-        authoritative(
+        let response = authoritative(
             self.client
                 .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
@@ -249,21 +328,36 @@ impl ConnectedOpenShellGateway {
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await,
-        )?
-        .map(|response| {
-            row(
-                response.profile.ok_or(ObservationError::Incomplete)?,
-                workspace,
-                name,
-                true,
-            )
-        })
-        .transpose()
+        )?;
+        match response {
+            Some(response) => self
+                .checked_profile_row(
+                    response.profile.ok_or(ObservationError::Incomplete)?,
+                    workspace,
+                    name,
+                    true,
+                )
+                .await
+                .map(Some),
+            None => Ok(None),
+        }
     }
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
         let search = SearchProvider::from_profile(&want["name"]);
         if search.is_none() && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
+        }
+        let mut observed = want.clone();
+        if let Some(storage) = cluster_source(want)? {
+            if search.is_some() {
+                return Err(ObservationError::Query);
+            }
+            let addresses =
+                crate::cluster_services::endpoint_addresses(&storage, &want["endpoint"]).await?;
+            observed.insert(
+                "cluster_addresses".into(),
+                serde_json::to_string(&addresses).map_err(|_| ObservationError::Incomplete)?,
+            );
         }
         let response = self
             .client
@@ -274,7 +368,7 @@ impl ConnectedOpenShellGateway {
                     profile: Some(if let Some(search) = search {
                         definition(search, want)?
                     } else {
-                        native_definition(want)?
+                        native_definition(&observed)?
                     }),
                     source: "NemoClaw".into(),
                 }],
@@ -286,12 +380,14 @@ impl ConnectedOpenShellGateway {
         if !response.imported || response.profiles.len() != 1 {
             return Err(ObservationError::Incomplete);
         }
-        let row = row(
-            response.profiles.into_iter().next().unwrap(),
-            &want["workspace"],
-            &want["name"],
-            false,
-        )?;
+        let row = self
+            .checked_profile_row(
+                response.profiles.into_iter().next().unwrap(),
+                &want["workspace"],
+                &want["name"],
+                false,
+            )
+            .await?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
     }
@@ -301,6 +397,71 @@ impl ConnectedOpenShellGateway {
 mod tests {
     use super::*;
     use prost::Message;
+
+    #[test]
+    fn owned_cluster_profiles_preserve_exact_observed_addresses_and_reject_broader_grants() {
+        for example in [
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = nemoclaw_sdk::config::Document::parse(example).unwrap();
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "kubernetes_storage",
+                "kubernetes_gateway",
+                "inference_service",
+                "ollama_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let targets = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
+            let target = targets
+                .iter()
+                .find(|target| target.kind == nemoclaw_sdk::kubernetes::services::SERVICE_KIND)
+                .unwrap();
+            let spec =
+                nemoclaw_sdk::kubernetes::services::Spec::decode(&target.values["spec"]).unwrap();
+            let mut want = native_fields("", spec.authenticated());
+            want.insert("owner".into(), document.metadata.uid.clone());
+            want.insert("endpoint".into(), spec.endpoint());
+            want.insert("cluster_source".into(), spec.storage().encode().unwrap());
+            want.insert(
+                "cluster_addresses".into(),
+                r#"["10.96.0.42","fd00::42"]"#.into(),
+            );
+            let mut profile = native_definition(&want).unwrap();
+            assert_eq!(
+                profile.endpoints[0].allowed_ips,
+                ["10.96.0.42/32", "fd00::42/128"]
+            );
+            profile.resource_version = 1;
+            profile.source = "user".into();
+            profile.scope = "workspace".into();
+            let observed = row(profile.clone(), "workspace", &profile.id, true).unwrap();
+            assert_eq!(observed["cluster_source"], want["cluster_source"]);
+            profile.endpoints[0].allowed_ips = vec!["10.0.0.0/8".into()];
+            assert!(row(profile.clone(), "workspace", &profile.id, true).is_err());
+            for (key, value) in [
+                ("endpoint", "http://foreign.namespace.svc:8000/v1"),
+                ("cluster_addresses", "[]"),
+                ("cluster_addresses", r#"["127.0.0.1"]"#),
+                (
+                    "authenticated",
+                    if spec.authenticated() {
+                        "false"
+                    } else {
+                        "true"
+                    },
+                ),
+            ] {
+                let mut changed = want.clone();
+                changed.insert(key.into(), value.into());
+                assert!(native_definition(&changed).is_err(), "{key}: {value}");
+            }
+        }
+    }
 
     fn native_fields(kind: &str, authenticated: bool) -> Row {
         [

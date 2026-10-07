@@ -86,6 +86,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
+| NemoClaw should run vLLM or Ollama beside a managed Kubernetes or OpenShift gateway | Add the service's `kubernetes` settings; follow [managed cluster inference](kubernetes.md#run-a-managed-model-service) | [Cluster vLLM](../examples/kubernetes/local-vllm.yaml), [cluster Ollama](../examples/kubernetes/local-ollama.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
@@ -144,6 +145,7 @@ Model and native settings changes restart the runtime inside the existing sandbo
 ## Run Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
+The host procedure below uses Docker; for Kubernetes or OpenShift, follow [managed cluster inference](kubernetes.md#run-a-managed-model-service).
 The [GPU example](../examples/managed-ollama-gpu.yaml) selects DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
 The inference host needs Linux, Docker with NVIDIA container GPU access, one observable NVIDIA GPU, and enough host/GPU memory and disk for the declared budget.
@@ -253,7 +255,8 @@ Destroy removes the runtime and provider registration and retains the separate m
 Recreation using the retained credential volume reuses the key.
 A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
 Retire model data and credentials separately; removing the model volume does not erase the credential.
-Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+For Docker services, changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+For [managed cluster services](kubernetes.md#run-a-managed-model-service), the authentication mode is fixed with the retained storage.
 
 ## Use External Ollama through a Managed Proxy
 
@@ -410,7 +413,8 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 |---|---|
 | Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
 | Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
-| Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
+| Docker-managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
+| Managed cluster service readiness, including model preparation | `spec.services.<name>.serving.startupTimeoutSeconds`; expiration leaves the owned Pod and PVCs in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 300-second wait |

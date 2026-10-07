@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Configuration template; real-cluster GPU inference is not qualified.
+# Replace the UID, context, namespace, and both zero image digests.
+# Choose hardware and budgets for your GPU node; these values illustrate one
+# AMD64 RTX 4090 service, not a requirement of the cluster implementation.
+# The cluster must enforce NetworkPolicies: managed Ollama has no bearer auth.
+# Build matching runtime and agent images from this checkout, make them available
+# to the cluster, and export the agent metadata bundle; see docs/kubernetes.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-local-ollama
+  uid: c79bb6fa-90d3-4ff1-af9a-39cdde3fe321
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-local-ollama
+      authentication:
+        profile: development
+  services:
+    qwen:
+      kind: ollama
+      image: registry.example.com/nemoclaw/ollama-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      hardware:
+        profile: rtx-4090
+        architecture: amd64
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 8192
+        maxSequences: 1
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 16
+      kubernetes:
+        imageMetadata: {env: NEMOCLAW_MODEL_IMAGE_METADATA}
+        cpuRequestMillis: 1000
+        cpuLimitMillis: 4000
+        memoryRequestGiB: 32
+        memoryLimitGiB: 64
+        storageGiB: 20
+        # Uses the default StorageClass; set storageClass to select another.
+        # Set runtimeClassName if the GPU runtime requires it.
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      serviceRef: qwen
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: qwen3:0.6b
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 8192

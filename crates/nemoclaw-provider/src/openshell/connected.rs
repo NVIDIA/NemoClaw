@@ -53,20 +53,29 @@ impl ConnectedOpenShellGateway {
         let native = search.is_none();
         let source = value(want, "credential_source");
         let profile = if native {
-            Some(inference_profile(
-                value(want, "name"),
-                value(want, "endpoint"),
-                kind.parse().map_err(|_| ObservationError::Query)?,
-                !source.is_empty() || !value(want, "credential_env").is_empty(),
-            )?)
-        } else {
-            None
-        };
-        if let Some(profile) = &profile {
+            let id = format!("nemoclaw-inference-{}", value(want, "name"));
             let bound = self
-                .observe_profile(value(want, "workspace"), &profile.id)
+                .observe_profile(value(want, "workspace"), &id)
                 .await?
                 .ok_or(ObservationError::BindingMismatch)?;
+            let authenticated = !source.is_empty() || !value(want, "credential_env").is_empty();
+            let profile = if let Some(storage) = profile::cluster_source(&bound)? {
+                nemoclaw_sdk::config::cluster_inference_profile(
+                    value(want, "name"),
+                    value(want, "endpoint"),
+                    kind.parse().map_err(|_| ObservationError::Query)?,
+                    authenticated,
+                    &storage,
+                    &[],
+                )?
+            } else {
+                inference_profile(
+                    value(want, "name"),
+                    value(want, "endpoint"),
+                    kind.parse().map_err(|_| ObservationError::Query)?,
+                    authenticated,
+                )?
+            };
             if ["owner", "generation", "endpoint", "provider_type"]
                 .iter()
                 .any(|key| value(&bound, key) != value(want, key))
@@ -79,7 +88,10 @@ impl ConnectedOpenShellGateway {
             {
                 return Err(ObservationError::BindingMismatch);
             }
-        }
+            Some(profile)
+        } else {
+            None
+        };
         let credential = if !source.is_empty() {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
