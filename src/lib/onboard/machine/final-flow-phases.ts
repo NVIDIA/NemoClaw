@@ -94,8 +94,7 @@ export function createFinalOnboardFlowPhases<
       context,
       options.preserveRebuildLivePolicy === true,
     );
-    const settleOpenclawStartupBeforeConfiguration =
-      initializeNativeInferenceRoute && Boolean(context.session?.metadata?.fromImage);
+    const settleOpenclawStartupBeforeConfiguration = initializeNativeInferenceRoute;
     if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
       throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
     }

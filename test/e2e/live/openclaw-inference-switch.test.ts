@@ -35,10 +35,7 @@ import {
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  type FakeOpenAiCompatibleServer,
-  startFakeOpenAiCompatibleServer,
-} from "../fixtures/fake-openai-compatible.ts";
+import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { selectedE2eManagedImageReference } from "../fixtures/managed-image-receipt.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -58,10 +55,10 @@ import {
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
   classifyUnavailableInitialProviderEvidence,
-  MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
+  startMockOpenClawBaselineProvider,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
@@ -1153,14 +1150,7 @@ test(
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
-      ? await startFakeOpenAiCompatibleServer({
-          apiKey: MOCK_BASELINE_API_KEY,
-          host: "0.0.0.0",
-          model: MOCK_BASELINE_MODEL,
-          publicHost: "host.openshell.internal",
-          progress,
-          requireAuth: true,
-        })
+      ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
