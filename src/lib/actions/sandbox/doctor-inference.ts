@@ -8,9 +8,21 @@ import {
   type EffectiveReasoningEffort,
   getEffectiveReasoningEffort,
 } from "../../inference/selection";
-import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
+import {
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
+import {
+  classifyInferenceRouteFailureLabel,
+  formatUntrustedProbeDetail,
+} from "./connect-inference-route-probe";
 import type { DoctorCheck } from "./doctor-report";
-import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
+import {
+  probeSandboxInferenceGatewayHealth,
+  probeSandboxNativeNvidiaModelsHealth,
+  verifyNativeNvidiaStatusAttachment,
+} from "./inference-route-health";
 
 export type DoctorInferenceRoute = {
   model: string;
@@ -18,6 +30,8 @@ export type DoctorInferenceRoute = {
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
   /** Sandbox route endpoint recorded at onboard; selects the bearerless local vLLM host port. */
   recordedEndpointUrl?: string | null;
+  agentName?: string | null;
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
 };
 
 type ManagedLlamaCppDoctorDeps = {
@@ -67,15 +81,95 @@ type DoctorInferenceDeps = {
   gatewayName?: string | null;
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
+  probeSandboxNativeNvidiaModelsHealthImpl?: typeof probeSandboxNativeNvidiaModelsHealth;
+  verifyNativeNvidiaStatusAttachmentImpl?: typeof verifyNativeNvidiaStatusAttachment;
   /** False for terminal agents that do not have a long-running gateway serving process. */
   includeServingProcessCheck?: boolean;
 };
+
+async function collectNativeNvidiaRouteProbe(
+  sandboxName: string,
+  route: DoctorInferenceRoute,
+  sandboxReachable: boolean,
+  deps: DoctorInferenceDeps,
+): Promise<ProviderHealthStatus> {
+  const endpoint = "https://integrate.api.nvidia.com/v1/models";
+  if (!sandboxReachable) {
+    return {
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA route",
+      endpoint,
+      detail: "skipped because the sandbox is not reachable through its named gateway",
+      probeLabel: "native NVIDIA",
+    };
+  }
+  if (!deps.gatewayName || !route.nativeNvidiaProviderAttachment) {
+    return {
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA route",
+      endpoint,
+      detail: "the native NVIDIA provider ownership receipt or gateway binding is missing",
+      probeLabel: "native NVIDIA",
+      failureLabel: "unreachable",
+    };
+  }
+  try {
+    await (deps.verifyNativeNvidiaStatusAttachmentImpl ?? verifyNativeNvidiaStatusAttachment)({
+      gatewayName: deps.gatewayName,
+      sandboxName,
+      expected: route.nativeNvidiaProviderAttachment,
+    });
+  } catch (error) {
+    const detail = formatUntrustedProbeDetail(
+      error instanceof Error ? error.message : String(error),
+    );
+    return {
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA route",
+      endpoint,
+      detail: `the recorded native NVIDIA provider attachment could not be verified: ${detail}`,
+      probeLabel: "native NVIDIA",
+      failureLabel: "unreachable",
+    };
+  }
+  const probe =
+    deps.probeSandboxNativeNvidiaModelsHealthImpl ?? probeSandboxNativeNvidiaModelsHealth;
+  const result = await probe(sandboxName, {
+    gatewayName: deps.gatewayName,
+    agentName: route.agentName,
+  }).catch(() => null);
+  if (!result) {
+    return {
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA route",
+      endpoint,
+      detail: `Could not probe ${endpoint} through the attached provider.`,
+      probeLabel: "native NVIDIA",
+      failureLabel: "unreachable",
+    };
+  }
+  return {
+    ok: result.ok,
+    probed: true,
+    providerLabel: "Native NVIDIA route",
+    endpoint: result.endpoint,
+    detail: result.detail,
+    probeLabel: "native NVIDIA",
+    ...(result.ok ? {} : { failureLabel: classifyInferenceRouteFailureLabel(result.httpStatus) }),
+  };
+}
 
 export function resolveDoctorReasoningEffort(
   input: Parameters<typeof getEffectiveReasoningEffort>[0],
 ): EffectiveReasoningEffort | null {
   return getEffectiveReasoningEffort(input);
 }
+
+export { isNativeNvidiaProvider, normalizeNativeNvidiaProviderAttachment };
 
 function pushInferenceHealthCheck(
   checks: DoctorCheck[],
@@ -220,13 +314,18 @@ export async function collectInferenceChecks(
   const checks = [inferenceRouteCheck(sandboxName, route)];
   const effortCheck = reasoningEffortCheck(route);
   if (effortCheck) checks.push(effortCheck);
-  const gatewayProbe = await collectInferenceRouteProbe(
-    sandboxName,
-    sandboxReachable,
-    deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
-    deps.gatewayName,
-  );
-  pushInferenceHealthCheck(checks, gatewayProbe, { label: "Inference route (gateway)" });
+  const nativeNvidia = isNativeNvidiaProvider(route.provider);
+  const routeProbe = nativeNvidia
+    ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
+    : await collectInferenceRouteProbe(
+        sandboxName,
+        sandboxReachable,
+        deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+        deps.gatewayName,
+      );
+  pushInferenceHealthCheck(checks, routeProbe, {
+    label: nativeNvidia ? "Inference route (native NVIDIA)" : "Inference route (gateway)",
+  });
   for (const diagnostic of collectProviderHealthDiagnostics(
     route,
     deps.probeProviderHealthImpl ?? probeProviderHealth,

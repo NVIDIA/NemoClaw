@@ -20,11 +20,17 @@ import {
   type GatewayInferenceRoute,
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
 import { valueLooksLikeSecret } from "../security/credential-filter";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
+  getDefaultSandboxTargetName,
   getKnownSandboxTarget,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -61,6 +67,7 @@ export type InferenceEndpointStatus =
 export interface InferenceGetDeps {
   inferenceRouteObserver: OpenShellInferenceRouteObserver;
   getSandbox?: typeof getKnownSandboxTarget;
+  getDefaultSandbox?: typeof getDefaultSandboxTargetName;
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   listSandboxes: typeof listPersistedSandboxTargets;
   log: (message?: string) => void;
@@ -80,6 +87,7 @@ export class InferenceGetError extends Error {
 function defaultDeps(): InferenceGetDeps {
   return {
     inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
+    getDefaultSandbox: getDefaultSandboxTargetName,
     getSandboxTargetGatewayName,
     listSandboxes: listPersistedSandboxTargets,
     log: console.log,
@@ -301,6 +309,31 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
+  const selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
+  const selectedSandbox = selectedSandboxName
+    ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
+    : null;
+  if (
+    selectedSandbox &&
+    isNativeNvidiaProvider(selectedSandbox.provider) &&
+    normalizeNativeNvidiaProviderAttachment(selectedSandbox.nativeNvidiaProviderAttachment)
+  ) {
+    const payload: InferenceGetResult = {
+      provider: selectedSandbox.provider ?? null,
+      model: selectedSandbox.model ?? null,
+      endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+    };
+    if (!options.quiet) {
+      if (options.json) {
+        deps.log(JSON.stringify(payload, null, 2));
+      } else {
+        deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
+        deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+        deps.log(`Endpoint: ${formatRouteValueForDisplay(NVIDIA_HOSTED_NATIVE_ENDPOINT)}`);
+      }
+    }
+    return payload;
+  }
   let gatewayName: string;
   try {
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);

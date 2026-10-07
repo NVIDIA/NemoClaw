@@ -277,7 +277,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     });
     await expect(
       runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "gamma" },
+        { provider: "openrouter", model: "nvidia/model-b", sandboxName: "gamma" },
         deps,
       ),
     ).rejects.toMatchObject({

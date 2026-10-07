@@ -215,18 +215,20 @@ describe("onboarding inference gateway scope", () => {
           },
         });
 
-        await expect(
-          harness.setupInference(
-            "test-box",
-            "claude-test",
-            "compatible-anthropic-endpoint",
-            "https://example.test",
-            "COMPATIBLE_ANTHROPIC_API_KEY",
-            null,
-            [],
-            { gatewayName: GATEWAY, preferredInferenceApi: "openai-completions" },
-          ),
-        ).resolves.toEqual({ ok: true });
+        const result = await harness.setupInference(
+          "test-box",
+          "claude-test",
+          "compatible-anthropic-endpoint",
+          "https://example.test",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+          null,
+          [],
+          { gatewayName: GATEWAY, preferredInferenceApi: "openai-completions" },
+        );
+        expect(
+          result,
+          JSON.stringify({ commands: harness.commands, errors: harness.errors }, null, 2),
+        ).toEqual({ ok: true });
 
         expect(commandRouter.callCount("provider-delete")).toBe(2);
         expect(harness.commands.map(({ command }) => command)).toContain(
