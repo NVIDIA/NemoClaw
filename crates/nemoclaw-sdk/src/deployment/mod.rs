@@ -354,16 +354,7 @@ impl Deployment {
             .await?;
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let allowed = allowed(&targets);
-        if bindings.iter().any(|(address, binding)| {
-            (!allowed.contains_key(address)
-                && !plan::disposable(address)
-                && !plan::reconstructible(address))
-                || !binding.spec.is_empty()
-        }) {
-            return Err(Error::Conflict(
-                "undeclared resource binding in deployment state",
-            ));
-        }
+        validate_root_bindings(&allowed, &bindings)?;
         (operation.progress)(Progress::Planning);
         let plan = operation
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -623,6 +614,26 @@ impl Deployment {
         self.teardown_stages(cancel, preview).await
     }
 }
+fn validate_root_bindings(
+    allowed: &BTreeMap<String, Row>,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    if bindings.iter().any(|(address, binding)| {
+        (!allowed.contains_key(address)
+            && !plan::disposable(address)
+            && !plan::reconstructible(address))
+            // The protected-input provider stores a spec and owns refresh,
+            // replacement and cleanup identity checks, like Docker compute.
+            || (!binding.spec.is_empty()
+                && !address.starts_with("nemoclaw_container_inputs."))
+    }) {
+        return Err(Error::Conflict(
+            "undeclared resource binding in deployment state",
+        ));
+    }
+    Ok(())
+}
+
 fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {
     targets
         .iter()

@@ -627,6 +627,76 @@ async fn serve_setup(
     let _ = stream.write_all(&body).await;
 }
 #[tokio::test]
+async fn image_update_plan_checks_the_existing_helpers_prior_spec_without_mutation() {
+    let fixture = SetupFixture::new().await;
+    let backend = fixture.backend(true);
+    let first = backend.ensure("container_inputs", &fixture.row).await;
+    assert!(first.error().is_none());
+    let prior = first.state().unwrap();
+    let mut desired = fixture.row.clone();
+    let mut spec: InputsSpec = serde_json::from_str(&desired["spec"]).unwrap();
+    spec.process.process.as_mut().unwrap().image = format!("voiceclaw@sha256:{}", "e".repeat(64));
+    desired.insert("spec".into(), serde_json::to_string(&spec).unwrap());
+    let requests = fixture.state.lock().unwrap().requests.len();
+    backend
+        .plan("container_inputs", &desired, Some(prior))
+        .await
+        .unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(
+            state.requests[requests..]
+                .iter()
+                .all(|(method, _)| method == "GET")
+        );
+        assert_eq!(
+            (state.creates, state.starts, state.transfers, state.deletes),
+            (1, 1, 1, 0)
+        );
+        assert!(state.files.contains_key("credentials/speech"));
+    }
+    fixture.state.lock().unwrap().foreign = true;
+    assert!(
+        backend
+            .plan("container_inputs", &desired, Some(prior))
+            .await
+            .is_err()
+    );
+    let files = {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            (state.creates, state.starts, state.transfers, state.deletes),
+            (1, 1, 1, 0)
+        );
+        assert!(state.helper.is_some());
+        assert!(state.files.contains_key("credentials/speech"));
+        state.files.clone()
+    };
+    fixture.state.lock().unwrap().foreign = false;
+    backend
+        .remove("container_inputs", prior, false)
+        .await
+        .unwrap();
+    let replacement = backend.ensure("container_inputs", &desired).await;
+    assert!(replacement.error().is_none(), "{:?}", replacement.error());
+    assert_eq!(replacement.state().unwrap()["complete"], "true");
+    assert_ne!(replacement.state().unwrap()["id"], prior["id"]);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(
+        (state.creates, state.starts, state.transfers, state.deletes),
+        (2, 2, 2, 1)
+    );
+    assert_eq!(state.files, files);
+    assert!(
+        state
+            .requests
+            .iter()
+            .filter(|(method, _)| method == "DELETE")
+            .all(|(_, path)| path.starts_with("/containers/"))
+    );
+}
+
+#[tokio::test]
 async fn setup_transfers_only_after_admission_and_unchanged_apply_does_not_restart_or_rewrite() {
     let fixture = SetupFixture::new().await;
     let backend = fixture.backend(true);

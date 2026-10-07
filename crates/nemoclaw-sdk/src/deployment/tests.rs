@@ -4,6 +4,62 @@ use crate::config::Gateway;
 
 use super::*;
 
+#[test]
+fn saved_container_inputs_are_valid_root_bindings() {
+    let document = Document::parse(
+        include_bytes!("../../tests/fixtures/config/container-managed-local.yaml").as_slice(),
+    )
+    .unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    let targets = compile::targets(&document, &generations).unwrap();
+    let expected = allowed(&targets);
+    let binding = StateBinding {
+        id: "owned-helper".into(),
+        spec: expected["nemoclaw_container_inputs.voice"]["spec"].clone(),
+        ..Default::default()
+    };
+    let bindings = BTreeMap::from([("nemoclaw_container_inputs.voice".into(), binding)]);
+    validate_root_bindings(&expected, &bindings).unwrap();
+
+    // An interrupted replacement can leave the old helper after the new
+    // document is checkpointed. The provider checks that helper's prior spec.
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["services"]["voice"]["image"] =
+        json!(format!("voiceclaw@sha256:{}", "e".repeat(64)));
+    let next = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let next_targets = compile::targets(&next, &generations).unwrap();
+    let next_expected = allowed(&next_targets);
+    assert_ne!(
+        expected["nemoclaw_container_inputs.voice"]["spec"],
+        next_expected["nemoclaw_container_inputs.voice"]["spec"]
+    );
+    validate_root_bindings(&next_expected, &bindings).unwrap();
+    // Removal still delegates the established helper's owned cleanup.
+    value["spec"]["services"] = json!({});
+    let removed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    validate_root_bindings(
+        &allowed(&compile::targets(&removed, &generations).unwrap()),
+        &bindings,
+    )
+    .unwrap();
+
+    for address in [
+        "nemoclaw_sandbox.assistant",
+        "docker_container.container_service_voice",
+        "nemoclaw_container_inputs_extra.voice",
+        "unknown.voice",
+    ] {
+        let foreign = BTreeMap::from([(
+            address.into(),
+            bindings["nemoclaw_container_inputs.voice"].clone(),
+        )]);
+        assert!(
+            validate_root_bindings(&expected, &foreign).is_err(),
+            "{address}"
+        );
+    }
+}
+
 pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
     let original =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())

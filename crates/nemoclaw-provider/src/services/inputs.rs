@@ -656,7 +656,8 @@ impl Backend for InputsBackend {
             .await
             .map_err(|_| ObservationError::Transport)??;
         if let Some(prior) = prior {
-            self.container(&spec, prior, false).await?;
+            let prior_spec = self.spec(prior)?;
+            self.container(&prior_spec, prior, false).await?;
         }
         Ok(())
     }
