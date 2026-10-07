@@ -153,7 +153,7 @@ test(
       const read = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
-          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
+          'set -e; marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; plugin="$(HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json)"; printf "%s" "$plugin" | node -e \'const p=JSON.parse(require("node:fs").readFileSync(0,"utf8")).plugin; if (p?.id !== "e2e-rebuild-plugin" || p.status !== "loaded") process.exit(1);\'; printf "%s\\n%s\\n" "$marker" "$timeout"',
         ),
         {
           artifactName: `${artifactPrefix}-read-marker`,
