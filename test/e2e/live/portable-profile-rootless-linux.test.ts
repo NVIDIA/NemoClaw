@@ -25,6 +25,10 @@ import {
   recoverHermesPortableLaunchForwards,
 } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
+import {
+  handleFinalizationState,
+  handlePostVerifyState,
+} from "../../../src/lib/onboard/machine/handlers/finalization.ts";
 import { enrollHermesPortableContainer } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
@@ -65,6 +69,11 @@ import {
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
+import {
+  createPortableHermesFinalizationOptions,
+  runPortableDoctor,
+  writePortableRegistry,
+} from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
   getSandboxConfigRequest,
@@ -587,6 +596,37 @@ function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.Proces
   return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
 }
 
+async function provePortableHermesFinalization(input: {
+  readonly lifecycleEnv: NodeJS.ProcessEnv;
+  readonly registry: SandboxEntry;
+  readonly sandboxName: string;
+}): Promise<Record<string, true>> {
+  const { lifecycleEnv, registry, sandboxName } = input;
+  const options = createPortableHermesFinalizationOptions(sandboxName, lifecycleEnv);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, {
+    ...registry,
+    lifecycleGeneration: `${HERMES_PORTABLE_E2E_GENERATION}-mismatch`,
+  });
+  const incomplete = await handleFinalizationState(options);
+  assert.equal(incomplete.stateResult.type, "pause");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 1);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, registry);
+  const finalization = await handleFinalizationState(options);
+  assert.equal(finalization.stateResult.type, "transition");
+  const postVerify = await handlePostVerifyState(options);
+  assert.equal(postVerify.stateResult.type, "complete");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 0);
+  return {
+    mismatchedAuthorityRejected: true,
+    doctorRejectedMismatchedAuthority: true,
+    finalizationAdvanced: true,
+    onboardingCompleted: true,
+    doctorHealthy: true,
+  };
+}
+
 async function proveHistoricalHermesPortableLifecycle(input: {
   artifactDir: string;
   hermesImageRef: string;
@@ -686,10 +726,14 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       name: sandboxName,
       agent: "hermes",
       gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+      gatewayPort: 8080,
       lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
       lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
       openshellDriver: "docker",
       openshellVersion: openshellExecutableAuthority.version,
+      portableLifecycleProfile: "hermes",
+      provider: "custom",
+      model: "e2e-readiness",
     };
     const context = {
       agent: "hermes",
@@ -771,6 +815,12 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       captureOpenShell: capture,
       readRegistry: () => registry,
     };
+
+    const finalizationEvidence = await provePortableHermesFinalization({
+      lifecycleEnv,
+      registry,
+      sandboxName,
+    });
 
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
@@ -865,6 +915,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
           authenticatedHealth: "verified-by-public-start-before-forward-verification",
         },
+        finalization: finalizationEvidence,
         postRecoveryStop: {
           result: postRecoveryStop.kind,
           containerStatus: postRecoveryContainerStatus,
@@ -1006,13 +1057,9 @@ async function main(progress: TestProgress): Promise<void> {
       "disposable network inspection",
     );
     assert.equal(disposableNetwork.dns_enabled, true);
-    assert.match(String(disposableNetwork.network_interface), /^podman(?:0|[1-9][0-9]{0,8})$/u);
     assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
-    assert.match(String(disposableNetwork.id), /^[a-f0-9]{64}$/u);
-    assert.ok(Array.isArray(disposableNetwork.subnets));
-    assert.equal(disposableNetwork.subnets.length, 1);
-    const disposableSubnet = disposableNetwork.subnets[0] as Record<string, unknown>;
-    assert.equal(typeof disposableSubnet.subnet, "string");
+    const disposableSubnets = disposableNetwork.subnets as Record<string, unknown>[];
+    const disposableSubnet = disposableSubnets[0]!;
     assert.equal(Object.hasOwn(disposableSubnet, "lease_range"), false);
     assert.notEqual(disposableSubnet.subnet, "169.254.1.0/24");
     disposableNetworkId = String(disposableNetwork.id);

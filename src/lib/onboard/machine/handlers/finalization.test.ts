@@ -835,4 +835,59 @@ describe("secret-boundary refusal during finalization", () => {
       expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("ready"));
     },
   );
+
+  it.each([
+    {
+      reason: "portable-hermes-registry-authority-unavailable" as const,
+      expected: "lifecycle receipt and registered gateway authority could not be matched",
+      action: "nemoclaw my-assistant doctor",
+      additional: "Preserve the registry and lifecycle receipt files unchanged",
+      forbidden: "identity-qualified recovery guidance",
+      resume: false,
+    },
+    {
+      reason: "portable-hermes-native-gateway-unavailable" as const,
+      expected: "receipt-owned native gateway is not qualified and healthy",
+      action: "nemoclaw my-assistant recover",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
+      resume: true,
+    },
+    {
+      reason: "portable-hermes-lifecycle-lock-unavailable" as const,
+      expected: "lifecycle lock is unavailable",
+      action: "Wait for the active sandbox operation to finish",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
+      resume: true,
+    },
+  ])("renders redacted actionable Portable Hermes $reason guidance (#11892)", async (row) => {
+    const { deps, calls } = createDeps({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        ready: false as const,
+        reason: row.reason,
+      })),
+    });
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      portableProfileSelected: true,
+    });
+
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { state: "finalizing", reason: "recovery_check_incomplete" },
+    });
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.expected));
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.action));
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.additional));
+    expect(calls.error).not.toHaveBeenCalledWith(expect.stringContaining(row.forbidden));
+    expect(calls.error.mock.calls.flat().join("\n").includes("nemoclaw onboard --resume")).toBe(
+      row.resume,
+    );
+    expect(calls.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("untrusted runtime diagnostic"),
+    );
+  });
 });

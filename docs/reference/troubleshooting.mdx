@@ -822,15 +822,28 @@ Run `$$nemoclaw status` for a broader gateway health report.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+### Portable Hermes receipt and registry authority do not match
+
+Portable Hermes lifecycle commands require the current registry entry and the durable lifecycle receipt to identify the same sandbox, gateway, and lifecycle generation. If onboarding reports that it cannot match them, keep both files unchanged and inspect the sandbox:
+
+```bash
+nemohermes <sandbox-name> doctor
+```
+
+Do not copy, recreate, or edit a registry entry or lifecycle receipt by hand. If `doctor` reports that it cannot qualify the authority, preserve both files unchanged and stop. Manual edits can bind recovery to stale or replacement state.
+
 If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
 Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
 
-Re-image the sandbox with a current Hermes build before retrying recovery:
+Re-image the sandbox with a current Hermes build through a fresh onboarding run:
 
 ```bash
-nemohermes <sandbox-name> rebuild --yes
-nemohermes <sandbox-name> recover
+nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+Portable Hermes does not support the sandbox `rebuild` command.
+The fresh onboarding run is the supported terminal action for replacing the outdated image.
 
 </AgentOnly>
 
