@@ -138,5 +138,12 @@
       "directory": "tools/mcp-tool-discovery-runtime",
       "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
     }
-  ]
+  ],
+  "sourceRegistryPackageReplacement": {
+    "artifactName": "nvidia-openshell-sdk-0.1.2.tgz",
+    "label": "OpenShell TypeScript SDK 0.1.2",
+    "packageSpec": "@nvidia/openshell-sdk@0.1.2",
+    "integrity": "sha512-GtNh/xzuIydm8pnBJSB+Pvo9wQrGcvAdVMgQOjmx2asjXIAMQcdX5/17sd0GjFF0K0KHCTW2gqgwYvf6BCqWMQ==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.2/2bef2b98c751484b2a8ad434915138f85d23cfba"
+  }
 }
