@@ -3,7 +3,11 @@
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import type { TelemetryOutcome, TelemetryState } from "../../../domain/telemetry/event";
-import { persistVerifiedAgentModelSelections, readAgentSelectionEntry } from "./model-selections";
+import {
+  configuredAgentIds,
+  persistVerifiedAgentModelSelections,
+  readAgentSelectionEntry,
+} from "./model-selections";
 import { loadAgentsManifest } from "../../../onboard/agents-manifest";
 import { isOpenclawAgent } from "../../../onboard/openclaw-otel-policy-presets";
 import * as registry from "../../../state/registry";
@@ -300,10 +304,17 @@ export function parseOpenClawAgentsList(output: string, strict = false): OpenCla
   });
 }
 
-export function readTelemetryAgentRoster(
+export async function readTelemetryAgentRoster(
   sandboxName: string,
   target: OpenShellGatewayTarget = selectedOpenShellGateway(),
+  configuration?: unknown,
 ): Promise<string[] | null> {
+  const configured = configuredAgentIds(
+    configuration === undefined
+      ? await readTelemetryAgentConfiguration(sandboxName, target)
+      : configuration,
+  );
+  if (configured !== undefined) return configured;
   return readTelemetryAgentCommand(
     sandboxName,
     target,
@@ -312,6 +323,7 @@ export function readTelemetryAgentRoster(
       parseOpenClawAgentsList(raw, true)
         .map((entry) => entry.id)
         .sort(),
+    5_000,
   );
 }
 

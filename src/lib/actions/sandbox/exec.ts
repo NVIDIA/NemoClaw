@@ -315,12 +315,14 @@ export async function startSandboxExec(
       }
     }
     if (rosterTelemetry) {
-      const afterRoster = await readTelemetryAgentRoster(sandboxName, target);
+      const config = await readTelemetryAgentConfiguration(sandboxName, target);
+      const afterRoster = await readTelemetryAgentRoster(sandboxName, target, config);
       if (!beforeRoster || !afterRoster) {
         recordTelemetryTarget({
           scope: "configuration",
           sandboxName,
-          outcome: "unverified",
+          gatewayName,
+          outcome: completion.cancelled ? "cancelled" : exitCode !== 0 ? "failed" : "unverified",
           state: "unavailable",
           verificationStatus: "collection_error",
         });
@@ -332,7 +334,6 @@ export async function startSandboxExec(
           const deleted = beforeRoster.filter((id) => !afterRoster.includes(id));
           const added = afterRoster.filter((id) => !beforeRoster.includes(id));
           const model = command[2] === "add" ? explicitAgentModel(command) : null;
-          const config = await readTelemetryAgentConfiguration(sandboxName, target);
           const selection =
             model && added.length === 1
               ? verifiedAddedAgentModelSelection(config, added[0], model)
@@ -358,6 +359,7 @@ export async function startSandboxExec(
         recordTelemetryTarget({
           scope: "configuration",
           sandboxName,
+          gatewayName,
           outcome: completion.cancelled
             ? "cancelled"
             : exitCode !== 0

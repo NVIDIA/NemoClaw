@@ -82,17 +82,39 @@ export function verifiedManifestModelSelections(
   return selections;
 }
 
-function hasNativeAgentRoster(config: unknown): boolean {
-  const agents = dataRecord(dataRecord(config)?.agents);
-  if (!agents) return false;
+/** Explicit native roster ownership needs no OpenClaw startup; absent ownership stays unknown. */
+export function configuredAgentIds(config: unknown): string[] | null | undefined {
+  const root = dataRecord(config);
+  if (!root) return null;
+  const agents = dataRecord(root.agents);
+  if (!agents) return root.agents === undefined ? undefined : null;
+  let rows: [unknown, unknown][];
   if (agents.entries !== undefined) {
     const entries = dataRecord(agents.entries);
-    return entries !== null && Object.values(entries).every((entry) => dataRecord(entry) !== null);
+    if (!entries) return null;
+    rows = Object.entries(entries);
+  } else if (agents.list !== undefined) {
+    if (!Array.isArray(agents.list)) return null;
+    rows = agents.list.map((entry) => [dataRecord(entry)?.id, entry]);
+  } else return undefined;
+  const ids = new Set<string>();
+  for (const [id, value] of rows) {
+    const entry = dataRecord(value);
+    if (
+      typeof id !== "string" ||
+      !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) ||
+      !entry ||
+      (entry.id !== undefined && entry.id !== id) ||
+      ids.has(id)
+    )
+      return null;
+    ids.add(id);
   }
-  return (
-    Array.isArray(agents.list) &&
-    agents.list.every((entry) => typeof dataRecord(entry)?.id === "string")
-  );
+  return [...ids].sort();
+}
+
+function hasNativeAgentRoster(config: unknown): boolean {
+  return Array.isArray(configuredAgentIds(config));
 }
 
 /** Retain historical origins only for native slots still owned by the recreated target. */

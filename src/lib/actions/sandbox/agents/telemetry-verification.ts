@@ -23,6 +23,7 @@ import {
 } from "../../../domain/telemetry/provenance";
 import { takeSelectedAgentsManifest } from "../../../onboard/agents-manifest";
 import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding/identity";
+import { resolveSandboxConfigRuntimeSelection } from "../mcp-bridge-provider-inspection";
 import { isTelemetryOperationActive, withTelemetryEvidence } from "../../telemetry/operation";
 import {
   persistVerifiedAgentModelSelections,
@@ -38,18 +39,25 @@ export async function readTelemetryAgentCommand<T>(
   target: OpenShellGatewayTarget,
   command: readonly string[],
   project: (raw: string) => T,
+  timeoutLimitMs = 1_000,
 ): Promise<T | null> {
   return withTelemetryEvidence(async (remainingMs, signal) => {
+    const runtimeSelection = resolveSandboxConfigRuntimeSelection(sandboxName);
+    if (target.kind === "named" && target.gatewayName !== runtimeSelection.gatewayName)
+      throw new Error("Native evidence target does not match the recorded sandbox gateway");
     const reader = createSupervisedSandboxCommandReader(signal);
     try {
-      const raw = await reader.read({
-        sandboxName,
-        target,
-        command,
-        timeoutMilliseconds: Math.max(1, Math.min(1_000, Math.floor(remainingMs))),
-        timeoutKillSignal: "SIGKILL",
-        outputLimitBytes: 16 * 1024 * 1024,
-      });
+      const raw = await reader.read(
+        {
+          sandboxName,
+          target: { kind: "named", gatewayName: runtimeSelection.gatewayName },
+          command,
+          timeoutMilliseconds: Math.max(1, Math.min(timeoutLimitMs, Math.floor(remainingMs))),
+          timeoutKillSignal: "SIGKILL",
+          outputLimitBytes: 16 * 1024 * 1024,
+        },
+        runtimeSelection,
+      );
       return project(raw);
     } finally {
       reader.dispose();
