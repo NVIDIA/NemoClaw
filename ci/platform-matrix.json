@@ -207,8 +207,8 @@
     },
     {
       "name": "Managed inference",
-      "status": "tested",
-      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. Most providers use `inference.local` inside the sandbox; NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
+      "status": "caveated",
+      "notes": "Fixed hosted providers use their native endpoints through sandbox-attached OpenShell providers. Custom, local, and Model Router selections use `inference.local` inside the sandbox. OpenShell keeps provider credentials outside the sandbox. Existing tested paths retain their evidence; live qualification of the newly migrated OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider paths remains pending."
     },
     {
       "name": "Declarative network policy",
