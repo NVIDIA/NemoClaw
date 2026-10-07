@@ -10,6 +10,11 @@ import type {
 import { createCliOpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../inference/native-nvidia";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -63,6 +68,84 @@ function defaultCaptureOpenshell(
       ? OPENAI_ENDPOINTLESS_PROFILE
       : "";
   return { status, output, stdout: output, stderr: "" };
+}
+
+function nativeAwareProviderAdapter(
+  base: OpenShellProviderAdapter,
+  entries: SandboxEntry[],
+): OpenShellProviderAdapter {
+  const recordedEntry = entries.find(
+    (entry) => entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
+  );
+  const providerId =
+    recordedEntry?.nativeNvidiaProviderAttachment?.providerId ??
+    "11111111-2222-4333-8444-555555555555";
+  let providerPresent = recordedEntry !== undefined;
+  const attachments = new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
+      )
+      .map((entry) => entry.name),
+  );
+  const isNative = (providerName: string): boolean =>
+    providerName === NVIDIA_HOSTED_NATIVE_PROVIDER;
+  return {
+    ...base,
+    importProviderProfile: async (request) =>
+      request.profilePath.endsWith(`${NVIDIA_HOSTED_NATIVE_PROFILE_ID}.yaml`)
+        ? ({ ok: true } as const)
+        : await base.importProviderProfile(request),
+    getProvider: async (request) => {
+      if (!isNative(request.providerName)) return await base.getProvider(request);
+      if (!providerPresent) {
+        return {
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "provider not found" },
+        } as const;
+      }
+      return {
+        ok: true,
+        value: {
+          name: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          credentialKeys: [NVIDIA_HOSTED_CREDENTIAL_ENV],
+          configKeys: [],
+          revision: { id: providerId, resourceVersion: 1 },
+        },
+      } as const;
+    },
+    createProvider: async (request) => {
+      if (!isNative(request.name)) return await base.createProvider(request);
+      providerPresent = true;
+      return { ok: true } as const;
+    },
+    updateProvider: async (request) => {
+      if (!isNative(request.providerName)) return await base.updateProvider(request);
+      providerPresent = true;
+      return { ok: true } as const;
+    },
+    attachProvider: async (request) => {
+      if (!isNative(request.providerName)) return await base.attachProvider(request);
+      attachments.add(request.sandboxName);
+      return { ok: true } as const;
+    },
+    detachProvider: async (request) => {
+      if (!isNative(request.providerName)) return await base.detachProvider(request);
+      const changed = attachments.delete(request.sandboxName);
+      return { ok: true, value: { changed } } as const;
+    },
+    listProviderAttachments: async (request) => {
+      if (!providerPresent) return await base.listProviderAttachments(request);
+      return {
+        ok: true,
+        value: {
+          names: attachments.has(request.sandboxName) ? [NVIDIA_HOSTED_NATIVE_PROVIDER] : [],
+        },
+      } as const;
+    },
+  };
 }
 
 export function baseSession(overrides: Partial<Session> = {}): Session {
@@ -194,6 +277,8 @@ export function createDeps(options: {
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
+  getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
+  setNativeNvidiaProviderAuthority?: InferenceSetDeps["setNativeNvidiaProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -218,6 +303,7 @@ export function createDeps(options: {
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
+    setNativeNvidiaProviderAuthority: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -290,27 +376,31 @@ export function createDeps(options: {
         (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
           await operation()),
     ),
+    setNativeNvidiaProviderAuthority: vi.fn(),
   };
   const providerAdapter =
     options.providerAdapter ??
-    createCliOpenShellProviderAdapter({
-      run: (args, runOptions) => {
-        const result = calls.captureOpenshell(args, {
-          ...(runOptions.env ? { env: runOptions.env } : {}),
-          ignoreError: true,
-          includeStreams: true,
-          ...(runOptions.maxBuffer ? { maxBuffer: runOptions.maxBuffer } : {}),
-          timeout: runOptions.timeout,
-        });
-        return {
-          status: result.status,
-          stdout: result.stdout || result.stderr ? result.stdout : result.output,
-          stderr: result.stderr,
-          ...("error" in result && result.error ? { error: result.error } : {}),
-          ...("signal" in result && result.signal ? { signal: result.signal } : {}),
-        };
-      },
-    });
+    nativeAwareProviderAdapter(
+      createCliOpenShellProviderAdapter({
+        run: (args, runOptions) => {
+          const result = calls.captureOpenshell(args, {
+            ...(runOptions.env ? { env: runOptions.env } : {}),
+            ignoreError: true,
+            includeStreams: true,
+            ...(runOptions.maxBuffer ? { maxBuffer: runOptions.maxBuffer } : {}),
+            timeout: runOptions.timeout,
+          });
+          return {
+            status: result.status,
+            stdout: result.stdout || result.stderr ? result.stdout : result.output,
+            stderr: result.stderr,
+            ...("error" in result && result.error ? { error: result.error } : {}),
+            ...("signal" in result && result.signal ? { signal: result.signal } : {}),
+          };
+        },
+      }),
+      entries,
+    );
   const inferenceRouteMutator =
     options.inferenceRouteMutator ??
     createCliOpenShellInferenceRouteMutator(
@@ -336,6 +426,9 @@ export function createDeps(options: {
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
+    getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority:
+      options.setNativeNvidiaProviderAuthority ?? calls.setNativeNvidiaProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,

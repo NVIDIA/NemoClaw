@@ -3,24 +3,26 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Verify the Sandbox Inference Route"
 sidebar-title: "Verify the Inference Route"
-description: "Verify that a NemoClaw sandbox can reach its configured model through the OpenShell inference route."
-description-agent: "Verifies the in-sandbox inference path. Use when checking that inference.local, proxy authentication, and the selected backend work together."
-keywords: ["verify inference.local", "nemoclaw inference route", "sandbox inference health"]
+description: "Verify that a NemoClaw sandbox can reach its configured model through its selected inference provider."
+description-agent: "Verifies the in-sandbox inference path for native NVIDIA providers and shared inference routes."
+keywords: ["verify inference provider", "nemoclaw inference route", "sandbox inference health"]
 content:
   type: "how_to"
 ---
-Verify inference through the same `inference.local` path that the agent uses inside the sandbox.
+Verify inference through the same provider path that the agent uses inside the sandbox.
 Reading the active route confirms configuration, but it does not authenticate a model request.
 
 ## Confirm the Configured Route
 
-Read the live gateway route first.
+Read the selected inference path first.
 
 ```bash
 $$nemoclaw inference get
 ```
 
-Confirm that the provider and model match the route you intended to configure.
+For a selected sandbox with a valid native NVIDIA attachment, the command returns that sandbox's recorded provider, model, and `https://integrate.api.nvidia.com/v1` endpoint.
+For other providers, the command reads the live shared gateway route.
+Confirm that the provider, model, and endpoint match the path you intended to configure.
 
 ## Check Sandbox Inference Health
 
@@ -30,7 +32,11 @@ Run the named sandbox status command.
 $$nemoclaw <name> status
 ```
 
-The `Inference` row first checks the sandbox's `inference.local` path.
+For NVIDIA Endpoints, the `Inference` row verifies the recorded sandbox attachment.
+It then sends a native Chat Completions request to `https://integrate.api.nvidia.com/v1`.
+It does not probe `https://inference.local/v1/models` for this provider.
+
+For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.
 When the live provider matches the recorded provider, `status` validates the result against the recorded API family, even when only the model differs.
 When the live provider differs, `status` does not carry the recorded API family to the live provider.
@@ -38,7 +44,8 @@ The row reports `healthy` only when the route returns a structurally valid resul
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
-Deep Agents Code on OpenRouter is the exception: its models route returns `404` by design, and `status` requires a successful inference request.
+The recorded `openrouter-api` provider uses NemoClaw's Chat Completions-only OpenRouter adapter.
+Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.
 When the models route responds and `status` sends an inference request, a failing row names the endpoint that request used.
 When the models route itself does not respond, the row names the models route.
 An HTTP `401` or `403` response reports `unauthorized`.
@@ -50,7 +57,7 @@ It reads `reachable` for a 2xx models route and reports the status the models ro
 The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
-Treat an unreachable route, an ordinary models-route HTTP 404, or HTTP 5xx as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
+Treat an unreachable route, an unsupported models-route HTTP 404, or HTTP 5xx as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
 Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to complete the retained onboarding session, then rerun the status command.
 
 ## Understand Local Provider Post-Ready Checks
@@ -68,15 +75,19 @@ For those routes, continue to the final route check, then use the status command
 
 ## Understand Final Route Checks
 
-When onboarding prints a dashboard summary, it first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
+For NVIDIA Endpoints, onboarding verifies the sandbox-attached provider through the native endpoint.
+It does not request the shared `inference.local` models route.
+
+For shared-route providers, onboarding first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
 <AgentOnly variant="openclaw,hermes">
 Each attempt allows 2 seconds for the route to return an HTTP response.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 For OpenClaw, this leaves time for client overhead before its 2.5-second provider preflight stops.
 </AgentOnly>
-A transport failure, an ordinary models-route HTTP 404, or HTTP 5xx leaves the onboarding session retryable at final verification.
-Onboarding retries an ordinary 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
+A transport failure, an unsupported models-route HTTP 404, or HTTP 5xx leaves the onboarding session retryable at final verification.
+For a supported OpenRouter agent, onboarding accepts the adapter's catalog 404 only after a bounded inference request validates the selected model.
+Onboarding retries any other 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
 Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
 Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.
 
@@ -86,7 +97,7 @@ Use the status command and a short agent request after onboarding to verify ongo
 ## Send a Short Agent Request
 
 Connect to the sandbox and send a short request before starting long-running work.
-A successful response proves that the configured model can serve an agent request through the OpenShell route.
+A successful response proves that the configured model can serve an agent request through the selected provider path.
 
 If the status route is reachable but a tool action returns JSON as normal assistant text, troubleshoot structured tool calling instead of the network route.
 

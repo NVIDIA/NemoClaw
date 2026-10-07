@@ -70,7 +70,7 @@ export function isDcodeManagedExecMissingDetail(detail: string): boolean {
   );
 }
 
-function formatUntrustedProbeDetail(detail: string): string {
+export function formatUntrustedProbeDetail(detail: string): string {
   const normalized = detail.replace(/\s+/g, " ").trim();
   if (isDcodeManagedExecMissingDetail(normalized)) return DCODE_MANAGED_EXEC_MISSING_DETAIL;
   return redactSensitiveText(normalized) ?? "";

@@ -65,6 +65,7 @@ import {
   type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
   recordLaunchReadinessObservationFailure,
+  getNativeNvidiaProviderAttachment,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -86,6 +87,10 @@ import {
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 export { createBoundLaunchReadinessDeps };
+export {
+  getNativeNvidiaProviderAttachment,
+  requireNativeNvidiaInferenceHealth,
+} from "./launch-readiness/health";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const LIVE_AGENT_VERSION_MAX_BYTES = 4 * 1_024;
@@ -821,49 +826,55 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const inferenceGetStartedAt = performance.now();
-  let inferenceResult: Awaited<
-    ReturnType<NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]>
-  >;
-  try {
-    const observer =
-      deps.inferenceRouteObserver ??
-      createLaunchReadinessInferenceRouteObserver(
-        deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
-      );
-    inferenceResult = await observer.observeInferenceRoute({
-      target: namedOpenShellGateway(gatewayName),
-    });
-  } catch (error) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw error;
-  } finally {
-    recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
-  }
-  if (!inferenceResult.ok) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw new LaunchReadinessEvidenceError();
-  }
-  const liveInference =
-    inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
-  const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
-  if (inference.kind === "configured") {
-    if (!liveInference && !liveInferenceAbsent) {
+  const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
+  let liveInference: { provider: string; model: string } | null = null;
+  if (!nativeNvidia) {
+    const inferenceGetStartedAt = performance.now();
+    let inferenceResult: Awaited<
+      ReturnType<
+        NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]
+      >
+    >;
+    try {
+      const observer =
+        deps.inferenceRouteObserver ??
+        createLaunchReadinessInferenceRouteObserver(
+          deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
+        );
+      inferenceResult = await observer.observeInferenceRoute({
+        target: namedOpenShellGateway(gatewayName),
+      });
+    } catch (error) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw error;
+    } finally {
+      recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
+    }
+    if (!inferenceResult.ok) {
       recordLaunchReadinessObservationFailure(deps, "inference-get");
       throw new LaunchReadinessEvidenceError();
     }
-    if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new ObservationError("config");
-    }
-  } else {
-    if (liveInference) {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new ObservationError("config");
-    }
-    if (!liveInferenceAbsent) {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new LaunchReadinessEvidenceError();
+    liveInference =
+      inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
+    const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
+    if (inference.kind === "configured") {
+      if (!liveInference && !liveInferenceAbsent) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new LaunchReadinessEvidenceError();
+      }
+      if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new ObservationError("config");
+      }
+    } else {
+      if (liveInference) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new ObservationError("config");
+      }
+      if (!liveInferenceAbsent) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new LaunchReadinessEvidenceError();
+      }
     }
   }
 
