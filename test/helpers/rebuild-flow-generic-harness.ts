@@ -101,6 +101,9 @@ function expectPolicyCaptureOptions() {
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
 
+  vi.spyOn(rebuildOnboardDependencies, "verifyRebuiltOpenClawCompatibleEndpoint").mockResolvedValue(
+    undefined,
+  );
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

@@ -172,11 +172,20 @@ describe("controlled setup-node environments", () => {
       YAML.parse(
         fs.readFileSync(path.join(GITHUB_ROOT, "workflows", file), "utf8"),
       ) as WorkflowDocument;
+    const windowsTunnelWorkflow = readWorkflow("tunnel-windows-process-identity.yaml");
 
     expect(readWorkflow("managed-images.yaml").on?.pull_request?.paths).toContain(
       reviewedNpmBootstrap,
     );
     expect(readWorkflow("base-image.yaml").on?.push?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain("ci/reviewed-npm-audit.json");
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain("ci/reviewed-npm-audit.json");
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain(
+      "scripts/lib/reviewed-npm-audit.mts",
+    );
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain("scripts/lib/reviewed-npm-audit.mts");
   });
 
   // source-shape-contract: security -- Every setup-node environment that later runs npm must install the integrity-bound npm release first.
