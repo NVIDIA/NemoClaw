@@ -67,9 +67,14 @@ describe("LangChain Deep Agents Code managed provider label", () => {
     const config = fs.readFileSync(path.join(tempDir, ".deepagents", "config.toml"), "utf8");
     expect(config).toContain(`default = "openai:${model}"`);
     expect(config).toContain("[models.providers.openai]");
-    expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain('base_url = "https://integrate.api.nvidia.com/v1"');
+    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
     expect(config).toContain("upstream provider: nvidia-prod");
 
+    const managedBaseUrlPath = path.join(tempDir, "managed-inference-base-url");
+    fs.chmodSync(managedBaseUrlPath, 0o644);
+    fs.writeFileSync(managedBaseUrlPath, `${runtimeEnv.NEMOCLAW_INFERENCE_BASE_URL}\n`, "utf8");
+    fs.chmodSync(managedBaseUrlPath, 0o444);
     patchFixture(tempDir);
     const validation = `
 import os
@@ -83,8 +88,8 @@ model = "nvidia/nemotron-3-super-120b-a12b"
 assert os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] == "ambient-provider"
 _nemoclaw_managed.assert_safe_runtime()
 assert os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] == "nvidia-prod"
-assert os.environ["OPENAI_BASE_URL"] == "https://inference.local/v1"
-assert os.environ["NEMOCLAW_INFERENCE_BASE_URL"] == "https://inference.local/v1"
+assert os.environ["OPENAI_BASE_URL"] == "https://integrate.api.nvidia.com/v1"
+assert os.environ["NEMOCLAW_INFERENCE_BASE_URL"] == "https://integrate.api.nvidia.com/v1"
 
 for upstream in ("nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"):
     os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] = upstream

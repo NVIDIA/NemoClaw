@@ -53,12 +53,18 @@ function bufferedExecutor(
 function identity(
   overrides: Partial<Record<"Route" | "Provider" | "Model" | "Endpoint", string>> = {},
 ) {
+  const provider = overrides.Provider ?? "nvidia-prod";
   return [
     "Sandbox:  alpha",
     `Route:    ${overrides.Route ?? "inference"}`,
-    `Provider: ${overrides.Provider ?? "nvidia-prod"}`,
+    `Provider: ${provider}`,
     `Model:    ${overrides.Model ?? "openai:nvidia/nemotron-3-super-120b-a12b"}`,
-    `Endpoint: ${overrides.Endpoint ?? "https://inference.local/v1"}`,
+    `Endpoint: ${
+      overrides.Endpoint ??
+      (provider === "nvidia-prod"
+        ? "https://integrate.api.nvidia.com/v1"
+        : "https://inference.local/v1")
+    }`,
     "Runtime:  Deep Agents Code (terminal)",
   ].join("\n");
 }
@@ -81,7 +87,7 @@ describe("live DCode selection drift", () => {
       route: "inference",
       provider: "nvidia-prod",
       model: "openai:nvidia/nemotron-3-super-120b-a12b",
-      endpoint: "https://inference.local/v1",
+      endpoint: "https://integrate.api.nvidia.com/v1",
     });
 
     expect(parseDcodeInferenceIdentity(identity().replace(/^Endpoint:.*$/m, ""))).toBeNull();

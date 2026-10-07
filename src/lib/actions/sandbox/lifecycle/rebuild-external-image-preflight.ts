@@ -46,6 +46,7 @@ export function preflightExternalImageRebuild(input: {
   const containerEngine = input.provider.containerEngine;
   if (
     containerEngine.supported !== true ||
+    !containerEngine.externalImagePreparation ||
     !containerEngine.identities.some(
       (identity) => identity.operation === "external-image-preparation",
     )
@@ -63,7 +64,7 @@ export function preflightExternalImageRebuild(input: {
         agentName: input.agentName,
         runtime: input.runtime,
       },
-      { capture: containerEngine.capture },
+      containerEngine.externalImagePreparation,
     );
   } catch (error) {
     throw new RebuildExternalImagePreflightError(

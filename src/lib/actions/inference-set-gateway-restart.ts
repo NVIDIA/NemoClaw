@@ -281,7 +281,7 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
         reason: `inference set openclaw:${result.provider}:${result.model} (config committed; gateway restart failed: ${restartFailure})`,
       });
       throw new InferenceSetError(
-        `Inference route and config were updated for '${result.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully. ` +
+        `Inference route and config were updated for '${result.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully (${restartFailure}). ` +
           `The committed route was not rolled back. Retry with '${CLI_NAME} ${result.sandboxName} gateway restart'.`,
       );
     }

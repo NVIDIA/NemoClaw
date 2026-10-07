@@ -118,6 +118,11 @@ export function prepareExternalImageForOnboard(input: {
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
+  if (!provider?.containerEngine.supported || !provider.containerEngine.externalImagePreparation) {
+    throw new Error(
+      `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
+    );
+  }
   return prepareExternalImageForOnboardSource(
     {
       reference: input.reference,
@@ -125,16 +130,7 @@ export function prepareExternalImageForOnboard(input: {
       runtime,
       requestedToolDisclosure: input.requestedToolDisclosure,
     },
-    {
-      capture: (operation, args, timeoutMs) => {
-        if (!provider?.containerEngine.supported) {
-          throw new Error(
-            `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
-          );
-        }
-        return provider.containerEngine.capture(operation, args, timeoutMs);
-      },
-    },
+    provider.containerEngine.externalImagePreparation,
   );
 }
 
