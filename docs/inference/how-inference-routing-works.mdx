@@ -9,17 +9,18 @@ keywords: ["nemoclaw inference routing", "inference.local", "openshell inference
 content:
   type: "concept"
 ---
-NemoClaw gives agents one managed inference route while OpenShell handles the selected upstream provider on the host.
-This design keeps provider selection and credentials outside the sandbox.
+NemoClaw configures each agent for its selected inference provider.
+OpenShell keeps provider credentials outside the sandbox and controls inference egress.
 
 ## Request Path
 
-The agent sends inference requests to `inference.local` inside the sandbox.
-It does not connect to the upstream provider directly.
-OpenShell intercepts the request on the host and forwards it to the provider and model selected during onboarding.
+NVIDIA Endpoints uses an OpenShell provider attached to the sandbox and `https://integrate.api.nvidia.com/v1`.
+OpenShell replaces the credential placeholder only for requests allowed by that provider profile.
+Other managed-route selections use `inference.local`.
 
 ```text
-Sandbox agent -> inference.local -> OpenShell -> selected provider and model
+NVIDIA Endpoints: agent -> native NVIDIA URL -> OpenShell attached provider -> NVIDIA
+Other managed routes: agent -> inference.local -> OpenShell -> selected provider
 ```
 
 Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
@@ -39,7 +40,8 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with the managed OpenAI-compatible `https://inference.local/v1` route, a scoped placeholder API key, and `use_responses_api = false`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with the selected OpenAI-compatible endpoint, a scoped placeholder API key, and `use_responses_api = false`.
+NVIDIA Endpoints uses `https://integrate.api.nvidia.com/v1`; other managed-route selections use `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

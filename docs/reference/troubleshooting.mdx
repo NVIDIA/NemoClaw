@@ -1709,7 +1709,7 @@ nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 
 ### Trusted route-probe helper is missing
 
-Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper. Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative `inference.local` route probe safely.
+Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper. Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative in-sandbox inference probe safely.
 
 If the output says the trusted Deep Agents Code route-probe helper is missing, rebuild the sandbox with the current image and retry the command:
 
@@ -1995,7 +1995,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends an inference request over the same route, so it reflects the route the agent uses. When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+For NVIDIA Endpoints, the main `Inference` line verifies the recorded provider attachment and sends a native inference request from inside the sandbox. Other managed-route selections probe `https://inference.local/v1/models`, then send an inference request over that route. When that request returns a transient gateway status, `status` retries the native invocation or managed-route probe pair up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; for managed routes, the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -2117,7 +2117,7 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 <AgentOnly variant="openclaw">
 
-Every OpenClaw onboarding run with an OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
+Every OpenClaw onboarding run with the `compatible-endpoint` provider sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 

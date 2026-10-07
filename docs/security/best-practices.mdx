@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only in the host adapter. The sandbox receives a narrow `inference.local` interface, not the host credentials. |
+| Host-brokered provider | Discover and use host credentials only in the host adapter. The sandbox receives a controlled inference endpoint and credential placeholders, not the host credentials. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -144,7 +144,7 @@ NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credentia
 
 #### Hermes Managed Inference Credential Discovery
 
-NemoClaw configures Hermes with a custom provider through `inference.local`, and the shipped Hermes image does not install the optional native Bedrock dependency.
+For Bedrock, NemoClaw configures Hermes through `inference.local`, and the shipped Hermes image does not install the optional native Bedrock dependency.
 AWS credential discovery for supported Bedrock inference therefore remains in NemoClaw's host-local adapter, outside the sandbox.
 If direct Hermes Bedrock support is added later, it must apply the same unavailable-metadata rule and include Hermes-specific credential-probe acceptance tests before it is enabled.
 
@@ -153,7 +153,9 @@ If direct Hermes Bedrock support is added later, it must apply the same unavaila
 
 #### Deep Agents Managed Inference Credential Discovery
 
-NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route through `inference.local`.
+NemoClaw configures the managed `dcode` runtime with the selected OpenAI-compatible endpoint.
+NVIDIA Endpoints uses an OpenShell provider attached to the sandbox and `https://integrate.api.nvidia.com/v1`.
+Other managed-route selections use `inference.local`.
 The sandbox receives a placeholder route key, not the upstream provider credential.
 The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
 If you need a new sandbox-direct credential source, design it as an explicit provider or MCP integration instead of placing secrets in `/sandbox/.deepagents`.
@@ -302,13 +304,16 @@ OpenShell routes all inference traffic through the gateway to isolate provider c
 
 The OpenShell gateway intercepts all inference requests from the agent and routes them to the configured provider.
 The agent never receives the provider API key.
+NVIDIA Endpoints uses an OpenShell provider attached to the sandbox and `https://integrate.api.nvidia.com/v1`.
+Other managed-route selections use `inference.local`.
+The attached NVIDIA profile permits only model listing and Chat Completions requests from the declared runtime binaries.
 
 | Aspect | Detail |
 |---|---|
-| Default | The agent talks to `inference.local`. The host owns the credential and upstream endpoint. |
+| Default | The agent uses the selected endpoint through OpenShell. Provider credentials remain outside the sandbox. |
 | What you can change | You cannot configure this architecture. The system always enforces it. |
-| Risk if bypassed | If the agent could reach an inference endpoint directly (by adding it to the network policy), it would need an API key. Since the sandbox does not contain credentials, this acts as defense-in-depth. However, adding an inference provider's host to the network policy without going through OpenShell routing could let the agent use a stolen or hardcoded key. |
-| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy for NemoClaw model traffic. Use OpenShell inference routing instead. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
+| Risk if bypassed | An attached provider can authorize native endpoint access without exposing its credential. Adding a separate broad policy rule can widen egress and let an agent send a stolen or hardcoded key. |
+| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy for NemoClaw model traffic. Use the NemoClaw-managed route or attached provider instead. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
 
 ### Provider Trust Tiers
 

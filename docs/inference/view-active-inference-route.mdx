@@ -11,24 +11,26 @@ content:
   type: "how_to"
 ---
 
-Use the NemoClaw CLI to read the provider and model on the live OpenShell inference route.
+Use the NemoClaw CLI to read the selected sandbox's inference configuration or the live shared OpenShell route.
 For a compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 This command reports configuration state and does not authenticate a model request.
 
 ## Read the Live Route
 
 Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
-The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+When the default sandbox records native NVIDIA access, the direct form reports that sandbox's provider, model, and native endpoint.
+Otherwise, it reads the shared route on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
 $$nemoclaw inference get
 ```
 
-Expected output:
+Example output for a sandbox with native NVIDIA access:
 
 ```text
 Provider: nvidia-prod
 Model:    nvidia/nemotron-3-super-120b-a12b
+Endpoint: https://integrate.api.nvidia.com/v1
 ```
 
 Pass `--json` for machine-readable output.
@@ -37,12 +39,13 @@ Pass `--json` for machine-readable output.
 $$nemoclaw inference get --json
 ```
 
-Expected output:
+Example output for a sandbox with native NVIDIA access:
 
 ```json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "endpointUrl": "https://integrate.api.nvidia.com/v1"
 }
 ```
 
@@ -66,7 +69,8 @@ Endpoint: https://inference.example.com/v1
 }
 ```
 
-Managed providers keep the existing provider-and-model output.
+Other managed providers keep the existing provider-and-model output.
+Native NVIDIA output comes from the sandbox's recorded configuration and attachment receipt; use `status` to verify the live attachment and an inference request.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, uses another path shape, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
@@ -96,10 +100,11 @@ $$nemoclaw <name> inference get
 ```
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
+When the named sandbox has a valid native NVIDIA attachment receipt, the command reports its recorded provider, model, and native endpoint.
+Otherwise, it resolves the sandbox's recorded gateway and reads that gateway-wide route.
 For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
-OpenShell exposes one inference route to every sandbox registered on the same gateway.
+OpenShell exposes one shared inference route per gateway. Native NVIDIA sandboxes use their attached provider instead.
 
 ## Include Sandbox Health
 
@@ -110,7 +115,7 @@ $$nemoclaw <name> status
 ```
 
 The status output shows the provider and model recorded for that sandbox.
-When the gateway's live shared route differs, status prints both routes and reports whether `connect` can safely restore the recorded route.
+For managed-route selections, when the gateway's live shared route differs, status prints both routes and reports whether `connect` can safely restore the recorded route.
 Refer to [Use Shared Gateway Routes](use-shared-gateway-routes) for the text and JSON drift fields and their compatibility rules.
 Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
 

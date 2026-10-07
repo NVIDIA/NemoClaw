@@ -10,7 +10,12 @@ content:
   type: "how_to"
 ---
 
-OpenShell exposes one live inference route per gateway.
+This page applies to selections that use the shared `inference.local` route.
+NVIDIA Endpoints uses a sandbox-attached provider and the native NVIDIA endpoint instead.
+Its onboarding, connection checks, and model selection do not re-point the shared route.
+Its status uses the recorded sandbox selection and verifies the attachment and native invocation.
+
+OpenShell exposes one live shared inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
 
 ## Change the Live Route During Onboarding

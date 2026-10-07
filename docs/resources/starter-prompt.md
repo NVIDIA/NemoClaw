@@ -252,7 +252,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - For other accepted platform-asset install paths, treat the asset's confirmation as final permission and do not ask again.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` and `NEMOCLAW_YES=1` only after their approvals.
 - Keep credentials in the approved environment and never display them.
-- Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
+- Verify the command and version, sandbox status, provider, model, the selected in-sandbox inference path, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
 - If `curl | bash` returns no output, verify installation; if absent, ask permission to download and inspect the official installer before retrying.
 - For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs, and treat them as secrets.
 - Ask permission before sending a live channel test or harmless first agent prompt.

@@ -33,7 +33,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | `https://inference.local/v1`             |
+| Sandbox route       | Native NVIDIA endpoint through an attached provider, or `https://inference.local/v1` for other managed-route selections |
 | Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
@@ -60,7 +60,7 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Pi reaches the provider through `inference.local`; direct provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Pi uses `https://integrate.api.nvidia.com/v1` through an attached OpenShell provider for NVIDIA Endpoints. Other managed-route selections use `https://inference.local/v1`. Both paths keep the upstream credential outside the sandbox. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
 When Pi uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
 NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
@@ -78,7 +78,7 @@ A rebuild replays the recorded values. Pi does not support `NEMOCLAW_REASONING_E
 
 The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
 
-Direct access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
+The attached NVIDIA provider authorizes only its declared native endpoint requests. Unapproved provider endpoints, GitHub, npm, host control, and container-runtime sockets remain denied. Operators must select an explicit maintained policy before additional services become reachable.
 
 Pi runs as the unprivileged `sandbox` user. Landlock strict mode and the OpenShell filesystem policy protect the image and host boundary. Writable paths are limited to `/sandbox`, `/sandbox/.pi`, `/tmp`, and `/dev/null`.
 

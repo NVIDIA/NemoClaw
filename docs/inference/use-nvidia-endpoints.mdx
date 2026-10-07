@@ -10,7 +10,9 @@ content:
   type: "how_to"
 ---
 NVIDIA Endpoints routes NemoClaw to models hosted on [build.nvidia.com](https://build.nvidia.com) through an OpenAI-compatible API.
-The sandbox keeps using `inference.local` while OpenShell forwards requests to the NVIDIA endpoint.
+NVIDIA Endpoints uses an OpenShell provider attached to the sandbox and `https://integrate.api.nvidia.com/v1`.
+The agent sends a credential placeholder; OpenShell inserts the stored credential at the approved request boundary.
+This selection does not use or change the shared `inference.local` route.
 
 ## Credential
 
@@ -44,6 +46,12 @@ If the live catalog is unavailable or does not contain safe model IDs, the wizar
 NemoClaw validates NVIDIA Endpoints through `/v1/chat/completions` only.
 It skips `/v1/responses` because NVIDIA Build does not expose that route.
 The wizard retries transient upstream failures before it reports a provider failure.
+
+## Existing Beta Sandboxes
+
+Legacy NVIDIA sandboxes without the recorded native-provider attachment must be recreated before they can use this path.
+NemoClaw rejects that state and prints recreation guidance; it does not silently fall back to the shared route.
+Follow the printed guidance and preserve the sandbox state through the documented recreation workflow.
 
 ## Related Topics
 

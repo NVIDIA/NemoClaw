@@ -9,8 +9,8 @@ keywords: ["switch nemoclaw provider", "change inference provider", "nemoclaw in
 content:
   type: "how_to"
 ---
-Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
-Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
+Move a sandbox to another provider family while keeping provider access, agent configuration, and host registry aligned.
+For an unregistered provider other than `nvidia-prod`, `compatible-endpoint`, or `compatible-anthropic-endpoint`, use onboarding first.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
 <AgentOnly variant="openclaw,hermes">
@@ -25,12 +25,12 @@ $$nemoclaw credentials list
 
 `inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, `custom`, and `llama-cpp`.
 It accepts recognized underscore spellings of canonical provider IDs and hyphenated aliases, such as `ollama_local`, `nvidia_prod`, and `open_router`.
-NemoClaw normalizes an accepted alias or underscore spelling to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
+NemoClaw normalizes an accepted alias or underscore spelling to its canonical NemoClaw provider ID and records the canonical name in the sandbox registry.
 
 If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
 If it cannot read the gateway list, it lists every supported provider ID instead.
 
-If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
+If OpenShell cannot find a requested provider other than `nvidia-prod`, `compatible-endpoint`, or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
 For a compatible custom endpoint, pass the complete route metadata described below so NemoClaw can register the provider.
 
@@ -47,6 +47,12 @@ Target a non-default sandbox by name.
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 ```
+
+For NVIDIA Endpoints (`nvidia-prod`), NemoClaw creates or reuses its owned provider, verifies the sandbox attachment, and validates a native inference request before recording the selection.
+If the owned provider does not exist, export `NVIDIA_INFERENCE_API_KEY` before switching.
+Switching away removes only that recorded attachment after the replacement path is verified.
+The logical name remains `nvidia-prod`; the attached OpenShell provider is `nemoclaw-nvidia-prod-v1`.
+Legacy beta NVIDIA sandboxes without an attachment receipt require recreation.
 
 For `openrouter-api`, NemoClaw verifies the selected model through the sandbox before it commits agent configuration.
 It skips the host-side provider probe because the OpenRouter adapter uses the sandbox-only `host.openshell.internal` route.
@@ -77,21 +83,21 @@ The gateway, CLI, TUI, and Web Dashboard all read that shared configuration; a n
 
 <AgentOnly variant="openclaw">
 
-If NemoClaw cannot confirm the native OpenClaw config batch, the OpenShell route and host registry remain committed, but `inference set` exits nonzero.
+If NemoClaw cannot confirm the native OpenClaw config batch, the inference selection and host registry remain committed, but `inference set` exits nonzero.
 Rerun the same `inference set` command to converge the config.
 A rebuild restores the previous native `openclaw.json`, so it does not repair this failure.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
+If the in-sandbox configuration sync fails after the inference selection changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
 Run the rebuild before relying on the running agent.
 
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
 
 Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
-This flag does not bypass shared-gateway compatibility checks.
+This flag does not bypass shared-gateway compatibility checks or native NVIDIA provider, attachment, and inference validation.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 It then sends a validation request from the target sandbox before persisting the route in NemoClaw state.
 The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
@@ -111,7 +117,7 @@ Endpoint-shape and shared-gateway compatibility checks still apply.
 ## Recreate a Deep Agents Sandbox
 
 Deep Agents uses fresh sandbox recreation for provider changes.
-The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.
+The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the selected endpoint.
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
@@ -173,9 +179,10 @@ Then rerun onboarding before you use the route.
 
 ## Account for Shared Gateways
 
-One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+For managed-route selections, one gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Native NVIDIA uses a sandbox-attached provider; selecting it does not re-point the shared route.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a provider that another registered sandbox shares.
-Runtime `inference set` also refuses a change that would leave another registered sandbox with a different recorded route.
+Shared-gateway compatibility checks apply to managed-route selections; native NVIDIA does not use that shared route.
 
 ## Related Topics
 

@@ -4,20 +4,20 @@
 title: "Verify the Sandbox Inference Route"
 sidebar-title: "Verify the Inference Route"
 description: "Verify that a NemoClaw sandbox can reach its configured model through the OpenShell inference route."
-description-agent: "Verifies the in-sandbox inference path. Use when checking that inference.local, proxy authentication, and the selected backend work together."
+description-agent: "Verifies the in-sandbox inference path. Use when checking that the selected endpoint, OpenShell credential replacement, and model work together."
 keywords: ["verify inference.local", "nemoclaw inference route", "sandbox inference health"]
 content:
   type: "how_to"
 ---
-Verify inference through the same `inference.local` path that the agent uses inside the sandbox.
+Verify inference through the same endpoint that the agent uses inside the sandbox.
 Reading the active route confirms configuration, but it does not authenticate a model request.
 
 ## Confirm the Configured Route
 
-Read the live gateway route first.
+Read the selected sandbox's inference configuration first.
 
 ```bash
-$$nemoclaw inference get
+$$nemoclaw <name> inference get
 ```
 
 Confirm that the provider and model match the route you intended to configure.
@@ -30,8 +30,14 @@ Run the named sandbox status command.
 $$nemoclaw <name> status
 ```
 
-The `Inference` row first checks the sandbox's `inference.local` path.
+For NVIDIA Endpoints, `status` verifies the recorded provider attachment and sends a request to `https://integrate.api.nvidia.com/v1/chat/completions` through OpenShell.
+It does not probe `inference.local/v1/models`.
+A missing or changed attachment fails verification.
+The `Inference` row reports `healthy` only when the native request returns a valid result; HTTP `401` or `403` reports `unauthorized`.
+
+For other managed-route selections, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.
+The following models-route and subprobe rules apply to those selections.
 When the live provider matches the recorded provider, `status` validates the result against the recorded API family, even when only the model differs.
 When the live provider differs, `status` does not carry the recorded API family to the live provider.
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.
@@ -69,7 +75,13 @@ For those routes, continue to the final route check, then use the status command
 
 ## Understand Final Route Checks
 
-When onboarding prints a dashboard summary, it first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
+For NVIDIA Endpoints, final readiness verifies the recorded attachment and a native inference request through OpenShell.
+A failed request or unverified attachment prevents a ready result.
+Correct the reported condition and run `$$nemoclaw onboard --resume`.
+Legacy beta sandboxes without native-provider attachment records require recreation; resuming does not add that missing migration.
+
+For other managed-route selections, onboarding requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
+The timing and models-route rules below apply to those selections.
 <AgentOnly variant="openclaw,hermes">
 Each attempt allows 2 seconds for the route to return an HTTP response.
 </AgentOnly>
