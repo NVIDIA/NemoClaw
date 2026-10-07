@@ -3294,6 +3294,11 @@ finish_nemoclaw_install() {
     source | managed) ;;
     *) error "The prepared ${_CLI_DISPLAY} CLI has no installation mode." ;;
   esac
+  refresh_path
+  ensure_nemoclaw_shim || true
+  verify_nemoclaw
+  _installer_telemetry_begin installed
+  _INSTALLER_TELEMETRY_STATE=partial
   if [[ "${_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY:-false}" == true ]]; then
     local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
     local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
@@ -3704,7 +3709,7 @@ prepare_current_cli_for_preupgrade_backup() {
     NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
     [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
-  verify_nemoclaw
+  return 0
 }
 
 resolve_prepared_cli_runner() {
@@ -7623,8 +7628,6 @@ install_nemoclaw_before_onboarding() {
   fi
   install_nemoclaw
   verify_nemoclaw
-  _installer_telemetry_begin installed
-  _INSTALLER_TELEMETRY_STATE=partial
   require_reportable_openshell_version
 }
 
