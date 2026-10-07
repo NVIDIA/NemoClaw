@@ -45,6 +45,16 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+// Exact #12376 npm replacement, derived from the canonical bootstrap template.
+const DCODE_NPM_REPLACEMENT_TEMPLATE = BREV_TEMPLATE.replace(
+  '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
+  `  # Replace npm's private dependency tree: overlaying a newer archive can leave
+  # incompatible packages from the previous npm installation in node_modules.
+  sudo rm -rf /usr/local/lib/node_modules/npm
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner`,
+);
+const DCODE_NPM_REPLACEMENT_DIGEST =
+  "00869358ea440c38fc81d8f921f5eaf9380368fa036b2fc5db07bd84c933c968";
 const NPM_CLEANUP_TEMPLATE_DIGEST =
   "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2";
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
@@ -940,6 +950,40 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
+  describe("DCode bootstrap prerequisite", () => {
+    it("admits the reviewed npm replacement only after its trust prerequisite", () => {
+      const before = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+        "0".repeat(64),
+      );
+      expect(before.status, before.stderr).toBe(1);
+      expect(before.stderr).toContain("Brev launchable operational template is not base-trusted");
+      const after = parseNpmReplacement(
+        DCODE_NPM_REPLACEMENT_TEMPLATE,
+        DCODE_NPM_REPLACEMENT_DIGEST,
+      );
+      expect(after.status, after.stderr).toBe(0);
+      expect(after.stdout).toContain(
+        `"operationalTemplateSha256":"${DCODE_NPM_REPLACEMENT_DIGEST}"`,
+      );
+    });
+
+    it.each([
+      [
+        "broader package deletion",
+        "/usr/local/lib/node_modules/npm",
+        "/usr/local/lib/node_modules",
+      ],
+      ["checksum bypass", '[[ "$actual_hash" != "$node_sha256" ]]', "false"],
+    ])("rejects %s in the reviewed npm replacement", (_name, original, replacement) => {
+      const mutated = DCODE_NPM_REPLACEMENT_TEMPLATE.replace(original, replacement);
+      const result = parseNpmReplacement(mutated, DCODE_NPM_REPLACEMENT_DIGEST);
+      expect(result.status, `${_name} mutation must be rejected: ${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    });
+  });
+
   describe("bootstrap npm cleanup trust", () => {
     it("admits the bootstrap npm cleanup only when its template is trusted", () => {
       const before = parseNpmReplacement(
