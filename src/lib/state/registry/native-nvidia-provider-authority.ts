@@ -38,3 +38,10 @@ export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
     save(data);
   });
 }
+
+export function listNativeNvidiaProviderAttachmentSandboxNames(): readonly string[] {
+  return Object.values(load().sandboxes)
+    .filter((sandbox) => sandbox.nativeNvidiaProviderAttachment !== undefined)
+    .map((sandbox) => sandbox.name)
+    .sort();
+}

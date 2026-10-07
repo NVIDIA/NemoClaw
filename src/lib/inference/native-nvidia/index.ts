@@ -76,6 +76,22 @@ function providerErrorDetail(error: OpenShellProviderError): string {
   return error.message.trim() || "OpenShell did not provide a diagnostic.";
 }
 
+async function requireNativeNvidiaProviderProfileBoundary(
+  adapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+  profilePath = nativeNvidiaProviderProfilePath(),
+): Promise<void> {
+  const imported = await adapter.importProviderProfile({ target, profilePath });
+  if (imported.ok) return;
+  const collision =
+    imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
+  throw new NativeNvidiaProviderError(
+    collision
+      ? `OpenShell provider profile '${NVIDIA_HOSTED_NATIVE_PROFILE_ID}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
+      : `Could not verify OpenShell provider profile '${NVIDIA_HOSTED_NATIVE_PROFILE_ID}': ${providerErrorDetail(imported.error)}`,
+  );
+}
+
 function exactNativeProvider(metadata: OpenShellProviderMetadata): boolean {
   return (
     metadata.name === NVIDIA_HOSTED_NATIVE_PROVIDER &&
@@ -223,19 +239,11 @@ export async function ensureNativeNvidiaProvider(input: {
   profilePath?: string;
 }): Promise<NativeNvidiaProviderAttachment> {
   const { adapter, target } = input;
-  const imported = await adapter.importProviderProfile({
+  await requireNativeNvidiaProviderProfileBoundary(
+    adapter,
     target,
-    profilePath: input.profilePath ?? nativeNvidiaProviderProfilePath(),
-  });
-  if (!imported.ok) {
-    const collision =
-      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
-    throw new NativeNvidiaProviderError(
-      collision
-        ? `OpenShell provider profile '${NVIDIA_HOSTED_NATIVE_PROFILE_ID}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
-        : `Could not prepare OpenShell provider profile '${NVIDIA_HOSTED_NATIVE_PROFILE_ID}': ${providerErrorDetail(imported.error)}`,
-    );
-  }
+    input.profilePath ?? nativeNvidiaProviderProfilePath(),
+  );
 
   const before = await inspectNativeProvider(adapter, target);
   if (before) {
@@ -324,6 +332,7 @@ export async function verifyNativeNvidiaProviderAttachment(input: {
   sandboxName: string;
   expected?: NativeNvidiaProviderAttachment;
 }): Promise<NativeNvidiaProviderAttachment> {
+  await requireNativeNvidiaProviderProfileBoundary(input.adapter, input.target);
   const provider = await inspectNativeProvider(input.adapter, input.target);
   if (!provider) {
     throw new NativeNvidiaProviderError(
@@ -360,6 +369,7 @@ export async function ensureNativeNvidiaProviderAttached(input: {
   sandboxName: string;
   expected: NativeNvidiaProviderAttachment;
 }): Promise<{ receipt: NativeNvidiaProviderAttachment; changed: boolean }> {
+  await requireNativeNvidiaProviderProfileBoundary(input.adapter, input.target);
   const provider = await inspectNativeProvider(input.adapter, input.target);
   if (!provider) {
     throw new NativeNvidiaProviderError(

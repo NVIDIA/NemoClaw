@@ -78,3 +78,30 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
     vi.unstubAllEnvs();
   }
 });
+
+it("lists registered sandboxes that retain native NVIDIA provider ownership", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-attachment-list-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  try {
+    const registry = await import("./registry");
+    const authority = await import("./registry/native-nvidia-provider-authority");
+    registry.registerSandbox({
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "model-a",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-id",
+      },
+    });
+    registry.registerSandbox({ name: "beta", provider: "openai", model: "model-b" });
+
+    expect(authority.listNativeNvidiaProviderAttachmentSandboxNames()).toEqual(["alpha"]);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  }
+});
