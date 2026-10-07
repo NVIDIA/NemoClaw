@@ -38,8 +38,9 @@ The runtime must correctly transition from reasoning to constrained tool output 
 This remains a runtime dependency; an unpatched image is not qualified by these declarations.
 Pin the complete runtime image, including required fixes and the template. Do not install patches at startup.
 
-Clients must send `chat_template_kwargs: {"enable_thinking": true}` and `parallel_tool_calls: false` for the staged serial-tool contract.
-The latter uses native response filtering; it is not a server flag and does not prevent generation of additional calls.
+The server defaults `enable_thinking` to `true`. Clients that override `chat_template_kwargs` must preserve that value.
+Clients must send `parallel_tool_calls: false` for the staged serial-tool contract.
+This request field uses native response filtering; it is not a server flag and does not prevent generation of additional calls.
 No additional serial-tool grammar patch is required by this contract.
 Clients must budget prompt and output within 49,152 tokens, with at most 8,192 requested output tokens.
 That output limit is a client requirement, not a server-enforced limit or the batched-token setting.
