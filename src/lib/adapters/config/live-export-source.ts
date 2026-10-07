@@ -103,8 +103,8 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
 }
 
 async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
-  // The v1 exporter cannot represent workspace profile attachments yet.
-  // Never substitute the unrelated gateway route for a native selection.
+  // Recognized native receipts use the native export path. Refuse an unmatched
+  // attachment here rather than substituting the unrelated shared gateway route.
   if (entry.nativeHostedProviderAttachment) {
     throw new Error("Native provider attachment export is not supported.");
   }
