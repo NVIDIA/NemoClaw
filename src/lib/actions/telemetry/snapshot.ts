@@ -33,11 +33,7 @@ import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
-import {
-  GATEWAY_PORT,
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding/identity";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
 import { resolveAgentConfig } from "../../sandbox/agent-config";
 import { parseConfig } from "../../sandbox/config-format";
 import { assertSafeConfigStructure } from "../../security/config-structure";
@@ -356,10 +352,8 @@ function metadataErrorsAt(
   targets: readonly TelemetryTargetReceipt[],
 ): TelemetryMetadataError[] {
   return targets.flatMap((target) => {
-    if (!target.sandboxName) return [];
-    const key = target.gatewayName
-      ? JSON.stringify([target.gatewayName, target.sandboxName])
-      : target.sandboxName;
+    if (!target.sandboxName || !target.gatewayName) return [];
+    const key = JSON.stringify([target.gatewayName, target.sandboxName]);
     return positions.get(key) === position ? (target.metadataErrors ?? []) : [];
   });
 }
@@ -417,10 +411,6 @@ export async function collectOperationSnapshot(options: {
   } catch {
     inventoryError = true;
   }
-  const matches = new Map<string, number[]>();
-  entries.forEach((entry, index) =>
-    matches.set(entry.name, [...(matches.get(entry.name) ?? []), index]),
-  );
   const qualified = new Map<string, number[]>();
   entries.forEach((entry, index) => {
     try {
@@ -433,19 +423,6 @@ export async function collectOperationSnapshot(options: {
   for (const [key, positions] of qualified) {
     if (positions.length === 1) snapshot.targetPositions.set(key, positions[0]);
     else inventoryError = true;
-  }
-  for (const [name, positions] of matches) {
-    const selected =
-      positions.length === 1
-        ? positions
-        : positions.filter((index) => {
-            try {
-              return resolveSandboxGatewayName(entries[index]) === resolveGatewayName(GATEWAY_PORT);
-            } catch {
-              return false;
-            }
-          });
-    if (selected.length === 1) snapshot.targetPositions.set(name, selected[0]);
   }
   const metadataErrors = entries.map((_, index) =>
     metadataErrorsAt(index, snapshot.targetPositions, options.targets ?? []),

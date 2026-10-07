@@ -47,7 +47,11 @@ import {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
-import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
+import {
+  getRequestedSandboxAgentName,
+  getSandboxAgentRegistryFields,
+  normalizeSandboxAgentName,
+} from "./sandbox-agent";
 
 /** Fence sandbox image creation through publication against host-wide GC. */
 export function withSandboxImageRegistrationFence<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -203,7 +207,7 @@ export function buildCreatedSandboxRegistryEntry(
   const requestedAgent = getRequestedSandboxAgentName(input.agent);
   const knownEmptyMessaging =
     session?.sandboxName === input.sandboxName &&
-    session.agent === requestedAgent &&
+    normalizeSandboxAgentName(session.agent) === requestedAgent &&
     session.messagingPlan === null &&
     session.checkpoint?.messaging.kind === "declined" &&
     (requestedAgent === "openclaw" || requestedAgent === "hermes");

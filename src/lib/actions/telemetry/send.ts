@@ -134,12 +134,10 @@ export async function collectOperationEvent(
       targetResultsStatus: context.targets.length ? "reported" : "not_observed",
       targetResults: context.targets.map((receipt) => {
         const position =
-          receipt.sandboxName === undefined
+          receipt.sandboxName === undefined || !receipt.gatewayName
             ? undefined
             : snapshot.targetPositions.get(
-                receipt.gatewayName
-                  ? JSON.stringify([receipt.gatewayName, receipt.sandboxName])
-                  : receipt.sandboxName,
+                JSON.stringify([receipt.gatewayName, receipt.sandboxName]),
               );
         return {
           scope: receipt.scope,
@@ -152,9 +150,11 @@ export async function collectOperationEvent(
           configurationStatus:
             position !== undefined
               ? "reported"
-              : receipt.scope === "cli" || context.operation === "sandbox_destroy"
-                ? "not_applicable"
-                : "unavailable",
+              : receipt.sandboxName !== undefined && !receipt.gatewayName
+                ? "unavailable"
+                : receipt.scope === "cli" || context.operation === "sandbox_destroy"
+                  ? "not_applicable"
+                  : "unavailable",
         };
       }),
     },

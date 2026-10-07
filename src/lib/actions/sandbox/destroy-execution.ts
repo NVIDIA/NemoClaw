@@ -1085,9 +1085,16 @@ export async function recordDestroyCompletion(
   sandboxName: string,
   outcome: "completed" | "cancelled" | "failed",
   exitCode?: number,
+  gatewayName?: string,
 ): Promise<void> {
   const state =
     outcome === "completed" ? "applied" : outcome === "cancelled" ? "unchanged" : "partial";
-  recordTelemetryTarget({ scope: "sandbox", sandboxName, outcome, state });
+  recordTelemetryTarget({
+    scope: "sandbox",
+    sandboxName,
+    gatewayName: gatewayName ?? "",
+    outcome,
+    state,
+  });
   if (exitCode !== undefined) await finishTelemetryOperation(exitCode);
 }

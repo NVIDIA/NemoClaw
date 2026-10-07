@@ -376,16 +376,14 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     const sessionRead = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "demo",
-      agent: "hermes",
+      agent: null,
       messagingPlan: null,
       checkpoint: { messaging: { kind: "declined" } },
     });
-    const knownEmptyEntry = buildCreatedSandboxRegistryEntry(
-      createdRegistryEntryInput({ agent: { name: "hermes" } as any, hermesApiPort: 18793 }),
-    );
+    const knownEmptyEntry = buildCreatedSandboxRegistryEntry(createdRegistryEntryInput());
     expect(knownEmptyEntry.messaging?.plan).toMatchObject({
       sandboxName: "demo",
-      agent: "hermes",
+      agent: "openclaw",
       channels: [],
       credentialBindings: [],
     });

@@ -688,6 +688,7 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
+  const telemetryTarget: { gatewayName?: string } = {};
   try {
     return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
@@ -700,6 +701,7 @@ export async function destroySandbox(
         options,
         removedImmutabilityMigration.stateRecord !== null,
         deps,
+        telemetryTarget,
       );
     });
   } catch (error) {
@@ -707,6 +709,7 @@ export async function destroySandbox(
       sandboxName,
       "failed",
       error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+      telemetryTarget.gatewayName,
     );
     if (error instanceof SandboxDestroyExitRequest) {
       process.exit(error.exitCode);
@@ -717,20 +720,31 @@ export async function destroySandbox(
 
 async function destroySandboxUnlocked(
   sandboxName: string,
-  options: string[] | DestroySandboxOptions = {},
-  retireRemovedImmutabilityState = false,
+  options: string[] | DestroySandboxOptions,
+  retireRemovedImmutabilityState: boolean,
   deps: {
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
-  } = {},
+  },
+  telemetryTarget: { gatewayName?: string },
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
   const getRegisteredSandbox = registryAuthority.getSandbox;
   const listRegisteredSandboxes = registryAuthority.listSandboxes;
   const registeredSandbox = registryAuthority.entry;
+  if (registeredSandbox) {
+    try {
+      telemetryTarget.gatewayName = resolveSandboxDestroyGatewayName(
+        sandboxName,
+        registeredSandbox,
+      );
+    } catch {
+      // The enforcing owner below still reports invalid gateway authority.
+    }
+  }
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
-    await recordDestroyCompletion(sandboxName, "cancelled");
+    await recordDestroyCompletion(sandboxName, "cancelled", undefined, telemetryTarget.gatewayName);
     return;
   }
   if (registeredSandbox) {
@@ -774,6 +788,7 @@ async function destroySandboxUnlocked(
     registeredSandbox,
     retainedRecoveryAuthority?.gatewayName,
   );
+  telemetryTarget.gatewayName = destroyGatewayName;
   const destroyRuntimeProviderId = resolveGatewayCleanupRuntimeProviderId(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
@@ -1435,5 +1450,5 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
-  await recordDestroyCompletion(sandboxName, "completed");
+  await recordDestroyCompletion(sandboxName, "completed", undefined, destroyGatewayName);
 }
