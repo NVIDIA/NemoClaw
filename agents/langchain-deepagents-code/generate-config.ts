@@ -15,6 +15,7 @@ import {
   normalizeManagedDcodeEndpointUrl,
   resolveManagedDcodeIdentity,
 } from "../../src/lib/inference/managed-dcode/identity.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
 
 type ReasoningEffort = "low" | "medium" | "high";
 
@@ -39,6 +40,8 @@ const NEMOTRON_ULTRA_MODEL_IDS = new Set([
   "nvidia/nemotron-3-ultra-550b-a55b",
   "nvidia/nvidia/nemotron-3-ultra",
 ]);
+const MANAGED_INFERENCE_API_KEY_ENV = "DEEPAGENTS_CODE_OPENAI_API_KEY";
+const ATTACHED_PROVIDER_API_KEY_ENV = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(
@@ -158,18 +161,22 @@ function providerConfigLines(
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
 ): string[] {
+  const apiKeyEnv =
+    baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+      ? ATTACHED_PROVIDER_API_KEY_ENV
+      : MANAGED_INFERENCE_API_KEY_ENV;
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
-    'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    `api_key_env = ${tomlString(apiKeyEnv)}`,
     `base_url = ${tomlString(baseUrl)}`,
     "enabled = true",
     ...(provider === "openai"
       ? [
           "",
           "[models.providers.openai.params]",
-          "# NemoClaw-managed inference.local currently exposes Chat Completions.",
-          "# Remove this override when that route supports OpenAI Responses API.",
+          "# NemoClaw-managed OpenAI-compatible routes use Chat Completions.",
+          "# Remove this override when the selected route supports OpenAI Responses API.",
           "use_responses_api = false",
           ...openAiModelRequestParamLines(model, reasoningEffort),
         ]
