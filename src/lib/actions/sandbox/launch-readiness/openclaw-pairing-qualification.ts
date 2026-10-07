@@ -20,10 +20,13 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 // Reuse one fixed pairing lifecycle across ordinary onboarding and Portable.
-// A contended gateway list can consume the watcher's complete child bound, so
-// the appearance window retains room for another observation after three
-// attempts (#9817).
-export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
+// The watcher first waits up to 330 seconds for native /startupz so its CLI
+// cannot contend with gateway database migrations. /health is only liveness
+// and can pass before that wait finishes. Reserve that startup bound plus the
+// existing 60-second device-list window (#9817) before declaring pairing absent.
+// Canonical state remains the only success authority; already-settled devices
+// return immediately without spending either window.
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 330_000 + 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
 // Reserve the bounded request producer and watcher-observation windows. The

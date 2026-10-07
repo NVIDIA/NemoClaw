@@ -29,6 +29,8 @@ import {
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
 
+import { observeAfterNativeStartup } from "../../../../test/helpers/native-startup-observation";
+
 const PAIRING_TARGET = {
   gatewayName: "nemoclaw",
   lifecycleGeneration: "generation-1",
@@ -138,6 +140,58 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
     expect(scope.calls).toEqual(["warmup"]);
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
+  it("waits for native startup before consuming the canonical pairing window (#12382)", async () => {
+    let now = 0;
+    let requested = false;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => ({ ...PAIRING_TARGET, version: "2026.9.5" })),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      observePairing: vi.fn(
+        observeAfterNativeStartup(
+          () => now,
+          380_000,
+          () => (requested ? SETTLED : PAIRING_ONLY),
+          new Error("canonical device not published"),
+        ),
+      ),
+      runWarmup: vi.fn(() => {
+        requested = true;
+        now += WARMUP_TIMEOUT_MS;
+        return "request-issued" as const;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(now).toBe(410_000);
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
+  it("bounds missing canonical state after native startup without requesting pairing (#12382)", async () => {
+    let now = 0;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => ({ ...PAIRING_TARGET, version: "2026.9.5" })),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      observePairing: vi.fn(() => {
+        throw new Error("startup never completed");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-unavailable",
+    });
+    expect(now).toBe(390_000);
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {

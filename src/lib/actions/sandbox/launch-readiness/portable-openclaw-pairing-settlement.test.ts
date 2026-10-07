@@ -28,6 +28,8 @@ import {
   type OpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
 
+import { observeAfterNativeStartup } from "../../../../../test/helpers/native-startup-observation";
+
 const AUTHORITY: CheckpointPortableRuntimeAuthority = {
   schemaVersion: 1,
   kind: "podman",
@@ -376,6 +378,33 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
     expect(scope.calls).toEqual(["sandbox-lock", "gateway-lock"]);
     expect(scope.observePairing).toHaveBeenCalledOnce();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("waits through native startup before the Portable canonical device appears (#12382)", async () => {
+    let now = 0;
+    const scope = settlementDeps({
+      getSandbox: () => ({ ...ENTRY, agentVersion: "2026.9.5" }),
+      loadAgent: () => ({ ...AGENT, expected_version: "2026.9.5" }),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    });
+    scope.observePairing.mockImplementation(
+      observeAfterNativeStartup(
+        () => now,
+        380_000,
+        () => ({ state: "settled" as const, deviceIdentitySha256: "a".repeat(64) }),
+        new OpenClawPairingObservationRetryableError(),
+      ),
+    );
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(now).toBe(380_000);
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
