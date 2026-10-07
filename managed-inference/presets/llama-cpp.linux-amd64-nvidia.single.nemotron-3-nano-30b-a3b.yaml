@@ -89,6 +89,13 @@ spec:
       - readiness:
           scope: everyNode
           kind: observation
+          id: host.gpu.memory_per_device_bytes
+          comparison:
+            operator: at-least
+            value: 50331648000
+      - readiness:
+          scope: everyNode
+          kind: observation
           id: host.gpu.driver_version
           comparison:
             operator: version-at-least

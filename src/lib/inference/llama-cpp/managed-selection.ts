@@ -49,29 +49,34 @@ type ManagedLlamaCppSelectionOptions = {
   readonly runtimeProviderId?: string;
 };
 
-function n1xWslDockerLocalityFailure(
+export function managedLlamaCppHostLocalDockerAuthorityFailure(
+  recipeId: string,
   env: NodeJS.ProcessEnv,
-  options: ManagedLlamaCppSelectionOptions,
+  dockerContextIsDefault: typeof dockerContextIsDefaultFromBuild = dockerContextIsDefaultFromBuild,
 ): string | null {
-  return (options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild)(env)
-    ? null
-    : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
+  if (dockerContextIsDefault(env)) return null;
+  return recipeId === N1X_WSL_RECIPE_ID
+    ? "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default."
+    : "Managed llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
+}
+
+function selectionRequiresDocker(selection: ResolvedLlamaCppInferenceSelection): boolean {
+  return selection.preset.spec.requirements.all.some(
+    (requirement) =>
+      "readiness" in requirement &&
+      requirement.readiness.kind === "observation" &&
+      requirement.readiness.id === "host.docker.runtime",
+  );
 }
 
 function dockerQualifiedPresetRuntimeFailure(
   runtimeProviderId: string | undefined,
   selection: ResolvedLlamaCppInferenceSelection,
 ): string | null {
-  const requiresDocker = selection.preset.spec.requirements.all.some(
-    (requirement) =>
-      "readiness" in requirement &&
-      requirement.readiness.kind === "observation" &&
-      requirement.readiness.id === "host.docker.runtime",
-  );
   const resolvedProvider = String(runtimeProviderId ?? "")
     .trim()
     .toLowerCase();
-  return requiresDocker && resolvedProvider && resolvedProvider !== "docker"
+  return selectionRequiresDocker(selection) && resolvedProvider && resolvedProvider !== "docker"
     ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification; the resolved runtime provider is ${resolvedProvider}.`
     : null;
 }
@@ -189,10 +194,11 @@ function managedLlamaCppSelectionEligibilityFailure(
 ): string | null {
   const runtimeFailure = dockerQualifiedPresetRuntimeFailure(options.runtimeProviderId, selection);
   if (runtimeFailure) return runtimeFailure;
-  return (
-    (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-      n1xWslDockerLocalityFailure(env, options)) ||
-    null
+  if (!selectionRequiresDocker(selection)) return null;
+  return managedLlamaCppHostLocalDockerAuthorityFailure(
+    selection.recipe.metadata.id,
+    env,
+    options.dockerContextIsDefault,
   );
 }
 
@@ -242,7 +248,11 @@ function resolveManagedLlamaCppSelectionFromChoices(
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
   const presetId = requestedPresetId(env, catalog);
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
-    const localityFailure = n1xWslDockerLocalityFailure(env, options);
+    const localityFailure = managedLlamaCppHostLocalDockerAuthorityFailure(
+      requestedRecipeId,
+      env,
+      options.dockerContextIsDefault,
+    );
     if (localityFailure) return { kind: "rejected", reason: localityFailure };
   }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
@@ -332,11 +342,12 @@ function resolveManagedLlamaCppSelectionFromChoices(
   const resolution = selected[0]!.resolution;
   const validated = validatedLlamaCppSelection(resolution, recipeId);
   if (validated.kind === "rejected") return validated;
-  const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(
-    options.runtimeProviderId,
+  const eligibilityFailure = managedLlamaCppSelectionEligibilityFailure(
     validated.selection,
+    env,
+    options,
   );
-  return runtimeProviderFailure ? { kind: "rejected", reason: runtimeProviderFailure } : validated;
+  return eligibilityFailure ? { kind: "rejected", reason: eligibilityFailure } : validated;
 }
 
 function choicesIncludingResolution(
