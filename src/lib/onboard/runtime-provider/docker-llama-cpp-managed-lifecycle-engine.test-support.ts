@@ -192,6 +192,17 @@ export function createDockerFixture(
       case "version":
         return { status: 0, stdout: "29.8.0", stderr: "" };
       case "image":
+        invariant(
+          JSON.stringify(args) ===
+            JSON.stringify([
+              "image",
+              "inspect",
+              "--format",
+              '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.authentication"}}',
+              IMAGE,
+            ]),
+          unexpected,
+        );
         return { status: 0, stdout: "managed-bearer-v1", stderr: "" };
       case "network":
         switch (args[1]) {

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
 
+import type { ContainerEngine } from "../../adapters/container-engine";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
@@ -568,29 +569,12 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
   });
 
-  it("fails onboarding when the host-process private loopback bridge probe is refused", () => {
-    const { fixture, lifecycle, store } = hostProbeLifecycle(() => ({
-      status: 7,
-      stdout: "",
-      stderr: "connection refused",
-    }));
-
-    let failure: Error | undefined;
-    try {
-      lifecycle.start(receiptWriter());
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error(String(error));
-    }
-
-    expect(failure?.message).toBe(
-      "Docker llama.cpp private loopback bridge probe failed (exit 7).",
-    );
-    expect(failure?.message).not.toContain("test-only-secret");
-    expect(store.list()).toEqual([]);
-    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
-  });
-
   it.each([
+    [
+      "is refused",
+      () => ({ status: 7, stdout: "", stderr: "connection refused test-only-secret" }),
+      "Docker llama.cpp private loopback bridge probe failed (exit 7).",
+    ],
     [
       "reports a spawn error",
       () => ({ status: 1, stdout: "", stderr: "", error: new Error("spawnSync ETIMEDOUT") }),
@@ -608,7 +592,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     (_kind, probe, message) => {
       const { fixture, lifecycle, store } = hostProbeLifecycle(probe);
 
-      expect(() => lifecycle.start(receiptWriter())).toThrow(message);
+      expect(() => lifecycle.start(receiptWriter())).toThrow(new Error(message));
       expect(store.list()).toEqual([]);
       expect(store.hasExecution()).toBe(false);
       expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
@@ -1483,6 +1467,7 @@ it("uses the guarded localhost upstream through WSL start, resume and cleanup (#
   input.bindings = { ...input.bindings, loopbackUpstream: true };
   const lifecycle = createLifecycle(input, {}, privateBridge);
   const receipt = lifecycle.start(receiptWriter());
+  expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
   expect(privateBridge.start.mock.calls[0]?.[0]).toMatchObject({
     targetHost: "127.0.0.1",
     targetPort: 49152,
@@ -1496,4 +1481,18 @@ it("uses the guarded localhost upstream through WSL start, resume and cleanup (#
   lifecycle.runtime.preserveForRebuild(receipt);
   lifecycle.runtime.destroy(receipt);
   expect(fixture.engine.capture(["container", "inspect", RUNTIME_ID]).status).toBe(1);
+});
+
+it("rejects a WSL image without guard authentication before container creation (#12285)", () => {
+  const fixture = dockerFixture("0", "49152", "127.0.0.1", 1);
+  const capture = fixture.capture.getMockImplementation() as ContainerEngine["capture"];
+  fixture.capture.mockImplementation((args, timeoutMs, input) =>
+    args[0] === "image" ? { status: 0, stdout: "", stderr: "" } : capture(args, timeoutMs, input),
+  );
+  const base = options(fixture);
+  const input = { ...base, bindings: { ...base.bindings, loopbackUpstream: true as const } };
+  expect(() => createLifecycle(input).start(receiptWriter())).toThrow(
+    /authenticated request-guard/u,
+  );
+  expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
 });

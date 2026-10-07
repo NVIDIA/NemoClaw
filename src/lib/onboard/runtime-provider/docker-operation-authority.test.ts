@@ -16,6 +16,7 @@ import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppHostLocalOperation,
+  createDockerLlamaCppInspectionOperation,
   createDockerLlamaCppOperationAuthority,
 } from "./docker-llama-cpp-operation";
 import {
@@ -545,12 +546,15 @@ describe("managed llama.cpp operation probe strategy", () => {
   >[0];
 
   it.each([
-    { status: "docker-desktop" as const, loopbackProbe: "host-process" },
-    { status: "not-docker-desktop" as const, loopbackProbe: undefined },
-    { status: "unknown" as const, loopbackProbe: undefined },
+    { status: "docker-desktop" as const, loopbackProbe: "host-process", inspection: false },
+    { status: "docker-desktop" as const, loopbackProbe: "host-process", inspection: true },
+    { status: "not-docker-desktop" as const, loopbackProbe: undefined, inspection: false },
+    { status: "not-docker-desktop" as const, loopbackProbe: undefined, inspection: true },
+    { status: "unknown" as const, loopbackProbe: undefined, inspection: false },
+    { status: "unknown" as const, loopbackProbe: undefined, inspection: true },
   ])(
-    "defaults loopbackProbe to $loopbackProbe when the WSL Docker Desktop status is $status",
-    ({ status, loopbackProbe }) => {
+    "selects $loopbackProbe for WSL status $status with inspection $inspection",
+    ({ status, loopbackProbe, inspection }) => {
       vi.mocked(detectWslDockerDesktopStatus).mockReturnValue(status);
       const createLifecycle = vi.fn(() => ({}) as never);
       const operation = createDockerLlamaCppHostLocalOperation(
@@ -560,7 +564,10 @@ describe("managed llama.cpp operation probe strategy", () => {
         createLifecycle,
       );
 
-      operation.createLlamaCppLifecycle(input);
+      const selected = inspection
+        ? createDockerLlamaCppInspectionOperation(operation.engine, env, createLifecycle)
+        : operation;
+      selected.createLlamaCppLifecycle(input);
 
       expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
         ...input,

@@ -119,19 +119,29 @@ export function createDockerLlamaCppHostLocalOperation(
     createLlamaCppLifecycle: (
       input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
     ) => {
-      const desktop =
-        detectWslDockerDesktopStatus({
-          env,
-          dockerInfoFormat: (format) => engine.capture(["info", "--format", format]).stdout,
-        }) === "docker-desktop";
       return createLifecycle({
-        ...input,
-        ...(desktop ? { bindings: { ...input.bindings, loopbackUpstream: true } } : {}),
+        ...dockerLlamaCppLifecycleOptions(input, engine, env),
         ...(deadlineMs === undefined ? {} : { engine }),
-        loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
       });
     },
   });
+}
+
+function dockerLlamaCppLifecycleOptions(
+  input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
+  engine: ContainerEngine,
+  env: NodeJS.ProcessEnv,
+): Parameters<typeof createDockerLlamaCppManagedLifecycle>[0] {
+  const desktop =
+    detectWslDockerDesktopStatus({
+      env,
+      dockerInfoFormat: (format) => engine.capture(["info", "--format", format]).stdout,
+    }) === "docker-desktop";
+  return {
+    ...input,
+    ...(desktop ? { bindings: { ...input.bindings, loopbackUpstream: true } } : {}),
+    loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
+  };
 }
 
 export function createManagedLlamaCppEngine(
@@ -144,6 +154,8 @@ export function createManagedLlamaCppEngine(
 /** Rebind an already injected Docker engine for read-only status inspection. */
 export function createDockerLlamaCppInspectionOperation(
   engine: ContainerEngine,
+  env: NodeJS.ProcessEnv = process.env,
+  createLifecycle: typeof createDockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
 ): HostLocalInferenceOperation {
   if (engine.operation !== "host-local-inference" || engine.engineId !== "docker") {
     throw new Error("Managed llama.cpp inspection requires a Docker host-local-inference engine.");
@@ -156,6 +168,7 @@ export function createDockerLlamaCppInspectionOperation(
     spawn: () => {
       throw new Error("Managed llama.cpp inspection cannot spawn container-engine commands.");
     },
-    createLlamaCppLifecycle: createDockerLlamaCppManagedLifecycle,
+    createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
+      createLifecycle(dockerLlamaCppLifecycleOptions(input, engine, env)),
   });
 }
