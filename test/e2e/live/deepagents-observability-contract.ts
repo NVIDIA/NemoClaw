@@ -117,9 +117,10 @@ export function assertDeepAgentsTraceContract(
   bodies: readonly Uint8Array[],
   expectations: DeepAgentsTraceExpectations,
 ): { requestCount: number; spanCount: number } {
+  // Required LLM and tool spans below also reject an empty capture.
   const canary = Buffer.from(expectations.ambientCanary);
   const rawCredential = Buffer.from(expectations.redaction.rawCredential);
-  const spans = bodies.flatMap((body) => {
+  const spans = bodies.flatMap((body, index) => {
     const encoded = Buffer.from(body);
     if (encoded.includes(canary)) {
       throw new Error("ambient exporter configuration reached OTLP");
@@ -127,9 +128,16 @@ export function assertDeepAgentsTraceContract(
     if (encoded.includes(rawCredential)) {
       throw new Error("credential-shaped prompt content reached OTLP");
     }
-    return decodeExportTraceServiceRequest(body);
+    try {
+      return decodeExportTraceServiceRequest(body);
+    } catch (error) {
+      throw new Error(
+        `captured OTLP request ${index + 1} is not a valid ExportTraceServiceRequest: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   });
-
+  // Check the replacement marker on the originating LLM span, not merely
+  // somewhere in the encoded request.
   for (const expectation of expectations.llmExchanges) {
     assertLlmExchange(spans, expectations.serviceName, expectation);
   }
@@ -180,6 +188,47 @@ export function observabilityThreadForPrompt(output: string, prompt: string): st
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
   ) {
     throw new Error("dcode did not identify exactly one observability conversation");
+  }
+  return threadId;
+}
+
+function nativeDcodeData(output: string, command: string): Record<string, unknown> | unknown[] {
+  let envelope: Record<string, unknown>;
+  try {
+    envelope = sessionRecord(JSON.parse(output));
+  } catch {
+    throw new Error("invalid native DCode result envelope");
+  }
+  if (
+    envelope.schema_version !== 1 ||
+    envelope.command !== command ||
+    typeof envelope.data !== "object" ||
+    envelope.data === null
+  ) {
+    throw new Error("invalid native DCode result envelope");
+  }
+  return envelope.data as Record<string, unknown> | unknown[];
+}
+
+export function observabilityProbeThreadId(output: string, probeCwd?: string): string {
+  const data = nativeDcodeData(output, probeCwd ? "threads list" : "non-interactive");
+  if (probeCwd && Array.isArray(data) && data.length === 0) return "";
+  const listed = (Array.isArray(data) && data.length === 1 ? data[0] : undefined) as
+    | { cwd?: unknown; thread_id?: unknown }
+    | undefined;
+  const completion = (Array.isArray(data) ? undefined : data.completion) as
+    | { thread_id?: unknown }
+    | undefined;
+  const threadId = probeCwd
+    ? listed?.cwd === probeCwd
+      ? listed.thread_id
+      : undefined
+    : completion?.thread_id;
+  if (
+    typeof threadId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+  ) {
+    throw new Error("observability probe did not report its native thread ID");
   }
   return threadId;
 }
@@ -290,6 +339,10 @@ async function main(): Promise<void> {
     assertObservabilityThreadDeleted(input, argument, command === "thread-absent");
     return;
   }
+  if (command === "probe-thread-id") {
+    process.stdout.write(`${observabilityProbeThreadId(input, argument)}\n`);
+    return;
+  }
   if (command === "validate-captures" && argument) {
     const result = validateCaptureDirectory(
       argument,
@@ -325,7 +378,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|thread-absent|validate-captures> [argument]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|thread-absent|probe-thread-id|validate-captures> [argument]",
   );
 }
 

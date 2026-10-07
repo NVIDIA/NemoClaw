@@ -455,7 +455,14 @@ describe("Deep Agents OTLP trace contract", () => {
     });
     expect(() =>
       assertDeepAgentsTraceContract([traceRequest(missingMarker)], expectations),
-    ).toThrow(/direct prompt and response markers were not associated/);
+    ).toThrow(/direct prompt and response markers were not associated on one managed LLM span/);
+  });
+
+  it("rejects empty captures through the required span contracts", () => {
+    expect(() => assertDeepAgentsTraceContract([], expectations)).toThrow(/managed LLM span/);
+    expect(() => assertDeepAgentsTraceContract([], { ...expectations, llmExchanges: [] })).toThrow(
+      /managed TOOL span/,
+    );
   });
 
   it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {
@@ -639,8 +646,8 @@ describe("bounded private OTLP capture server", () => {
     expect(isPrivateBridgeIpv4("8.8.8.8", true)).toBe(false);
   });
 
-  it("rejects a non-protobuf request before persisting an accepted capture", async () => {
-    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-type-"));
+  it("rejects an incorrect content type at the collector and through capture validation", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-content-type-"));
     const started = await startOtlpCaptureServers({
       allowLoopback: true,
       bindIp: "127.0.0.1",
@@ -665,7 +672,7 @@ describe("bounded private OTLP capture server", () => {
       });
       expect(() =>
         validateCaptureDirectory(captureDir, started.collectorPort, "allow probe", expectations),
-      ).toThrow("records a rejected request");
+      ).toThrow(/records a rejected request: unexpected content type/);
       expect(started.snapshot().capturedBytes).toBe(0);
     } finally {
       await started.close();

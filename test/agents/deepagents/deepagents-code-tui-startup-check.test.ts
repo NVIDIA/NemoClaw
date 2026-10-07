@@ -550,7 +550,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK\\n'; }",
+          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK\\n'; }",
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() {",
           '  value="$(sed -n "1p" "$COUNT_FILE")"',
@@ -605,7 +605,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK\\n'; }",
+          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK\\n'; }",
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",

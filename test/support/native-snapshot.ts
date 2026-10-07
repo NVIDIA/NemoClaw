@@ -8,7 +8,11 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
-export function writeSnapshotRegistry(home: string, sandboxName: string): void {
+export function writeSnapshotRegistry(
+  home: string,
+  sandboxName: string,
+  agent: "hermes" | null = null,
+): void {
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(home, ".nemoclaw", "sandboxes.json"),
@@ -20,7 +24,7 @@ export function writeSnapshotRegistry(home: string, sandboxName: string): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          agent: null,
+          agent,
         },
       },
     }),
