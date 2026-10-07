@@ -479,7 +479,7 @@ describe("OpenClaw npm remediation", () => {
         undefined,
         process.env,
         64 * 1024 * 1024,
-        100,
+        750,
       );
     } catch (error) {
       failure = error;
