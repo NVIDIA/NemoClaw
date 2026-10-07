@@ -13,6 +13,7 @@ import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selecto
 import { exactRequestAdminApprovalConnectScript } from "../e2e/live/openclaw-admin-scope.ts";
 import {
   ADMIN_APPROVAL_TEST_CLI_SH,
+  ADMIN_APPROVAL_TEST_OPENSHELL_SH,
   ADMIN_APPROVAL_TEST_PTY_PY,
   removeStagedAdminScript,
 } from "../support/admin-approval-connect-fixture.ts";
@@ -153,6 +154,7 @@ function runAdminApprovalScript(
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
   const cliPath = path.join(root, "nemoclaw");
+  const openshellPath = path.join(root, "openshell");
   const openclawPath = path.join(root, "openclaw");
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
@@ -180,6 +182,7 @@ ${options.omitPreparedWrapper ? "unset -f openclaw" : ""}
 `,
   );
   fs.writeFileSync(cliPath, ADMIN_APPROVAL_TEST_CLI_SH, { mode: 0o755 });
+  fs.writeFileSync(openshellPath, ADMIN_APPROVAL_TEST_OPENSHELL_SH, { mode: 0o755 });
   fs.writeFileSync(
     path.join(root, "mktemp"),
     `#!/bin/sh
@@ -271,6 +274,7 @@ esac
             "admin-cron",
             options.expectedRequestId ?? requestId,
             options.verifyCronConsumer,
+            { gatewayName: "nemoclaw", openshellPath },
           )
         : adminApprovalConnectScript(
             cliPath,
