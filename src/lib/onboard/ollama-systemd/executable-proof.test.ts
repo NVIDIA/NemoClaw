@@ -358,7 +358,8 @@ describe("bounded direct execution proof process ownership", () => {
           { status: 137, signal: null },
           { status: null, signal: "SIGKILL" },
         ]).toContainEqual({ status: result.status, signal: result.signal });
-        expect(["", "Z"]).toContain(processState);
+        // Linux can expose EXIT_DEAD (X) briefly before removing the task from /proc.
+        expect(["", "Z", "X"]).toContain(processState);
       } finally {
         try {
           process.kill(descendantPid, "SIGKILL");
