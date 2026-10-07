@@ -86,7 +86,8 @@ The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitH
 
 </AgentOnly>
 
-When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1` provider to the sandbox instead of using `inference.local` or the broader baseline compatibility rule.
+Fixed hosted providers use restricted sandbox-attached OpenShell profiles for their selected endpoint, protocol paths, and agent binaries.
+For NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1` provider to the sandbox instead of using `inference.local` or the broader baseline compatibility rule.
 This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
 The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
@@ -217,7 +218,7 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-Most providers use the OpenShell-managed `inference.local` route. NVIDIA Endpoints instead uses its least-privilege, sandbox-attached OpenShell provider at `integrate.api.nvidia.com`. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
+Fixed hosted providers use their native endpoints through least-privilege, sandbox-attached OpenShell providers. Custom, local, and Model Router selections use the OpenShell-managed `inference.local` route. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="deepagents">
 

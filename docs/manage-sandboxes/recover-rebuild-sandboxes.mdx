@@ -190,7 +190,7 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 <AgentOnly variant="openclaw,hermes">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
-NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`.
+Fixed hosted providers use their native endpoints through sandbox-attached OpenShell providers.
 The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
 A failed model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
