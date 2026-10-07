@@ -171,17 +171,7 @@ pub(crate) async fn run(
                     match observed {
                         Ok(Some(observations)) => {
                             wizard.remember(observations);
-                            match wizard
-                                .state
-                                .delegate_remaining(&wizard.capabilities, &wizard.observations)
-                            {
-                                Ok(delegated) => {
-                                    wizard.history.push(wizard.state.clone());
-                                    wizard.state = delegated;
-                                    wizard.error = None;
-                                }
-                                Err(error) => wizard.error = Some(error.to_string()),
-                            }
+                            wizard.delegate();
                         }
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),

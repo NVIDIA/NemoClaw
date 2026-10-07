@@ -177,6 +177,7 @@ pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
     warnings: Vec<String>,
+    information: Vec<String>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -198,6 +199,10 @@ impl JourneyResolution {
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+    /// Informational authoring notes; these do not establish compatibility.
+    pub fn information(&self) -> &[String] {
+        &self.information
     }
     pub fn unverified(&self) -> &[String] {
         &self.unverified

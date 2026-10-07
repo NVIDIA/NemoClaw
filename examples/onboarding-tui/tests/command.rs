@@ -35,7 +35,9 @@ fn help_describes_a_generation_only_example() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("example terminal frontend"));
-    assert!(stdout.contains("does not resolve credentials, plan, or apply"));
+    assert!(stdout.contains("does not plan or apply"));
+    assert!(stdout.contains("checks referenced environment variables"));
+    assert!(stdout.contains("does not prompt for or retain credential values"));
     for unsupported in ["--state-dir", "--bundle", "--apply", "--edit"] {
         assert!(!stdout.contains(unsupported));
     }
