@@ -194,7 +194,15 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         : {}),
     });
   if (preserveRebuildLivePolicy) {
-    await verifySandboxInferenceRoute();
+    // OpenClaw's saved configuration is restored by the outer rebuild after
+    // inner onboarding returns. Verify that route in the post-restore phase.
+    if (
+      hostLocalInferenceRouteOnly ||
+      provider !== "compatible-endpoint" ||
+      normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name) !== "openclaw"
+    ) {
+      await verifySandboxInferenceRoute();
+    }
     deps.skippedStepMessage("policies", "live OpenShell rebuild policy");
     await deps.recordStateSkipped("policies", {
       reason: "rebuild-live-policy",

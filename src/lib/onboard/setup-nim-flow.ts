@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import type { SystemReadinessReport } from "../readiness/types";
+import type { ManagedInferenceReadinessSource } from "../inference/serving/types";
+
 import type { AgentDefinition } from "../agent/defs";
 import {
   OPENROUTER_CLOUD_MODEL_OPTIONS,
@@ -43,7 +47,10 @@ import {
   createLocalModelProfileIntegration,
   type LocalModelProfilePlan,
 } from "./local-model-profile/integration";
-import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
+import type {
+  ProviderSelectionResult,
+  ProviderInferenceStateOptions,
+} from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
   NvidiaFeaturedModelSession,
@@ -121,7 +128,40 @@ export type SetupNim = (
   canProbeRoute?: (provider: string) => boolean,
   recoverySessionId?: string | null,
   revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+  readinessReport?: SystemReadinessReport,
 ) => Promise<ProviderSelectionResult>;
+
+/** Bind current-run evidence without persisting it in the onboarding session. */
+export function bindSetupNimForRun(
+  setup: SetupNim,
+  rebuildRoute: RebuildRouteHandoff | null | undefined,
+  getReadinessReport: () => SystemReadinessReport | undefined,
+): ProviderInferenceStateOptions<SetupNimGpu, AgentDefinition | null, unknown>["deps"]["setupNim"] {
+  return (
+    gpu,
+    sandboxName,
+    agent,
+    recover,
+    gateway,
+    assertRouteCompatible,
+    canProbeRoute,
+    recoverySessionId,
+    revalidateSandboxIdentity,
+  ) =>
+    setup(
+      gpu,
+      sandboxName,
+      agent,
+      recover,
+      rebuildRoute,
+      gateway,
+      assertRouteCompatible,
+      canProbeRoute,
+      recoverySessionId,
+      revalidateSandboxIdentity,
+      getReadinessReport(),
+    );
+}
 
 export interface SetupNimFlowDeps {
   remoteProviderConfig: Record<string, SetupNimRemoteProviderConfigEntry>;
@@ -242,6 +282,7 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
       checkpointInstallIntent?: (modelId: string) => void;
       modelIntent?: string;
+      readinessReports?: readonly ManagedInferenceReadinessSource[];
     },
   ): Promise<{ ok: boolean }>;
   checkpointVllmInstallModel?(modelId: string): void;
@@ -859,6 +900,38 @@ function policyCheckedVllmInstallRecovery(
   };
 }
 
+async function installVllmWithReadiness(
+  deps: SetupNimFlowDeps,
+  profile: VllmProfile,
+  options: Parameters<SetupNimFlowDeps["installVllm"]>[1],
+  report?: SystemReadinessReport,
+): Promise<{ ok: boolean }> {
+  // Preserve the WSL proof's original observation time. Native hosts retain
+  // fresh collection because onboarding can outlast the reuse window.
+  const wslReport = report?.observations.some(
+    ({ id, state, value }) => id === "host.os.wsl" && state === "present" && value === true,
+  )
+    ? report
+    : undefined;
+  const runtimeProviderId = deps.getRuntimeProvider().identity.id;
+  const mismatchedProvider = wslReport?.observations.some(
+    ({ id, state, value }) =>
+      (id === "host.runtime.provider" || id === "host.gpu.container_proof_provider") &&
+      state === "present" &&
+      value !== runtimeProviderId,
+  );
+  if (mismatchedProvider) {
+    deps.error(
+      `  vLLM readiness was collected for a different runtime provider. Rerun onboarding with ${runtimeProviderId}.`,
+    );
+    return { ok: false };
+  }
+  return deps.installVllm(profile, {
+    ...options,
+    ...(wslReport ? { readinessReports: [{ nodeId: os.hostname(), report: wslReport }] } : {}),
+  });
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -884,6 +957,7 @@ export function createSetupNim(
     canProbeRoute?: (provider: string) => boolean,
     recoverySessionId?: string | null,
     revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+    readinessReport?: SystemReadinessReport,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -1377,16 +1451,21 @@ export function createSetupNim(
             seedVllmInstallRoute,
             deps.selectVllmModelFromEnv,
           );
-          const result = await deps.installVllm(vllmProfile, {
-            hasImage: hasVllmImage,
-            nonInteractive: deps.isNonInteractive(),
-            promptFn: deps.prompt,
-            ...vllmRecovery,
-            beforeInstall: (modelId) => {
-              seedVllmInstallRoute(modelId);
-              vllmState.revalidateSandboxIdentity?.("install managed vLLM runtime");
+          const result = await installVllmWithReadiness(
+            deps,
+            vllmProfile,
+            {
+              hasImage: hasVllmImage,
+              nonInteractive: deps.isNonInteractive(),
+              promptFn: deps.prompt,
+              ...vllmRecovery,
+              beforeInstall: (modelId) => {
+                seedVllmInstallRoute(modelId);
+                vllmState.revalidateSandboxIdentity?.("install managed vLLM runtime");
+              },
             },
-          });
+            readinessReport,
+          );
           if (!result.ok) {
             exitAfterPinnedVllmFailure(
               deps,

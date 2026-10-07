@@ -24,7 +24,8 @@ $$nemoclaw credentials list
 ```
 
 `inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, `custom`, and `llama-cpp`.
-NemoClaw normalizes an accepted alias to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
+It accepts recognized underscore spellings of canonical provider IDs and hyphenated aliases, such as `ollama_local`, `nvidia_prod`, and `open_router`.
+NemoClaw normalizes an accepted alias or underscore spelling to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
 If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
 If it cannot read the gateway list, it lists every supported provider ID instead.
@@ -46,6 +47,10 @@ Target a non-default sandbox by name.
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 ```
+
+For `openrouter-api`, NemoClaw verifies the selected model through the sandbox before it commits agent configuration.
+It skips the host-side provider probe because the OpenRouter adapter uses the sandbox-only `host.openshell.internal` route.
+If sandbox verification fails, NemoClaw tries to restore the previous inference selection and does not commit the agent configuration.
 
 </AgentOnly>
 
@@ -136,7 +141,10 @@ $$nemoclaw inference set \
 NemoClaw validates the endpoint before it changes the route.
 For an HTTPS IP-literal or DNS-pinned HTTP endpoint, NemoClaw registers and verifies an absent provider before selecting the route.
 If OpenShell still reports the provider as absent, NemoClaw retries the switch once.
-If provider verification or route selection fails, NemoClaw leaves the inference selection unchanged and removes the provider only when it can verify the revision created by this switch.
+If provider verification fails or OpenShell confirms that it did not apply the route, NemoClaw leaves the inference selection unchanged.
+If OpenShell cannot confirm whether it changed the route, NemoClaw stops and reports an unknown result.
+Run `$$nemoclaw <name> inference get` to inspect the selected sandbox's gateway before you use the route or retry.
+NemoClaw removes the provider only when it can verify the revision created by this switch.
 If removal was not attempted or could not be confirmed, rerun onboarding before using that provider route or retrying the switch.
 For a DNS-backed HTTPS endpoint, NemoClaw registers the HTTPS Pin Runtime provider before the first route attempt.
 

@@ -30,6 +30,8 @@ vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
 vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
+import * as registry from "../../state/registry";
+import * as onboardSession from "../../state/onboard-session";
 import type { AgentSkillIntegration } from "../../agent/skill-integration";
 
 const roots: string[] = [];
@@ -136,6 +138,41 @@ describe("stateless sandbox skill orchestration", () => {
     expect(request.command.slice(-command.length)).toEqual(command);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "keeps OpenClaw skill operations on their registered sandbox after %s onboarding (#12586)",
+    async (sessionAgent) => {
+      const runtime =
+        await vi.importActual<typeof import("../../agent/runtime")>("../../agent/runtime");
+      getSessionAgent.mockImplementation(runtime.getSessionAgent);
+      resolveSessionAgentDefinition.mockImplementation(runtime.resolveSessionAgentDefinition);
+      vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: null } as never);
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({ agent: sessionAgent } as never);
+
+      await listSandboxSkills("alpha");
+      expect(sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].command.slice(-5)).toEqual([
+        "/usr/local/bin/openclaw",
+        "skills",
+        "list",
+        "--agent",
+        "main",
+      ]);
+      expect(process.exitCode).toBe(0);
+      sdkCommandExecutor.runStreaming.mockClear();
+
+      await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+      const install = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
+      expect(install.slice(-7, -4)).toEqual(["/usr/local/bin/openclaw", "skills", "install"]);
+      expect(install.slice(-3)).toEqual(["--agent", "main", "--force"]);
+      expect(process.exitCode).toBe(0);
+      sdkCommandExecutor.runStreaming.mockClear();
+
+      await removeSandboxSkill("alpha", { name: "demo-skill" });
+      const remove = sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].command as string[];
+      expect(remove.at(-1)).toContain("/sandbox/.openclaw/workspace/skills");
+      expect(process.exitCode).toBe(0);
+    },
+  );
 
   it("forwards the native list exit status", async () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
