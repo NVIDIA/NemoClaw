@@ -271,12 +271,20 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     interval = float(os.environ.get("E2E_ESCALATE_INTERVAL_SEC", "15"))
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
-    # Latency HPA: short answers stay under ~10s (5 users on 1 GPU). The
-    # 2000-word prompts fill MAX_TOKENS and hold 18–40s during scale-up.
+    # Latency HPA: short answers plus a pause so 5 users do not queue to ~14s
+    # on 1–2 GPUs. Long GPU-util prompts fill MAX_TOKENS and hold 18–40s.
     try:
         max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
     except ValueError:
         max_tokens = 1024
+    pause_raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
+    if pause_raw is None or pause_raw == "":
+        pause = 3.0 if max_tokens <= 128 else 0.0
+    else:
+        try:
+            pause = max(0.0, float(pause_raw))
+        except ValueError:
+            pause = 0.0
     if max_tokens <= 128:
         prompts = [
             prompt or "In one sentence, what is Kubernetes HPA?",
@@ -330,6 +338,11 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
                 else:
                     err += 1
             turn += 1
+            remaining = pause
+            while remaining > 0 and not stop.is_set():
+                step = min(0.25, remaining)
+                time.sleep(step)
+                remaining -= step
 
     def spawn_upto(n: int) -> None:
         while len(workers) < n:
@@ -363,8 +376,8 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             last_log = now
         time.sleep(0.5)
     stop.set()
-    # Finish the current chat.send instead of dying on SIGTERM (client stops
-    # load when HPA hits 8). That last in-flight used to increment err.
+    # Finish the current chat.send instead of dying on SIGTERM. That last
+    # in-flight used to increment err.
     drain = float(os.environ.get("E2E_DRAIN_SEC", "8"))
     join_deadline = time.monotonic() + max(1.0, drain)
     for worker_thread in workers:

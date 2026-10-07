@@ -196,21 +196,6 @@ def read_hpa_http(host: str, port: int) -> tuple[int, int]:
     return current, desired
 
 
-def hpa_motion(current: int, desired: int) -> str:
-    if current < desired:
-        return "scale-up"
-    if current > desired:
-        return "scale-down"
-    return "hold"
-
-
-def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> str:
-    return (
-        f"[hpa] {hpa_motion(current, desired)} "
-        f"{namespace}/{name} current={current} desired={desired}"
-    )
-
-
 # argv from exec -a. Also TERM leftover python3 that still has NEMOCLAW_E2E_LOAD=1.
 TERM_SANDBOX_HELPERS = r"""
 pkill -TERM -f '[e]2e-openclaw-load' || true
@@ -415,6 +400,29 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
         await proc.wait()
 
 
+async def stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
+    """Do not start all 5 users at t=0; that queues ~14s chats on 1 GPU."""
+    try:
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+    except ValueError:
+        max_tokens = 1024
+    raw = os.environ.get("E2E_USER_STAGGER_SEC")
+    if raw is None or raw == "":
+        per_user = 2.0 if max_tokens <= 128 else 0.0
+    else:
+        try:
+            per_user = max(0.0, float(raw))
+        except ValueError:
+            per_user = 0.0
+    delay = per_user * user_id
+    if delay <= 0:
+        return
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except asyncio.TimeoutError:
+        return
+
+
 async def simulate_user_http(
     user_id: int,
     endpoint: dict[str, object],
@@ -435,6 +443,9 @@ async def simulate_user_http(
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": f"missing {HELPER_PATH}"}
     if not host or port < 1 or not token:
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "endpoint missing host/port/token"}
+    await stagger_user_start(user_id, stop_event)
+    if stop_event.is_set():
+        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 0, "chats_ok": 0, "chats_err": 0}
     env = os.environ.copy()
     env["OPENCLAW_GATEWAY_HOST"] = host
     env["OPENCLAW_GATEWAY_PORT"] = str(port)
@@ -449,6 +460,8 @@ async def simulate_user_http(
     env["E2E_ESCALATE_FACTOR"] = "0.35"
     env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
     env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
+    if os.environ.get("E2E_CHAT_PAUSE_SEC"):
+        env["E2E_CHAT_PAUSE_SEC"] = os.environ["E2E_CHAT_PAUSE_SEC"]
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         str(HELPER_PATH),
@@ -526,6 +539,9 @@ async def simulate_user(
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "kubectl missing"}
     if not HELPER_PATH.is_file():
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": f"missing {HELPER_PATH}"}
+    await stagger_user_start(user_id, stop_event)
+    if stop_event.is_set():
+        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 0, "chats_ok": 0, "chats_err": 0}
     script = (
         "set -euo pipefail; "
         "ns=''; "
@@ -662,13 +678,11 @@ async def run_test(args: argparse.Namespace) -> int:
             not os.environ.get("MAX_TOKENS_FROM_USER", "").strip()
             and "latency" in metric.lower()
         ):
-            os.environ["MAX_TOKENS"] = "64"
-            print("[load] latency HPA on laptop: MAX_TOKENS=64", flush=True)
+            os.environ["MAX_TOKENS"] = "32"
+            print("[load] latency HPA on laptop: MAX_TOKENS=32", flush=True)
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target
-        last_line = ""
-        zero_polls = 0
         while not stop_load.is_set():
             if args.host:
                 current, desired = await asyncio.to_thread(
@@ -684,18 +698,6 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            line = format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired)
-            if line != last_line:
-                print(line, flush=True)
-                last_line = line
-            if current == 0 and desired == 0:
-                zero_polls += 1
-                if zero_polls == 1 or zero_polls % 15 == 0:
-                    print(
-                        "[hpa] replica counts are 0 (kubectl or /hpa failed)",
-                        file=sys.stderr,
-                        flush=True,
-                    )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
             try:

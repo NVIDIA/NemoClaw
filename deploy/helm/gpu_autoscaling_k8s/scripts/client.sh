@@ -18,7 +18,7 @@
 # simpler option — from the same DGX in another terminal:
 #   E2E_USERS=5 ./scripts/client.sh
 # Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
+# Latency HPA overrides to 32. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -62,10 +62,10 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:18789 … $((18789 + E2E_USERS - 1))"
-  echo "Sends chats for ${DURATION_SEC}s. HPA scales on live latency. Queries are not dropped at 8 GPUs."
-  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${E2E_DISCOVERY_PORT:-18788}" <<'PY'
-import json, sys, urllib.error, urllib.request
-host, users, discovery = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+  echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" <<'PY'
+import sys, urllib.error, urllib.request
+host, users = sys.argv[1], int(sys.argv[2])
 failed = 0
 for i in range(users):
     url = f"http://{host}:{18789 + i}/health"
@@ -84,16 +84,6 @@ for i in range(users):
     print(f"  user {i} → {url}")
 if failed:
     raise SystemExit("client will not send chat until every http://dgx-ip:18789+i/health answers")
-hpa_url = f"http://{host}:{discovery}/hpa"
-try:
-    data = json.loads(urllib.request.urlopen(hpa_url, timeout=5).read().decode())
-    if isinstance(data, dict):
-        current = int(data.get("current") or 0)
-        desired = int(data.get("desired") or 0)
-        metric = str(data.get("metric") or "")
-        print(f"  HPA {hpa_url} current={current} desired={desired} metric={metric or '?'}")
-except Exception as exc:
-    print(f"  HPA {hpa_url} unavailable ({exc}); continuing chats for DURATION_SEC")
 print(f"UI (one port per user): http://{host}:18789/u/0 … :{18789 + users - 1}/u/0")
 PY
   mkdir -p "${E2E_OUTPUT_DIR}"
@@ -126,7 +116,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1)."
-echo "Sends chats for ${DURATION_SEC}s. HPA scales on live latency. Queries are not dropped at 8 GPUs."
+echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

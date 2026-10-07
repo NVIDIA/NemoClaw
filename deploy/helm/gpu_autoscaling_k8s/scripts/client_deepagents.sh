@@ -16,7 +16,7 @@
 # Deep Agents has no HTTP dashboard. Run after agentscaling_deepagents_*.
 #   E2E_USERS=5 ./scripts/client_deepagents.sh
 # Workload: inflight stays 1. Default MAX_TOKENS=2048 (GPU util).
-# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
+# Latency HPA overrides to 32. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -66,7 +66,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client_deepagents.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n)."
-echo "Sends chats for ${DURATION_SEC}s. HPA scales on live latency. Queries are not dropped at 8 GPUs."
+echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

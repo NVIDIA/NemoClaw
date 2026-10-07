@@ -16,7 +16,7 @@
 # Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
 #   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 # Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA overrides to 64. Set MAX_TOKENS only to force a value.
+# Latency HPA overrides to 32. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -60,7 +60,7 @@ if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client_hermes.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
   echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
-  echo "Sends chats for ${DURATION_SEC}s. HPA scales on live latency. Queries are not dropped at 8 GPUs."
+  echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
   python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" "${TARGET_PODS}" "${MAX_TOKENS_FROM_USER}" <<'PY'
 import json, os, sys, time, urllib.error, urllib.request
 host, users, duration, timeout, max_tokens, _target = (
@@ -102,13 +102,9 @@ def hpa_status():
         return 0, 0, ""
 
 current, desired, metric = hpa_status()
-if max(current, desired) >= 1:
-    print(f"  HPA http://{host}:{discovery}/hpa current={current} desired={desired} metric={metric or '?'}")
-else:
-    print(f"  HPA http://{host}:{discovery}/hpa unavailable; continuing chats for DURATION_SEC")
 if not user_max.strip() and "latency" in metric.lower() and max_tokens > 128:
-    max_tokens = 64
-    print("[load] latency HPA on laptop: MAX_TOKENS=64", flush=True)
+    max_tokens = 32
+    print("[load] latency HPA on laptop: MAX_TOKENS=32", flush=True)
 prompt = (
     "In one sentence, what is Kubernetes HPA?"
     if max_tokens <= 128
@@ -138,6 +134,8 @@ while time.monotonic() < deadline:
         except Exception as exc:
             err += 1
             print(f"[user {i}] {exc}", flush=True)
+        if max_tokens <= 128:
+            time.sleep(3)
 print(f"[load] done ok={ok} err={err}", flush=True)
 raise SystemExit(0 if ok else 1)
 PY
@@ -158,7 +156,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client_hermes.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z)."
-echo "Sends chats for ${DURATION_SEC}s. HPA scales on live latency. Queries are not dropped at 8 GPUs."
+echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

@@ -44,7 +44,7 @@ FALLBACK_RE = re.compile(
 )
 
 # GPU util keeps longer answers. Latency (MAX_TOKENS<=128) uses one-sentence
-# prompts so chats stay under ~10s.
+# prompts, a 3s pause, and staggered starts so 5 users do not queue to ~14s.
 try:
     _MAX_TOKENS = int(os.environ.get("MAX_TOKENS") or "1024")
 except ValueError:
@@ -65,6 +65,34 @@ else:
 
 def sandbox_name(prefix: str, user_id: int) -> str:
     return f"{prefix}{user_id:04d}"
+
+
+def _chat_pause_sec() -> float:
+    raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
+    if raw is None or raw == "":
+        return 3.0 if _MAX_TOKENS <= 128 else 0.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
+async def _stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
+    raw = os.environ.get("E2E_USER_STAGGER_SEC")
+    if raw is None or raw == "":
+        per_user = 2.0 if _MAX_TOKENS <= 128 else 0.0
+    else:
+        try:
+            per_user = max(0.0, float(raw))
+        except ValueError:
+            per_user = 0.0
+    delay = per_user * user_id
+    if delay <= 0:
+        return
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except asyncio.TimeoutError:
+        return
 
 
 def read_hpa(namespace: str, name: str) -> tuple[int, int]:
@@ -94,21 +122,6 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
 def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
     """True when HPA current or desired replicas reached the demo target. 0/0 is a failed poll."""
     return max(current, desired) >= target
-
-
-def hpa_motion(current: int, desired: int) -> str:
-    if current < desired:
-        return "scale-up"
-    if current > desired:
-        return "scale-down"
-    return "hold"
-
-
-def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> str:
-    return (
-        f"[hpa] {hpa_motion(current, desired)} "
-        f"{namespace}/{name} current={current} desired={desired}"
-    )
 
 
 SANDBOX_NS = os.environ.get("OPENSHELL_NAMESPACE", "nemoclaw-sandboxes")
@@ -258,6 +271,9 @@ async def simulate_user(
 
     Inflight 2+ OOMed a CPU node. Default is one hermes -z per sandbox.
     """
+    await _stagger_user_start(user_id, stop_event)
+    if stop_event.is_set():
+        return {"user_id": user_id, "sandbox": sandbox_name(prefix, user_id), "ok": 0, "err": 0, "chats_ok": 0, "chats_err": 0}
     sandbox = sandbox_name(prefix, user_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ok = 0
@@ -291,6 +307,12 @@ async def simulate_user(
             )
             last_log = now
         log_handle.flush()
+        pause = _chat_pause_sec()
+        if pause > 0 and not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=pause)
+            except asyncio.TimeoutError:
+                pass
 
     pending: set[asyncio.Task[None]] = set()
     try:
@@ -338,8 +360,6 @@ async def run_test(args: argparse.Namespace) -> int:
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target
-        last_line = ""
-        zero_polls = 0
         while not stop_load.is_set():
             current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
             max_replicas = max(max_replicas, current, desired)
@@ -350,18 +370,6 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            line = format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired)
-            if line != last_line:
-                print(line, flush=True)
-                last_line = line
-            if current == 0 and desired == 0:
-                zero_polls += 1
-                if zero_polls == 1 or zero_polls % 15 == 0:
-                    print(
-                        "[hpa] replica counts are 0 (kubectl failed)",
-                        file=sys.stderr,
-                        flush=True,
-                    )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
             try:

@@ -25,7 +25,8 @@ agent_common_print_laptop_client_usage() {
 }
 
 # Inflight stays 1. Default MAX_TOKENS is the GPU-util workload
-# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA overrides to 64.
+# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA overrides to 32
+# so 5 users do not queue to ~14s on 1–2 GPUs.
 # Set MAX_TOKENS only if you want to force a value.
 agent_common_resolve_max_tokens() {
   local agent="${1:-openclaw}"
@@ -39,7 +40,7 @@ agent_common_resolve_max_tokens() {
         -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
     fi
     case "${metric}" in
-      *latency*) raw="64" ;;
+      *latency*) raw="32" ;;
       *)
         case "${agent}" in
           deepagents) raw="2048" ;;

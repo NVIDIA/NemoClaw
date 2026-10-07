@@ -153,7 +153,7 @@ Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end user
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client.sh`. `client.sh` re-pins `max_tokens` and keeps the provisioned model.
+- `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client.sh`. `client.sh` re-pins `max_tokens` and keeps the provisioned model.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
@@ -220,11 +220,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=64 ./scripts/client.sh
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=32 ./scripts/client.sh
 
 
 # or a simpler option — from the same DGX in another terminal
-E2E_USERS=5 MAX_TOKENS=64 ./scripts/client.sh
+E2E_USERS=5 MAX_TOKENS=32 ./scripts/client.sh
 ```
 
 Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
@@ -266,7 +266,7 @@ export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_hermes.sh`. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client_hermes.sh`. 
 
 ```text
 E2E test: Hermes + vLLM
@@ -332,11 +332,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=64 ./scripts/client_hermes.sh
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_hermes.sh
 
 
 # simpler option — from the same DGX in another terminal
-E2E_USERS=5 MAX_TOKENS=64 ./scripts/client_hermes.sh
+E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_hermes.sh
 ```
 
 
@@ -364,7 +364,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **2048** (GPU util). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_deepagents.sh`.
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **2048** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client_deepagents.sh`.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -429,7 +429,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 ```bash
 # Terminal C — from the same DGX in another terminal
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_USERS=5 MAX_TOKENS=64 ./scripts/client_deepagents.sh
+E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_deepagents.sh
 ```
 
 
