@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InferenceSelection } from "../../inference/selection";
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -132,6 +133,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
+  /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
@@ -231,4 +234,6 @@ export interface SandboxRegistry {
   defaultSandbox: string | null;
   defaultSelectionRevision?: number;
   extraProviders?: string[];
+  /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
+  nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
 }

@@ -466,6 +466,9 @@ export function createDirectSetupInferenceHarnessFactory(
           ? "http://host.openshell.internal:11435/v1"
           : "http://host.openshell.internal:8000/v1",
       applyLocalInferenceRoute: async () => false,
+      // Let setupInference bind provider recovery to this harness's
+      // gateway-scoped runner instead of the production process adapter.
+      providerAdapter: undefined,
       run: () => directRunResult(),
       shouldFrontOllamaWithProxy: () => false,
       ensureOllamaAuthProxy: () => {},

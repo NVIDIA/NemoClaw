@@ -187,7 +187,7 @@ function makeRestoreFixture(): {
       "[models.providers.openai]",
       'models = ["new-model"]',
       'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
-      'base_url = "https://inference.local/v1"',
+      'base_url = "https://integrate.api.nvidia.com/v1"',
       "enabled = true",
       "",
       "[update]",

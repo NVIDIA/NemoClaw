@@ -6,6 +6,8 @@ import {
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
+  nativeInferenceProviderForSandbox,
+  normalizeNativeNvidiaProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -50,6 +52,7 @@ import {
   recordCheckpointSandboxIdentity,
   recordCheckpointWebSearch,
 } from "../../checkpoint-record";
+
 import {
   checkpointProvesSandboxStepComplete,
   observeProviderEffectFingerprint,
@@ -126,6 +129,22 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   ReplacedSandboxWorkloadCleanupResult,
   { readonly status: "skipped" }
 >["reason"];
+
+function nativeNvidiaCreateIntentFields(
+  provider: string | null | undefined,
+  entry: SandboxEntry | null,
+): {
+  inferenceProvider: string | null;
+  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+} {
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    entry?.nativeNvidiaProviderAttachment,
+  );
+  return {
+    inferenceProvider: nativeInferenceProviderForSandbox(provider),
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+  };
+}
 
 const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
   "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
@@ -349,6 +368,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -1857,7 +1877,10 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      inferenceProvider: this.options.provider,
+      ...nativeNvidiaCreateIntentFields(
+        this.options.provider,
+        this.deps.getSandboxRegistryEntry(sandboxName),
+      ),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,

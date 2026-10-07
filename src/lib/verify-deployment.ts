@@ -30,6 +30,7 @@ import { isOpenRouterRuntimeAdapterModelsRoute404 } from "./inference/openrouter
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
+import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
@@ -110,11 +111,12 @@ export interface VerifyDeploymentDeps {
   providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
-   * Send one bounded inference request over the gateway route from inside the
-   * sandbox. Only consulted when a supported agent uses the OpenRouter runtime
-   * adapter, whose models route returns HTTP 404 (#12621). The route can only
-   * be accepted on the evidence of a served request. Optional: when it is
-   * absent that 404 fails closed, because nothing validated the selected model.
+   * Send one bounded inference request over the sandbox's configured route.
+   * This request is authoritative for native NVIDIA, which has no shared
+   * `inference.local` route. It also validates OpenRouter runtime adapters,
+   * whose models route returns HTTP 404 (#12621). When this dependency is
+   * absent, both exceptional paths fail closed because no request validated
+   * the selected model (#10543).
    */
   probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
@@ -393,6 +395,32 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
+  if (isNativeNvidiaProvider(context.provider)) {
+    const invocation = await retryUntilAsync(
+      async () => (await deps.probeInferenceInvocation?.()) ?? null,
+      {
+        accept: (result) => result?.ok === true,
+        retryDelaysMs,
+        sleep,
+      },
+    );
+    if (invocation?.ok) {
+      return {
+        status: "ok",
+        detail: "native NVIDIA inference served an agent request",
+        httpCode: 200,
+      };
+    }
+    const reason = invocation?.detail ?? "no inference request confirmed the selected model";
+    return {
+      status: "unhealthy",
+      detail: `native NVIDIA inference did not serve an agent request: ${reason}`,
+      httpCode: 0,
+      hint:
+        "The sandbox-attached NVIDIA provider could not serve the selected model. Confirm the " +
+        "NVIDIA credential and model, then re-run: nemoclaw <sandbox> status.",
+    };
+  }
   const routeContext = toRouteHealthContext(context);
   const isExpected404 = (result: InferenceRouteProbe) =>
     isOpenRouterRuntimeAdapterModelsRoute404(routeContext.provider, result.httpCode);
@@ -895,6 +923,7 @@ export async function probeOnboardInferenceInvocation(
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
+    ...(isNativeNvidiaProvider(provider) ? { nativeProvider: true } : {}),
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }
