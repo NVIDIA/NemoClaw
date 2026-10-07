@@ -14,6 +14,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-deferred";
 validateSandboxName(SANDBOX_NAME);
@@ -118,6 +119,12 @@ test(
       env: onboardEnv,
       artifactName: "deferred-public-onboard",
       timeoutMs: execTimeout(30 * 60_000),
+    });
+    await captureSandboxFailureDiagnostics(host, onboarded, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "deferred-onboard-failure",
+      redactionValues,
+      captureGatewayLog: true,
     });
     expect(onboarded.exitCode, resultText(onboarded)).toBe(0);
     expect(getSandbox(SANDBOX_NAME)?.agent).toBe(agent);

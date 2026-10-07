@@ -184,14 +184,18 @@ export function observabilityThreadForPrompt(output: string, prompt: string): st
   return threadId;
 }
 
-export function assertObservabilityThreadDeleted(output: string, threadId: string): void {
+export function assertObservabilityThreadDeleted(
+  output: string,
+  threadId: string,
+  verifyAbsence = false,
+): void {
   const envelope = sessionRecord(JSON.parse(output));
   const data = sessionRecord(envelope.data);
   if (
     envelope.schema_version !== 1 ||
     envelope.command !== "threads delete" ||
     data.thread_id !== threadId ||
-    data.deleted !== true
+    (verifyAbsence ? data.dry_run !== true || data.exists !== false : data.deleted !== true)
   ) {
     throw new Error("dcode did not confirm deletion of the observability conversation");
   }
@@ -282,8 +286,8 @@ async function main(): Promise<void> {
     process.stdout.write(`${observabilityThreadForPrompt(input, argument)}\n`);
     return;
   }
-  if (command === "thread-deleted" && argument) {
-    assertObservabilityThreadDeleted(input, argument);
+  if ((command === "thread-deleted" || command === "thread-absent") && argument) {
+    assertObservabilityThreadDeleted(input, argument, command === "thread-absent");
     return;
   }
   if (command === "validate-captures" && argument) {
@@ -321,7 +325,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|validate-captures> [argument]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|thread-absent|validate-captures> [argument]",
   );
 }
 

@@ -111,7 +111,9 @@ cleanup() {
       | "$TSX" "$CONTRACT_HELPER" thread-for-prompt "$prompt")" \
       || ! deletion_output="$(cleanup_sandbox_exec \
         dcode threads delete "$thread" --json)" \
-      || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread"; then
+      || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread" \
+      || ! cleanup_sandbox_exec dcode threads delete "$thread" --dry-run --json \
+      | "$TSX" "$CONTRACT_HELPER" thread-absent "$thread"; then
       printf '%s: could not remove an observability test conversation\n' "$PREFIX" >&2
       exit_status=1
     fi

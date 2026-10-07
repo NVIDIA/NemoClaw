@@ -147,7 +147,7 @@ export interface GatewayHealth {
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
-  showServiceStatus: (options: { sandboxName?: string }) => void;
+  showServiceStatus: (options: { sandboxName?: string; dashboardPort?: number }) => void;
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
    * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
@@ -806,7 +806,19 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
     }
   }
 
-  if (!hasHermesPortable) deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
+  if (!hasHermesPortable) {
+    const selectedSandbox = sandboxes.find((sandbox) => sandbox.name === resolvedDefault);
+    const dashboardPort = selectedSandbox?.dashboardPort;
+    deps.showServiceStatus({
+      sandboxName: resolvedDefault || undefined,
+      ...(typeof dashboardPort === "number" &&
+      Number.isSafeInteger(dashboardPort) &&
+      dashboardPort >= 1 &&
+      dashboardPort <= 65_535
+        ? { dashboardPort }
+        : {}),
+    });
+  }
 
   if (deps.findMessagingOverlaps && !hasHermesPortable) {
     const overlaps = deps.findMessagingOverlaps();
