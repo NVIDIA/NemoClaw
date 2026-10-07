@@ -29,7 +29,8 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
+        SHARED_INFERENCE["Shared-route inference providers<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
+        NVIDIA_INFERENCE["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
         INTEGRATIONS["Integration APIs<br/><small>MCP · GitHub · package indexes</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -64,8 +65,9 @@ graph LR
     BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
     STATE -->|"Backup + restore"| SANDBOX
 
-    AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
-    GW -->|"Proxied with<br/>credential injected"| INFERENCE
+    AGENT -->|"Most inference requests<br/><small>inference.local · no credentials</small>"| GW
+    GW -->|"Shared-route request with<br/>credential injected"| SHARED_INFERENCE
+    AGENT -->|"Attached NVIDIA provider<br/><small>restricted request · placeholder credential</small>"| NVIDIA_INFERENCE
 
     INTEGRATIONS -->|"External APIs"| INTEG
     INTEG -->|"Policy-gated access"| AGENT
@@ -169,12 +171,14 @@ graph TB
         end
     end
 
-    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
+    SHARED_INFER["Shared-route inference provider<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
+    NVIDIA_INFER["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GW
     GW -->|"creates/recreates<br/>Docker-driver sandbox"| SANDBOX
-    SANDBOX -->|"inference requests<br/><small>placeholder credentials</small>"| GW
-    GW -->|"egress with real credentials<br/>injected at the L7 proxy"| INFER
+    SANDBOX -->|"shared-route requests<br/><small>inference.local · placeholder credentials</small>"| GW
+    GW -->|"shared-route egress<br/>credential injected at L7 proxy"| SHARED_INFER
+    SANDBOX -->|"attached NVIDIA provider<br/><small>restricted egress · placeholder rewritten</small>"| NVIDIA_INFER
 
     class HOST host
     class DOCKER docker
@@ -190,10 +194,13 @@ Layering from top to bottom:
 | OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
 | Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
-| OpenShell L7 proxy | Gateway process | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
+| OpenShell L7 proxy | Gateway process | Intercepts shared-route agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
+| OpenShell attached NVIDIA provider | Provider profile attached to the sandbox | Restricts NVIDIA Endpoints egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
-At onboard time it registers credentials with OpenShell's provider/placeholder system, and the L7 proxy substitutes the real value into outbound requests at egress.
+At onboard time it registers credentials with OpenShell's provider and placeholder system.
+Shared routes use the gateway L7 proxy to substitute the real value at egress.
+NVIDIA Endpoints uses the sandbox-attached provider profile to enforce the restricted request and replace its placeholder at egress.
 The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
 It is not a runtime component.
 
@@ -213,7 +220,7 @@ The concrete files differ by agent because each runtime has its own plugin syste
 | Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/runtime-config-guard.py`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, materializes and guards managed runtime configuration during startup, and launches `hermes gateway run` behind the OpenShell proxy. |
 </AgentOnly>
 <AgentOnly variant="deepagents">
-| Deep Agents | `agents/langchain-deepagents-code/manifest.yaml`, `agents/langchain-deepagents-code/generate-config.ts`, `agents/langchain-deepagents-code/start.sh`, and the managed `dcode` launchers | Declares the terminal agent contract, writes `/sandbox/.deepagents/config.toml`, installs managed wrappers for `dcode` and `dcode -n`, and routes inference through `inference.local`. |
+| Deep Agents | `agents/langchain-deepagents-code/manifest.yaml`, `agents/langchain-deepagents-code/generate-config.ts`, `agents/langchain-deepagents-code/start.sh`, and the managed `dcode` launchers | Declares the terminal agent contract, writes `/sandbox/.deepagents/config.toml`, installs managed wrappers for `dcode` and `dcode -n`, and routes inference through the selected OpenShell-managed path. |
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -350,12 +357,22 @@ Inside the sandbox:
 
 ## Inference Routing
 
-Inference requests from the agent never leave the sandbox directly.
-OpenShell intercepts them and routes them to the configured provider:
+Agent inference follows one of two OpenShell-managed paths.
+Most providers use the shared `inference.local` route through the OpenShell gateway:
 
 ```text
-Supported agent runtime (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
+Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
+
+NVIDIA Endpoints uses a restricted provider attached to the sandbox:
+
+```text
+Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──▶  NVIDIA Endpoints
+                                      OpenShell attached-provider policy and placeholder rewrite
+```
+
+The NVIDIA request does not use the shared `inference.local` route.
+The attached OpenShell profile allows only the configured endpoint, methods, paths, and binaries, and it replaces the placeholder credential at egress.
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
 The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
@@ -377,9 +394,10 @@ Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inf
 
 ## Provider Credential Storage
 
-Provider credentials live in the OpenShell gateway store, not on the host filesystem.
+Provider credentials live in OpenShell's credential store, not on the host filesystem.
 NemoClaw never writes them to host disk.
-The OpenShell L7 proxy injects values at egress.
+The OpenShell L7 proxy injects values for shared routes.
+The sandbox-attached NVIDIA provider rewrites its placeholder credential at egress.
 Refer to [Credential Storage](../security/credential-storage) for the inspection, rotation, and migration flow.
 
 ## Host-Side State and Config

@@ -86,6 +86,15 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
   });
 
+  it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
+    const config = runGenerator({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+    });
+
+    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+  });
+
   it("keeps the legacy provider key when the renamed route variables are absent", () => {
     const config = runGenerator({
       NEMOCLAW_PROVIDER_KEY: "legacy-route",
