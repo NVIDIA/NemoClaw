@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isMcpLifecycleLockHeld } from "../state/mcp-lifecycle-lock-acquisition";
 import type { CloudflaredState } from "./services";
 import { migrateLegacyCloudflaredState, resolveTunnelPidDir } from "./services";
 
@@ -72,6 +74,32 @@ describe("legacy tunnel state migration (#11628)", () => {
 
     expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
     expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("holds the gateway tunnel lifecycle lock throughout migration", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    const lockName = `cloudflared-${createHash("sha256").update(path.resolve(targetPidDir)).digest("hex")}`;
+    const lockObservations: boolean[] = [];
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(
+      migrateLegacyCloudflaredState(
+        { gatewayPort },
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          registeredSandboxNames: () => ["legacy"],
+          readState: (pidDir): CloudflaredState => {
+            lockObservations.push(isMcpLifecycleLockHeld(lockName));
+            return pidDir === legacyPidDir
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
+              : { kind: "stopped" };
+          },
+        },
+      ),
+    ).toBe(true);
+
+    expect(lockObservations.length).toBeGreaterThan(0);
+    expect(lockObservations.every(Boolean)).toBe(true);
   });
 
   it("preserves both records when host identity is unverified and legacy is verified", () => {

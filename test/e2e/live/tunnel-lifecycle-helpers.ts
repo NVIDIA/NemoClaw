@@ -121,7 +121,7 @@ function isCloudflareTransientHttpCode(code: string): boolean {
 }
 
 export function getCloudflaredLogPath(
-  stateRoot = resolveNemoclawStateDir(),
+  stateRoot = resolveTunnelLifecycleStateDir(),
   _sandboxName = SANDBOX_NAME,
 ): string | undefined {
   // Source boundary: NemoClaw owns one gateway-scoped host-side dashboard tunnel log. If
@@ -132,6 +132,17 @@ export function getCloudflaredLogPath(
   // machine-readable tunnel diagnostics from `nemoclaw tunnel status --json`.
   const tunnelLog = path.join(stateRoot, "tunnel", "cloudflared.log");
   return fs.existsSync(tunnelLog) ? tunnelLog : undefined;
+}
+
+export function resolveTunnelLifecycleStateDir(
+  homeDir?: string,
+  gatewayPort = Number(TUNNEL_GATEWAY_PORT),
+): string {
+  return resolveNemoclawStateDir(homeDir, gatewayPort);
+}
+
+export function getCloudflaredPidPath(stateRoot = resolveTunnelLifecycleStateDir()): string {
+  return path.join(stateRoot, "tunnel", "cloudflared.pid");
 }
 
 function readCloudflaredLog(): string {
@@ -151,7 +162,7 @@ function cloudflaredLogTail(lines = 80): string {
 }
 
 export function classifyCloudflaredLog(
-  logRoot = resolveNemoclawStateDir(),
+  logRoot = resolveTunnelLifecycleStateDir(),
   sandboxName = SANDBOX_NAME,
 ): "nemoclaw_no_spawn" | "nemoclaw_capture_bug" | "nemoclaw_local" | "cloudflare" | "unknown" {
   const logPath = getCloudflaredLogPath(logRoot, sandboxName);
@@ -398,11 +409,7 @@ export async function runTunnelLifecycleContract({
   }
 
   progress.phase("verify cloudflared targets the registered dashboard port");
-  const cloudflaredPidFile = path.join(
-    "/tmp",
-    `nemoclaw-services-${SANDBOX_NAME}`,
-    "cloudflared.pid",
-  );
+  const cloudflaredPidFile = getCloudflaredPidPath();
   const cloudflaredPid = Number(fs.readFileSync(cloudflaredPidFile, "utf8").trim());
   const cloudflaredCommand = await host.command(
     "ps",

@@ -13,9 +13,11 @@ import {
   cloudflaredTargetsRegisteredPort,
   classifyCloudflaredLog,
   getCloudflaredLogPath,
+  getCloudflaredPidPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
   resolveTunnelLifecycleDashboardPort,
+  resolveTunnelLifecycleStateDir,
   tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
@@ -211,6 +213,23 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
       expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_capture_bug");
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves PID and log evidence from the selected non-default gateway state root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-home-"));
+    const stateRoot = resolveTunnelLifecycleStateDir(home, 18_080);
+    const tunnelDir = path.join(stateRoot, "tunnel");
+    fs.mkdirSync(tunnelDir, { recursive: true });
+    const tunnelLog = path.join(tunnelDir, "cloudflared.log");
+    fs.writeFileSync(tunnelLog, "gateway-scoped log\n");
+
+    try {
+      expect(stateRoot).toContain(path.join("gateways", "18080", "state"));
+      expect(getCloudflaredPidPath(stateRoot)).toBe(path.join(tunnelDir, "cloudflared.pid"));
+      expect(getCloudflaredLogPath(stateRoot)).toBe(tunnelLog);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
