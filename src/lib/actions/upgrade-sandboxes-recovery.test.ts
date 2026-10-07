@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
+import * as commandExecutor from "../adapters/openshell/sandbox-command-cli";
+import { loadAgent } from "../agent/defs";
 import { parseCliOpenShellSandboxInventory } from "../adapters/openshell/sandbox-observer-cli";
 import * as coreVersion from "../core/version";
 import * as sandboxList from "../openshell-sandbox-list";
@@ -606,6 +613,63 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       allowLegacyManagedImageRecovery: true,
     });
   });
+
+  it.each([
+    { confirmed: true, probeStatus: 42, rebuilds: 1 },
+    { confirmed: false, probeStatus: 42, rebuilds: 0 },
+    { confirmed: true, probeStatus: 0, rebuilds: 0 },
+  ])(
+    "selects recovery from an executed probe with status $probeStatus and confirmation $confirmed (#7475)",
+    async ({ confirmed, probeStatus, rebuilds }) => {
+      const expectedVersion = loadAgent("openclaw").expectedVersion!;
+      const harness = createRecoveryHarness(["legacy-box"], {
+        liveOutput: "legacy-box Ready",
+        confirmedLegacyManagedNames: confirmed ? ["legacy-box"] : [],
+        registryOverrides: {
+          "legacy-box": { agent: "openclaw", agentVersion: expectedVersion, nemoclawVersion: null },
+        },
+        useRealManagedEvidence: true,
+      });
+      harness.checkAgentVersionSpy.mockRestore();
+      vi.spyOn(registry, "getSandbox").mockReturnValue(harness.registryEntries[0]!);
+      vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+      const directory = mkdtempSync(join(tmpdir(), "legacy-version-probe-"));
+      onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+      writeFileSync(
+        join(directory, "openclaw"),
+        `#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = "--version" ] || exit 99
+printf '%s\\n' '${expectedVersion}'
+exit ${probeStatus}
+`,
+        { mode: 0o700 },
+      );
+      // Run the production transport command locally; only the OpenShell execution boundary is replaced.
+      const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+        const [command, ...args] = request.command;
+        const result = spawnSync(command!, args, {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: { HOME: directory, PATH: `${directory}:/usr/bin:/bin` },
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(probeStatus);
+        return {
+          outcome: { kind: "completed" as const, exitCode: result.status! },
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      });
+      vi.spyOn(commandExecutor, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+        runBuffered,
+      });
+
+      await harness.upgradeSandboxes({ auto: true });
+
+      expect(runBuffered).toHaveBeenCalledTimes(1);
+      expect(harness.rebuildSpy).toHaveBeenCalledTimes(rebuilds);
+    },
+  );
 
   it.each([
     { condition: "confirmation is absent", confirmedLegacyManagedNames: [] },
