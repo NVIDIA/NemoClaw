@@ -515,13 +515,13 @@ def _startup_process_identity_is_live(
 def _capability_free_supervisor_matches(
     cmdline: bytes,
     status_bytes: bytes,
-    proc_metadata: os.stat_result,
+    status_metadata: os.stat_result,
     expected_uid: int,
 ) -> bool:
     # OpenShell 0.1.2's workload boundary runs without saved root IDs or
     # capabilities, using bootstrap directly or Podman's rootless launcher.
     # It becomes nondumpable before reading bootstrap material, which
-    # makes its proc directory root-owned and prevents same-user ptrace/argv
+    # makes its proc status file root-owned and prevents same-user ptrace/argv
     # replacement. Accept only that pinned launch contract, not arbitrary
     # same-user supervisors. PID/parent, lifetime and unique child checks remain
     # in the descriptor-pinned callers below; argv alone is never authority.
@@ -533,8 +533,9 @@ def _capability_free_supervisor_matches(
         expected_uid <= 0
         or sandbox.pw_uid != expected_uid
         or sandbox.pw_gid <= 0
-        or proc_metadata.st_uid != 0
-        or proc_metadata.st_gid != 0
+        or not stat.S_ISREG(status_metadata.st_mode)
+        or status_metadata.st_uid != 0
+        or status_metadata.st_gid != 0
     ):
         return False
     rootless_argv = (
@@ -584,6 +585,11 @@ def _openshell_supervisor_identity(
         proc_root_fd = _open_proc_root()
         proc_pid_fd = _open_proc_pid(proc_root_fd, 1)
         pinned_before = os.fstat(proc_pid_fd)
+        # Linux deliberately leaves the world-readable /proc/<pid> directory
+        # owned by the effective UID even for a nondumpable process. Its status
+        # entry follows task_dump_owner's nondumpable ownership rule instead.
+        # Resolve it without symlinks beneath the already-pinned PID directory.
+        first_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         first_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
         )
@@ -608,6 +614,7 @@ def _openshell_supervisor_identity(
         )
         second_start_time = _parse_process_start_time(second_stat)
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        second_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         pinned_after = os.fstat(proc_pid_fd)
         if expected_effective_uid == 0:
             supervisor_matches = (
@@ -617,11 +624,13 @@ def _openshell_supervisor_identity(
         else:
             supervisor_matches = (
                 first_cmdline == second_cmdline
+                and first_status_metadata.st_dev == second_status_metadata.st_dev
+                and first_status_metadata.st_ino == second_status_metadata.st_ino
                 and _capability_free_supervisor_matches(
-                    first_cmdline, first_status_bytes, pinned_before, expected_effective_uid
+                    first_cmdline, first_status_bytes, first_status_metadata, expected_effective_uid
                 )
                 and _capability_free_supervisor_matches(
-                    second_cmdline, second_status_bytes, pinned_after, expected_effective_uid
+                    second_cmdline, second_status_bytes, second_status_metadata, expected_effective_uid
                 )
             )
         if not (

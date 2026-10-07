@@ -367,6 +367,24 @@ driver, separator, variant = case.partition(":")
 if separator: case = variant
 uid, gid = 998, 999
 guard.pwd.getpwnam = lambda _name: SimpleNamespace(pw_uid=uid, pw_gid=gid)
+kernel_metadata = None
+if case in ("linux-nondumpable", "linux-dumpable"):
+    import ctypes
+    # This subprocess changes only its own credentials/dumpability, never the
+    # test runner or host configuration. Root CI containers use nobody here.
+    if os.geteuid() == 0:
+        os.setgroups([])
+        os.setgid(65534)
+        os.setuid(65534)
+    assert os.geteuid() > 0 and os.getegid() > 0
+    libc = ctypes.CDLL(None, use_errno=True)
+    dumpable = 0 if case == "linux-nondumpable" else 1
+    assert libc.prctl(4, dumpable, 0, 0, 0) == 0
+    directory = os.stat("/proc/self")
+    kernel_metadata = os.stat("/proc/self/status")
+    assert (directory.st_uid, directory.st_gid) == (os.geteuid(), os.getegid())
+    expected_owner = (0, 0) if dumpable == 0 else (os.geteuid(), os.getegid())
+    assert (kernel_metadata.st_uid, kernel_metadata.st_gid) == expected_owner
 
 with tempfile.TemporaryDirectory() as root:
     guard.PROC_ROOT = root
@@ -426,19 +444,34 @@ with tempfile.TemporaryDirectory() as root:
     if case == "duplicate-child":
         write_process(413, 1, child_argv, {"Uid": "998 998 998 998", "NSpid": "413"})
     if case == "missing-child": os.unlink(os.path.join(root, "412", "cmdline"))
-    # Fixture proc directories cannot acquire Linux's nondumpable ownership on
-    # macOS. Model only that kernel metadata; parse real fixture file bytes and
-    # exercise the production identity, uniqueness and parent checks unchanged.
+    # Model Linux's distinct directory/status ownership on macOS. Linux cases
+    # use actual kernel status metadata after toggling this process's dumpability.
+    # Parse fixture bytes and exercise identity/uniqueness/parent checks unchanged.
     original_fstat = os.fstat
+    original_stat = os.stat
     init_stat = os.stat(os.path.join(root, "1"))
     def fixture_fstat(fd):
         value = original_fstat(fd)
         if (value.st_dev, value.st_ino) == (init_stat.st_dev, init_stat.st_ino):
             return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino,
-                                   st_uid=uid if case == "dumpable-owner" else 0,
-                                   st_gid=gid if case == "dumpable-owner" else 0)
+                                   st_uid=uid, st_gid=gid)
+        return value
+    metadata_reads = 0
+    def fixture_stat(name, *args, **kwargs):
+        global metadata_reads
+        value = original_stat(name, *args, **kwargs)
+        fd = kwargs.get("dir_fd")
+        if name == "status" and fd is not None and original_fstat(fd).st_ino == init_stat.st_ino:
+            assert kwargs.get("follow_symlinks") is False
+            metadata_reads += 1
+            dumpable = case == "dumpable-owner" or (case == "raced-owner" and metadata_reads >= 4)
+            owner = kernel_metadata or SimpleNamespace(st_uid=uid if dumpable else 0,
+                                                      st_gid=gid if dumpable else 0)
+            return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino,
+                                   st_mode=value.st_mode, st_uid=owner.st_uid, st_gid=owner.st_gid)
         return value
     guard.os.fstat = fixture_fstat
+    guard.os.stat = fixture_stat
     if case == "namespace-inaccessible": guard._proc_pid_namespace_inode = lambda _fd: None
     original_read = guard._read_proc_pid_file
     reads = 0
@@ -477,6 +510,7 @@ with tempfile.TemporaryDirectory() as root:
                 0, uid, 413 if case == "wrong-required-parent" else 412)))
     finally:
         guard.os.fstat = original_fstat
+        guard.os.stat = original_stat
 `;
 
 describe("Hermes capability-free OpenShell startup identity", () => {
@@ -529,6 +563,7 @@ describe("Hermes capability-free OpenShell startup identity", () => {
     "non-init",
     "foreign-parent",
     "dumpable-owner",
+    "raced-owner",
     "root-child",
     "spoofed-child",
     "indirect-child",
@@ -565,5 +600,23 @@ describe("Hermes capability-free OpenShell startup identity", () => {
     );
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toBe(false);
+  });
+
+  it.runIf(process.platform === "linux").each([
+    ["linux-nondumpable", true],
+    ["linux-dumpable", false],
+  ] as const)("uses actual Linux proc ownership: %s", (scenario, accepted) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        CAPABILITY_FREE_IDENTITY_HARNESS,
+        path.resolve("agents/hermes/runtime-config-guard.py"),
+        scenario,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toBe(accepted);
   });
 });
