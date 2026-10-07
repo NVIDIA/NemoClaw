@@ -101,6 +101,8 @@ export function restoredAgentModelSelections(
   current: SandboxEntry,
 ): ModelAssignmentSelection[] | null {
   if (
+    previous.pendingCreateIdentity !== undefined ||
+    previous.pendingRouteReservation !== undefined ||
     previous.name !== current.name ||
     (previous.agent ?? "openclaw") !== (current.agent ?? "openclaw") ||
     resolveSandboxGatewayName(previous) !== resolveSandboxGatewayName(current)
@@ -133,7 +135,8 @@ export function persistVerifiedAgentModelSelections(
   deletedAgentIds: readonly string[] = [],
   retainedSelections?: readonly ModelAssignmentSelection[],
 ): boolean {
-  if (!expected || !hasNativeAgentRoster(config)) return false;
+  if (!expected || (expected.agent ?? "openclaw") !== "openclaw" || !hasNativeAgentRoster(config))
+    return false;
   if (
     additions.some(
       (selection) =>
@@ -163,6 +166,9 @@ export function persistVerifiedAgentModelSelections(
   try {
     return updateSandboxTelemetrySelections(expected, {
       modelAssignmentSelections: [...retained, ...additions],
+      ...(expected.nativeModelSelectionProvenance === undefined
+        ? {}
+        : { nativeModelSelectionProvenance: undefined }),
     });
   } catch {
     return false;

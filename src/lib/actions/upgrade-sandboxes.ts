@@ -715,7 +715,7 @@ export async function upgradeSandboxes(
       const verb = manifest ? "recover" : "rebuild";
       console.error(`  ${YW}⚠${R} Failed to ${verb} '${sandbox.name}': ${errorMessage}`);
       failed++;
-      recordTarget(sandbox.name, "failed", "partial");
+      recordTarget(sandbox.name, "failed", "unavailable");
     }
   }
   for (const sandbox of stoppedIntentReconciliations) {

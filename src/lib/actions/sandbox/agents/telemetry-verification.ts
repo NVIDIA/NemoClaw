@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshellCommandAsyncResult } from "../../../adapters/openshell/command-execution";
-import { createCliOpenShellSandboxCommandExecutor } from "../../../adapters/openshell/sandbox-command-cli";
+import { createSupervisedSandboxCommandReader } from "../../telemetry/native-reader";
 import {
   type OpenShellGatewayTarget,
   selectedOpenShellGateway,
@@ -27,7 +26,6 @@ import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding/iden
 import { isTelemetryOperationActive, withTelemetryEvidence } from "../../telemetry/operation";
 import {
   persistVerifiedAgentModelSelections,
-  readAgentSelectionEntry,
   readSandboxTelemetryEntry,
   updateSandboxTelemetrySelections,
   verifiedManifestModelSelections,
@@ -42,30 +40,20 @@ export async function readTelemetryAgentCommand<T>(
   project: (raw: string) => T,
 ): Promise<T | null> {
   return withTelemetryEvidence(async (remainingMs, signal) => {
-    if (signal.aborted) throw new Error("Roster evidence cancelled");
-    const executor = createCliOpenShellSandboxCommandExecutor({
-      runBuffered: (binary, args, options) =>
-        captureOpenshellCommandAsyncResult(binary, [...args], {
-          ...options,
-          cwd: options.hostCwd,
-          killGraceMs: 0,
-          signalSource: {
-            add: (_signal, listener) => signal.addEventListener("abort", listener),
-            remove: (_signal, listener) => signal.removeEventListener("abort", listener),
-          },
-        }),
-    });
-    const result = await executor.runBuffered({
-      sandboxName,
-      target,
-      command,
-      timeoutMilliseconds: Math.max(1, Math.min(1_000, Math.floor(remainingMs))),
-      timeoutKillSignal: "SIGKILL",
-      outputLimitBytes: 16 * 1024 * 1024,
-    });
-    if (result.outcome.kind !== "completed" || result.outcome.exitCode !== 0)
-      throw new Error("Agent roster could not be verified");
-    return project(result.stdout);
+    const reader = createSupervisedSandboxCommandReader(signal);
+    try {
+      const raw = await reader.read({
+        sandboxName,
+        target,
+        command,
+        timeoutMilliseconds: Math.max(1, Math.min(1_000, Math.floor(remainingMs))),
+        timeoutKillSignal: "SIGKILL",
+        outputLimitBytes: 16 * 1024 * 1024,
+      });
+      return project(raw);
+    } finally {
+      reader.dispose();
+    }
   });
 }
 
@@ -92,7 +80,11 @@ function sourceErrors(selections: readonly ModelAssignmentSelection[]): Telemetr
   }));
 }
 
-async function restoreNativeModelSelection(sandboxName: string, previous: SandboxEntry) {
+async function restoreNativeModelSelection(
+  sandboxName: string,
+  previous: SandboxEntry,
+  expected: SandboxEntry,
+) {
   const failure = {
     verified: true,
     status: "collection_error" as const,
@@ -100,8 +92,6 @@ async function restoreNativeModelSelection(sandboxName: string, previous: Sandbo
   };
   let verified = false;
   try {
-    const expected = readSandboxTelemetryEntry(sandboxName);
-    if (!expected) return { ...failure, verified: false };
     const gatewayName = resolveSandboxGatewayName(expected);
     const sameOwner =
       previous.pendingCreateIdentity === undefined &&
@@ -109,22 +99,23 @@ async function restoreNativeModelSelection(sandboxName: string, previous: Sandbo
       previous.name === expected.name &&
       previous.agent === expected.agent &&
       resolveSandboxGatewayName(previous) === gatewayName;
+    if (!sameOwner) return { ...failure, verified: false };
     const receipt = readModelSelectionProvenance(previous.nativeModelSelectionProvenance);
-    if (sameOwner && !receipt) return failure;
-    const config = sameOwner
-      ? await readTelemetryAgentCommand(
-          sandboxName,
-          { kind: "named", gatewayName },
-          ["cat", "/sandbox/.hermes/config.yaml"],
-          (raw) => parseConfig(raw, "yaml"),
-        )
-      : null;
-    if (sameOwner && !readHermesModelSelectionTuple(config)) return { ...failure, verified: false };
+    if (!receipt) return failure;
+    const config = await readTelemetryAgentCommand(
+      sandboxName,
+      { kind: "named", gatewayName },
+      ["cat", "/sandbox/.hermes/config.yaml"],
+      (raw) => parseConfig(raw, "yaml"),
+    );
+    if (!readHermesModelSelectionTuple(config)) return { ...failure, verified: false };
     verified = true;
     if (
       updateSandboxTelemetrySelections(expected, {
         nativeModelSelectionProvenance:
-          (sameOwner && readMatchingNativeModelSelection(config, receipt)) || undefined,
+          readMatchingNativeModelSelection(config, expected.nativeModelSelectionProvenance) ??
+          readMatchingNativeModelSelection(config, receipt) ??
+          undefined,
       })
     )
       return { verified: true, status: "reported" as const };
@@ -152,10 +143,35 @@ export async function verifySelectedAgentsManifest(
       previous?.nativeModelSelectionProvenance === undefined)
   )
     return { verified: true, status: "reported" };
-  if (previous?.agent === "hermes" && previous.nativeModelSelectionProvenance !== undefined)
-    return restoreNativeModelSelection(sandboxName, previous);
-  const expected = readAgentSelectionEntry(sandboxName);
-  const config = await readTelemetryAgentConfiguration(sandboxName, target);
+  let expected: SandboxEntry | null;
+  let scopedTarget = target;
+  try {
+    expected = readSandboxTelemetryEntry(sandboxName);
+    if (expected) {
+      const gatewayName = resolveSandboxGatewayName(expected);
+      if (
+        expected.name !== sandboxName ||
+        expected.pendingCreateIdentity !== undefined ||
+        expected.pendingRouteReservation !== undefined ||
+        (target.kind === "named" && target.gatewayName !== gatewayName)
+      )
+        return { verified: false, status: "collection_error" };
+      scopedTarget = { kind: "named", gatewayName };
+    }
+  } catch {
+    return { verified: false, status: "collection_error" };
+  }
+  if (expected && (expected.agent ?? "openclaw") !== "openclaw") {
+    if (manifest) return { verified: false, status: "collection_error" };
+    return expected.agent === "hermes" &&
+      previous?.agent === "hermes" &&
+      previous.nativeModelSelectionProvenance !== undefined
+      ? restoreNativeModelSelection(sandboxName, previous, expected)
+      : { verified: true, status: "reported" };
+  }
+  if (!manifest && previous?.modelAssignmentSelections === undefined)
+    return { verified: expected !== null, status: expected ? "reported" : "collection_error" };
+  const config = await readTelemetryAgentConfiguration(sandboxName, scopedTarget);
   if (!config) return { verified: false, status: "collection_error" };
   const fresh = manifest ? verifiedManifestModelSelections(config, manifest) : [];
   if (!fresh) return { verified: false, status: "reported" };

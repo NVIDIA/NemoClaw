@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import {
-  buildSandboxCommandEnvironment,
-  createSupervisedSandboxCommandReader,
-} from "../../adapters/sandbox/command-transport";
+import { createSupervisedSandboxCommandReader } from "./native-reader";
 import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 import {
   approvedCategory,
@@ -245,7 +242,6 @@ async function collectRuntime(
   let routeObservation: Promise<void> | undefined;
   try {
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(entry);
-    const environment = buildSandboxCommandEnvironment(runtimeSelection);
     const gatewayName = resolveSandboxGatewayName(entry);
     const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
     let route = options.routes.get(routeKey);
@@ -255,7 +251,7 @@ async function collectRuntime(
         throw new Error("Telemetry observation deadline reached");
       route = reader.observeInferenceRoute(
         { target: { kind: "named", gatewayName }, timeoutMs: remaining },
-        environment,
+        runtimeSelection,
       );
       options.routes.set(routeKey, route);
     }
@@ -274,22 +270,17 @@ async function collectRuntime(
       const remaining = options.deadlineAt - Date.now();
       if (options.signal.aborted || remaining <= 0)
         throw new Error("Telemetry observation deadline reached");
-      const result = await reader.executor.runBuffered({
-        sandboxName: entry.name,
-        target: { kind: "named", gatewayName },
-        command,
-        environment,
-        timeoutMilliseconds: remaining,
-        timeoutKillSignal: "SIGKILL",
-        outputLimitBytes: 16 * 1024 * 1024,
-      });
-      if (
-        options.signal.aborted ||
-        result.outcome.kind !== "completed" ||
-        result.outcome.exitCode !== 0
-      )
-        throw new Error("Native configuration collection failed");
-      return result.stdout;
+      return reader.read(
+        {
+          sandboxName: entry.name,
+          target: { kind: "named", gatewayName },
+          command,
+          timeoutMilliseconds: remaining,
+          timeoutKillSignal: "SIGKILL",
+          outputLimitBytes: 16 * 1024 * 1024,
+        },
+        runtimeSelection,
+      );
     };
     if (row.sandboxOSStatus !== "reported") {
       osObservation = read(["uname", "-s"])
@@ -430,7 +421,7 @@ export async function collectOperationSnapshot(options: {
   snapshot.configurations = entries.map((entry, index) =>
     projectConfiguration(entry, metadataErrors[index]),
   );
-  const reader = createSupervisedSandboxCommandReader(options.signal);
+  const reader = createSupervisedSandboxCommandReader(options.signal, true);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
   try {
     await Promise.all(

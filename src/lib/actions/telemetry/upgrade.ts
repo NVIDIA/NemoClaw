@@ -35,16 +35,32 @@ export function createUpgradeTelemetry(
     const binding = getTargetBinding(sandboxName);
     if (!binding) return;
     const previous = getTelemetryTarget(sandboxName, binding.gatewayName);
+    if (outcome === "failed" && previous?.outcome === "failed") return;
     if (
       (outcome === "no_change" || outcome === "checked") &&
       previous &&
       (previous.outcome === "failed" ||
         previous.outcome === "unverified" ||
+        previous.state === "applied" ||
         previous.state === "partial" ||
         previous.state === "pending")
     )
       return;
-    recordTelemetryTarget({ scope: "sandbox", sandboxName, ...binding, outcome, state });
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      ...binding,
+      outcome,
+      state:
+        outcome === "failed" &&
+        state === "unavailable" &&
+        previous &&
+        (previous.state === "applied" ||
+          previous.state === "pending" ||
+          previous.state === "partial")
+          ? "partial"
+          : state,
+    });
   };
   return {
     recordTarget,

@@ -1,28 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnOptions } from "node:child_process";
-import { captureOpenshellCommandAsyncResult } from "../openshell/command-execution";
-
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxCommandError,
 } from "../openshell/sandbox-command";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 
-import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
-import { createCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
-import type {
-  ObserveOpenShellInferenceRouteRequest,
-  OpenShellInferenceRouteResult,
-} from "../openshell/inference-route";
-import { resolveOpenshellBinaryOrNull } from "../openshell/resolve-shared";
 import {
-  buildOpenShellRuntimeSelectionEnv,
-  type OpenShellRuntimeSelection,
-} from "../openshell/runtime-selection";
+  buildSandboxCommandEnvironment,
+  createCliOpenShellSandboxCommandExecutor,
+} from "../openshell/sandbox-command-cli";
+export { buildSandboxCommandEnvironment } from "../openshell/sandbox-command-cli";
+import type { OpenShellRuntimeSelection } from "../openshell/runtime-selection";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -112,7 +103,7 @@ function commandTransportDependencies(
 ): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
-    buildSubprocessEnv,
+    buildSubprocessEnv: buildSandboxCommandEnvironment,
     extractSandboxExecCommandStdout,
     commandExecutor: {
       runBuffered: (request) =>
@@ -122,16 +113,6 @@ function commandTransportDependencies(
         }),
     },
   };
-}
-
-/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
-export function buildSandboxCommandEnvironment(
-  runtimeSelection?: OpenShellRuntimeSelection,
-  runtimeEnv?: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  return runtimeSelection
-    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-    : (runtimeEnv ?? buildSubprocessEnv());
 }
 
 export async function executeSandboxExecCommand(
@@ -157,78 +138,4 @@ export async function executeSandboxExecCommand(
       ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
-}
-
-/** Keep bounded readers and their descendants inside the foreground supervisor's process group. */
-export function createSupervisedSandboxCommandReader(signal: AbortSignal): {
-  executor: OpenShellSandboxBufferedCommandExecutor;
-  observeInferenceRoute: (
-    request: ObserveOpenShellInferenceRouteRequest,
-    environment: NodeJS.ProcessEnv,
-  ) => Promise<OpenShellInferenceRouteResult>;
-  dispose: () => void;
-} {
-  const listeners = { SIGTERM: new Set<() => void>(), SIGINT: new Set<() => void>() };
-  const forwardTerm = () => {
-    for (const listener of listeners.SIGTERM) listener();
-  };
-  const forwardInt = () => {
-    for (const listener of listeners.SIGINT) listener();
-  };
-  signal.addEventListener("abort", forwardTerm, { once: true });
-  process.on("SIGTERM", forwardTerm);
-  process.on("SIGINT", forwardInt);
-  const signalSource = {
-    add: (signalName: "SIGTERM" | "SIGINT", listener: () => void) => {
-      listeners[signalName].add(listener);
-      if (signal.aborted) queueMicrotask(listener);
-    },
-    remove: (signalName: "SIGTERM" | "SIGINT", listener: () => void) => {
-      listeners[signalName].delete(listener);
-    },
-  };
-  const capture = (
-    binary: string,
-    args: readonly string[],
-    request: Parameters<typeof captureOpenshellCommandAsyncResult>[2],
-  ) =>
-    captureOpenshellCommandAsyncResult(binary, args, {
-      ...request,
-      killGraceMs: 0,
-      signalSource,
-      spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) =>
-        spawn(binary, [...args], { ...options, detached: false })) as typeof spawn,
-    });
-  const executor = createCliOpenShellSandboxCommandExecutor({
-    signalSource,
-    runBuffered: (binary, args, request) =>
-      capture(binary, args, {
-        ...request,
-        cwd: request.hostCwd,
-      }),
-  });
-  return {
-    executor,
-    observeInferenceRoute: async (request, environment) =>
-      await createCliOpenShellInferenceRouteObserver(
-        async (args, options) => {
-          const binary = resolveOpenshellBinaryOrNull(environment);
-          if (!binary) throw new Error("OpenShell is unavailable");
-          const result = await capture(binary, args, {
-            environment,
-            cwd: REPOSITORY_ROOT,
-            timeoutMilliseconds: options.timeout,
-            timeoutKillSignal: "SIGKILL",
-            outputLimitBytes: options.outputLimitBytes,
-          });
-          return { ...result, output: result.stdout };
-        },
-        { environment },
-      ).observeInferenceRoute(request),
-    dispose: () => {
-      signal.removeEventListener("abort", forwardTerm);
-      process.removeListener("SIGTERM", forwardTerm);
-      process.removeListener("SIGINT", forwardInt);
-    },
-  };
 }
