@@ -79,7 +79,7 @@ impl JourneyWizard {
         let current = self.question();
         let reviewing = self.started && matches!(&current, Ok(None));
         let asking = self.started && matches!(&current, Ok(Some(_)));
-        let lines = if !self.started {
+        let mut lines = if !self.started {
             welcome()
         } else if let Err(error) = &current {
             vec![
@@ -98,6 +98,21 @@ impl JourneyWizard {
         } else {
             self.review_lines()
         };
+        if self.started
+            && let Ok(resolution) = self
+                .state
+                .resolve_with_observations(&self.capabilities, &self.observations)
+            && !resolution.information().is_empty()
+        {
+            let mut information = resolution
+                .information()
+                .iter()
+                .map(|note| Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED))))
+                .collect::<Vec<_>>();
+            information.push(Line::from(""));
+            information.append(&mut lines);
+            lines = information;
+        }
         let mut content = Paragraph::new(lines).wrap(Wrap { trim: false });
         if reviewing {
             content = content.scroll((self.review_scroll, 0));

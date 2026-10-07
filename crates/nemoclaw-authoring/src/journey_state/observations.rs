@@ -6,7 +6,8 @@ use super::*;
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
     /// Endpoint models remain suggestions, while target observations can block
-    /// readiness. An empty sheet leaves the resolution as it was.
+    /// readiness. Credential availability is informational; an empty sheet
+    /// leaves compatibility unverified and lists references needed by plan.
     pub fn resolve_with_observations(
         &self,
         capabilities: &Capabilities,
@@ -65,18 +66,48 @@ impl JourneyState {
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
+        let unresolved = document
+            .credential_names()
+            .into_iter()
+            .filter(|reference| {
+                observations
+                    .get(&CredentialRequest {
+                        reference: (*reference).into(),
+                    })
+                    .is_none_or(|credential| credential.status != ObservationStatus::Available)
+            })
+            .collect::<Vec<_>>();
+        if !unresolved.is_empty() {
+            resolution.information.push(format!(
+                "Credential availability is missing or unverified here: {}. Interactive plan prompts for missing values; set them first for a non-interactive run.",
+                unresolved.join(", ")
+            ));
+        }
         let Some(request) = crate::inference_request_for_document(document, self.current_route())
             .ok()
             .flatten()
         else {
             return Ok(resolution);
         };
-        let Some(observed) = observations
-            .get(&request)
-            .filter(|observed| observed.status == ObservationStatus::Available)
-        else {
+        let Some(observed) = observations.get(&request) else {
             return Ok(resolution);
         };
+        if let Some(note) = catalog_credential_note(&request, observed) {
+            resolution.information.push(note);
+            if let Some(path) = self.route_model_path()
+                && let Some(question) = resolution
+                    .questions
+                    .iter_mut()
+                    .find(|question| question.id == path)
+            {
+                question.choices.clear();
+                question.suggestion = None;
+            }
+            return Ok(resolution);
+        }
+        if observed.status != ObservationStatus::Available {
+            return Ok(resolution);
+        }
         let Some(path) = self.route_model_path() else {
             return Ok(resolution);
         };
@@ -195,6 +226,9 @@ impl JourneyState {
         let endpoint = observations
             .get(&request)
             .ok_or_else(|| diagnostic("delegation", "Model discovery is missing or stale."))?;
+        if let Some(note) = catalog_credential_note(&request, endpoint) {
+            return Err(diagnostic("inference:catalog:credential", &note));
+        }
         if endpoint.status != ObservationStatus::Available
             || endpoint.reachable != Some(true)
             || !matches!(
@@ -220,18 +254,23 @@ impl JourneyState {
                 "The selected model was not advertised by the endpoint.",
             ));
         }
-        if document.credential_names().iter().any(|reference| {
-            observations
-                .get(&CredentialRequest {
-                    reference: (*reference).into(),
-                })
-                .is_none_or(|credential| credential.status != ObservationStatus::Available)
-        }) {
-            return Err(diagnostic(
-                "delegation",
-                "Required credentials are unavailable or unverified.",
-            ));
-        }
         Ok(())
     }
+}
+
+/// Only a reachable server's explicit authentication requirement establishes
+/// this condition. A denied key or unreachable catalog remains a real failure.
+fn catalog_credential_note(
+    request: &nemoclaw_sdk::inference_discovery::EndpointRequest,
+    endpoint: &nemoclaw_sdk::inference_discovery::EndpointObservation,
+) -> Option<String> {
+    if endpoint.status != ObservationStatus::Unavailable
+        || endpoint.reachable != Some(true)
+        || endpoint.authentication != AuthenticationStatus::Required
+    {
+        return None;
+    }
+    request.credential_env.as_ref().map(|reference| format!(
+        "Model catalog needs credential {reference}. Set it to see model suggestions and use bulk acceptance, or enter a model identifier to continue individually."
+    ))
 }

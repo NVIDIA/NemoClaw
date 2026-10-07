@@ -772,3 +772,169 @@ async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once(
     );
     assert!(wizard.observations.get(&request).is_some());
 }
+
+#[test]
+fn credential_information_keeps_controls_and_real_errors_visible() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let state = JourneyDefinition::new("credential-note", base)
+        .ask(["/metadata/name"])
+        .start(&capabilities)
+        .unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.started = true;
+    wizard.error = Some("Actual engine failure".into());
+    for (width, height) in [(160, 35), (72, 24)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| wizard.render(frame)).unwrap();
+        let screen = terminal.backend().to_string();
+        assert!(screen.contains("NVIDIA_API_KEY"), "{screen}");
+        assert!(screen.contains("plan"), "{screen}");
+        assert!(screen.contains("Actual engine failure"), "{screen}");
+        assert!(screen.contains("Ctrl+D"), "{screen}");
+    }
+    assert_eq!(wizard.error.as_deref(), Some("Actual engine failure"));
+}
+
+#[test]
+fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() {
+    use nemoclaw_sdk::{
+        discovery::{FabricObservation, ObservationStatus, plan_queries},
+        fabric_capabilities::{CompatibilityReport, ImageMetadata, Support},
+        fabric_catalog::{BridgeCapabilities, FabricCatalog},
+        inference_discovery::AuthenticationStatus,
+    };
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let mut state = JourneyDefinition::new("catalog-note", base)
+        .ask(["/spec/sandboxes/0/harness/kind", "/metadata/name"])
+        .start(&capabilities)
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/harness/kind",
+            Some(serde_json::json!("nvidia.fabric.openclaw")),
+        )
+        .unwrap();
+    let document = state
+        .resolve(&capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.started = true;
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
+    let engine_query = plan_queries(&document)
+        .unwrap()
+        .into_iter()
+        .find(|q| matches!(q, DiscoveryQuery::Engine(_)))
+        .unwrap();
+    wizard.observations.record(
+        engine_query.clone(),
+        DiscoveryObservation::Engine(EngineObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            server_version: Some("1".into()),
+            architecture: Some("aarch64".into()),
+            operating_system: Some("linux".into()),
+            memory_bytes: None,
+            cpus: None,
+        }),
+    );
+    let image_query = plan_queries(&document)
+        .unwrap()
+        .into_iter()
+        .find(|q| matches!(q, DiscoveryQuery::Fabric(_)))
+        .unwrap();
+    wizard.observations.record(
+        image_query,
+        DiscoveryObservation::Fabric(FabricObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            image_id: Some("sha256:observed".into()),
+            catalog: Some(catalog),
+            image: ImageMetadata {
+                architecture: Some("arm64".into()),
+                operating_system: Some("linux".into()),
+                repo_digests: vec![document.spec.sandboxes[0].image.ref_.clone()],
+                ..Default::default()
+            },
+            compatibility: Some(CompatibilityReport {
+                status: Support::Supported,
+                adapter_id: None,
+                checks: Vec::new(),
+            }),
+        }),
+    );
+    let request = inference_request_for_document(&document, wizard.state.current_route())
+        .unwrap()
+        .unwrap();
+    wizard.observations.record(
+        DiscoveryQuery::Inference(request),
+        DiscoveryObservation::Inference(EndpointObservation {
+            status: ObservationStatus::Unavailable,
+            reason: None,
+            source: "fixture".into(),
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Required,
+            models: Vec::new(),
+            api_verified: false,
+        }),
+    );
+    let before = wizard.state.values().clone();
+    wizard.delegate();
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(wizard.state.values(), &before);
+    assert!(wizard.history.is_empty());
+    let mut terminal = Terminal::new(TestBackend::new(160, 35)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(
+        terminal
+            .backend()
+            .to_string()
+            .contains("Model catalog needs credential NVIDIA_API_KEY")
+    );
+    wizard.observations.record(
+        engine_query,
+        DiscoveryObservation::Engine(EngineObservation {
+            status: ObservationStatus::Unavailable,
+            reason: None,
+            source: "fixture".into(),
+            server_version: None,
+            architecture: None,
+            operating_system: None,
+            memory_bytes: None,
+            cpus: None,
+        }),
+    );
+    wizard.delegate();
+    assert!(
+        wizard
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Target engine and image compatibility")
+    );
+}
