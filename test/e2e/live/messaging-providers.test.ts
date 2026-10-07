@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import {
   accountBool,
   accountString,
@@ -53,7 +54,7 @@ import {
   tokenValues,
 } from "./messaging-providers-helpers.ts";
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
-import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
+import { sendWithInstalledTelegramRuntime } from "./messaging-providers-telegram-runtime-proof.ts";
 import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-runtime-proof.ts";
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -164,6 +165,12 @@ test(
       skip("NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran");
       return;
     }
+    await captureOpenClawOnboardFailure(install, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "messaging-onboard",
+      env: state.env,
+      redactionValues,
+    });
     expectExitZero(install, "M0: install.sh completed");
     assertStockManagedImageReceipt({
       environment: state.env,
@@ -1063,8 +1070,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
-    const installedTelegramProof = await runInstalledTelegramRuntimeProof(
+    const installedTelegramProof = await sendWithInstalledTelegramRuntime(
       sandbox,
+      SANDBOX_NAME,
       fakeTelegram,
       telegramMockTarget,
       telegramMockText,

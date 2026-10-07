@@ -8,7 +8,6 @@ import path from "node:path";
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
 import {
-  createCloudflaredServiceDir,
   createDoctorTestSetup,
   runWithEnv,
   testTimeoutOptions,
@@ -195,15 +194,8 @@ describe("CLI dispatch", () => {
       );
       // The Docker-driver gateway is healthy, so no Gateway check should fail.
       expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
-      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
-        group: "Sandbox",
-        label: "Config permissions",
-        status: "warn",
-        detail: expect.stringContaining(
-          "No running direct OpenShell sandbox container found for 'alpha'",
-        ),
-      });
-      expect(report.status).toBe("warn");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toBeUndefined();
+      expect(report.status).toBe("ok");
       expect(r.code).toBe(0);
     },
   );
@@ -309,15 +301,8 @@ describe("CLI dispatch", () => {
       expect(
         report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
       ).toEqual([]);
-      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
-        group: "Sandbox",
-        label: "Config permissions",
-        status: "warn",
-        detail: expect.stringContaining(
-          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
-        ),
-      });
-      expect(report.status).toBe("warn");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toBeUndefined();
+      expect(report.status).toBe("ok");
 
       const calls = fs.readFileSync(hostCalls, "utf8");
       expect(calls).toContain(
@@ -411,15 +396,8 @@ describe("CLI dispatch", () => {
         }),
       );
       expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
-        group: "Sandbox",
-        label: "Config permissions",
-        status: "warn",
-        detail: expect.stringContaining(
-          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
-        ),
-      });
-      expect(report.status).toBe("warn");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toBeUndefined();
+      expect(report.status).toBe("ok");
     },
   );
 
@@ -450,8 +428,7 @@ describe("CLI dispatch", () => {
     "doctor treats a live non-cloudflared PID as stale",
     testTimeoutOptions(15_000),
     ({ resources }) => {
-      const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");
-      resources.ownDirectory(serviceDir);
+      const sandboxName = `dpid-${process.pid.toString(36)}`;
       const setup = createDoctorTestSetup(
         resources,
         "nemoclaw-cli-doctor-wrong-cloudflared-pid-",
@@ -465,6 +442,8 @@ describe("CLI dispatch", () => {
         ],
         sandboxName,
       );
+      const serviceDir = path.join(setup.home, ".nemoclaw", "state", "tunnel");
+      fs.mkdirSync(serviceDir, { recursive: true });
       const sleeper = resources.ownChild(
         spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
           stdio: "ignore",
@@ -492,8 +471,7 @@ describe("CLI dispatch", () => {
   );
 
   it("doctor accepts a live cloudflared PID", testTimeoutOptions(35_000), ({ resources }) => {
-    const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorcloudflared-");
-    resources.ownDirectory(serviceDir);
+    const sandboxName = `dcf-${process.pid.toString(36)}`;
     const setup = createDoctorTestSetup(
       resources,
       "nemoclaw-cli-doctor-cloudflared-pid-",
@@ -507,6 +485,8 @@ describe("CLI dispatch", () => {
       ],
       sandboxName,
     );
+    const serviceDir = path.join(setup.home, ".nemoclaw", "state", "tunnel");
+    fs.mkdirSync(serviceDir, { recursive: true });
     const shimDir = resources.temporaryDirectory("nemoclaw-cloudflared-shim-");
     const cloudflaredBin = path.join(shimDir, "cloudflared");
     fs.symlinkSync(process.execPath, cloudflaredBin);

@@ -305,10 +305,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-startup-hold.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw-config-guard.py"),
-    path.join(stagedScriptsDir, "openclaw-config-guard.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-cli-wrapper.sh"),
     path.join(stagedScriptsDir, "openclaw-cli-wrapper.sh"),
   );
@@ -351,10 +347,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "openclaw_pairing_state.py"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
-    path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "refresh-openclaw-wechat-placeholder.py"),
     path.join(stagedScriptsDir, "lib", "refresh-openclaw-wechat-placeholder.py"),
   );
@@ -381,10 +373,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
-    path.join(stagedScriptsDir, "patch-openclaw-chat-send.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-container-restart.mts"),

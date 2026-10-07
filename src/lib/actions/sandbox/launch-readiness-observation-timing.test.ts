@@ -157,6 +157,62 @@ describe("launch readiness observation timing", () => {
     }
   });
 
+  it("reports the failed publication operation without exposing exception details", async () => {
+    const publication = publicationFromDecision(
+      SANDBOX,
+      await inspectLaunchReadiness(
+        SANDBOX,
+        publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) => lease(identity)),
+      ),
+    );
+    const secret = "private-value-that-must-not-appear";
+    const error = Object.assign(new Error(secret.repeat(1000)), { code: "EACCES", path: secret });
+    const storeDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
+      lease(identity),
+    );
+    storeDeps.publishLease = () => {
+      throw error;
+    };
+    expect(await publishLaunchReadiness(publication, storeDeps)).toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "permission-denied" },
+    });
+    const lockDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
+      lease(identity),
+    );
+    lockDeps.withSandboxLock = () => {
+      throw error;
+    };
+    expect(await publishLaunchReadiness(publication, lockDeps)).toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-lock", reason: "permission-denied" },
+    });
+  });
+
+  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
+    const currentDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
+      lease(identity),
+    );
+    const publishLease = vi.fn();
+    currentDeps.publishLease = publishLease;
+
+    await expect(
+      publishLaunchReadiness(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY,
+          gatewayPort: PORT,
+          epochId: null,
+        },
+        currentDeps,
+      ),
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-input", reason: "missing-authority" },
+    });
+    expect(publishLease).not.toHaveBeenCalled();
+  });
+
   it("checks retained authority around final capture and lease publication", async () => {
     const assertPublicationCurrent = vi.fn();
     const publishLease = vi.fn((_name, _gateway, _port, _epoch, identity, _options, commit) => {
@@ -197,7 +253,13 @@ describe("launch readiness observation timing", () => {
 
       await expect(
         publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
-      ).resolves.toEqual({ kind: "evidence-failed" });
+      ).resolves.toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: failureCall <= 2 ? "publication-validation" : "publication-store",
+          reason: "unclassified",
+        },
+      });
 
       expect(publishLease).toHaveBeenCalledTimes(expectedPublicationAttempts);
       expect(committed).toBe(false);
@@ -232,7 +294,10 @@ describe("launch readiness observation timing", () => {
 
     await expect(
       publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
-    ).resolves.toEqual({ kind: "evidence-failed" });
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "unclassified" },
+    });
 
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY, PORT, storeOptions)).toEqual({
       kind: "missing",

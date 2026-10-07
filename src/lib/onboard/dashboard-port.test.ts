@@ -22,6 +22,7 @@ import {
   findAvailableDashboardPortFromObservations,
   getRegistryOccupiedDashboardPorts,
   hasExplicitDashboardPortOverride,
+  lsofOutputBlocksLoopbackBind,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
@@ -108,13 +109,67 @@ async function unusedLoopbackPort(): Promise<number> {
   return address.port;
 }
 
+describe("lsofOutputBlocksLoopbackBind interface-specific loopback probe (#11439)", () => {
+  const loopback = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nx 1 u 3u IPv4 1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
+  const external = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsocat 1 u 6u IPv4 1 0t0 TCP 10.63.144.115:${port} (LISTEN)`;
+  const wildcard = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nx 1 u 3u IPv4 1 0t0 TCP *:${port} (LISTEN)`;
+
+  it("treats an external-interface-only listener as non-blocking for the loopback bind", () => {
+    expect(lsofOutputBlocksLoopbackBind(external(18789), 18789)).toBe(false);
+  });
+
+  it("treats a loopback listener as blocking", () => {
+    expect(lsofOutputBlocksLoopbackBind(loopback(18789), 18789)).toBe(true);
+  });
+
+  it("treats a wildcard 0.0.0.0 or star listener as blocking, preserving docker-proxy detection (#3260)", () => {
+    expect(lsofOutputBlocksLoopbackBind(wildcard(18789), 18789)).toBe(true);
+    expect(
+      lsofOutputBlocksLoopbackBind("x 1 u 3u IPv4 1 0t0 TCP 0.0.0.0:18789 (LISTEN)", 18789),
+    ).toBe(true);
+  });
+
+  it("treats an IPv6 loopback listener as blocking", () => {
+    expect(
+      lsofOutputBlocksLoopbackBind("x 1 u 3u IPv6 1 0t0 TCP [::1]:18789 (LISTEN)", 18789),
+    ).toBe(true);
+  });
+
+  it("only matches the requested port", () => {
+    expect(lsofOutputBlocksLoopbackBind(loopback(18790), 18789)).toBe(false);
+  });
+
+  it("returns false for empty or missing output", () => {
+    expect(lsofOutputBlocksLoopbackBind("", 18789)).toBe(false);
+    expect(lsofOutputBlocksLoopbackBind(null, 18789)).toBe(false);
+    expect(lsofOutputBlocksLoopbackBind(undefined, 18789)).toBe(false);
+  });
+
+  it("ignores non-LISTEN rows", () => {
+    expect(
+      lsofOutputBlocksLoopbackBind(
+        "x 1 u 3u IPv4 1 0t0 TCP 127.0.0.1:18789->10.0.0.2:5000 (ESTABLISHED)",
+        18789,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("typed OpenShell dashboard-port observation", () => {
-  it("binds an exact identity factory to one read-only adapter request", async () => {
+  it("checks gateway authority once for each multi-port batch (#11963)", async () => {
     const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
-      async ({ forwards }) => forwards.map((forward) => ({ state: "absent" as const, forward })),
+      async ({ assertCurrent, forwards }) => {
+        expect(assertCurrent).toBeUndefined();
+        return forwards.map((forward) => ({ state: "absent" as const, forward }));
+      },
     );
+    const assertCurrent = vi.fn(async () => undefined);
     const observer = createOpenShellForwardPortObserver({
       adapter: { observeForwards },
+      assertCurrent,
       forwardForPort: (port) => ({
         gatewayEndpoint: "https://127.0.0.1:9090",
         gatewayName: "nemoclaw-9090",
@@ -150,6 +205,65 @@ describe("typed OpenShell dashboard-port observation", () => {
       },
     ]);
     expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+
+    await observer([18789, 18790]);
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a batch when gateway authority is stale before collection (#11963)", async () => {
+    const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+      async ({ forwards }) => forwards.map((forward) => ({ state: "absent" as const, forward })),
+    );
+    const assertCurrent = vi.fn(async () => {
+      throw new Error("gateway authority changed");
+    });
+    const observer = createOpenShellForwardPortObserver({
+      adapter: { observeForwards },
+      assertCurrent,
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "127.0.0.1",
+        port,
+      }),
+    });
+
+    await expect(observer([18789, 18790])).rejects.toThrow(/gateway authority changed/);
+    expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a batch when gateway authority changes during collection (#11963)", async () => {
+    let observationComplete = false;
+    const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+      async ({ forwards }) => {
+        observationComplete = true;
+        return forwards.map((forward) => ({ state: "absent" as const, forward }));
+      },
+    );
+    const assertCurrent = vi.fn(async () => {
+      expect(observationComplete).toBe(true);
+      throw new Error("gateway authority changed");
+    });
+    const observer = createOpenShellForwardPortObserver({
+      adapter: { observeForwards },
+      assertCurrent,
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "127.0.0.1",
+        port,
+      }),
+    });
+
+    await expect(observer([18789, 18790])).rejects.toThrow(/gateway authority changed/);
+    expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
   });
 
   it.each(["owned", "stale"] as const)("reuses an exact %s forward", (state) => {
@@ -218,10 +332,12 @@ describe("typed OpenShell dashboard-port observation", () => {
   });
 
   it("rejects an adapter response that does not match its requested identities", async () => {
+    const assertCurrent = vi.fn(async () => undefined);
     const observer = createOpenShellForwardPortObserver({
       adapter: {
         observeForwards: async () => [forwardObservation("other", 18789, "absent")],
       },
+      assertCurrent,
       forwardForPort: (port) => ({
         gatewayEndpoint: "https://127.0.0.1:9090",
         gatewayName: "nemoclaw-9090",
@@ -233,6 +349,7 @@ describe("typed OpenShell dashboard-port observation", () => {
     });
 
     await expect(observer([18789])).rejects.toThrow(/incomplete forward ownership evidence/);
+    expect(assertCurrent).not.toHaveBeenCalled();
   });
 });
 

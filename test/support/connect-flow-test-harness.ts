@@ -12,6 +12,7 @@ import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandRequest,
 } from "../../src/lib/adapters/openshell/sandbox-command";
+import type { DockerSandboxIdentityObservation } from "../../src/lib/adapters/docker/inspect";
 import type { WslDetectionOptions } from "../../src/lib/platform";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
@@ -53,6 +54,7 @@ export type ConnectHarness = {
   ensureLiveSandboxSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   dockerStartSpy: MockInstance;
+  inspectSandboxNameLabeledContainersSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
   inspectLaunchReadinessSpy: MockInstance;
@@ -91,6 +93,11 @@ export type ConnectHarnessOptions = {
   sessionOutcome?: OpenShellSandboxSessionOutcome;
   agentName?: string;
   inferenceGetOutput?: string;
+  inferenceSetResult?: {
+    status: number | null;
+    output?: string;
+    signal?: NodeJS.Signals | null;
+  };
   isWsl?: boolean;
   frontOllamaWithProxy?: boolean;
   inferenceProbeResponses?: Array<
@@ -145,12 +152,14 @@ export type ConnectHarnessOptions = {
       };
   useRealPortableReceipt?: boolean;
   dockerRuntime?: {
+    containerObservationFailed?: boolean;
     health?: string;
     paused?: boolean;
     running?: boolean;
     containerName?: string | null;
   };
   dockerStartStatus?: number | null;
+  sandboxNameLabeledContainers?: DockerSandboxIdentityObservation;
   /** Exit status the mocked `openshell sandbox start` reports. */
   sandboxLifecycleStartStatus?: number | null;
   /** Phase the mocked `openshell sandbox get` reports. */
@@ -465,10 +474,19 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       paused: options.dockerRuntime?.paused ?? false,
       running: options.dockerRuntime?.running ?? true,
       containerName: options.dockerRuntime?.containerName ?? null,
+      containerObservationFailed: options.dockerRuntime?.containerObservationFailed,
     });
   const dockerStartSpy = vi.spyOn(dockerAdapter, "dockerStart").mockReturnValue({
     status: options.dockerStartStatus === undefined ? 0 : options.dockerStartStatus,
   });
+  const openshellDockerSandboxContainers = requireDist(
+    "../../src/lib/onboard/openshell-docker-sandbox-containers.js",
+  );
+  const inspectSandboxNameLabeledContainersSpy = vi
+    .spyOn(openshellDockerSandboxContainers, "inspectDockerSandboxNameLabeledContainers")
+    .mockReturnValue(
+      options.sandboxNameLabeledContainers ?? { status: "observed", rows: [], malformedRows: 0 },
+    );
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
@@ -562,6 +580,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
             : "Provider: unknown\nModel: unknown\n"),
       };
     }
+    if (argv[0] === "inference" && argv[1] === "set" && options.inferenceSetResult) {
+      return options.inferenceSetResult;
+    }
     if (argv[0] === "forward" && argv[1] === "list") {
       const sandboxName = String(registryEntries[0]?.name ?? "alpha");
       const port = String(registryEntries[0]?.dashboardPort ?? 18_789);
@@ -626,6 +647,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(runtime, "captureResolvedOpenshell")
     .mockImplementation(captureOpenshellImplementation);
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockReturnValue({ status: 0 });
+  vi.spyOn(runtime, "captureResolvedOpenshellAsync").mockImplementation(async (args, options) => {
+    runtime.runOpenshell(args, {
+      ignoreError: true,
+      timeout: (options as { timeout?: number }).timeout,
+    });
+    return captureOpenshellImplementation(args);
+  });
   const withGatewayRouteMutationLockSpy = vi
     .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
     .mockImplementation(
@@ -837,6 +865,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     ensureLiveSandboxSpy,
     getSandboxDockerRuntimeSpy,
     dockerStartSpy,
+    inspectSandboxNameLabeledContainersSpy,
     errorSpy,
     logSpy,
     inspectLaunchReadinessSpy,
