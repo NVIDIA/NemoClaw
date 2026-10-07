@@ -1,8 +1,8 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "View the Active Inference Route"
-sidebar-title: "View the Active Route"
+title: "View the Selected Inference Path"
+sidebar-title: "View the Inference Path"
 description: "Inspect a sandbox's native inference selection or the shared OpenShell route, including a safe compatible endpoint URL."
 description-agent: "Shows the recorded native selection or shared inference provider and model, plus safe compatible endpoint metadata."
 keywords:
@@ -53,6 +53,7 @@ Expected output:
 ```text
 Provider: nvidia-prod
 Model:    nvidia/nemotron-3-super-120b-a12b
+Endpoint: https://integrate.api.nvidia.com/v1
 ```
 
 Pass `--json` for machine-readable output.
@@ -66,7 +67,8 @@ Expected output:
 ```json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "endpointUrl": "https://integrate.api.nvidia.com/v1"
 }
 ```
 
@@ -90,7 +92,8 @@ Endpoint: https://inference.example.com/v1
 }
 ```
 
-Managed providers keep the existing provider-and-model output.
+A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the provider-and-model output.
+Other managed providers keep the provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, uses another path shape, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
@@ -104,7 +107,7 @@ These endpoint-omission fields never include a stored URL, registry path, or und
 If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
 If the requested sandbox has an invalid gateway binding, the error names that sandbox and tells you to repair or remove its registration without displaying the rejected gateway value or port.
 
-The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
+A shared-route lookup exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
 For lookup failures, the error names the gateway without rendering command output.
 It reports a timeout, a nonzero exit status, no exit status, or output NemoClaw cannot interpret after a command exits successfully.

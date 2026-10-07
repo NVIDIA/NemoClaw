@@ -255,7 +255,7 @@ export async function ensureNativeProvider(input: {
     const confirmed = attachmentFromMetadata(observed, profile);
     if (confirmed.providerId !== receipt.providerId) {
       throw new NativeProviderError(
-        `OpenShell provider '${profile.providerName}' changed identity during its credential update.`,
+        `OpenShell provider '${profile.providerName}' changed identity during its credential update. No provider receipt was recorded.`,
       );
     }
     return confirmed;
