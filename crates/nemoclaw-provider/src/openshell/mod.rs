@@ -263,4 +263,3 @@ pub fn verify_identity(expected: &Row, observed: &Row) -> Result<(), Observation
     }
     Ok(())
 }
-mod probes;

@@ -91,6 +91,35 @@ impl OpenShell {
     }
 }
 
+impl OpenShell {
+    pub async fn exec_bound(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error> {
+        self.exec_input(binding, command, environment, seconds, Vec::new())
+            .await
+    }
+    pub(super) async fn exec_input(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+        stdin: Vec<u8>,
+    ) -> Result<(i32, Vec<u8>), Error> {
+        tokio::time::timeout(
+            Duration::from_secs(u64::from(seconds)),
+            self.gateway
+                .exec(binding, command, environment, seconds, stdin),
+        )
+        .await
+        .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
+    }
+}
+
 impl ConnectedOpenShellGateway {
     pub(in crate::openshell) fn connect(
         gateway: &Gateway,
