@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
+import { verifyNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
@@ -59,6 +62,24 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
     expected: input.expected,
   });
 }
+
+export type VerifyNativeLocalStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeLocalProviderAttachment;
+}) => Promise<void>;
+
+export const verifyNativeLocalStatusAttachment: VerifyNativeLocalStatusAttachment = async (
+  input,
+) => {
+  if (input.expected.gatewayName !== input.gatewayName)
+    throw new Error("Native local provider gateway authority changed.");
+  await verifyNativeLocalProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+};
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
@@ -334,6 +355,7 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
   nativeNvidia?: boolean;
+  nativeLocalEndpoint?: string;
 };
 
 // A models route that answers but is credential-gated (401/403) stays
@@ -366,6 +388,25 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
+  if (context.nativeLocalEndpoint) {
+    return {
+      ok: invocation?.ok === true,
+      probed: invocation !== null,
+      providerLabel: "Native local inference",
+      endpoint: `${context.nativeLocalEndpoint}/chat/completions`,
+      detail: invocation?.ok
+        ? "The attached provider served a native local inference request."
+        : invocation
+          ? `Native local inference failed: ${invocation.detail}`
+          : "Native local inference could not be verified inside the sandbox.",
+      ...(invocation?.ok
+        ? {}
+        : {
+            failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+          }),
+      subprobes: providerHealthDiagnostics(providerHealth, invocation?.ok === true),
+    };
+  }
   if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint

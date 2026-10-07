@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  nativeLocalCredentialReference,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
+
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -48,6 +54,7 @@ export type SandboxInferenceInvocationInput = {
   model: string;
   preferredInferenceApi: string | null;
   nativeProvider?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 };
 
 export type SandboxInferenceInvocationResult =
@@ -81,10 +88,20 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   headers: string[];
   payload: Record<string, unknown>;
 } {
+  const local = normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment);
+  if (
+    input.nativeLocalProviderAttachment &&
+    (!local ||
+      local.sandboxName !== input.sandboxName ||
+      local.provider !== input.provider ||
+      (input.gatewayName && local.gatewayName !== input.gatewayName))
+  )
+    throw new Error("Native local inference probe authority changed.");
   const config = getSandboxInferenceConfig(
     input.model,
     input.provider,
     input.preferredInferenceApi,
+    local?.endpointUrl ?? null,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const baseUrl = (
@@ -94,7 +111,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
         ? "https://inference.local/v1"
         : config.inferenceBaseUrl
   ).replace(/\/+$/u, "");
-  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  const apiBaseUrl = local || baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
@@ -119,7 +136,13 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: useNativeNvidia ? ["Authorization: Bearer nemoclaw-openshell-provider"] : [],
+    headers: local
+      ? [
+          `Authorization: Bearer ${nativeLocalCredentialReference(local.provider, local.endpointUrl)}`,
+        ]
+      : useNativeNvidia
+        ? ["Authorization: Bearer nemoclaw-openshell-provider"]
+        : [],
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),

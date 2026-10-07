@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireNativeLocalProvider } from "../../inference/native-local/profile";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import { clearNativeLocalProviderAuthority } from "../../state/registry/native-local-provider-authority";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -940,6 +943,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      !sandbox?.nativeLocalProviderAttachment &&
       portableContainerAuthority === undefined;
 
     if (deleteFailed && !forcedLocalCleanup) {
@@ -953,7 +957,8 @@ export async function executeSandboxDestroy({
         gatewayUnreachable,
         ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
-          gatewayUnreachable && hasHostLocalInferenceOwnership,
+          gatewayUnreachable &&
+          (hasHostLocalInferenceOwnership || Boolean(sandbox?.nativeLocalProviderAttachment)),
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
         portableLifecycleOwnershipRequiresGateway:
@@ -1076,4 +1081,24 @@ export async function executeSandboxDestroy({
       ...(commonLlamaCppAuthorityRetired ? { commonLlamaCppAuthorityRetired: true as const } : {}),
     };
   });
+}
+
+/** Retire native credentials only after the caller confirms sandbox deletion. */
+export async function retireDestroyedSandboxNativeLocalProvider(
+  sandbox: SandboxEntry,
+  gatewayName: string,
+): Promise<void> {
+  if (!sandbox.nativeLocalProviderAttachment) return;
+  const retirement = await retireNativeLocalProvider({
+    adapter: createManagedProviderAdapter(),
+    expected: sandbox.nativeLocalProviderAttachment,
+    sandboxName: sandbox.name,
+    gatewayName,
+    clearAuthority: clearNativeLocalProviderAuthority,
+  });
+  if (retirement.status === "attached") {
+    throw new Error(
+      "Native inference provider remains attached; recovery authority retained. Inspect its attachments before retrying destroy.",
+    );
+  }
 }

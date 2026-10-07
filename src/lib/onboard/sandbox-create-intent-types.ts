@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
+
 import type { SandboxHostMount } from "../state/registry/types";
 import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
@@ -48,6 +50,7 @@ export type SandboxCreatePolicyRequest = {
 export type SandboxCreateIntent = {
   readonly sandboxName: string;
   readonly inferenceProvider: string | null;
+  readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
@@ -70,6 +73,7 @@ export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
   inferenceProvider?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];

@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  nativeLocalIdentity,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  type NativeLocalBinding,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
+import { ensureNativeLocalProvider } from "../../inference/native-local/profile";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +24,68 @@ import {
 } from "../runtime-provider/host-local-inference";
 import type { HostLocalInferenceStartupSelection } from "../runtime-provider/host-local-inference-routing";
 import { createHermesPortablePodmanOperationEngines } from "./hermes-portable-podman-authority";
+
+function portableNativeBinding(
+  gatewayName: string,
+  sandboxName: string,
+  transactionId?: string,
+): NativeLocalBinding {
+  return {
+    gatewayName,
+    sandboxName,
+    ...(transactionId ? { transactionId } : {}),
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+    authMode: "sentinel",
+  };
+}
+function portableNativeIdentity(gatewayName: string, sandboxName: string, transactionId?: string) {
+  return nativeLocalIdentity(portableNativeBinding(gatewayName, sandboxName, transactionId));
+}
+const PORTABLE_NATIVE_PROFILE = portableNativeIdentity("nemoclaw", "profile").profileId;
+
+/** Select the recorded contract for cleanup only; the journal owner still validates every field. */
+function portableProviderIdentity(options: {
+  directory: string;
+  gatewayName: string;
+  sandboxName: string;
+  transactionId?: string;
+}) {
+  let transactionId = options.transactionId;
+  const raw = readPortableGatewayState(() =>
+    openPrivateStateFile(
+      options.directory,
+      GATEWAY_PROVIDER_JOURNAL_FILE,
+      "gateway provider journal",
+    ).readExact(),
+  );
+  if (raw !== null) {
+    try {
+      const intent = JSON.parse(raw)?.intent;
+      if (intent?.type === "openai") return { providerName: "ollama-local", profileId: "openai" };
+      transactionId = intent?.transactionId;
+    } catch {
+      throw portableGatewayStateConflict(
+        "Hermes Portable inference gateway provider journal is malformed.",
+      );
+    }
+  }
+  if (transactionId !== undefined && !NETWORK_ID.test(transactionId)) {
+    throw portableGatewayStateConflict(
+      "Hermes Portable inference gateway provider journal identity is malformed.",
+    );
+  }
+  return portableNativeIdentity(options.gatewayName, options.sandboxName, transactionId);
+}
+function portableProviderCredential(
+  options: { directory: string; gatewayName: string; sandboxName: string; credentialEnv: string },
+  transactionId: string,
+) {
+  return portableProviderIdentity(options).profileId === "openai"
+    ? `${options.credentialEnv}_${transactionId.toUpperCase()}`
+    : NATIVE_LOCAL_CREDENTIAL_ENV;
+}
 
 const NETWORK_ID = /^[a-f0-9]{64}$/u;
 const GATEWAY_PROVIDER_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -277,9 +346,9 @@ type GatewayProviderJournalIntent = Readonly<{
   targetSha256: string;
   gatewayName: string;
   sandboxName: string;
-  provider: "ollama-local";
+  provider: string;
   model: string;
-  type: "openai";
+  type: string;
   credentialEnv: string;
   providerCredentialEnv: string;
   baseUrl: "http://host.openshell.internal:11434/v1";
@@ -335,7 +404,10 @@ function recoverGatewayProviderJournalTransactionId(
       "Hermes Portable inference gateway provider journal identity is malformed.",
     );
   }
-  const providerCredentialEnv = `${scope.credentialEnv}_${transactionId.toUpperCase()}`;
+  const providerCredentialEnv =
+    scope.type === "openai"
+      ? `${scope.credentialEnv}_${transactionId.toUpperCase()}`
+      : NATIVE_LOCAL_CREDENTIAL_ENV;
   const intent: GatewayProviderJournalIntent = Object.freeze({
     transactionId,
     targetSha256: scope.targetSha256,
@@ -589,11 +661,15 @@ function observeExactGatewayProvider(
   if (
     !metadata ||
     metadata.name !== provider ||
-    metadata.type !== "openai" ||
+    metadata.type !==
+      (expectedProviderCredentialEnv === NATIVE_LOCAL_CREDENTIAL_ENV
+        ? PORTABLE_NATIVE_PROFILE
+        : "openai") ||
     metadata.credentialKeys.length !== 1 ||
     metadata.credentialKeys[0] !== expectedProviderCredentialEnv ||
-    metadata.configKeys.length !== 1 ||
-    metadata.configKeys[0] !== "OPENAI_BASE_URL" ||
+    (expectedProviderCredentialEnv === NATIVE_LOCAL_CREDENTIAL_ENV
+      ? metadata.configKeys.length !== 0
+      : metadata.configKeys.length !== 1 || metadata.configKeys[0] !== "OPENAI_BASE_URL") ||
     !GATEWAY_PROVIDER_ID.test(id) ||
     !Number.isSafeInteger(resourceVersion) ||
     resourceVersion < 1
@@ -614,10 +690,15 @@ function exactGatewayMutation(
   expectedProviderCredentialEnv: string,
   journalStore: ReturnType<typeof createGatewayProviderJournalStore>,
   receiptPublished: boolean,
+  expectedTransactionId: string,
 ): Readonly<{
   prepareGatewayMutation: HostLocalInferenceStartupSelection["prepareGatewayMutation"];
   recoverUnpublishedRoute: boolean;
 }> {
+  const intent = journalStore.load()?.intent;
+  const native = intent
+    ? { providerName: intent.provider, profileId: intent.type }
+    : portableNativeIdentity(expectedGatewayName, expectedSandboxName, expectedTransactionId);
   const readExact = (provider: string): GatewayProviderObservation =>
     observeExactGatewayProvider(runGatewayOpenshell, provider, expectedProviderCredentialEnv);
   const matchesAuthority = (
@@ -680,7 +761,7 @@ function exactGatewayMutation(
     throw new Error("Hermes Portable inference gateway provider remained after recorded rollback.");
   };
   const journalAtEntry = journalStore.load();
-  const providerAtEntry = readExact("ollama-local");
+  const providerAtEntry = readExact(native.providerName);
   const recoverUnpublishedRoute =
     !receiptPublished &&
     journalAtEntry?.phase === "created" &&
@@ -734,10 +815,10 @@ function exactGatewayMutation(
         throw new Error("Hermes Portable inference gateway mutation authority changed.");
       }
       let journal = journalStore.load();
-      let current = readExact(input.provider);
+      let current = readExact(native.providerName);
       if (journal?.phase === "rolling-back") {
-        journal = await deleteRecordedProvider(input.provider, journal);
-        current = readExact(input.provider);
+        journal = await deleteRecordedProvider(native.providerName, journal);
+        current = readExact(native.providerName);
       }
       if (receiptPublished) {
         if (journal?.phase !== "created" && journal?.phase !== "committed") {
@@ -782,98 +863,82 @@ function exactGatewayMutation(
         }
       }
       return Object.freeze({
-        upsertProvider(
-          name: string,
-          type: string,
-          credentialEnv: string,
-          baseUrl: string,
-          env: NodeJS.ProcessEnv = {},
-        ) {
-          if (
-            name !== input.provider ||
-            type !== "openai" ||
-            credentialEnv !== expectedCredentialEnv ||
-            baseUrl !== input.providerBaseUrl ||
-            Object.keys(env).length !== 1 ||
-            env[expectedCredentialEnv] !== "ollama"
-          ) {
-            throw new Error("Hermes Portable inference provider mutation authority changed.");
-          }
+        async registerNativeProvider() {
+          if (native.profileId === "openai")
+            throw portableGatewayStateConflict(
+              "Existing beta inference requires recreation; native provider migration is not automatic.",
+            );
           let active = journalStore.load();
-          if (!active) {
-            throw portableGatewayStateConflict(
-              "Hermes Portable inference gateway provider intent disappeared.",
-            );
-          }
-          let before = readExact(input.provider);
-          if (active.phase === "created" || active.phase === "committed") {
-            if (!active.providerAuthority || !matchesAuthority(before, active.providerAuthority)) {
-              throw portableGatewayStateConflict(
-                "Hermes Portable inference recorded gateway provider authority changed.",
-              );
-            }
-            return { ok: true };
-          }
-          if (active.phase === "prepared") {
-            if (before.kind !== "absent") {
-              throw portableGatewayStateConflict(
-                "Hermes Portable inference provider name is no longer unclaimed.",
-              );
-            }
+          if (!active)
+            throw portableGatewayStateConflict("Native provider publication intent disappeared.");
+          if (active.phase === "prepared")
             active = journalStore.transition(active, "creating", null);
-            before = readExact(input.provider);
+          const existing = readExact(native.providerName);
+          if (active.phase === "creating" && existing.kind === "present") {
+            const authority = createdAuthority(existing);
+            if (!authority)
+              throw portableGatewayStateConflict("Native provider creation is indeterminate.");
+            active = journalStore.transition(active, "created", authority);
           }
-          if (active.phase !== "creating") {
-            throw portableGatewayStateConflict(
-              "Hermes Portable inference gateway provider intent cannot create.",
-            );
-          }
-          if (before.kind === "present") {
-            const authority = createdAuthority(before);
-            if (!authority) {
+          const binding = portableNativeBinding(
+            expectedGatewayName,
+            expectedSandboxName,
+            expectedTransactionId,
+          );
+          const recorded = (): NativeLocalProviderAttachment | undefined => {
+            const current = journalStore.load();
+            if (current?.phase === "creating" && readExact(native.providerName).kind !== "absent") {
               throw portableGatewayStateConflict(
-                "Hermes Portable inference recorded provider creation is ambiguous.",
+                "Native provider creation awaits journal recovery.",
               );
             }
-            journalStore.transition(active, "created", authority);
-            return { ok: true };
-          }
-          const result = runGatewayOpenshell(
-            [
-              "provider",
-              "create",
-              "--name",
-              input.provider,
-              "--type",
-              "openai",
-              "--credential",
-              expectedProviderCredentialEnv,
-              "--config",
-              `OPENAI_BASE_URL=${input.providerBaseUrl}`,
-            ],
-            {
-              ignoreError: true,
-              suppressOutput: true,
-              stdio: ["ignore", "pipe", "pipe"],
-              env: { [expectedProviderCredentialEnv]: "ollama" },
-              timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+            return current?.providerAuthority
+              ? {
+                  ...binding,
+                  ...native,
+                  schemaVersion: 1,
+                  providerId: current.providerAuthority.id,
+                }
+              : undefined;
+          };
+          const expected = recorded();
+          return ensureNativeLocalProvider({
+            adapter: createManagedProviderAdapter((args, options) =>
+              runGatewayOpenshell(args, { ...options, suppressOutput: true }),
+            ),
+            binding,
+            policyCommand: async (args) =>
+              runGatewayOpenshell(args, {
+                ignoreError: true,
+                suppressOutput: true,
+                stdio: ["ignore", "pipe", "pipe"],
+                timeout: GATEWAY_PROVIDER_PROBE_TIMEOUT_MS,
+              }),
+            credentialValue: expected ? null : "ollama",
+            expected,
+            readAuthority: recorded,
+            writeAuthority: (receipt) => {
+              const observed = readExact(native.providerName);
+              const authority = createdAuthority(observed);
+              const current = journalStore.load();
+              if (!current || !authority || authority.id !== receipt.providerId)
+                throw portableGatewayStateConflict(
+                  "Native provider ownership changed before publication.",
+                );
+              if (current.phase === "creating")
+                journalStore.transition(current, "created", authority);
+              else if (
+                !current.providerAuthority ||
+                !matchesAuthority(observed, current.providerAuthority)
+              )
+                throw portableGatewayStateConflict(
+                  "Native provider publication authority changed.",
+                );
             },
-          );
-          const after = readExact(input.provider);
-          const authority = createdAuthority(after);
-          if (!authority) {
-            if (after.kind === "absent" && result.status !== 0) {
-              throw new Error("Hermes Portable inference could not create its gateway provider.");
-            }
-            throw portableGatewayStateConflict(
-              "Hermes Portable inference gateway provider creation is indeterminate.",
-            );
-          }
-          journalStore.transition(active, "created", authority);
-          return { ok: true };
+          });
         },
         commit() {
-          const current = readExact(input.provider);
+          const current = readExact(native.providerName);
           const active = journalStore.load();
           if (
             (active?.phase !== "created" && active?.phase !== "committed") ||
@@ -897,7 +962,7 @@ function exactGatewayMutation(
               "Hermes Portable inference refused rollback of a published provider.",
             );
           }
-          const observed = readExact(input.provider);
+          const observed = readExact(native.providerName);
           if (active.phase === "rolled-back") {
             if (observed.kind !== "absent") {
               throw portableGatewayStateConflict(
@@ -930,7 +995,7 @@ function exactGatewayMutation(
             }
             active = journalStore.transition(active, "rolling-back", active.providerAuthority);
           }
-          await deleteRecordedProvider(input.provider, active);
+          await deleteRecordedProvider(native.providerName, active);
         },
       });
     };
@@ -967,9 +1032,9 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     targetSha256: options.targetSha256,
     gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
-    provider: "ollama-local",
+    provider: portableProviderIdentity(options).providerName,
     model: options.model,
-    type: "openai",
+    type: portableProviderIdentity(options).profileId,
     credentialEnv: options.credentialEnv,
     baseUrl: "http://host.openshell.internal:11434/v1",
   });
@@ -981,7 +1046,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     recoveredReceipt?.publication?.transactionId ??
     recoveredJournalTransactionId ??
     options.transactionId;
-  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
+  const providerCredentialEnv = portableProviderCredential(options, transactionId);
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -992,9 +1057,9 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
       targetSha256: options.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: "ollama-local",
+      provider: portableProviderIdentity(options).providerName,
       model: options.model,
-      type: "openai",
+      type: portableProviderIdentity(options).profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1",
@@ -1027,6 +1092,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     providerCredentialEnv,
     gatewayProviderJournal,
     publishedReceipt !== null,
+    transactionId,
   );
   return Object.freeze({
     receiptWriter,
@@ -1079,7 +1145,7 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
     throw new Error("Hermes Portable Ollama published receipt authority is inconsistent.");
   }
   const transactionId = receipt.publication.transactionId;
-  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
+  const providerCredentialEnv = portableProviderCredential(options, transactionId);
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1090,9 +1156,9 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
       targetSha256: receipt.publication.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: "ollama-local" as const,
+      provider: portableProviderIdentity(options).providerName,
       model: receipt.inference.model,
-      type: "openai" as const,
+      type: portableProviderIdentity(options).profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1" as const,
@@ -1146,7 +1212,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   }
   const transactionId = receipt.publication.transactionId;
   const targetSha256 = receipt.publication.targetSha256;
-  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
+  const providerCredentialEnv = portableProviderCredential(options, transactionId);
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1155,9 +1221,9 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     targetSha256,
     gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
-    provider: "ollama-local" as const,
+    provider: portableProviderIdentity(options).providerName,
     model: receipt.inference.model,
-    type: "openai" as const,
+    type: portableProviderIdentity(options).profileId,
     credentialEnv: options.credentialEnv,
     providerCredentialEnv,
     baseUrl: "http://host.openshell.internal:11434/v1" as const,
@@ -1173,7 +1239,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   }
   const provider = observeExactGatewayProvider(
     options.runGatewayOpenshell,
-    "ollama-local",
+    portableProviderIdentity(options).providerName,
     providerCredentialEnv,
   );
   if (
@@ -1196,7 +1262,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     assertTransactionCurrent();
     const currentProvider = observeExactGatewayProvider(
       options.runGatewayOpenshell,
-      "ollama-local",
+      portableProviderIdentity(options).providerName,
       providerCredentialEnv,
     );
     if (!isDeepStrictEqual(currentProvider, provider)) {
@@ -1246,7 +1312,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly allowAbsent?: boolean;
 }): PreparedHermesPortableOllamaProviderRetirement {
-  const providerCredentialEnv = `${options.credentialEnv}_${options.transactionId.toUpperCase()}`;
+  const providerCredentialEnv = portableProviderCredential(options, options.transactionId);
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1257,9 +1323,9 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
       targetSha256: options.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: "ollama-local",
+      provider: portableProviderIdentity(options).providerName,
       model: options.model,
-      type: "openai",
+      type: portableProviderIdentity(options).profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1",
@@ -1273,7 +1339,11 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   const expectedJournal = `${JSON.stringify(journal)}\n`;
   const expected = journal.providerAuthority;
   const observe = () =>
-    observeExactGatewayProvider(options.runGatewayOpenshell, "ollama-local", providerCredentialEnv);
+    observeExactGatewayProvider(
+      options.runGatewayOpenshell,
+      portableProviderIdentity(options).providerName,
+      providerCredentialEnv,
+    );
   const matches = (
     observation: GatewayProviderObservation,
   ): observation is Extract<GatewayProviderObservation, { kind: "present" }> =>
@@ -1328,7 +1398,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
         }),
       ).deleteProvider({
         target: { kind: "selected" },
-        providerName: "ollama-local",
+        providerName: portableProviderIdentity(options).providerName,
         timeoutMs: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
       });
       const after = observe();

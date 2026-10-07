@@ -62,7 +62,7 @@ const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const {
-  createCompatibleEndpointSmoke,
+  createCompatibleEndpointSmoke: createSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   verifyCompatibleEndpointSandboxSmoke,
@@ -674,7 +674,7 @@ const {
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
-const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact);
+const compatibleSmoke = createSmoke(runOpenshell, sandboxExec, redact, registry.getSandbox);
 
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({

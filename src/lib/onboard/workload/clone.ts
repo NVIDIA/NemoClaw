@@ -277,6 +277,11 @@ function reboundMessaging(
 export function prepareManagedWorkloadCloneHandoff(
   input: PrepareManagedWorkloadCloneHandoffInput,
 ): PreparedManagedWorkloadCloneHandoff {
+  if (input.source.nativeLocalProviderAttachment !== undefined) {
+    fail(
+      "Native local provider attachments cannot be cloned. Onboard the destination with its own provider.",
+    );
+  }
   const sourceSandboxName = requireSandboxName(input.source.name, "source");
   const snapshotSandboxName = requireSandboxName(input.snapshot.sandboxName, "snapshot source");
   const destinationSandboxName = requireSandboxName(input.destinationSandboxName, "destination");

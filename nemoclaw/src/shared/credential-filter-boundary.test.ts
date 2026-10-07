@@ -134,8 +134,21 @@ describe("shared credential filter", () => {
     "openshell:resolve:env:GITHUB_TOKEN",
     "Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
     "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN",
+    "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
   ])("preserves credential reference %s (#8291)", (value) => {
     expect(isSafeCredentialPlaceholder(value), value).toBe(true);
+  });
+
+  it("preserves only the fixed Hermes local-provider alias during rebuild (#12558)", () => {
+    expect(
+      stripCredentials({
+        api_key: "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        other_api_key: "sk-OPENSHELL-RESOLVE-ENV-untrusted-value",
+      }),
+    ).toEqual({
+      api_key: "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      other_api_key: CREDENTIAL_PLACEHOLDER,
+    });
   });
 
   it("preserves a value that has no secret shape (#8291)", () => {

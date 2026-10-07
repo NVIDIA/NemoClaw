@@ -9,6 +9,10 @@
 // env or global session. Extracted from rebuild.ts so the trust-boundary logic
 // is auditable on its own (PRA-5).
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -58,6 +62,7 @@ export interface RebuildResumeConfig {
    */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
+  readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   /** Durable pre-delete route used only for credential-safe provider recovery. */
   readonly registryInferenceRoute: RegistryInferenceRoute | null;
   readonly ambient: AmbientRecreateEnvAssessment;
@@ -252,6 +257,9 @@ export function prepareRebuildResumeConfig(
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     registryInferenceRoute,
+    nativeLocalProviderAttachment: normalizeNativeLocalProviderAttachment(
+      sb.nativeLocalProviderAttachment,
+    ),
     ambient,
   };
 }

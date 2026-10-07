@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { attachNativeLocalExportFixture } from "../../../../test/support/native-local-export-fixture";
 import {
   raw,
   mockSupportedLiveSource,
@@ -46,6 +47,7 @@ function mockManagedVllmSource(
   environmentOverrides: NodeJS.ProcessEnv = {},
   webSearch: ManagedStartupProfileBuilderInput["webSearch"] = null,
   toolDisclosure: ManagedStartupProfileBuilderInput["toolDisclosure"] = "progressive",
+  native = false,
 ) {
   const catalog = loadServingCatalog();
   const provenance = servingProfileProvenance(catalog, EXPORTED_VLLM_PROFILE_ID);
@@ -57,6 +59,7 @@ function mockManagedVllmSource(
     "vllm-local",
     model,
     "openai-completions",
+    native ? "http://host.openshell.internal:18000/v1" : undefined,
   );
   const environment: NodeJS.ProcessEnv = {};
   // This is the actual onboarding projection of the fixed server's /v1/models response.
@@ -150,6 +153,22 @@ function mockManagedVllmSource(
 }
 
 describe("managed vLLM export pipeline", () => {
+  it("exports native managed vLLM through its existing service without reading credentials or a shared route (#12558)", async () => {
+    const { source } = mockManagedVllmSource({}, null, "progressive", true);
+    const native = attachNativeLocalExportFixture(source);
+    const exported = await exportLiveSource();
+    expect(exported.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = exported.writeStdout.mock.calls[0]![0];
+    const document = asExportedConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders).toEqual([
+      expect.objectContaining({ provider: "openai", serviceRef: "vllm" }),
+    ]);
+    expect(yaml).not.toContain("host.openshell.internal");
+    expect(yaml).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    expect(native.readCredential).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+  });
+
   it.each([
     { count: 1, names: ["researcher"] },
     { count: 2, names: ["researcher", "reviewer"] },

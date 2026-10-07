@@ -15,6 +15,7 @@ import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 import {
   EXPORT_REGISTRY_EVIDENCE_KEYS,
   exportWebSearchBinding,
+  exportNativeInferenceReceipt,
 } from "../../domain/config/export-evidence";
 import type {
   ExportSnapshotReadStage,
@@ -173,13 +174,13 @@ function inferenceTopology(
     : "hosted";
 }
 
-type NativeNvidiaReceipt = NonNullable<SandboxEntry["nativeNvidiaProviderAttachment"]>;
+type NativeInferenceReceipt = NonNullable<ReturnType<typeof exportNativeInferenceReceipt>>;
 
 function matchesNativeProviderMetadata(
   provider: Provider,
   normalized: ReturnType<typeof normalizeInferenceSelection>,
   routeProvider: string,
-  receipt: NativeNvidiaReceipt,
+  receipt: NativeInferenceReceipt,
 ): boolean {
   return isDeepStrictEqual(
     [
@@ -194,7 +195,9 @@ function matchesNativeProviderMetadata(
       routeProvider,
       receipt.providerId,
       receipt.profileId,
-      expectedCredentialKeys(normalized.credentialEnv, routeProvider),
+      "endpointUrl" in receipt
+        ? [receipt.credentialEnv]
+        : expectedCredentialKeys(normalized.credentialEnv, routeProvider),
       [],
       receipt.profileId,
     ],
@@ -206,7 +209,7 @@ function matchesProviderMetadata(
   normalized: ReturnType<typeof normalizeInferenceSelection>,
   routeProvider: string,
   managed: boolean,
-  nativeReceipt?: NativeNvidiaReceipt,
+  nativeReceipt?: NativeInferenceReceipt,
 ): boolean {
   if (nativeReceipt !== undefined) {
     return matchesNativeProviderMetadata(provider, normalized, routeProvider, nativeReceipt);
@@ -239,14 +242,16 @@ function matchesProviderMetadata(
 
 function profileContractFor(
   routeProvider: string,
-  nativeReceipt: NativeNvidiaReceipt | undefined,
-): "native-nvidia" | "openai" | undefined {
+  nativeReceipt: NativeInferenceReceipt | undefined,
+): Parameters<ReturnType<typeof createProviders>["get"]>[0]["profileContract"] {
+  if (nativeReceipt && "endpointUrl" in nativeReceipt)
+    return { kind: "native-local", binding: nativeReceipt };
   if (nativeReceipt) return "native-nvidia";
   return routeProvider === "ollama-local" ? "openai" : undefined;
 }
 
 function endpointSourceFor(
-  nativeReceipt: NativeNvidiaReceipt | undefined,
+  nativeReceipt: NativeInferenceReceipt | undefined,
   builtin: boolean,
   configKey: "ANTHROPIC_BASE_URL" | "OPENAI_BASE_URL",
 ): ObservedExportEndpointEvidence["source"] {
@@ -261,7 +266,7 @@ async function readProviderEvidence(
   gatewayName: string,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
-  nativeReceipt?: NativeNvidiaReceipt,
+  nativeReceipt?: NativeInferenceReceipt,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
   const profileContract = profileContractFor(routeProvider, nativeReceipt);
@@ -294,7 +299,7 @@ async function readProviderEvidence(
 async function resolveLiveInference(
   entry: Readonly<SandboxEntry>,
   gatewayName: string,
-  nativeReceipt: NativeNvidiaReceipt | undefined,
+  nativeReceipt: NativeInferenceReceipt | undefined,
 ): Promise<Readonly<{ provider: string; model: string; logicalProvider: string }>> {
   if (!nativeReceipt) {
     const live = await readInferenceRoute(entry, gatewayName);
@@ -302,7 +307,7 @@ async function resolveLiveInference(
   }
   const selected = getSandboxEntryInference(entry);
   if (selected.kind !== "configured") {
-    throw new Error("The native NVIDIA inference selection is incomplete.");
+    throw new Error("The native inference selection is incomplete.");
   }
   return {
     provider: nativeReceipt.providerName,
@@ -320,10 +325,11 @@ async function inferenceFor(
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
-  const nativeReceipt =
-    entry.provider?.trim() === "nvidia-prod" ? entry.nativeNvidiaProviderAttachment : undefined;
+  const nativeReceipt = exportNativeInferenceReceipt(entry);
+  if (nativeReceipt === null)
+    throw new Error("The native local export binding is invalid or unsupported.");
   if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
-    throw new Error("The native NVIDIA provider is not attached to the sandbox.");
+    throw new Error("The native inference provider is not attached to the sandbox.");
   }
   const live = await resolveLiveInference(entry, gateway.name, nativeReceipt);
   beforeRead("provider-metadata");

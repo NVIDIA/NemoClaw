@@ -118,7 +118,7 @@ export async function resolveSignals<Agent>(
     options.provider,
     options.model,
     options.preferredInferenceApi,
-    options.endpointUrl,
+    registryEntry.nativeLocalProviderAttachment?.endpointUrl ?? options.endpointUrl,
   );
   return {
     inferenceSelectionChanged: Boolean(drift.changed || drift.unknown),

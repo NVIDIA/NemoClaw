@@ -27,6 +27,8 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
+import { nativeLocalCredentialReference } from "../src/lib/inference/native-local/agent-config.ts";
+
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 
 import {
@@ -973,7 +975,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey:
+        nativeLocalCredentialReference(env.NEMOCLAW_UPSTREAM_PROVIDER, inferenceBaseUrl) ??
+        "unused",
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

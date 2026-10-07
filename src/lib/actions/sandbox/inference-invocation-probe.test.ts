@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import {
@@ -95,6 +96,39 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("probes the recorded native endpoint with its opaque credential (#12558)", async () => {
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const nativeInput = {
+      ...input,
+      provider: binding.provider,
+      gatewayName: binding.gatewayName,
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned-local-provider",
+      },
+    };
+    const execute = vi.fn(async () => ({ status: 1, stdout: "403\n", stderr: "" }));
+    const result = await probeSandboxInferenceInvocation(nativeInput, { execute });
+    expect(result).toMatchObject({
+      ok: false,
+      httpStatus: 403,
+      endpoint: "http://host.openshell.internal:11434/v1/chat/completions",
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    const command = execute.mock.calls[0] as unknown as [string, string];
+    expect(command[1]).toContain("openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    expect(command[1]).not.toContain("inference.local");
+  });
+
   it("ignores personal curl configuration when an inference request fails (#11520)", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-curl-config-"));
     try {

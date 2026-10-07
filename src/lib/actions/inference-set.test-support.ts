@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import { vi } from "vitest";
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import type {
@@ -251,6 +252,26 @@ export type CaptureOpenshell = (
   options?: CaptureOpenshellOptions,
 ) => CaptureOpenshellResult;
 
+export function nativeLocalTestReceipt(
+  provider: NativeLocalBinding["provider"] = "ollama-local",
+  endpointUrl = "http://host.openshell.internal:11435/v1",
+) {
+  const binding: NativeLocalBinding = {
+    provider,
+    endpointUrl,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+  };
+  return {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "local-provider-id",
+  };
+}
+
 export function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
@@ -423,6 +444,27 @@ export function createDeps(options: {
       { redactDiagnostic: redactInferenceSetRouteDiagnostic },
     );
   return {
+    requireNativeProviderPolicy: async () => {},
+    prepareNativeLocalSwitch: async (input) => {
+      const binding: NativeLocalBinding = {
+        provider: input.provider as NativeLocalBinding["provider"],
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        endpointUrl: input.binding?.baseUrl ?? "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+      };
+      return {
+        changed: false,
+        previousDetached: false,
+        receipt: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "local-provider-id",
+        },
+      };
+    },
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),

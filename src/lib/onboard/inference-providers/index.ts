@@ -25,3 +25,11 @@ export type {
   SetupInferenceResult,
   VllmDeps,
 } from "./types";
+
+export { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+export {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInference,
+} from "../../inference/native-local/contract";
+export { prepareNativeLocalSelection } from "../../inference/native-local/selection";
+export { gatewayReachableCompatibleEndpointUrl } from "./compatible-endpoint-gateway-route";

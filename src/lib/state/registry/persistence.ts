@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAuthorities } from "../../inference/native-local/contract";
+
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -125,6 +127,9 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeLocalProviderAuthorities = normalizeNativeLocalProviderAuthorities(
+    data.nativeLocalProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -144,6 +149,8 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeLocalProviderAuthorities)
+    base.nativeLocalProviderAuthorities = nativeLocalProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
@@ -152,6 +159,9 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeLocalProviderAuthorities = normalizeNativeLocalProviderAuthorities(
+    data.nativeLocalProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -174,6 +184,8 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeLocalProviderAuthorities)
+    base.nativeLocalProviderAuthorities = nativeLocalProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }

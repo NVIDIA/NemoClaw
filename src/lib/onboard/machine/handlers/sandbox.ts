@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAttachment } from "../../../inference/gateway-route-compatibility";
+
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
@@ -130,18 +132,24 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   { readonly status: "skipped" }
 >["reason"];
 
-function nativeNvidiaCreateIntentFields(
+function nativeInferenceCreateIntentFields(
   provider: string | null | undefined,
   entry: SandboxEntry | null,
 ): {
   inferenceProvider: string | null;
+  nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
 } {
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry?.nativeLocalProviderAttachment,
+  );
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
   return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
+    inferenceProvider:
+      nativeLocalProviderAttachment?.providerName ?? nativeInferenceProviderForSandbox(provider),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
   };
 }
@@ -368,6 +376,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
@@ -1877,7 +1886,7 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
+      ...nativeInferenceCreateIntentFields(
         this.options.provider,
         this.deps.getSandboxRegistryEntry(sandboxName),
       ),
@@ -1893,6 +1902,8 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const endpointUrl =
+      resolved.nativeLocalProviderAttachment?.endpointUrl ?? this.options.endpointUrl;
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
@@ -1900,7 +1911,7 @@ class SandboxStateFlow<
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
-      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...(endpointUrl ? { endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: this.options.endpointSource ?? null,
       ...(this.options.deferredN1xManagedVllmPreviewIntent === true

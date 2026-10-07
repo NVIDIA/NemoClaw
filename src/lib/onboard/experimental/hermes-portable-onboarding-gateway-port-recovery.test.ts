@@ -120,15 +120,10 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
       model: freshPortableInput.model,
       providerBaseUrl: baseUrl,
     });
-    expect(
-      mutation.upsertProvider!(
-        freshPortableInput.provider,
-        "openai",
-        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-        baseUrl,
-        { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
-      ),
-    ).toMatchObject({ ok: true });
+    expect(await mutation.registerNativeProvider!()).toMatchObject({
+      provider: "ollama-local",
+      sandboxName: freshPortableInput.sandboxName,
+    });
     await mutation.commit();
     preparedStartup.prepared.commit();
     const transactionRoot = path.join(fixture.resolverOptions.stateDir, "portable-inference");
@@ -215,7 +210,9 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     const runner = require("../../runner") as typeof import("../../runner");
     vi.spyOn(runner, "run").mockImplementation((command, options) => {
       const args = Array.isArray(command) ? command.map(String) : [String(command)];
-      const providerIndex = args.indexOf("provider");
+      const providerIndex = args.findIndex((arg) =>
+        ["provider", "settings", "policy"].includes(arg),
+      );
       expect(
         providerIndex,
         `Unexpected onboarding command: ${args.join(" ")}`,
@@ -262,7 +259,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     vi.spyOn(setup, "createSetupInference").mockImplementation(
       (deps) =>
         createDirectSetupInferenceHarnessFactory((overrides) =>
-          createSetup({ ...deps, ...overrides }),
+          createSetup({ ...deps, ...overrides, requireNativeProviderPolicy: async () => {} }),
         )({ overrides: { error: deps.error, log: deps.log } }).setupInference,
     );
     const core =

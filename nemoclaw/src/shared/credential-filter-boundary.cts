@@ -132,6 +132,7 @@ const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   // Hermes requires an sk-prefixed value in its config, but OpenShell replaces
   // this reserved non-secret sentinel at the proxy boundary before inference.
   "sk-OPENSHELL-PROXY-REWRITE",
+  "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
   CREDENTIAL_PLACEHOLDER,
 ]);
 

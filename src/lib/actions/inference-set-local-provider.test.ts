@@ -19,14 +19,23 @@ describe("runInferenceSet local-provider verification", () => {
     },
   });
 
-  it("forces --no-verify for a local provider whose host validation passes", async () => {
+  it("uses a native sandbox request without changing the gateway route (#12558)", async () => {
     const deps = createDeps({ config: localConfig(), session: baseSession() });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
     expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).toContain("--no-verify");
+    expect(deps.calls.captureOpenshell.mock.calls.some(([args]) => args[0] === "inference")).toBe(
+      false,
+    );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        nativeLocalProviderAttachment: expect.objectContaining({
+          endpointUrl: "http://host.openshell.internal:11435/v1",
+        }),
+      }),
+    );
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
   });
 
@@ -43,7 +52,7 @@ describe("runInferenceSet local-provider verification", () => {
       .map((call) => call[0])
       .flat()
       .map(String);
-    expect(openshellArgs).toContain("ollama-local");
+    expect(openshellArgs).not.toContain("inference");
     expect(openshellArgs).not.toContain("ollama_local");
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
@@ -51,7 +60,7 @@ describe("runInferenceSet local-provider verification", () => {
     );
   });
 
-  it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
+  it("requires a sandbox-native probe when host reachability recovers (#12558)", async () => {
     const deps = createDeps({
       config: localConfig(),
       session: baseSession(),
@@ -66,8 +75,17 @@ describe("runInferenceSet local-provider verification", () => {
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
     expect(deps.calls.ensureLocalProviderReachable).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).toContain("--no-verify");
+    expect(deps.calls.captureOpenshell.mock.calls.some(([args]) => args[0] === "inference")).toBe(
+      false,
+    );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        nativeLocalProviderAttachment: expect.objectContaining({
+          endpointUrl: "http://host.openshell.internal:11435/v1",
+        }),
+      }),
+    );
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
     expect(logged).toMatch(/reachable/);
   });
@@ -88,6 +106,19 @@ describe("runInferenceSet local-provider verification", () => {
     ).rejects.toThrow(/Cannot reach local provider 'ollama-local'/);
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not change selection when the gateway prerequisite is missing (#12558)", async () => {
+    const deps = createDeps({ config: localConfig(), session: baseSession() });
+    deps.requireNativeProviderPolicy = async () => {
+      throw new Error("composition disabled");
+    };
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps),
+    ).rejects.toThrow("composition disabled");
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it("does not run local validation or force --no-verify for cloud providers", async () => {

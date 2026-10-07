@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAttachment } from "../inference/native-local/contract";
+
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
@@ -69,6 +71,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
@@ -208,6 +211,11 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    input.nativeLocalProviderAttachment,
+  );
+  if (input.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment)
+    throw new Error("Invalid native local provider attachment.");
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     input.nativeNvidiaProviderAttachment,
   );
@@ -265,6 +273,7 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
@@ -341,6 +350,8 @@ export function prepareCreatedSandboxRegistration(
     input.hostLocalInferenceProvenance !== undefined
       ? input.hostLocalInferenceProvenance
       : pending?.hostLocalInferenceProvenance;
+  const pendingNativeLocalProviderAttachment =
+    input.nativeLocalProviderAttachment ?? pending?.nativeLocalProviderAttachment;
   const pendingNativeNvidiaProviderAttachment =
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
@@ -356,6 +367,9 @@ export function prepareCreatedSandboxRegistration(
     ...(pendingHostLocalInferenceProvenance === undefined
       ? {}
       : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
+    ...(pendingNativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: pendingNativeLocalProviderAttachment }
+      : {}),
     ...(pendingNativeNvidiaProviderAttachment === undefined
       ? {}
       : { nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment }),

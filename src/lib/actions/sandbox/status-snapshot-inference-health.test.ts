@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
@@ -50,6 +51,66 @@ function snapshotDeps(
 }
 
 describe("collectSandboxStatusSnapshot inference route health", () => {
+  it.each([true, false])(
+    "reports native local attachment health without querying the shared route: %s (#12558)",
+    async (attached) => {
+      const binding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned-local-provider",
+      };
+      const options = snapshotDeps(
+        null,
+        null,
+        { ok: true },
+        {
+          provider: binding.provider,
+          gatewayName: binding.gatewayName,
+          nativeLocalProviderAttachment: receipt,
+        },
+      );
+      const observeInferenceRoute = vi.fn();
+      const verifyNativeLocalProviderAttachmentImpl = vi.fn();
+      verifyNativeLocalProviderAttachmentImpl.mockImplementation(
+        attached
+          ? async () => undefined
+          : async () => {
+              throw new Error("attachment missing");
+            },
+      );
+      const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true as const }));
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          inferenceRouteObserver: { observeInferenceRoute },
+          verifyNativeLocalProviderAttachmentImpl,
+          probeSandboxInferenceInvocationImpl,
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: attached,
+        endpoint: expect.stringContaining(binding.endpointUrl),
+      });
+      expect(observeInferenceRoute).not.toHaveBeenCalled();
+      expect(verifyNativeLocalProviderAttachmentImpl).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        expected: receipt,
+      });
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(Number(attached));
+    },
+  );
+
   it("restores the guarded agent and host-forward chain before probing a Docker-recovered sandbox", async () => {
     const order: string[] = [];
     const gateway: SandboxInferenceRouteHealth = {

@@ -62,6 +62,7 @@ COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/agent-config.ts
 COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts

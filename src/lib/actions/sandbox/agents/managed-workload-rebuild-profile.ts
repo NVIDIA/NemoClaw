@@ -93,6 +93,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
     resumeConfig.provider,
     resumeConfig.model,
     resumeConfig.preferredInferenceApi,
+    resumeConfig.nativeLocalProviderAttachment?.endpointUrl,
   );
   const upstreamProvider =
     agent === "hermes" && resumeConfig.provider === "hermes-provider"

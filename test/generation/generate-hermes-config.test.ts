@@ -253,6 +253,20 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
+  const localDir = path.join(fixtureRoot, "src", "lib", "inference", "native-local");
+  fs.mkdirSync(localDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(
+      import.meta.dirname,
+      "../..",
+      "src",
+      "lib",
+      "inference",
+      "native-local",
+      "agent-config.ts",
+    ),
+    path.join(localDir, "agent-config.ts"),
+  );
   return fixtureScriptPath;
 }
 
@@ -314,6 +328,25 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
+    "writes the selected native endpoint and opaque credential for %s (#12558)",
+    (provider) => {
+      const { config, envFile } = runConfigScript({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_MODEL: "local-model",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+        OPENAI_API_KEY: "ambient-secret-must-not-escape",
+      });
+      expect(config.model).toMatchObject({
+        default: "local-model",
+        base_url: "http://host.openshell.internal:11434/v1",
+        api_key: "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      });
+      expect(JSON.stringify(config) + envFile).not.toContain("ambient-secret-must-not-escape");
+    },
+  );
+
   it(
     "matches direct generation as a strip-types executable with an explicit gateway matrix",
     async () => {

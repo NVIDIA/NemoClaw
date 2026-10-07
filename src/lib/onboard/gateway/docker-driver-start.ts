@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { initializeNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+import { captureSanitizedResolvedOpenshellAsync } from "../../adapters/openshell/sanitized-capture";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +43,7 @@ type DynamicGatewayHelpers = ReturnType<
 >;
 
 export interface DockerDriverGatewayStartDeps {
+  initializeNativeProviderPolicy?: typeof initializeNativeProviderPolicy;
   observer: import("../../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   SUPPORTED_OPENSHELL_FALLBACK_VERSION: string;
   checkGatewayPortAvailable(): Promise<import("../preflight").PortProbeResult>;
@@ -203,7 +206,7 @@ export function createDockerDriverGatewayStart(
     const runtimeOptions = selectedRuntimeEnv
       ? {
           env: selectedRuntimeEnv,
-          replaceEnv: true,
+          replaceEnv: true as const,
         }
       : {};
     const runCaptureOpenshell: DockerDriverGatewayStartDeps["runCaptureOpenshell"] = (
@@ -240,6 +243,19 @@ export function createDockerDriverGatewayStart(
           },
         );
       }
+      // A restart or partially initialized gateway is existing state. Never
+      // activate attached profiles there as a side effect of onboarding.
+      const freshState = ["openshell.db", "openshell-gateway.toml", "runtime.json", "jwt"].every(
+        (name) => {
+          try {
+            fs.lstatSync(path.join(stateDir, name));
+            return false;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+            throw error;
+          }
+        },
+      );
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
       const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
@@ -265,6 +281,21 @@ export function createDockerDriverGatewayStart(
       const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
       const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
       const initialPortCheck = await deps.checkGatewayPortAvailable();
+      const initializeFreshGateway = async () => {
+        if (!freshState || !initialPortCheck.ok || initialPortCheck.warning) return;
+        await (deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy)(
+          deps.gatewayName(),
+          (args) =>
+            captureSanitizedResolvedOpenshellAsync(args, {
+              ...runtimeOptions,
+              ignoreError: true,
+              includeStreams: true,
+              includeStderr: true,
+              timeout: 30_000,
+              outputLimitBytes: 65_536,
+            }),
+        );
+      };
       const servicePortOwnership = deps.createGatewayServicePortOwnership(initialPortCheck, {
         exitOnFailure,
         gatewayBin: identityGatewayBin,
@@ -381,7 +412,10 @@ export function createDockerDriverGatewayStart(
             },
           ),
       );
-      if (cutover !== "launch") return;
+      if (cutover !== "launch") {
+        if (cutover === "managed") await initializeFreshGateway();
+        return;
+      }
       if (!gatewayBin || !gatewayLaunch) {
         throw new Error("OpenShell gateway launch missing after cutover");
       }
@@ -438,6 +472,7 @@ export function createDockerDriverGatewayStart(
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {
+        await initializeFreshGateway();
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }

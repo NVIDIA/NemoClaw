@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
+
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
@@ -22,6 +24,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
+  "nativeLocalProviderAttachment",
   "nativeNvidiaProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",
@@ -82,6 +85,11 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
     return false;
   }
+  if (
+    entry.nativeLocalProviderAttachment !== undefined &&
+    !normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)
+  )
+    return false;
   if (
     entry.nativeNvidiaProviderAttachment !== undefined &&
     !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
@@ -188,11 +196,13 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 
 /** True when an entry participates in the inference route shared by its gateway. */
 export function isSharedGatewayRouteParticipant(entry: {
+  nativeLocalProviderAttachment?: unknown;
   pendingRouteReservation?: true;
   createdAt?: string;
   provider?: string | null;
   model?: string | null;
 }): boolean {
+  if (normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)) return false;
   if (isPublishedSandboxRegistration(entry)) return true;
   return (
     isRouteOnlySandboxReservation(entry) &&
@@ -348,3 +358,5 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
     )
   );
 }
+
+export { normalizeNativeLocalProviderAttachment };

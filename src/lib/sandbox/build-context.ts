@@ -131,6 +131,7 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
     "extra-agents-validation.ts",
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
+    path.join("inference", "native-local", "agent-config.ts"),
     path.join("security", "credential-hash.ts"),
     path.join("state", "paths.ts"),
     path.join("state", "state-root.ts"),

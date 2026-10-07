@@ -43,7 +43,11 @@ import {
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
-import { ExportSourceValuesSchema, exportWebSearchBinding } from "./export-evidence";
+import {
+  ExportSourceValuesSchema,
+  exportWebSearchBinding,
+  exportNativeInferenceReceipt,
+} from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
@@ -545,6 +549,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.provider,
     selected.model,
     selected.preferredInferenceApi,
+    entry.nativeLocalProviderAttachment?.endpointUrl,
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   const search = exportWebSearchBinding(entry);
@@ -809,40 +814,86 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
+function nativeNvidiaEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (!evidence || evidence.source.kind !== "managed-profile") return false;
+  const receipt = normalizeNativeNvidiaProviderAttachment(
+    snapshot.registry.nativeNvidiaProviderAttachment,
+  );
+  return (
+    receipt !== undefined &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        receipt.providerName,
+        receipt.providerId,
+        NVIDIA_HOSTED_LOGICAL_PROVIDER,
+        "openai-completions",
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_CREDENTIAL_ENV,
+      ],
+    )
+  );
+}
+
+function nativeLocalEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (!evidence || evidence.source.kind !== "managed-profile") return false;
+  const receipt = exportNativeInferenceReceipt(snapshot.registry);
+  return (
+    receipt != null &&
+    "endpointUrl" in receipt &&
+    (receipt.provider === "ollama-local" || receipt.provider === "vllm-local") &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.managedProfile?.id,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+        snapshot.registry.name,
+        snapshot.gateway.name,
+      ],
+      [
+        receipt.profileId,
+        receipt.profileId,
+        receipt.providerName,
+        receipt.providerId,
+        receipt.provider,
+        "openai-completions",
+        receipt.endpointUrl,
+        receipt.endpointUrl,
+        receipt.sandboxName,
+        receipt.gatewayName,
+      ],
+    )
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
-  if (evidence.source.kind === "managed-profile") {
-    const receipt = normalizeNativeNvidiaProviderAttachment(
-      snapshot.registry.nativeNvidiaProviderAttachment,
-    );
-    return (
-      receipt !== undefined &&
-      isDeepStrictEqual(
-        [
-          evidence.source.profileId,
-          evidence.provider.name,
-          evidence.provider.id,
-          inference.provider,
-          inference.api,
-          inference.endpoint,
-          evidence.endpoint,
-          inference.credentialEnv,
-        ],
-        [
-          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          receipt.providerName,
-          receipt.providerId,
-          NVIDIA_HOSTED_LOGICAL_PROVIDER,
-          "openai-completions",
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_CREDENTIAL_ENV,
-        ],
-      )
-    );
-  }
+  if (snapshot.registry.nativeLocalProviderAttachment !== undefined)
+    return nativeLocalEndpointEvidenceMatches(snapshot);
+  if (evidence.source.kind === "managed-profile")
+    return nativeNvidiaEndpointEvidenceMatches(snapshot);
   if (evidence.source.kind === "builtin-profile") {
     return (
       inference.credentialEnv !== null &&
@@ -916,9 +967,8 @@ function validateSandboxIdentity(
 
 function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
-  const nativeReceipt = normalizeNativeNvidiaProviderAttachment(
-    entry.nativeNvidiaProviderAttachment,
-  );
+  const nativeReceipt = exportNativeInferenceReceipt(entry);
+  if (nativeReceipt === null) return false;
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
   const webSearch = exportWebSearchBinding(entry);
@@ -1230,8 +1280,7 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 
 function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
   return (
-    normalizeNativeNvidiaProviderAttachment(snapshot.registry.nativeNvidiaProviderAttachment)
-      ?.providerName ?? snapshot.inference.provider
+    exportNativeInferenceReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider
   );
 }
 

@@ -6,6 +6,7 @@
  * All functions are pure.
  */
 
+import { nativeLocalCredentialReference } from "./native-local/agent-config";
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import {
   isSafeLlamaCppServedModelAlias,
@@ -20,7 +21,8 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
-export { isSafeModelId };
+export { isSafeModelId, nativeLocalCredentialReference };
+export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export {
   detachNativeNvidiaProvider,
@@ -331,6 +333,7 @@ export function getSandboxInferenceConfig(
   model: string,
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
+  nativeEndpointUrl: string | null = null,
 ): SandboxInferenceConfig {
   let providerKey: string;
   let primaryModelRef: string;
@@ -418,6 +421,10 @@ export function getSandboxInferenceConfig(
       break;
   }
 
+  if (nativeEndpointUrl && nativeLocalCredentialReference(provider, nativeEndpointUrl)) {
+    inferenceBaseUrl = nativeEndpointUrl;
+    inferenceApi = "openai-completions";
+  }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 

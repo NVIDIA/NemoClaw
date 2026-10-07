@@ -826,7 +826,9 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
+  const nativeNvidia =
+    Boolean(getNativeNvidiaProviderAttachment(entry)) ||
+    entry.nativeLocalProviderAttachment !== undefined;
   let liveInference: { provider: string; model: string } | null = null;
   if (!nativeNvidia) {
     const inferenceGetStartedAt = performance.now();

@@ -407,6 +407,7 @@ async function resolveInferenceRoute(
     agentName: sb?.agent,
     ...(recordedNativeNvidia
       ? {
+          nativeLocalProviderAttachment: sb?.nativeLocalProviderAttachment,
           nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(
             sb?.nativeNvidiaProviderAttachment,
           ),
