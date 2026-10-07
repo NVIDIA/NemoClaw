@@ -159,6 +159,7 @@ COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/s
 COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py
 COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py
 COPY agents/langchain-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py
+COPY agents/langchain-deepagents-code/validate-quickjs-runtime.py /usr/local/lib/nemoclaw/validate-quickjs-runtime.py
 # SECURITY: copy only the two hash-verified plugin inputs, never the source directory.
 COPY agents/langchain-deepagents-code/profile-plugin/pyproject.toml /opt/nemoclaw-deepagents-profile-plugin/
 COPY agents/langchain-deepagents-code/profile-plugin/src/nemoclaw_deepagents_profile/__init__.py /opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/
@@ -188,7 +189,7 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # regressionTest: the stripped-base gate must reach this marker, then fail import.
 # removalCondition: remove when installation validates dependencies atomically.
 # hadolint ignore=DL4006
-RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
+RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py /usr/local/lib/nemoclaw/validate-quickjs-runtime.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -205,7 +206,7 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && /opt/venv/bin/pip3 check \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
-    && /opt/venv/bin/python3 -I -c 'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close()' \
+    && timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py \
     && rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
