@@ -31,6 +31,7 @@ const nativeSafeRestart = `async function runSafeGatewayRestart(opts, target) {
 function restartHarness(
   options: {
     sandbox?: boolean;
+    native?: boolean;
     container?: boolean;
     platform?: string;
     supervisor?: string;
@@ -62,13 +63,22 @@ function restartHarness(
     isContainerEnvironment: () => options.container !== false,
   });
   const restart = vm.runInContext(
-    `${patchContainerRestart(nativeRestart)}; restartGatewayProcessWithFreshPid`,
+    `${options.native ? nativeRestart : patchContainerRestart(nativeRestart)}; restartGatewayProcessWithFreshPid`,
     context,
   );
   return { restart, execve, processStub };
 }
 
 describe("OpenClaw sandbox restart patch", () => {
+  it("O06 stops replacing the process when the container restart patch is omitted (#11763)", () => {
+    const native = restartHarness({ native: true });
+    expect(native.restart().mode).toBe("disabled");
+    expect(native.execve).not.toHaveBeenCalled();
+    const managed = restartHarness();
+    expect(() => managed.restart()).toThrow("replaced");
+    expect(managed.execve).toHaveBeenCalledOnce();
+  });
+
   it.each([
     [{ OPENSHELL_SANDBOX: "1", NEMOCLAW_OPENCLAW_HOST_RESTART: "1" }, true],
     [{ OPENSHELL_SANDBOX: "1" }, false],

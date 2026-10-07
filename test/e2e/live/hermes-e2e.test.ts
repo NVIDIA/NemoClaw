@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -319,6 +320,13 @@ test(
       env,
       redactionValues,
       timeoutMs: execTimeout(60 * 60_000),
+    });
+    await captureSandboxFailureDiagnostics(host, install, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-2-hermes-startup-failure",
+      redactionValues,
+      captureGatewayLog: true,
+      env,
     });
     await (install.exitCode === 0
       ? Promise.resolve()

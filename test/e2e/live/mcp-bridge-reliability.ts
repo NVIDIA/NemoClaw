@@ -108,7 +108,15 @@ export async function addBridgeAndReadStatus(
     policy: { name: `mcp-bridge-${serverName}`, present: true, state: "configured" },
     adapter: { registered: true },
   });
-  expect(statusJson.warnings).toEqual([]);
+  // Public tunnel DNS can change between add and status. Require the exact
+  // drift warning when reported; all other warnings still fail this check.
+  expect(statusJson.warnings).toEqual(
+    statusJson.publicTarget?.state === "drift"
+      ? [
+          "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
+        ]
+      : [],
+  );
   expect(status.stdout).not.toContain(credential);
   expect(statusJson.provider.name).toBe(`${options.sandboxName}-mcp-${serverName}`);
 

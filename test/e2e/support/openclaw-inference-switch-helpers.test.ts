@@ -1,17 +1,97 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   agentReplyContainsToken,
   anthropicToolCount,
   classifyOpenClawPostSwitchInferenceAttempt,
+  gatewayOwnerProbeSource,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+function runGatewayOwnerProbe(
+  observations: unknown[],
+  options: { previousOwnerId?: string; timeoutMs?: number; modules?: number } = {},
+) {
+  const distDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-owner-probe-"));
+  try {
+    fs.writeFileSync(path.join(distDir, "package.json"), '{"type":"module"}');
+    const reader = `const observations = ${JSON.stringify(observations)};
+let index = 0;
+export async function readActiveGatewayLockIdentity(options) {
+  if (options.requireInspection !== true) throw new Error("Inspection is required");
+  return observations[Math.min(index++, observations.length - 1)];
+}`;
+    fs.writeFileSync(
+      path.join(distDir, options.modules === 0 ? "unrelated.js" : "gateway-lock-public.js"),
+      reader,
+    );
+    fs.writeFileSync(
+      path.join(distDir, "gateway-lock-internal.js"),
+      options.modules === 2 ? reader : "export const internal = true;",
+    );
+    return spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        gatewayOwnerProbeSource({
+          distDir,
+          previousOwnerId: options.previousOwnerId,
+          timeoutMs: options.timeoutMs ?? 0,
+        }),
+      ],
+      { encoding: "utf8", timeout: 5_000, env: { PATH: process.env.PATH } },
+    );
+  } finally {
+    fs.rmSync(distDir, { recursive: true, force: true });
+  }
+}
+
+describe("OpenClaw gateway restart identity", () => {
+  it("records an inspected native gateway before the switch", () => {
+    const identity = { ownerId: "initial-owner", pid: 17, port: 18789 };
+    const result = runGatewayOwnerProbe([identity]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(identity);
+  });
+
+  it("waits through the old owner and missing lease for a new owner with the same PID", () => {
+    const identity = { ownerId: "new-owner", pid: 17, port: 18789 };
+    const result = runGatewayOwnerProbe([{ ...identity, ownerId: "old-owner" }, null, identity], {
+      previousOwnerId: "old-owner",
+      timeoutMs: 2_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(identity);
+  });
+
+  it.each([null, {}, { ownerId: "" }, { ownerId: "old-owner", pid: 999 }])(
+    "refuses missing or unchanged owner evidence: %j",
+    (identity) => {
+      const result = runGatewayOwnerProbe([identity], { previousOwnerId: "old-owner" });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Gateway owner did not become ready or change");
+    },
+  );
+
+  it.each([0, 2])("refuses %i native identity readers", (modules) => {
+    const result = runGatewayOwnerProbe([{ ownerId: "new-owner" }], { modules });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

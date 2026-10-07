@@ -19,6 +19,16 @@ function sqliteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+function sessionBlobContainsCredential(value: Uint8Array): boolean {
+  // quickjs-rs 0.2.5 checkpoints include this NUL-delimited engine diagnostic.
+  // Its printf format is public code, not a token assignment. Normalize only
+  // that exact constant; scan the rest of the interpreter memory as before.
+  const text = Buffer.from(value)
+    .toString("utf8")
+    .replaceAll("\0unexpected token: '%.*s'\0", "\0unexpected syntax: '%.*s'\0");
+  return textContainsCredential(text);
+}
+
 /** Inspect logical SQLite values so record framing cannot create token-shaped byte sequences. */
 function databaseContainsCredential(databasePath: string): boolean | null {
   let database: DatabaseSync | null = null;
@@ -46,8 +56,7 @@ function databaseContainsCredential(databasePath: string): boolean | null {
         for (const value of Object.values(row)) {
           if (
             (typeof value === "string" && textContainsCredential(value)) ||
-            (value instanceof Uint8Array &&
-              textContainsCredential(Buffer.from(value).toString("utf8")))
+            (value instanceof Uint8Array && sessionBlobContainsCredential(value))
           ) {
             return true;
           }

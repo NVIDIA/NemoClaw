@@ -38,13 +38,13 @@ dcode_secret_probe_runtime_env() {
   # Keep secret injection, output capture, cleanup, and status reporting atomic.
   local fake_secret_q remote_cmd
   printf -v fake_secret_q '%q' "$FAKE_SECRET"
-  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); env OPENAI_API_KEY=${fake_secret_q} dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  remote_cmd="audit_start=\$(date +%s.%3N); tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); env OPENAI_API_KEY=${fake_secret_q} dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; audit_end=\$(date +%s.%3N); cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; printf 'DCODE_AUDIT_START:%s\\nDCODE_AUDIT_END:%s\\n' \"\$audit_start\" \"\$audit_end\"; exit 0"
   sandbox_exec "$remote_cmd"
 }
 
 dcode_secret_probe_env_file() {
   local remote_cmd
-  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  remote_cmd="audit_start=\$(date +%s.%3N); tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; audit_end=\$(date +%s.%3N); cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; printf 'DCODE_AUDIT_START:%s\\nDCODE_AUDIT_END:%s\\n' \"\$audit_start\" \"\$audit_end\"; exit 0"
   sandbox_exec "$remote_cmd"
 }
 
@@ -76,25 +76,60 @@ enable_openshell_audit_logs() {
 }
 
 openshell_audit_logs_since_epoch() {
-  local start_epoch="$1"
-  local output=""
-
-  if ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>&1)"; then
-    printf 'AUDIT_LOG_READ:0\n%s\n' "$output"
+  local start_epoch="$1" end_epoch="$2"
+  local output="" filtered="" attempt parse_status
+  if [[ ! "$start_epoch" =~ ^[0-9]+\.[0-9]{3}$ || ! "$end_epoch" =~ ^[0-9]+\.[0-9]{3}$ ]] \
+    || ! awk -v start="$start_epoch" -v end="$end_epoch" 'BEGIN { exit !(end >= start) }'; then
+    printf 'AUDIT_LOG_READ:0\nInvalid probe timestamps\n'
     return 0
   fi
 
-  printf 'AUDIT_LOG_READ:1\n'
-  printf '%s\n' "$output" | awk -v start="$start_epoch" '
-    /^\[[0-9]+(\.[0-9]+)?\]/ {
-      close = index($0, "]");
-      ts = substr($0, 2, close - 2) + 0;
-      keep = ts >= start;
-      if (keep) print;
-      next;
-    }
-    keep { print; }
-  '
+  # OpenShell 0.0.116 stamps events before enqueue and flushes every 500 ms.
+  # The log-marker read after the probe opens another SSH relay. Wait for that
+  # later control record rather than accepting an empty, not-yet-flushed page.
+  # This is a bounded read-only observation, never a retry of the secret probe.
+  for attempt in {1..20}; do
+    if ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>&1)"; then
+      printf 'AUDIT_LOG_READ:0\n%s\n' "$output"
+      return 0
+    fi
+    if filtered="$(printf '%s\n' "$output" | awk -v start="$start_epoch" -v end="$end_epoch" '
+      /^\[[0-9]+(\.[0-9]+)?\]/ {
+        rows++;
+        bracket_end = index($0, "]");
+        ts = substr($0, 2, bracket_end - 2) + 0;
+        if (ts <= start) before = 1;
+        keep = ts >= start;
+        # Exclude only the complete fixed SSH control-transport record.
+        ssh_relay = $0 ~ /^\[[0-9]+(\.[0-9]+)?\] \[sandbox\] \[OCSF \] \[ocsf\] NET:OPEN \[INFO\] \[msg:ssh relay open \(channel_id=[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}, target=unix:\/run\/openshell\/ssh\.sock\)\]$/;
+        if (ssh_relay && ts > end) after = 1;
+        if (keep && !ssh_relay) print;
+        next;
+      }
+      keep { print; }
+      END {
+        exit (before && after && rows < 500) ? 0 : 3;
+      }
+    ')"; then
+      printf 'AUDIT_LOG_READ:1\n%s\n' "$filtered"
+      return 0
+    else
+      parse_status=$?
+      if [ "$parse_status" -ne 3 ]; then
+        printf 'AUDIT_LOG_READ:0\n'
+        return 0
+      fi
+    fi
+    if [ "$attempt" -lt 20 ]; then sleep 0.5; fi
+  done
+  printf 'AUDIT_LOG_READ:0\nAudit interval was incomplete or truncated\n%s\n' "$filtered"
+}
+
+probe_audit_logs() {
+  local probe_output="$1" start_epoch end_epoch
+  start_epoch="$(printf '%s\n' "$probe_output" | sed -n 's/^DCODE_AUDIT_START://p')"
+  end_epoch="$(printf '%s\n' "$probe_output" | sed -n 's/^DCODE_AUDIT_END://p')"
+  openshell_audit_logs_since_epoch "$start_epoch" "$end_epoch"
 }
 
 restore_env_file() {
@@ -178,6 +213,19 @@ assert_no_rejected_interval_audit_logs() {
 PASSED=0
 FAILED=0
 
+if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "audit-logs" ]; then
+  audit_logs="$(openshell_audit_logs_since_epoch "${AUDIT_TEST_START:-100.123}" "${AUDIT_TEST_END:-100.456}" || true)"
+  assert_no_rejected_interval_audit_logs "self-test" "$audit_logs"
+  exit "$FAILED"
+fi
+
+if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "probe-timestamps" ]; then
+  sandbox_exec() { bash -c "$1"; }
+  dcode_secret_probe_runtime_env
+  dcode_secret_probe_env_file
+  exit 0
+fi
+
 if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "probe-command-shape" ]; then
   sandbox_exec() {
     case "$1" in
@@ -204,11 +252,10 @@ info "Running Deep Agents Code secret-boundary checks in sandbox: $SANDBOX_NAME"
 enable_openshell_audit_logs
 
 runtime_log_marker="$(make_log_marker runtime-env)"
-runtime_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$runtime_log_marker"
 runtime_output="$(dcode_secret_probe_runtime_env || true)"
 runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
-runtime_audit_logs="$(openshell_audit_logs_since_epoch "$runtime_audit_start" || true)"
+runtime_audit_logs="$(probe_audit_logs "$runtime_output" || true)"
 assert_secret_rejected "runtime environment injection" "$runtime_output" "OPENAI_API_KEY"
 assert_no_rejected_interval_network_logs "runtime environment injection" "$runtime_logs"
 assert_no_rejected_interval_audit_logs "runtime environment injection" "$runtime_audit_logs"
@@ -222,11 +269,10 @@ trap restore_env_file EXIT
 sandbox_exec "printf '%s\n' OPENAI_API_KEY=${FAKE_SECRET@Q} >> ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null
 env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 env_log_marker="$(make_log_marker env-file)"
-env_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$env_log_marker"
 env_output="$(dcode_secret_probe_env_file || true)"
 env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"
-env_audit_logs="$(openshell_audit_logs_since_epoch "$env_audit_start" || true)"
+env_audit_logs="$(probe_audit_logs "$env_output" || true)"
 env_after_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 
 assert_secret_rejected "deepagents env file" "$env_output" "OPENAI_API_KEY"

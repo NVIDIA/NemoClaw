@@ -6,7 +6,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { HostCliClient } from "../fixtures/clients/index.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
+import { captureFailedGpuContainer } from "../live/hermes-gpu-startup.test.ts";
+
+// Register no live test: this suite executes only the captured diagnostic script.
+vi.mock("../fixtures/e2e-test.ts", async () => ({
+  expect: (await import("vitest")).expect,
+  test: vi.fn(),
+}));
 
 import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
@@ -90,6 +100,79 @@ describe("Hermes GPU startup scenario selection", () => {
 });
 
 describe("Hermes GPU startup failure diagnostics", () => {
+  it.each([
+    {
+      outcome: "found",
+      exitCode: 0,
+      calls: ["ps", "inspect", "top", "logs"],
+      output: "logs c1",
+      error: "",
+    },
+    {
+      outcome: "absent",
+      exitCode: 0,
+      calls: ["ps"],
+      output: "no runtime container found",
+      error: "",
+    },
+    {
+      outcome: "failed",
+      exitCode: 17,
+      calls: ["ps"],
+      output: "pre-rollback diagnostics directory unavailable",
+      error: "list-failed\n",
+    },
+  ])(
+    "preserves runtime arguments and reports $outcome containers",
+    async ({ outcome, exitCode, calls, output, error }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-gpu-diagnostics-"));
+      roots.push(root);
+      const runtime = path.join(root, "fake runtime");
+      const log = path.join(root, "calls");
+      writeExecutable(
+        runtime,
+        `#!/usr/bin/env bash
+set -eu
+test "$1" = --url
+test "$2" = 'unix:///runtime socket'
+shift 2
+test "$1" = container
+printf '%s\\n' "$2" >> "$RUNTIME_CALLS"
+case "$2" in
+  ps)
+    case "$RUNTIME_OUTCOME" in
+      found) printf '%s\\n' c1 ;;
+      failed) printf '%s\\n' list-failed >&2; exit 17 ;;
+    esac ;;
+  inspect|top|logs) printf '%s\\n' "$2 c1" ;;
+  *) exit 99 ;;
+esac
+`,
+      );
+      const command = vi.fn<HostCliClient["command"]>();
+      await captureFailedGpuContainer(
+        { command } as unknown as HostCliClient,
+        {
+          hostInvocation: () => ({ command: runtime, args: ["--url", "unix:///runtime socket"] }),
+        } as unknown as RuntimeProviderPrerequisite,
+        "",
+      );
+      expect(command).toHaveBeenCalledOnce();
+      const [executable, args = []] = command.mock.calls[0]!;
+      // Avoid host login profiles; retain the script and all positional arguments.
+      const result = spawnSync(executable, ["-c", ...args.slice(1)], {
+        encoding: "utf8",
+        timeout: 5000,
+        env: { ...process.env, RUNTIME_CALLS: log, RUNTIME_OUTCOME: outcome },
+      });
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual(calls);
+      expect(result.stdout.includes("no runtime container found")).toBe(outcome === "absent");
+      expect(result.stdout).toContain(output);
+      expect(result.stderr).toBe(error);
+    },
+  );
+
   it.each([
     [
       "recognizes native diagnostics",

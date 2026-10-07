@@ -821,6 +821,7 @@
         "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
+        "test/agents/openclaw/openclaw-container-restart-patch.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",

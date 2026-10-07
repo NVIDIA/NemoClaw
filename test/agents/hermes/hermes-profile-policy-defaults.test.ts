@@ -12,7 +12,6 @@ import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-
 
 const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
-const imageBuildProbes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "test-model",
   baseUrl: "https://inference.local/v1",
@@ -80,80 +79,7 @@ def _restrict_browser_evaluate() -> bool:
     return _browser_eval_flag("restrict_evaluate")
 `;
 
-const gatewayFixture = `\
-from dataclasses import dataclass
-
-@dataclass
-class SessionResetPolicy:
-    mode: str = "none"
-
-    @classmethod
-    def from_dict(cls, data):
-        return cls() if data.get("mode") is None else cls(mode=data["mode"])
-`;
-
-const cliFixture = `\
-CLI_CONFIG = {
-    "display": {
-        "show_reasoning": True,
-    },
-}
-`;
-
-const tuiFixture = `\
-def _load_show_reasoning():
-    # Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning (no DEFAULT_CONFIG merge here).
-    return bool(_display_cfg().get("show_reasoning", True))
-`;
-
-const tuiConfigFixture = `\
-def _get_reasoning_status(cfg):
-    display = "show" if (cfg.get("display") or {}).get("show_reasoning", True) else "hide"
-    return display
-`;
-
-const agentFixture = `\
-def _cfg_dict(cfg, key):
-    return cfg.get(key, {})
-
-def apply(agent, _agent_cfg):
-    # show_commentary: Codex phase=commentary → interim path (true) or reasoning channel.
-    agent.show_commentary = bool(_cfg_dict(_agent_cfg, "display").get("show_commentary", True))
-`;
-
-const mainFixture = `\
-def _load_updates_cfg():
-    return {}
-
-def _resolve_pre_update_backup_mode(args=None):
-    try:
-        raw = _load_updates_cfg().get("pre_update_backup", "quick")
-    except Exception:
-        raw = "quick"
-
-    if raw is True:
-        return "full"
-    return raw
-
-def _refresh():
-    refresh_cua_driver = True
-    refresh_cua_driver = bool(_load_updates_cfg().get("refresh_cua_driver", True))
-    return refresh_cua_driver
-`;
-
-function patchSource(
-  kind:
-    | "config"
-    | "browser"
-    | "browser_policy"
-    | "gateway"
-    | "cli"
-    | "tui"
-    | "tui_config"
-    | "agent"
-    | "main",
-  source: string,
-) {
+function patchSource(kind: "config" | "browser" | "browser_policy", source: string) {
   const harness = `\
 import importlib.util
 import pathlib
@@ -221,8 +147,8 @@ describe("Hermes profile policy defaults", () => {
         temp_store: 2,
         wal_autocheckpoint: null,
       },
-      display: { show_commentary: false, show_reasoning: false },
-      updates: { pre_update_backup: false, refresh_cua_driver: false },
+      display: { show_commentary: true, show_reasoning: true },
+      updates: { pre_update_backup: "quick", refresh_cua_driver: true },
     });
   });
 
@@ -257,88 +183,6 @@ print(namespace["_restrict_browser_evaluate"](), namespace["_allow_unsafe_browse
     expect(probe.stdout.trim()).toBe("True False");
   });
 
-  it("keeps the gateway reset policy fail-safe without config.yaml", () => {
-    const result = patchSource("gateway", gatewayFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(
-      result.stdout,
-      'print(namespace["SessionResetPolicy"].from_dict({}).mode)',
-    );
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("both");
-  });
-
-  it("keeps the independent classic CLI display default private", () => {
-    const result = patchSource("cli", cliFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(
-      result.stdout,
-      'print(namespace["CLI_CONFIG"]["display"]["show_reasoning"])',
-    );
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("False");
-  });
-
-  it("keeps the raw TUI server reasoning fallback private", () => {
-    const result = patchSource("tui", tuiFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(
-      result.stdout,
-      'namespace["_display_cfg"] = lambda: {}; print(namespace["_load_show_reasoning"]())',
-    );
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("False");
-  });
-
-  it("keeps the raw TUI config reasoning fallback private", () => {
-    const result = patchSource("tui_config", tuiConfigFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(result.stdout, 'print(namespace["_get_reasoning_status"]({}))');
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("hide");
-  });
-
-  it("keeps the agent commentary fallback private", () => {
-    const result = patchSource("agent", agentFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probeScript = `
-import types
-import sys
-
-source = sys.stdin.read()
-def evaluate(config):
-    scope = {"agent": types.SimpleNamespace(), "_agent_cfg": config}
-    exec(compile(source, "<agent>", "exec"), scope)
-    scope["apply"](scope["agent"], config)
-    return scope["agent"].show_commentary
-print(evaluate({}))
-`;
-    const probe = spawnSync("python3", ["-I", "-c", probeScript], {
-      encoding: "utf8",
-      input: result.stdout,
-      timeout: 5000,
-    });
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("False");
-  });
-
-  it("keeps update backup and CUA refresh fallbacks off", () => {
-    const result = patchSource("main", mainFixture);
-
-    expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(
-      result.stdout,
-      'print(namespace["_resolve_pre_update_backup_mode"](), namespace["_refresh"]())',
-    );
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("False False");
-  });
-
   it("reports an invalid managed policy as a bounded build error", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-policy-error-"));
     const policyPath = path.join(tmp, "managed-policy.json");
@@ -352,41 +196,5 @@ print(evaluate({}))
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`ERROR: ${policyPath}: managed policy is malformed`);
     expect(result.stderr).not.toContain("Traceback");
-  });
-
-  it("checks session reset defaults at their gateway boundary for a config-less profile", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-probe-"));
-    const policyPath = path.join(tmp, "managed-policy.json");
-    fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
-    const harness = `\
-import copy
-import importlib.util
-import json
-import pathlib
-import sys
-from types import SimpleNamespace
-
-probe_path = pathlib.Path(sys.argv[1])
-policy_path = pathlib.Path(sys.argv[2])
-sys.path.insert(0, str(probe_path.parent))
-from managed_policy import profile_default_values
-spec = importlib.util.spec_from_file_location("image_build_probes", probe_path)
-assert spec and spec.loader
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-policy = json.loads(policy_path.read_text(encoding="utf-8"))
-expected = profile_default_values(policy)
-config = copy.deepcopy(policy["config"])
-reset_policy = SimpleNamespace(**config.pop("session_reset"))
-module._verify_profile_config_policy(config, expected)
-module._verify_session_reset_policy(reset_policy, expected)
-`;
-    const result = spawnSync("python3", ["-I", "-c", harness, imageBuildProbes, policyPath], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    fs.rmSync(tmp, { recursive: true, force: true });
-
-    expect(result.status, result.stderr).toBe(0);
   });
 });

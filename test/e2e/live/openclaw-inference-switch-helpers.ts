@@ -9,6 +9,43 @@
 
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
 
+/** Observe the native gateway lease, which changes across an in-place execve restart. */
+export function gatewayOwnerProbeSource(
+  options: {
+    previousOwnerId?: string;
+    distDir?: string;
+    timeoutMs?: number;
+  } = {},
+): string {
+  return `
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { setTimeout } from "node:timers/promises";
+const dist = ${JSON.stringify(options.distDir ?? "/usr/local/lib/node_modules/openclaw/dist")};
+const previousOwnerId = ${JSON.stringify(options.previousOwnerId ?? null)};
+let readIdentity;
+for (const name of fs.readdirSync(dist).filter(name => /^gateway-lock-.*\\.js$/.test(name))) {
+  const api = await import(pathToFileURL(path.join(dist, name)).href);
+  if (typeof api.readActiveGatewayLockIdentity === "function") {
+    if (readIdentity) throw new Error("Ambiguous native gateway identity reader");
+    readIdentity = api.readActiveGatewayLockIdentity;
+  }
+}
+if (!readIdentity) throw new Error("Native gateway identity reader is unavailable");
+const deadline = Date.now() + ${options.timeoutMs ?? 60_000};
+while (true) {
+  const identity = await readIdentity({requireInspection: true});
+  if (typeof identity?.ownerId === "string" && identity.ownerId.length > 0 && identity.ownerId !== previousOwnerId) {
+    console.log(JSON.stringify(identity));
+    break;
+  }
+  if (Date.now() >= deadline) throw new Error("Gateway owner did not become ready or change after restart");
+  await setTimeout(250);
+}
+`;
+}
+
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
   httpStatus: string;

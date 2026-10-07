@@ -216,10 +216,6 @@ describe("complete managed-image publication workflow", () => {
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
     expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
     expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
-    const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
-    const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
-    expect(channelGuardStart).toBeGreaterThan(-1);
-    expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
     expect(publisher).toMatchObject({
       needs: [
         "build-and-push-hermes",

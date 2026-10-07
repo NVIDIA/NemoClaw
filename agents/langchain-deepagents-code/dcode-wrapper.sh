@@ -902,10 +902,6 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$managed_headless" = true ]; then
-  unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
-fi
-
 reject_managed_override() {
   local posture="$1"
   local arg="$2"
@@ -914,24 +910,11 @@ reject_managed_override() {
 }
 
 case "${1:-}" in
-  mcp)
-    reject_managed_override "MCP posture" "mcp"
-    ;;
   update | install)
     reject_managed_override "dependency update posture" "${1:-}"
     ;;
   auth)
     reject_managed_override "credential posture" "auth"
-    ;;
-  tools)
-    case "${2:-}" in
-      list | call-read-only | help | "" | -h | --help)
-        : # managed read-only subcommands pass through
-        ;;
-      *)
-        reject_managed_override "managed tool set posture" "tools ${2:-}"
-        ;;
-    esac
     ;;
 esac
 
@@ -949,13 +932,8 @@ for arg in "$@"; do
     --sandbox-setup | --sandbox-setup=*)
       reject_managed_override "sandbox isolation" "$arg"
       ;;
-    --mcp-config | --mcp-config=* | --trust-project-mcp | --no-mcp | --no-mcp=*)
-      reject_managed_override "MCP posture" "$arg"
-      ;;
-    --shell-allow-list | --shell-allow-list=* | -S | -S?*)
-      if [ "$managed_headless" = true ]; then
-        reject_managed_override "headless shell posture" "$arg"
-      fi
+    --model-p | --model-p=* | --model-pa | --model-pa=* | --model-par | --model-par=* | --model-para | --model-para=* | --model-param | --model-param=* | --model-params | --model-params=*)
+      reject_managed_override "model parameter posture" "$arg"
       ;;
     --u | --up | --upd | --upda | --updat | --update | --update=*)
       reject_managed_override "dependency update posture" "$arg"
@@ -966,34 +944,10 @@ for arg in "$@"; do
     --ins | --inst | --insta | --instal | --install | --install=*)
       reject_managed_override "dependency update posture" "$arg"
       ;;
-    --model-p | --model-p=* | --model-pa | --model-pa=* | --model-par | --model-par=* | --model-para | --model-para=* | --model-param | --model-param=* | --model-params | --model-params=*)
-      reject_managed_override "model parameter posture" "$arg"
-      ;;
-    --rubric-m | --rubric-m=* | --rubric-mo | --rubric-mo=* | --rubric-mod | --rubric-mod=* | --rubric-mode | --rubric-mode=* | --rubric-model | --rubric-model=*)
-      reject_managed_override "rubric model posture" "$arg"
-      ;;
-    --sta | --sta=* | --star | --star=* | --start | --start=* | --startu | --startu=* | --startup | --startup=* | --startup-*)
-      if [ "$managed_headless" = true ]; then
-        reject_managed_override "headless startup command posture" "$arg"
-      fi
-      ;;
-    --interpreter)
-      if [ "$managed_headless" = true ]; then
-        reject_managed_override "headless interpreter posture" "$arg"
-      fi
-      ;;
-    --interpreter-t | --interpreter-t=* | --interpreter-to | --interpreter-to=* | --interpreter-too | --interpreter-too=* | --interpreter-tool | --interpreter-tool=* | --interpreter-tools | --interpreter-tools=*)
-      if [ "$managed_headless" = true ]; then
-        reject_managed_override "headless interpreter posture" "$arg"
-      fi
-      ;;
     -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve | --yolo)
       if [ "$managed_headless" = true ] || [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
         reject_managed_override "tool approval posture" "$arg"
       fi
-      ;;
-    --acp)
-      reject_managed_override "ACP approval posture" "$arg"
       ;;
   esac
 done

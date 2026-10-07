@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -55,6 +56,7 @@ import {
   agentReplyContainsToken,
   anthropicToolCount,
   classifyOpenClawPostSwitchInferenceAttempt,
+  gatewayOwnerProbeSource,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
@@ -515,19 +517,6 @@ async function prepareCompatibleAnthropicSwitchBinding(
     env: commandEnv(home),
   });
   return binding;
-}
-
-async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
-  const result = await sandboxShell(
-    sandbox,
-    home,
-    'ps -eo pid=,comm=,args= 2>/dev/null | awk \'$2 != "sh" && $2 != "bash" && $2 != "awk" && $0 ~ /openclaw/ && $0 ~ /gateway run/ { print $1; exit }\' || true',
-    {
-      artifactName: "openclaw-gateway-pid",
-      timeoutMs: 30_000,
-    },
-  );
-  return result.stdout.trim();
 }
 
 async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
@@ -1097,7 +1086,7 @@ test(
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
-        "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
+        "OpenClaw gateway acquires a new native lease after the inference configuration changes",
         "OpenShell route points at the switched provider/model",
         "OpenClaw config reflects the switched inference API/model",
         "registry and onboard session record the switched provider/model",
@@ -1191,6 +1180,14 @@ test(
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
+    await captureSandboxFailureDiagnostics(host, onboard, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "onboard-openclaw-switch-failure",
+      redactionValues,
+      captureGatewayLog: true,
+      captureAgentGatewayLog: true,
+      env: commandEnv(home),
+    });
     const onboardText = resultText(onboard);
     if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
       await artifacts.target.complete({
@@ -1257,7 +1254,14 @@ test(
     expect(SWITCH_INFERENCE_API).toBe(
       apiFamilyChanges ? "anthropic-messages" : "openai-completions",
     );
-    const pidBefore = await openclawGatewayPid(sandbox, home);
+    const ownerBefore = await sandboxShell(
+      sandbox,
+      home,
+      `env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH HOME=/sandbox node --input-type=module <<'GATEWAY_OWNER'\n${gatewayOwnerProbeSource()}\nGATEWAY_OWNER`,
+      { artifactName: "gateway-owner-before-switch" },
+    );
+    expect(ownerBefore.exitCode, resultText(ownerBefore)).toBe(0);
+    const gatewayBefore = JSON.parse(ownerBefore.stdout) as { ownerId: string };
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1266,21 +1270,19 @@ test(
       artifacts,
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
-    expect(
-      resultText(switchResult).includes(
-        `Restarting the OpenClaw gateway in '${SANDBOX_NAME}' to apply the updated inference configuration`,
-      ),
-      `managed config restart marker mismatch: ${resultText(switchResult)}`,
-    ).toBe(true);
-
-    const pidAfter = await openclawGatewayPid(sandbox, home);
-    const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
-    if (gatewayPidStable !== null) {
-      expect(
-        gatewayPidStable,
-        `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
-      ).toBe(false);
-    }
+    // Native execve retains the PID. The live lease owner changes only when
+    // OpenClaw acquires a new gateway lease; a progress message cannot prove it.
+    const ownerAfter = await sandboxShell(
+      sandbox,
+      home,
+      `env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH HOME=/sandbox node --input-type=module <<'GATEWAY_OWNER'\n${gatewayOwnerProbeSource({ previousOwnerId: gatewayBefore.ownerId })}\nGATEWAY_OWNER`,
+      { artifactName: "gateway-owner-after-switch" },
+    );
+    expect(ownerAfter.exitCode, resultText(ownerAfter)).toBe(0);
+    await artifacts.writeJson("gateway-restart-identity.json", {
+      before: gatewayBefore,
+      after: JSON.parse(ownerAfter.stdout),
+    });
 
     progress.phase("inspect route configuration and recorded state");
     const route = await getRouteOutput(host, home);
@@ -1349,8 +1351,7 @@ test(
         customImageRouteSurvivedRebuild: true,
         customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
-        gatewayRestartExpected: true,
-        gatewayPidStable,
+        gatewayOwnerChanged: true,
         routeChecked: true,
         configChecked: true,
         registryAndSessionChecked: true,

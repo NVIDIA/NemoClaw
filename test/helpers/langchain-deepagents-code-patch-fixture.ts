@@ -226,9 +226,14 @@ class Parser:
         if command == "tools":
             index = argv.index("tools")
             tools_command = argv[index + 1] if len(argv) > index + 1 else None
+        mcp_command = None
+        if command == "mcp":
+            index = argv.index("mcp")
+            mcp_command = argv[index + 1] if len(argv) > index + 1 else None
         return SimpleNamespace(
             command=command,
             tools_command=tools_command,
+            mcp_command=mcp_command,
             update=any(arg.startswith("--u") for arg in argv),
             auto_update=any(arg.startswith("--auto-u") for arg in argv),
             install=("nvidia" if any(arg.startswith("--ins") for arg in argv) else None),

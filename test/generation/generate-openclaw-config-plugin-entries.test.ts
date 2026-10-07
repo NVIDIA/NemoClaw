@@ -13,7 +13,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildConfig,
-  MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
   MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   main,
 } from "../../scripts/generate-openclaw-config.mts";
@@ -35,14 +34,6 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "whatsapp", pluginId: "whatsapp" },
   { channelId: "msteams", pluginId: "msteams" },
   { channelId: "googlechat", pluginId: "googlechat" },
-] as const;
-const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "a2a", pluginId: "a2a" },
-  { channelId: "reef", pluginId: "reef" },
-] as const;
-const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
-  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
-  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
 
 function messagingPlanner(): MessagingWorkflowPlanner {
@@ -75,6 +66,21 @@ function messagingPlanner(): MessagingWorkflowPlanner {
 }
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
+  it("O09 leaves packaged channel activation unset without neutral image defaults (#11763)", () => {
+    const managed = buildConfig({ ...BASE_ENV, NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1" });
+    const nativeSelection = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0",
+    });
+    expect(managed.channels.telegram).toBeUndefined();
+    expect(managed.plugins.entries.telegram).toBeUndefined();
+    expect(nativeSelection.channels.telegram).toBeUndefined();
+    expect(nativeSelection.plugins.entries.telegram).toBeUndefined();
+    expect(nativeSelection.models).toEqual(managed.models);
+    expect(nativeSelection.gateway.auth).toEqual(managed.gateway.auth);
+    expect(nativeSelection.plugins.entries.bonjour).toBeUndefined();
+  });
+
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.nemoclaw).toEqual({ enabled: true });
@@ -84,7 +90,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
   it("omits stale disabled entries for optional bundled plugins", () => {
     const config = buildConfig({ ...BASE_ENV, NEMOCLAW_PROVIDER_KEY: "inference" });
-    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour", "nemoclaw"]);
+    expect(Object.keys(config.plugins.entries)).toEqual(["nemoclaw"]);
   });
 
   it("allows the enabled diagnostics plugin (#8975)", () => {
@@ -98,10 +104,10 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.allow).toBeUndefined();
   });
 
-  it("omits the stale acpx entry and disables bundled bonjour by default", () => {
+  it("leaves native acpx and bonjour defaults unset", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.acpx).toBeUndefined();
-    expect(config.plugins.entries.bonjour).toEqual({ enabled: false });
+    expect(config.plugins.entries.bonjour).toBeUndefined();
   });
 
   it("does not reference the uninstalled qqbot plugin", () => {
@@ -111,7 +117,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.entries.qqbot).toBeUndefined();
   });
 
-  it("keeps every managed-image plugin and channel explicitly inert before first start (#7744)", () => {
+  it("leaves native plugin and channel activation unset before first start (#7744)", () => {
     const config = buildConfig({
       ...BASE_ENV,
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
@@ -120,26 +126,27 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES).toEqual(
       EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
     );
-    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
-      EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
-    );
-    EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.forEach(({ channelId, pluginId }) => {
-      expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
-      expect(config.channels[channelId], channelId).toEqual({ enabled: false });
+    EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES.forEach(({ channelId, pluginId }) => {
+      expect(config.plugins.entries[pluginId], pluginId).toBeUndefined();
+      expect(config.channels[channelId], channelId).toBeUndefined();
+    });
+    ["a2a", "reef"].forEach((channelId) => {
+      expect(config.plugins.entries[channelId], channelId).toBeUndefined();
+      expect(config.channels[channelId], channelId).toBeUndefined();
     });
     ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
-      expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
+      expect(config.plugins.entries[pluginId], pluginId).toBeUndefined();
     });
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
-  it("removes active Telegram account and credential configuration while retaining its bundled inert capability (#9361)", async () => {
+  it("removes active Telegram account and credential configuration without overriding native activation (#9361)", async () => {
     const baseline = buildConfig({
       ...BASE_ENV,
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
-    expect(baseline.channels.telegram).toEqual({ enabled: false });
-    expect(baseline.plugins.entries.telegram).toEqual({ enabled: false });
+    expect(baseline.channels.telegram).toBeUndefined();
+    expect(baseline.plugins.entries.telegram).toBeUndefined();
 
     const planner = messagingPlanner();
     const addedPlan = await planner.buildPlan({
@@ -187,16 +194,16 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
     applyMessagingAgentRenderToObject(removed, removedPlan, "openclaw.json");
-    expect(removed.channels.telegram).toEqual({ enabled: false });
-    expect(removed.channels.telegram.accounts).toBeUndefined();
-    expect(JSON.stringify(removed.channels.telegram)).not.toContain("TELEGRAM_BOT_TOKEN");
-    expect(removed.plugins.entries.telegram).toEqual({ enabled: false });
+    expect(removed.channels.telegram).toBeUndefined();
+    expect(removed.channels.telegram?.accounts).toBeUndefined();
+    expect(JSON.stringify(removed.channels)).not.toContain("TELEGRAM_BOT_TOKEN");
+    expect(removed.plugins.entries.telegram).toBeUndefined();
     expect(removed.plugins.allow).toBeUndefined();
-    expect(removed.channels.discord).toEqual({ enabled: false });
-    expect(removed.plugins.entries.discord).toEqual({ enabled: false });
+    expect(removed.channels.discord).toBeUndefined();
+    expect(removed.plugins.entries.discord).toBeUndefined();
   });
 
-  it("preserves native plugin controls while explicitly disabling the managed-image channel (#7744, #11766)", () => {
+  it("preserves native plugin controls without overriding native channel activation (#7744, #11766)", () => {
     const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
     const originalEnvironment = { ...process.env };
     const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");
@@ -229,8 +236,8 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
       expect(config.plugins?.allow).toEqual(["openclaw-weixin"]);
-      expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
-      expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
+      expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
+      expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
     } finally {
       Object.keys(process.env).forEach((name) => {
         delete process.env[name];

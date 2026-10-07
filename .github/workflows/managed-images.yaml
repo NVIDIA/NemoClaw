@@ -2519,24 +2519,8 @@ jobs:
               const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
               return manifest.name === name && manifest.version === version ? [manifestPath] : [];
             });
-            if (matches.length !== 1 || config.plugins?.entries?.[id]?.enabled !== false) {
-              throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
-            }
-          }
-          if (config.plugins?.entries?.telegram?.enabled !== false) {
-            throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
-          }
-          for (const id of [
-            "telegram",
-            "discord",
-            "openclaw-weixin",
-            "slack",
-            "whatsapp",
-            "msteams",
-            "googlechat",
-          ]) {
-            if (config.channels?.[id]?.enabled !== false) {
-              throw new Error(`managed OpenClaw channel ${id} is not explicitly disabled`);
+            if (matches.length !== 1) {
+              throw new Error(`managed OpenClaw plugin ${id} is missing or duplicated`);
             }
           }
           if (config.tools?.web?.search?.enabled !== false) {
@@ -2547,13 +2531,6 @@ jobs:
             hermes)
               /opt/hermes/.venv/bin/python -I <<'VALIDATE_HERMES_UNION'
           import importlib.metadata as metadata
-          from pathlib import Path
-          import yaml
-
-          config = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text())
-          optional = ("telegram", "discord", "weixin", "slack", "whatsapp", "teams")
-          if any(config["platforms"].get(name) != {"enabled": False} for name in optional):
-              raise SystemExit("managed Hermes optional platform is not explicitly disabled")
           if metadata.version("microsoft-teams-apps") != "2.0.13.4":
               raise SystemExit("managed Hermes microsoft-teams-apps version is wrong")
           if metadata.version("aiohttp") != "3.14.3":

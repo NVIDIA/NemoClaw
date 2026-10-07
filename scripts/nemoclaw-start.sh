@@ -3343,22 +3343,6 @@ openclaw() {
           ;;
       esac
       ;;
-    agent)
-      # Block --local inside sandbox: it bypasses gateway protections and can
-      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
-      local _arg
-      for _arg in "$@"; do
-        if [ "$_arg" = "--local" ]; then
-          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
-          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
-          echo "network policy, inference auth) and can crash the sandbox." >&2
-          echo "" >&2
-          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
-          echo "  openclaw agent --agent main -m \"hello\"" >&2
-          return 1
-        fi
-      done
-      ;;
   esac
   case "$_nemoclaw_guard_request_handled" in
     1)

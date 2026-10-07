@@ -15,6 +15,43 @@ describe("managed MCP provider rewrite probe", () => {
   const stableCredentialId = "a".repeat(64);
 
   it.each([
+    ["deny", "HTTP/1.1 403 Forbidden", 0],
+    ["deny-strict", "HTTP/1.1 403 Forbidden", 0],
+    ["allow", "HTTP/1.1 403 Forbidden", 1],
+    ["deny", "getaddrinfo ENOTFOUND example.test", 1],
+    ["deny-strict", "getaddrinfo ENOTFOUND example.test", 1],
+    ["deny", "certificate verification failed", 1],
+    ["deny", "socket hang up", 1],
+  ])("requires a policy denial for %s: %s", (expectation, message, status) => {
+    const exits: number[] = [];
+    let onError: ((error: Error) => void) | undefined;
+    new vm.Script(MCP_PROVIDER_REWRITE_PROBE_SOURCE).runInNewContext(
+      {
+        URL,
+        Buffer,
+        console: { log() {}, error() {} },
+        process: {
+          argv: ["node", "probe", "https://example.test/mcp", "tools/list", expectation],
+          env: { FAKE_MCP_SECRET: "openshell:resolve:env:v1_FAKE_MCP_SECRET" },
+          exit: (code: number) => exits.push(code),
+        },
+        require: () => ({
+          request: () => ({
+            on: (_event: string, callback: (error: Error) => void) => {
+              onError = callback;
+            },
+            end: () => {
+              onError!(new Error(message));
+            },
+          }),
+        }),
+      },
+      { timeout: 1000 },
+    );
+    expect(exits).toEqual([status]);
+  });
+
+  it.each([
     "openshell:resolve:env:v0_FAKE_MCP_SECRET",
     "openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",

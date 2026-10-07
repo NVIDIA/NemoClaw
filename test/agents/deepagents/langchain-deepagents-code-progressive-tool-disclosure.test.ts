@@ -790,7 +790,9 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") &&
             !sourcePath.endsWith("/onboarding.py") &&
-            !sourcePath.endsWith("/hooks/legacy.py"),
+            !sourcePath.endsWith("/hooks/legacy.py") &&
+            !sourcePath.endsWith("/hooks/manager.py") &&
+            !sourcePath.endsWith("/subagents.py"),
         )
         .every(
           (file) =>

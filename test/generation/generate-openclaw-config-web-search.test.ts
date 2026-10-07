@@ -14,7 +14,7 @@ function buildWebSearchConfig(env: Record<string, string>) {
 
 describe("generate-openclaw-config.mts: Tavily web search", () => {
   it.each(["brave", "tavily"])(
-    "enables only the selected %s search plugin in the managed image (#11294)",
+    "configures %s search and leaves the other plugin unset (#11294)",
     (provider) => {
       const config = buildWebSearchConfig({
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
@@ -30,7 +30,7 @@ describe("generate-openclaw-config.mts: Tavily web search", () => {
         },
       });
       const inactive = provider === "brave" ? "tavily" : "brave";
-      expect(config.plugins?.entries?.[inactive]).toEqual({ enabled: false });
+      expect(config.plugins?.entries?.[inactive]).toBeUndefined();
       expect(config.tools?.web?.search?.apiKey).toBeUndefined();
     },
   );

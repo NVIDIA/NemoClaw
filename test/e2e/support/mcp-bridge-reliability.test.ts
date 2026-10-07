@@ -31,14 +31,56 @@ import {
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+const PUBLIC_DNS_DRIFT_WARNING =
+  "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.";
 
 describe("real MCP add/status helper", () => {
   it.each([
-    ["fake", "FAKE_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.host],
-    ["distinct", "DISTINCT_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost],
-  ])(
+    ["fake", "FAKE_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.host, "match", [], true],
+    [
+      "distinct",
+      "DISTINCT_MCP_SECRET",
+      MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+      "drift",
+      [PUBLIC_DNS_DRIFT_WARNING],
+      true,
+    ],
+    ["missingwarning", "FAKE_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.host, "drift", [], false],
+    [
+      "extrawarning",
+      "FAKE_MCP_SECRET",
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      "drift",
+      [PUBLIC_DNS_DRIFT_WARNING, "provider conflict"],
+      false,
+    ],
+    [
+      "unexpectedwarning",
+      "FAKE_MCP_SECRET",
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      "match",
+      [PUBLIC_DNS_DRIFT_WARNING],
+      false,
+    ],
+    [
+      "rejected",
+      "FAKE_MCP_SECRET",
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      "rejected",
+      ["Public DNS target was rejected"],
+      false,
+    ],
+    [
+      "unresolved",
+      "FAKE_MCP_SECRET",
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      "unresolved",
+      ["Public DNS resolution is unavailable"],
+      false,
+    ],
+  ] as const)(
     "keeps %s endpoint and credential identity in both real CLI calls",
-    async (server, envName, secret) => {
+    async (server, envName, secret, state, warnings, succeeds) => {
       const url = `https://${server}.example.test/mcp`;
       const providerName = `alpha-mcp-${server}`;
       const nemoclaw = vi.fn().mockResolvedValue({
@@ -53,25 +95,25 @@ describe("real MCP add/status helper", () => {
           provider: { name: providerName, present: true, state: "configured", attached: true },
           policy: { name: `mcp-bridge-${server}`, present: true, state: "configured" },
           adapter: { registered: true },
-          warnings: [],
+          publicTarget: { state },
+          warnings,
         }),
       });
-      expect(
-        await addBridgeAndReadStatus(
-          { nemoclaw } as unknown as HostCliClient,
-          {} as SandboxClient,
-          {
-            sandboxName: "alpha",
-            mcpUrl: url,
-            expectedAdapter: "openclaw-config",
-            artifactPrefix: server,
-            serverName: server,
-            credentialEnvName: envName,
-            credential: secret,
-            applyHostPolicyEdit: false,
-          },
-        ),
-      ).toBe(providerName);
+      const result = addBridgeAndReadStatus(
+        { nemoclaw } as unknown as HostCliClient,
+        {} as SandboxClient,
+        {
+          sandboxName: "alpha",
+          mcpUrl: url,
+          expectedAdapter: "openclaw-config",
+          artifactPrefix: server,
+          serverName: server,
+          credentialEnvName: envName,
+          credential: secret,
+          applyHostPolicyEdit: false,
+        },
+      );
+      await expect(result.catch(() => null)).resolves.toBe(succeeds ? providerName : null);
       expect(nemoclaw.mock.calls[0]?.[0]).toEqual([
         "alpha",
         "mcp",

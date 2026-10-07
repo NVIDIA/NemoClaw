@@ -122,6 +122,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           "-c",
           expect.any(String),
           `hermes-mcp-${operation}-failure`,
+          "nemoclaw-start.log",
           "docker",
           "cp",
           `${CONTAINER_ID}:/tmp/nemoclaw-start.log`,
@@ -162,7 +163,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         progress.phase("capture startup log");
         const captured = await captureHost.command(
           "bash",
-          [...startupArgs.slice(0, 5), "cat", archive],
+          [...startupArgs.slice(0, 6), "cat", archive],
           command.mock.calls[4]?.[2],
         );
         progress.phase("verify retained evidence");

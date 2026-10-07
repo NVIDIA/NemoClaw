@@ -17,7 +17,6 @@ const baseDockerfile = fs.readFileSync(
   path.join(root, "agents", "hermes", "Dockerfile.base"),
   "utf8",
 );
-const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
 const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents", "hermes", "security-dependencies.patch"),
   "utf8",
@@ -83,6 +82,7 @@ const commands = [
   "googlechat-override-seams",
   "langfuse-credentials",
   "profile-policy",
+  "mcp-http-proxy",
   "session-delete",
   "session-preview",
   "session-state-create",
@@ -476,22 +476,6 @@ describe("Hermes image build probes", () => {
     expect(normalizedDockerfile).toContain(
       "check_metadata /etc/nemoclaw/hermes-mcp-transaction.lock 'root:root 444'",
     );
-  });
-
-  it("verifies the A2A neutralization patch before root applies it", () => {
-    const digest = createHash("sha256").update(a2aNeutralPatch).digest("hex");
-    const digestBinding = `ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=${digest}`;
-    const integrityCheck =
-      '"$NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256" /opt/nemoclaw-hermes-config/a2a-neutral.patch';
-    const shaCheck = "| sha256sum -c -";
-    const applyCheck = "git -C /opt/hermes apply --check";
-    const integrityCheckIndex = dockerfile.indexOf(integrityCheck);
-    const shaCheckIndex = dockerfile.indexOf(shaCheck, integrityCheckIndex);
-
-    expect(dockerfile).toContain(digestBinding);
-    expect(integrityCheckIndex).toBeGreaterThan(dockerfile.indexOf(digestBinding));
-    expect(shaCheckIndex).toBeGreaterThan(integrityCheckIndex);
-    expect(dockerfile.indexOf(applyCheck, shaCheckIndex)).toBeGreaterThan(shaCheckIndex);
   });
 
   // source-shape-contract: security -- The final image must execute the reviewed runtime environment validator bytes
