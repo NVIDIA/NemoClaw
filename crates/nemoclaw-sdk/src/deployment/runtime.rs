@@ -206,7 +206,11 @@ impl Deployment {
             .saved_plan(bundle, &stage, document, "apply.plan", cancel)
             .await?;
         let checked = runtime_observations(document, &targets, &bindings, &plan)?;
-        let changes = check_runtime_plan(&plan, &checked.expected, &bindings)?;
+        let changes = check_runtime_plan(
+            &plan,
+            &with_observations(&checked.expected, &compile::observations(&graph)),
+            &bindings,
+        )?;
         if !apply {
             if !checked.gateway_running
                 && !self

@@ -187,22 +187,24 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
         compile::GATEWAY_CAPABILITIES_ADDRESS,
         compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS,
     ] {
+        // The gate accepts only observations the compiled graph declares.
+        let declared = BTreeMap::from([(address.to_string(), Row::new())]);
         for action in ["read", "no-op"] {
             let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":[action]}}]})).unwrap();
             assert!(
-                check_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+                check_plan(&plan, &declared, &BTreeMap::new())
                     .unwrap()
                     .is_empty()
             );
             assert!(
-                runtime::check_runtime_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+                runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new())
                     .unwrap()
                     .is_empty()
             );
         }
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert!(
-            check_destroy_plan(&plan, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new())
+            check_destroy_plan(&plan, &declared, &BTreeMap::new(), &BTreeSet::new())
                 .unwrap()
                 .is_empty()
         );
@@ -214,15 +216,13 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
         ] {
             let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
             let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
-            assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
-            assert!(
-                runtime::check_runtime_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err()
-            );
+            assert!(check_plan(&plan, &declared, &BTreeMap::new()).is_err());
+            assert!(runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new()).is_err());
         }
         let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
         let duplicate: Plan =
             serde_json::from_value(json!({"resource_changes":[change, change]})).unwrap();
-        assert!(check_plan(&duplicate, &BTreeMap::new(), &BTreeMap::new()).is_err());
+        assert!(check_plan(&duplicate, &declared, &BTreeMap::new()).is_err());
     }
 }
 #[test]
@@ -984,10 +984,8 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
             valid
         );
     }
-    let foreign = crate::services::capacity::observation_address(
-        &document.spec.gateway.as_managed().unwrap().engine,
-    );
-    for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
+    let foreign = "data.nemoclaw_service_capacity.undeclared";
+    for (address, valid) in [(address.as_str(), true), (foreign, false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(
             check_destroy_plan(&plan, &allowed, &BTreeMap::new(), &BTreeSet::new()).is_ok(),
@@ -1209,4 +1207,248 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
             .is_err()
         );
     }
+}
+
+fn example_documents() -> Vec<(String, Document)> {
+    fn walk(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "yaml")
+            {
+                found.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut paths = Vec::new();
+    walk(&root, &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let name = path.strip_prefix(&root).unwrap().display().to_string();
+            let document = Document::parse(fs::read(&path).unwrap().as_slice())
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            (name, document)
+        })
+        .collect()
+}
+
+/// Each example's compiled deployment and runtime graphs with their plan-gate expectations.
+fn compiled_examples() -> Vec<(String, Value, BTreeMap<String, Row>)> {
+    let mut compiled = Vec::new();
+    for (name, document) in example_documents() {
+        let generations = Record::new(document.clone()).unwrap().generations;
+        let (graph, targets) = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
+        let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
+        compiled.push((format!("{name} deployment"), graph, expected));
+        if document.has_runtime() {
+            let (graph, targets) =
+                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap();
+            let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
+            compiled.push((format!("{name} runtime"), graph, expected));
+        }
+    }
+    compiled
+}
+
+/// The data blocks a compiled graph declares, read directly from its JSON.
+fn declared_reads(graph: &Value) -> BTreeSet<String> {
+    let mut reads = BTreeSet::new();
+    for (kind, instances) in graph["data"].as_object().into_iter().flatten() {
+        for name in instances
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, _)| name)
+        {
+            reads.insert(format!("data.{kind}.{name}"));
+        }
+    }
+    reads
+}
+
+/// A plan that creates every expected resource and reads the given data sources.
+fn creation_plan(expected: &BTreeMap<String, Row>, reads: &[&str]) -> Plan {
+    let changes: Vec<Value> = expected
+        .keys()
+        .filter(|address| !address.starts_with("data."))
+        .map(
+            |address| json!({"mode":"managed", "address":address, "change":{"actions":["create"]}}),
+        )
+        .chain(reads.iter().map(
+            |address| json!({"mode":"data", "address":address, "change":{"actions":["read"]}}),
+        ))
+        .collect();
+    serde_json::from_value(json!({ "resource_changes": changes })).unwrap()
+}
+
+const UNEXPECTED_OBSERVATION: &str = "plan contains an unexpected observation";
+
+// Observations a plan could name without the compiled graph reading them.
+const UNDECLARED_OBSERVATIONS: [&str; 6] = [
+    "data.nemoclaw_fabric_capabilities.sandbox_99",
+    "data.nemoclaw_target_hardware.target_99",
+    "data.nemoclaw_inference_capabilities.endpoint_99",
+    "data.nemoclaw_engine_capabilities.current",
+    compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS,
+    "data.nemoclaw_runtime_image.runtime_image_present_managed_gateway_runtime",
+];
+
+#[test]
+fn every_observation_a_compiled_graph_reads_passes_plan_validation() {
+    let compiled = compiled_examples();
+    assert!(!compiled.is_empty());
+    for (name, graph, expected) in compiled {
+        let reads = declared_reads(&graph);
+        let reads: Vec<&str> = reads.iter().map(String::as_str).collect();
+        assert!(
+            check_plan(
+                &creation_plan(&expected, &reads),
+                &expected,
+                &BTreeMap::new()
+            )
+            .is_ok(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn plan_validation_rejects_observations_the_compiled_graph_does_not_read() {
+    let mut rejected = 0;
+    for (name, graph, expected) in compiled_examples() {
+        let declared = compile::observations(&graph);
+        for address in UNDECLARED_OBSERVATIONS
+            .into_iter()
+            .filter(|address| !declared.contains(*address))
+        {
+            assert!(
+                matches!(
+                    check_plan(
+                        &creation_plan(&expected, &[address]),
+                        &expected,
+                        &BTreeMap::new()
+                    ),
+                    Err(Error::Conflict(UNEXPECTED_OBSERVATION))
+                ),
+                "{name} accepted {address}"
+            );
+            rejected += 1;
+        }
+    }
+    assert!(rejected > 0);
+}
+
+#[test]
+fn teardown_discards_only_observations_the_applied_graph_read() {
+    let mut rejected = 0;
+    for (name, document) in example_documents() {
+        let generations = Record::new(document.clone()).unwrap().generations;
+        for runtime in [false, true] {
+            if runtime && !document.has_runtime() {
+                continue;
+            }
+            let compiled = compile::compile_teardown(
+                &document,
+                &generations,
+                "0.0.0",
+                &BTreeSet::new(),
+                runtime,
+            )
+            .unwrap();
+            let (applied, targets) = if runtime {
+                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap()
+            } else {
+                compile::deployment_graph(&document, &generations, "0.0.0").unwrap()
+            };
+            assert_eq!(
+                compiled.observations,
+                declared_reads(&applied),
+                "{name} runtime={runtime}"
+            );
+            let expected = with_observations(&allowed(&targets), &compiled.observations);
+            let discard = |addresses: Vec<&str>| -> Plan {
+                let changes: Vec<Value> = addresses
+                    .into_iter()
+                    .map(|address| json!({"mode":"data", "address":address, "change":{"actions":["delete"]}}))
+                    .collect();
+                serde_json::from_value(json!({ "resource_changes": changes })).unwrap()
+            };
+            let declared = compiled.observations.iter().map(String::as_str).collect();
+            assert!(
+                check_destroy_plan(
+                    &discard(declared),
+                    &expected,
+                    &BTreeMap::new(),
+                    &BTreeSet::new()
+                )
+                .is_ok(),
+                "{name} runtime={runtime}"
+            );
+            for address in UNDECLARED_OBSERVATIONS
+                .into_iter()
+                .filter(|address| !compiled.observations.contains(*address))
+            {
+                assert!(
+                    matches!(
+                        check_destroy_plan(
+                            &discard(vec![address]),
+                            &expected,
+                            &BTreeMap::new(),
+                            &BTreeSet::new()
+                        ),
+                        Err(Error::Conflict(UNEXPECTED_OBSERVATION))
+                    ),
+                    "{name} runtime={runtime} discarded {address}"
+                );
+                rejected += 1;
+            }
+        }
+    }
+    assert!(rejected > 0);
+}
+
+#[test]
+fn declared_observations_still_reject_deposed_objects_and_unsupported_modes() {
+    let address = compile::GATEWAY_CAPABILITIES_ADDRESS;
+    let declared = BTreeMap::from([(address.to_string(), Row::new())]);
+    let plan = |change: Value| -> Plan {
+        serde_json::from_value(json!({ "resource_changes": [change] })).unwrap()
+    };
+    let deposed_read = json!({"mode":"data", "address":address, "deposed":"previous", "change":{"actions":["read"]}});
+    let deposed_delete = json!({"mode":"data", "address":address, "deposed":"previous", "change":{"actions":["delete"]}});
+    let imported = json!({"mode":"import", "address":address, "change":{"actions":["read"]}});
+
+    assert!(matches!(
+        check_plan(&plan(deposed_read.clone()), &declared, &BTreeMap::new()),
+        Err(Error::Conflict(UNEXPECTED_OBSERVATION))
+    ));
+    for change in [deposed_read, deposed_delete] {
+        assert!(matches!(
+            check_destroy_plan(&plan(change), &declared, &BTreeMap::new(), &BTreeSet::new()),
+            Err(Error::Conflict(UNEXPECTED_OBSERVATION))
+        ));
+    }
+    assert!(matches!(
+        check_plan(&plan(imported.clone()), &declared, &BTreeMap::new()),
+        Err(Error::Conflict(
+            "plan contains an unsupported resource mode"
+        ))
+    ));
+    assert!(matches!(
+        check_destroy_plan(
+            &plan(imported),
+            &declared,
+            &BTreeMap::new(),
+            &BTreeSet::new()
+        ),
+        Err(Error::Conflict(
+            "plan contains an unsupported resource mode"
+        ))
+    ));
 }

@@ -8,7 +8,6 @@
 
 #[doc(hidden)]
 pub mod authentication;
-pub(crate) mod capacity;
 mod contract;
 pub mod installers;
 pub mod placement;

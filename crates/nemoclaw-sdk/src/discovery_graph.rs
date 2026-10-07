@@ -168,18 +168,3 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
     graph["output"]["discovery"] = json!({ "value": observations });
     Ok(())
 }
-
-pub(crate) fn is_observation(address: &str) -> bool {
-    address == "data.nemoclaw_engine_capabilities.current"
-        || [
-            "data.nemoclaw_fabric_capabilities.sandbox_",
-            "data.nemoclaw_target_hardware.target_",
-            "data.nemoclaw_inference_capabilities.endpoint_",
-        ]
-        .iter()
-        .any(|prefix| {
-            address.strip_prefix(prefix).is_some_and(|name| {
-                !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit())
-            })
-        })
-}

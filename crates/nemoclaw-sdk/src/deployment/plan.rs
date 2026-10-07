@@ -34,43 +34,9 @@ fn observation(
         }
         return Ok(false);
     }
-    let runtime_image = ["runtime_image_present_", "runtime_image_acquired_"]
-        .iter()
-        .any(|prefix| {
-            change
-                .address
-                .strip_prefix(&format!("data.nemoclaw_runtime_image.{prefix}"))
-                .is_some_and(|name| allowed.contains_key(&format!("docker_container.{name}")))
-        });
-    let expected = runtime_image
-        || (change.address.starts_with("data.docker_image.")
-            && allowed.contains_key(&change.address))
-        || crate::compile::is_gateway_observation(&change.address)
-        || crate::discovery_graph::is_observation(&change.address)
-        || allowed.keys().any(|address| {
-            address
-                .strip_prefix("nemoclaw_sandbox.")
-                .is_some_and(|name| {
-                    change.address == format!("data.nemoclaw_sandbox_readiness.{name}")
-                })
-        })
-        || allowed.keys().any(|address| {
-            (address.starts_with("docker_container.inference_service_")
-                || address.starts_with("docker_container.ollama_service_")
-                || address.starts_with("docker_container.ollama_proxy_"))
-                && change.address
-                    == format!(
-                        "data.nemoclaw_service_readiness.{}",
-                        address.split_once('.').unwrap().1
-                    )
-        })
-        || crate::services::capacity::groups(
-            allowed.iter().map(|(address, row)| (address.as_str(), row)),
-        )?
-        .keys()
-        .any(|engine| change.address == crate::services::capacity::observation_address(engine));
+    // Callers add every observation the compiled graph reads to `allowed`.
     if change.deposed.is_some()
-        || !expected
+        || !allowed.contains_key(&change.address)
         || !seen.insert(change.address.clone())
         || !(change.change.actions == ["no-op"]
             || (!destroying && change.change.actions == ["read"])
