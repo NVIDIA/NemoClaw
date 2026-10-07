@@ -62,7 +62,7 @@ The following endpoint groups are allowed by default:
 
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
-| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | POST to inference and embedding paths, GET to model listings |
+| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Retained baseline compatibility rule: POST to inference and embedding paths, GET to model listings. NVIDIA Endpoints selection uses the narrower attached-provider rule described below. |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
 | `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
@@ -85,6 +85,10 @@ Hermes baseline endpoint groups are declared by the Hermes agent policy addition
 The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitHub file links and read repository source through its managed `fetch_url` tool. Repository, ref, and file path segments vary by task, so the route covers the host while limiting requests to read-only GET and HEAD methods and the listed managed binaries.
 
 </AgentOnly>
+
+When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1` provider to the sandbox instead of using `inference.local` or the broader baseline compatibility rule.
+This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
+The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
 All endpoints use TLS termination and are enforced at port 443.
 
@@ -213,7 +217,7 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-The baseline policy allows only the `local` inference route. External inference providers are reached through the OpenShell gateway, not by direct sandbox egress.
+Most providers use the OpenShell-managed `inference.local` route. NVIDIA Endpoints instead uses its least-privilege, sandbox-attached OpenShell provider at `integrate.api.nvidia.com`. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="deepagents">
 

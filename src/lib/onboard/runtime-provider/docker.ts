@@ -17,6 +17,7 @@ import {
 } from "../experimental/docker-network-authority";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
+import { EXTERNAL_IMAGE_AGENTS } from "../workload/source";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -135,6 +136,37 @@ function captureDockerContainerEngineOperation(
     throw new Error(`Docker provider does not register the '${operation}' engine operation.`);
   }
   return deps.captureHostCommand("docker", [...args], timeoutMs);
+}
+
+function createDockerExternalImagePreparation(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+) {
+  const capture = (args: readonly string[], timeoutMs: number) =>
+    captureDockerContainerEngineOperation(
+      deps,
+      supportedOperations,
+      "external-image-preparation",
+      args,
+      timeoutMs,
+    );
+  return Object.freeze({
+    displayName: "Docker",
+    inspectLocal: (reference: string, timeoutMs: number) => {
+      const inspection = capture(["image", "inspect", reference], timeoutMs);
+      if (inspection.error) return { status: "failed" as const, error: inspection.error };
+      if (inspection.status === 0) return { status: "present" as const, inspection };
+      if (/(?:No such image|No such object)(?::|$)/iu.test(inspection.stderr)) {
+        return { status: "absent" as const };
+      }
+      return { status: "failed" as const };
+    },
+    pull: (reference: string, timeoutMs: number) => capture(["pull", reference], timeoutMs),
+    inspectPulled: (reference: string, timeoutMs: number) =>
+      capture(["image", "inspect", reference], timeoutMs),
+    normalizeContentId: (value: unknown) =>
+      typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value) ? value : null,
+  });
 }
 
 function captureDockerNvidiaContainer(
@@ -273,7 +305,7 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
   externalImageSupport: {
     exactDigestReferences: true,
     platforms: MANAGED_IMAGE_PLATFORMS,
-    agents: ["openclaw", "hermes"],
+    agents: EXTERNAL_IMAGE_AGENTS,
   },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
@@ -482,6 +514,10 @@ export function createDockerRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
+      externalImagePreparation: createDockerExternalImagePreparation(
+        deps,
+        containerEngineOperations,
+      ),
       nvidiaContainer: {
         capture: (operation, input, timeoutMs) =>
           captureDockerNvidiaContainer(
