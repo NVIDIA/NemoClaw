@@ -78,8 +78,8 @@ agentscaling_deepagents_common_wait_baseline() {
     hpa_status="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" \
       -o jsonpath='{.status.currentReplicas}{" "}{.status.desiredReplicas}' 2>/dev/null || true)"
     read -r current desired <<<"${hpa_status}"
-    if [[ "${current:-0}" == "1" && "${desired:-0}" == "1" ]]; then
-      echo "HPA baseline ready: 1 current / 1 desired replica"
+    if hpa_common_replicas_at_want "${current}" "${desired}" 1; then
+      hpa_common_replicas_ready_message "${NAMESPACE}" "${HPA_NAME}" "${current}" "${desired}"
       return 0
     fi
     sleep 5

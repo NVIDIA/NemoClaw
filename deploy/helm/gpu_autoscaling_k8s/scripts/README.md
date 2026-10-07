@@ -43,3 +43,4 @@ what each script in this directory does — it has no instructions of its own.
 | `test-inference-auth-contract.ts` | Local contract: metrics-proxy requires the inference API key and rejects non-object chat bodies |
 | `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` uses a 30s sample window and idle-expires so HPA can scale down |
 | `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; a failed poll is not treated as 8 |
+| `test-hpa-idle-replicas-contract.sh` | Local contract: idle latency HPA `1/0` is a ready baseline; leftover `5/6` is not |

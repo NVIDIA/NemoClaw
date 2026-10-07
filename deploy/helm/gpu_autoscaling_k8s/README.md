@@ -131,7 +131,7 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). One end user ↔ one sandbox ↔ one agent. End users do not log into the DGX. CLI is `E2E_CLIENT_HOST=dgx-ip` plus the pairing script in 6a / 6b / 6c (or the same script from the same DGX in another terminal). The OpenClaw remote laptop UI is [OpenClaw simple test](#openclaw-simple-test).
+Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for one Ready GPU replica (up to 240s, `HPA_BASELINE_WAIT_SEC`). Latency HPA may show desired 0 until chats produce the metric; that is idle, not leftover load. One end user ↔ one sandbox ↔ one agent. End users do not log into the DGX. CLI is `E2E_CLIENT_HOST=dgx-ip` plus the pairing script in 6a / 6b / 6c (or the same script from the same DGX in another terminal). The OpenClaw remote laptop UI is [OpenClaw simple test](#openclaw-simple-test).
 
 | | Agent | Default `INFERENCE_RUNTIME` | Default model | Provision | Client |
 |--|-------|------------------------------|---------------|-----------|--------|

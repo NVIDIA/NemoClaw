@@ -282,8 +282,8 @@ hpa_wait_for_one_replica_baseline() {
     read -r current desired <<<"${hpa_status}"
     available="$(kubectl get deployment "${DEPLOYMENT}" -n "${NAMESPACE}" \
       -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
-    if [[ "${current:-0}" == "1" && "${desired:-0}" == "1" && "${available:-0}" == "1" ]]; then
-      hpa_common_log "HPA baseline ready: 1 current / 1 desired replica"
+    if hpa_common_replicas_at_want "${current}" "${desired}" 1 && [[ "${available:-0}" == "1" ]]; then
+      hpa_common_replicas_ready_message "${NAMESPACE}" "${HPA_NAME}" "${current}" "${desired}"
       return 0
     fi
     sleep 5

@@ -579,24 +579,61 @@ hpa_common_require_live_runtime() {
   echo "Live GPU runtime is ${expected}"
 }
 
-# Keep current/desired replicas at 1 while idle. Do not clamp maxReplicas
-# to 1 — HPA max stays the installed value (8 on this DGX). Do not restart
-# GPU pods that are already 1/1 (yesterday's fast path). Set
-# E2E_FORCE_GPU_RESTART=1 only when leftover util/latency must be wiped.
+# True when HPA current/desired match want. Latency HPA with no custom-metric
+# samples yet keeps desiredReplicas at 0 while minReplicas=1 holds the live
+# pod at 1. That is idle, not leftover load (leftover load is 5/6, not 1/0).
+hpa_common_replicas_at_want() {
+  local current="${1:-}"
+  local desired="${2:-}"
+  local want="${3:?}"
+  if [[ "${current}" == "${want}" && "${desired}" == "${want}" ]]; then
+    return 0
+  fi
+  if [[ "${want}" == "1" && "${current}" == "1" && "${desired:-0}" == "0" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+hpa_common_replicas_ready_message() {
+  local ns="${1:?namespace}"
+  local hpa="${2:?hpa}"
+  local current="${3:-}"
+  local desired="${4:-}"
+  if [[ "${current}" == "1" && "${desired:-0}" == "0" ]]; then
+    echo "HPA ${ns}/${hpa} is 1 current replica (desired 0 until the latency metric exists)"
+    return 0
+  fi
+  echo "HPA ${ns}/${hpa} is ${current} current / ${desired} desired"
+}
+
+# Keep current replicas at 1 while idle. Do not clamp maxReplicas to 1 — HPA
+# max stays the installed value (8 on this DGX). Do not restart GPU pods that
+# are already 1 Ready (yesterday's fast path). Set E2E_FORCE_GPU_RESTART=1
+# only when leftover util/latency must be wiped.
 hpa_common_wait_hpa_replicas() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
   local want="${3:?replicas}"
   local timeout_sec="${4:-120}"
   local deadline=$((SECONDS + timeout_sec))
+  local last_print="${SECONDS}"
   local current desired
-  echo "Waiting for HPA ${ns}/${hpa} ${want}/${want} (up to ${timeout_sec}s)"
+  if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+    echo "Waiting for HPA ${ns}/${hpa} ${want}/${want} (up to ${timeout_sec}s)"
+  fi
   while ((SECONDS < deadline)); do
     current="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.currentReplicas}' 2>/dev/null || true)"
     desired="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || true)"
-    if [[ "${current:-}" == "${want}" && "${desired:-}" == "${want}" ]]; then
-      echo "HPA ${ns}/${hpa} is ${want} current / ${want} desired"
+    if hpa_common_replicas_at_want "${current}" "${desired}" "${want}"; then
+      if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+        hpa_common_replicas_ready_message "${ns}" "${hpa}" "${current}" "${desired}"
+      fi
       return 0
+    fi
+    if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]] && ((SECONDS - last_print >= 15)); then
+      echo "HPA ${ns}/${hpa} is ${current:-?}/${desired:-?} (want ${want}/${want})"
+      last_print="${SECONDS}"
     fi
     sleep 3
   done
@@ -619,7 +656,8 @@ hpa_common_hold_hpa_until_client() {
   current="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.currentReplicas}' 2>/dev/null || true)"
   desired="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || true)"
   ready="$(kubectl get deploy "${deploy}" -n "${ns}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
-  if [[ "${current}" == "1" && "${desired}" == "1" && "${ready}" == "1" && "${E2E_FORCE_GPU_RESTART:-0}" != "1" ]]; then
+  if hpa_common_replicas_at_want "${current}" "${desired}" 1 \
+    && [[ "${ready}" == "1" && "${E2E_FORCE_GPU_RESTART:-0}" != "1" ]]; then
     if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
       echo "Holding ${ns}/${hpa} at 1 current replica (maxReplicas=${max})"
     fi
@@ -1686,10 +1724,12 @@ hpa_common_gpu_helm_upgrade() {
 
   # hold/arm used kubectl patch, which owns .spec.maxReplicas as kubectl-patch.
   # Helm 4 server-side apply then fails: conflict with "kubectl-patch" on maxReplicas.
+  # The metrics ConfigMap hits the same class of conflict on .data.metrics-proxy-metrics.ts.
   # Drop the HPA only (GPU Deployment stays). Helm recreates it with min/max from this upgrade.
   kubectl delete hpa "$(RELEASE="${release}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)" \
     -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
+  helm_args+=(--force-conflicts)
   helm "${helm_args[@]}" >/dev/null
 }
 
