@@ -598,7 +598,6 @@ describe("reviewed npm image remediation contract", () => {
       "Dockerfile:builder",
       "Dockerfile:codex-acp-runtime",
       "Dockerfile:wechat-npm-cache",
-      "Dockerfile:openclaw-managed-messaging-npm-cache-0",
       "Dockerfile:openclaw-managed-messaging-npm-cache-1",
       "Dockerfile.base:native-security-builder",
       "Dockerfile.base:<final>",

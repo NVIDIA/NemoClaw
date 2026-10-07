@@ -21,12 +21,12 @@ import os from "node:os";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
-  isDcodeOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "./inference/openrouter";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
@@ -111,10 +111,10 @@ export interface VerifyDeploymentDeps {
 
   /**
    * Send one bounded inference request over the gateway route from inside the
-   * sandbox. Only consulted for the Deep Agents Code OpenRouter models route,
-   * whose HTTP 404 is expected (#9834) and can only be accepted on the
-   * evidence of a served request. Optional: when it is absent that 404 fails
-   * closed, because nothing validated the selected model (#10543).
+   * sandbox. Only consulted when a supported agent uses the OpenRouter runtime
+   * adapter, whose models route returns HTTP 404 (#12621). The route can only
+   * be accepted on the evidence of a served request. Optional: when it is
+   * absent that 404 fails closed, because nothing validated the selected model.
    */
   probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
@@ -154,9 +154,9 @@ export interface VerifyDeploymentOptions {
    */
   diagnoseCustomOpenClawRuntime?: boolean;
   /**
-   * Agent and provider behind this deployment, used to recognise the one
-   * models route that answers HTTP 404 by design (#9834). Defaults to no
-   * agent and no provider, which fails every 404 closed.
+   * Agent and provider behind this deployment, used to recognise supported
+   * OpenRouter adapter routes that answer HTTP 404 by design (#12621).
+   * Defaults to no agent and no provider, which fails every 404 closed.
    */
   inferenceRouteContext?: InferenceRouteContext;
 }
@@ -260,16 +260,15 @@ async function fetchGatewayVersion(
 type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 
 /**
- * Agent and provider behind the deployment, normalised into the context
+ * Provider behind the deployment, normalized into the context
  * `status` uses so the two readiness paths cannot drift (#10080).
  */
 export type InferenceRouteContext = {
-  agentName?: string | null;
   provider?: string | null;
 };
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
-  return { agentName: context.agentName ?? null, provider: context.provider ?? null };
+  return { provider: context.provider ?? null };
 }
 
 type InferenceRouteProbe = {
@@ -352,11 +351,11 @@ function buildInferenceRouteHint(inference: InferenceRouteProbe): string {
 }
 
 /**
- * Resolve the one 404 that is expected: Deep Agents Code on OpenRouter serves
- * no model catalog (#9834). Matching the shared predicate is necessary but not
- * sufficient — the route status alone proves nothing about whether the sandbox
- * can invoke its selected model — so accept it only through a successful
- * bounded inference request, exactly as `status` does.
+ * Resolve an expected OpenRouter adapter 404. The adapter serves Chat
+ * Completions but no model catalog (#12621). Matching the shared predicate is
+ * necessary but not sufficient: the route status alone proves nothing about
+ * whether the sandbox can invoke its selected model. Accept it only through a
+ * successful bounded inference request, exactly as `status` does.
  */
 async function resolveExpectedModelsRoute404(
   probe: InferenceRouteProbe,
@@ -368,7 +367,7 @@ async function resolveExpectedModelsRoute404(
       status: "ok",
       detail:
         "inference.local served an inference request; its models route answers " +
-        "HTTP 404 by design for this agent and provider",
+        "HTTP 404 by design for the OpenRouter adapter",
       httpCode: probe.httpCode,
     };
   }
@@ -376,11 +375,12 @@ async function resolveExpectedModelsRoute404(
   return {
     status: "unhealthy",
     detail:
-      `inference.local answered HTTP ${probe.httpCode} on its models route, which is expected ` +
-      `for this agent and provider, but no inference request confirmed the selected model: ${reason}`,
+      `inference.local answered HTTP ${probe.httpCode} on its models route and serves no model ` +
+      `catalog by design for the OpenRouter adapter, but no inference request confirmed the ` +
+      `selected model: ${reason}`,
     httpCode: probe.httpCode,
     hint:
-      "This agent and provider serve no model catalog, so the models route answering HTTP 404 is " +
+      "The OpenRouter adapter serves no model catalog, so the models route answering HTTP 404 is " +
       "expected. The inference request itself failed. Confirm the provider credential and the " +
       "selected model, then re-run: nemoclaw <sandbox> status.",
   };
@@ -395,7 +395,7 @@ async function verifyInferenceRoute(
 ): Promise<InferenceRouteProbe> {
   const routeContext = toRouteHealthContext(context);
   const isExpected404 = (result: InferenceRouteProbe) =>
-    isDcodeOpenRouterModelsRoute404(routeContext, result.httpCode);
+    isOpenRouterRuntimeAdapterModelsRoute404(routeContext.provider, result.httpCode);
   // An ordinary 404 still gets the startup budget: a route can answer before
   // its model catalog is registered, and the inference probe already recovers
   // a late route (#6849). Only the 404 that is expected settles immediately,
@@ -877,9 +877,9 @@ export type InferenceInvocationContext = {
 /**
  * The standard `probeInferenceInvocation` dependency: send one bounded
  * inference request over the gateway route, using the same probe `status`
- * runs. Onboarding wires this so the one models route that answers HTTP 404 by
- * design — Deep Agents Code on OpenRouter (#9834) — is accepted only on the
- * evidence of a served request (#10543).
+ * runs. Onboarding wires this so supported OpenRouter adapter routes that
+ * answer HTTP 404 by design are accepted only on the evidence of a served
+ * request (#12621).
  */
 export async function probeOnboardInferenceInvocation(
   context: InferenceInvocationContext,
