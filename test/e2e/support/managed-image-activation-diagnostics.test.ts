@@ -14,7 +14,10 @@ import {
 } from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
-import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
+import {
+  ADMIN_APPROVAL_TEST_CLI_SH,
+  ADMIN_APPROVAL_TEST_OPENSHELL_SH,
+} from "../../support/admin-approval-connect-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
@@ -291,7 +294,11 @@ describe("managed image activation failure diagnostics", () => {
 
     try {
       await approveOpenClawAdminScope(
-        { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never,
+        {
+          command: hostCommand,
+          commandPath: "/fixture/nemoclaw",
+          openshellCommandPath: "/fixture/openshell",
+        } as never,
         { exec: sandboxExec } as never,
         "fixture-sandbox",
         {},
@@ -354,7 +361,11 @@ describe("managed image activation failure diagnostics", () => {
       stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
       timedOut: false,
     }));
-    const host = { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never;
+    const host = {
+      command: hostCommand,
+      commandPath: "/fixture/nemoclaw",
+      openshellCommandPath: "/fixture/openshell",
+    } as never;
     const sandbox = { exec: sandboxExec } as never;
 
     await approveOpenClawAdminScope(host, sandbox, "fixture-sandbox", {});
@@ -374,6 +385,7 @@ describe("managed image activation failure diagnostics", () => {
     const staleRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
     const commandLog = fixture.path("commands.log");
     const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    const openshellPath = fixture.writeExecutable("openshell", ADMIN_APPROVAL_TEST_OPENSHELL_SH);
     fs.writeFileSync(join(fixture.homeDir, ".bash_logout"), "echo HOST_LOGOUT_RAN; false\n");
     fixture.writeExecutable(
       "openclaw",
@@ -406,7 +418,11 @@ esac
         return { ...result, exitCode: result.status, timedOut: false };
       });
       await approveOpenClawAdminScope(
-        { command: hostCommand, commandPath: cliPath } as never,
+        {
+          command: hostCommand,
+          commandPath: cliPath,
+          openshellCommandPath: openshellPath,
+        } as never,
         {
           exec: async () => ({
             exitCode: 1,
@@ -453,13 +469,14 @@ printf '%s\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
       };
       devicesState.pending.push({ ...devicesState.pending[0] });
       fs.writeFileSync(devicesPath, JSON.stringify(devicesState));
+      const openshellPath = fixture.writeExecutable("openshell", ADMIN_APPROVAL_TEST_OPENSHELL_SH);
       const result = fixture.run(
         "/bin/bash",
         [
           "-lc",
           `PATH=${JSON.stringify(fixture.binDir)}:$PATH
 export PATH
-${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cron", requestId)}`,
+${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cron", requestId, true, { gatewayName: "nemoclaw", openshellPath })}`,
         ],
         {
           env: fixture.environment({
