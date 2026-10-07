@@ -2,126 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
 import { G, R, YW } from "../../cli/terminal-style";
-import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
-import { readHermesOperatorConfigHandoff } from "../../state/sandbox";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import {
-  abortOpenClawPostRestoreDoctor,
-  beginOpenClawBackupQuiesce,
-  promoteOpenClawBackupQuiesceToPostRestoreDoctor,
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 import {
-  applyHermesOperatorConfigSnapshot,
-  type HermesOperatorConfigRestoreReport,
-  parseHermesOperatorConfigSnapshot,
-  verifyHermesOperatorConfigSnapshot,
-} from "./rebuild-durable-config";
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "./snapshot-hermes-gateway-hint";
 import * as snapshotRestore from "./snapshot/restore-authority";
 
 export interface RebuildRestorePhaseInput {
   sandboxName: string;
   targetAgentType: string;
-  targetImageIsCustom: boolean;
   backupManifest: RebuildBackupManifest;
-  reconcileManagedDcodeObservability?: boolean;
   runtimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
+  migrateHermesLegacyDashboardState?: (
+    sandboxName: string,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) => Promise<SandboxCommandResult | null>;
 }
 
 export interface RebuildRestorePhaseResult {
   restoreSucceeded: boolean;
-  hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
-}
-
-const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = {
-  restoredKeys: [],
-  droppedKeys: [],
-};
-
-function restoreHermesOperatorConfig(
-  sandboxName: string,
-  backupManifest: RebuildBackupManifest,
-  log: RebuildLog,
-): { success: boolean; report: HermesOperatorConfigRestoreReport } {
-  if (!backupManifest?.hermesOperatorConfigHandoff) {
-    return { success: true, report: EMPTY_HERMES_OPERATOR_CONFIG_RESTORE };
-  }
-  const document = readHermesOperatorConfigHandoff(backupManifest);
-  const snapshot = document ? parseHermesOperatorConfigSnapshot(document, sandboxName) : null;
-  if (!snapshot) {
-    log("Hermes operator config handoff failed digest or schema validation");
-    console.error(`  ${YW}Hermes operator config restore blocked:${R} invalid rebuild handoff`);
-    return {
-      success: false,
-      report: {
-        restoredKeys: [],
-        droppedKeys: [...new Set(backupManifest.hermesOperatorConfigHandoff.keys ?? [])].sort(),
-      },
-    };
-  }
-  if (snapshot.entries.length === 0) {
-    return {
-      success: true,
-      report: { restoredKeys: [], droppedKeys: snapshot.droppedKeys },
-    };
-  }
-
-  try {
-    const target = sandboxConfig.resolveAgentConfig(sandboxName);
-    if (target.agentName !== "hermes") {
-      throw new Error(`replacement config target is '${target.agentName}'`);
-    }
-    const current = sandboxConfig.readSandboxConfig(sandboxName, target);
-    const merged = applyHermesOperatorConfigSnapshot(current, snapshot);
-    sandboxConfig.writeSandboxConfig(sandboxName, target, merged);
-    const verified = sandboxConfig.readSandboxConfig(sandboxName, target);
-    const report = verifyHermesOperatorConfigSnapshot(verified, snapshot);
-    const failedRestores = report.droppedKeys.filter((key) => !snapshot.droppedKeys.includes(key));
-    log(
-      `Hermes operator config restore: restored=${report.restoredKeys.join(",") || "none"}; dropped=${report.droppedKeys.join(",") || "none"}`,
-    );
-    return { success: failedRestores.length === 0, report };
-  } catch (error) {
-    const report = {
-      restoredKeys: [],
-      droppedKeys: [
-        ...new Set([...snapshot.droppedKeys, ...snapshot.entries.map((entry) => entry.key)]),
-      ].sort(),
-    };
-    log(
-      `Hermes operator config restore failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    console.error(`  ${YW}Hermes operator config restore failed.${R}`);
-    return { success: false, report };
-  }
 }
 
 /** Restore sandbox files. The replacement already received the captured live OpenShell policy. */
 export async function runRebuildRestorePhase(
   input: RebuildRestorePhaseInput,
 ): Promise<RebuildRestorePhaseResult> {
-  const {
-    sandboxName,
-    targetAgentType,
-    targetImageIsCustom,
-    backupManifest,
-    runtimeSelection,
-    log,
-  } = input;
+  const { sandboxName, targetAgentType, backupManifest, runtimeSelection, log } = input;
   let restoreSucceeded = true;
   let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | undefined;
-  let hermesOperatorConfigRestore: {
-    success: boolean;
-    report: HermesOperatorConfigRestoreReport;
-  } | null = null;
   if (targetAgentType === "openclaw") {
     log("Entering verified OpenClaw pre-restore quiesce window");
-    const doctorWindow = await beginOpenClawBackupQuiesce(sandboxName, runtimeSelection);
+    const doctorWindow = await beginUnregisteredOpenClawBackupQuiesce(
+      sandboxName,
+      runtimeSelection,
+    );
     log(`Pre-restore quiesce window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
     if (!doctorWindow.ok) {
       console.error(
@@ -143,14 +69,13 @@ export async function runRebuildRestorePhase(
         backupManifest,
         {
           targetAgentType,
-          ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
           ...(runtimeSelection ? { runtimeSelection } : {}),
         },
         { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
       );
     } catch (error) {
       if (openClawDoctorWindow) {
-        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       }
       throw error;
     }
@@ -158,30 +83,32 @@ export async function runRebuildRestorePhase(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
-    hermesOperatorConfigRestore =
-      targetAgentType === "hermes"
-        ? restoreHermesOperatorConfig(sandboxName, backupManifest, log)
-        : null;
-    if (hermesOperatorConfigRestore && !hermesOperatorConfigRestore.success) {
-      restoreSucceeded = false;
+    let hermesDashboardStateMigrationSucceeded = true;
+    if (targetAgentType === "hermes" && restore.success) {
+      const migrate = input.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+      let migration: SandboxCommandResult | null = null;
+      try {
+        migration = await migrate(sandboxName, runtimeSelection);
+      } catch (error) {
+        log(
+          `Hermes legacy dashboard-state migration transport failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      hermesDashboardStateMigrationSucceeded = migration?.status === 0;
+      log(
+        `Hermes legacy dashboard-state migration: ${hermesDashboardStateMigrationSucceeded ? "complete" : `failed${migration ? ` (exit ${migration.status})` : " (transport unavailable)"}`}`,
+      );
+      if (!hermesDashboardStateMigrationSucceeded) {
+        restoreSucceeded = false;
+        console.error(`  ${YW}Hermes legacy dashboard-state migration failed.${R}`);
+        const detail = migration?.stderr.trim();
+        if (detail) console.error(`  ${detail.slice(0, 500)}`);
+        console.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(sandboxName)}`);
+      }
     }
-    if (
-      targetAgentType === "hermes" &&
-      restore.restoredDirs.some(
-        (directory) => directory === "dashboard-home" || directory === "profiles",
-      )
-    ) {
-      const target = sandboxConfig.resolveAgentConfig(sandboxName);
-      const seeded =
-        target.agentName === "hermes"
-          ? sandboxConfig.restoreHermesDashboardConfig(sandboxName, target)
-          : "failed";
-      log(`Hermes dashboard state after restore: ${seeded}`);
-      if (seeded === "failed") restoreSucceeded = false;
-    }
-    if (!restore.success) {
+    if (!restore.success || !hermesDashboardStateMigrationSucceeded) {
       if (openClawDoctorWindow) {
-        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
         openClawDoctorWindow = undefined;
       }
       if (restore.error) console.error(`  Restore blocked: ${restore.error}`);
@@ -194,30 +121,10 @@ export async function runRebuildRestorePhase(
     }
   }
   if (targetAgentType === "openclaw" && openClawDoctorWindow) {
-    const quiesceWindow = openClawDoctorWindow;
-    log("Promoting restored OpenClaw state into the post-upgrade doctor window");
-    const promoted = await promoteOpenClawBackupQuiesceToPostRestoreDoctor(quiesceWindow);
-    log(`Post-restore doctor window: ${promoted.ok ? "verified" : promoted.stage}`);
-    if (!promoted.ok) {
-      await abortOpenClawPostRestoreDoctor(quiesceWindow);
-      console.error(
-        `  ${YW}OpenClaw restored state could not enter its post-upgrade doctor window.${R}`,
-      );
-      return { restoreSucceeded: false };
-    }
-    openClawDoctorWindow = promoted.window;
-  }
-  if (targetAgentType === "hermes" && hermesOperatorConfigRestore === null) {
-    hermesOperatorConfigRestore = {
-      success: true,
-      report: EMPTY_HERMES_OPERATOR_CONFIG_RESTORE,
-    };
+    log("Keeping restored OpenClaw state in the verified gateway-down maintenance window");
   }
   return {
     restoreSucceeded,
     ...(openClawDoctorWindow ? { openClawDoctorWindow } : {}),
-    ...(hermesOperatorConfigRestore
-      ? { hermesOperatorConfigRestore: hermesOperatorConfigRestore.report }
-      : {}),
   };
 }

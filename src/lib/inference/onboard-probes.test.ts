@@ -353,8 +353,8 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it.each(["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"])(
-    "uses max_completion_tokens for GPT-5 family and reasoning models [case %#] (#6642)",
+  it.each(["gpt-5.4", "azure/gpt-5.4", "gpt-6-astra", "o3-mini", "o1"])(
+    "uses max_completion_tokens for GPT-5, GPT-6 and reasoning models [case %#]",
     (model) => {
       expect(getChatCompletionsProbePayload(model)).toEqual({
         model,

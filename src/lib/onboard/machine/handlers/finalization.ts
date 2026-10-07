@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
+import { DCODE_AGENT_NAME } from "../../observability-policy-presets";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import type { PreparedExternalComponent } from "../../external-component";
 import type {
@@ -33,9 +35,11 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
+  preferredInferenceApi?: string | null;
   portableProfileSelected?: boolean;
   externalComponent?: PreparedExternalComponent | null;
   providerless?: boolean;
+  deferRuntimeVerification?: boolean;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -91,6 +95,13 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      */
     buildVerifyChain(chatUiUrl: string, sandboxName: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
+    probeTerminalInference?(input: {
+      sandboxName: string;
+      agentName: string;
+      provider: string;
+      model: string;
+      preferredInferenceApi: string | null;
+    }): Promise<{ ok: boolean; detail?: string }>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
     isDeploymentHealthy(result: VerificationResult): boolean;
     reportDeploymentReadiness(healthy: boolean): void;
@@ -169,6 +180,18 @@ function selectedAgentName(agent: unknown): string | null {
   return typeof name === "string" && name.trim() === name && name ? name : null;
 }
 
+function requiresTerminalInferenceVerification(agent: unknown, provider: string): boolean {
+  return selectedAgentName(agent) === DCODE_AGENT_NAME && provider === OPENROUTER_PROVIDER_NAME;
+}
+
+function terminalInferenceIncompleteMessage(sandboxName: string, detail: string): string {
+  return (
+    `Deep Code inference for '${sandboxName}' is not ready: ${detail}. The sandbox was preserved. ` +
+    `Resolve the provider, model, or runtime adapter problem, then resume onboarding with ` +
+    `${CLI_NAME} onboard --resume.`
+  );
+}
+
 function logTerminalReadyBlock(
   sandboxName: string,
   agent: unknown,
@@ -206,6 +229,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   migratedLegacyKeys,
   externalComponent = null,
   providerless = false,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -282,6 +306,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
 
   // Sweep stale host files left by older credential migration paths (#3105).
   deps.cleanupStaleHostFiles();
+  if (deferRuntimeVerification) {
+    return {
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+      unmigratedLegacyKeys,
+    };
+  }
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
     if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
@@ -316,13 +346,26 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   hermesToolGateways,
   webSearchEnabled,
   webSearchProvider,
+  preferredInferenceApi = null,
   portableProfileSelected,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
   VerifyChain,
   VerificationResult
 >): Promise<PostVerifyStateResult> {
+  const terminalInferenceVerificationRequired = requiresTerminalInferenceVerification(
+    agent,
+    provider,
+  );
+  if (deferRuntimeVerification && !terminalInferenceVerificationRequired) {
+    return {
+      stateResult: completeOnboardMachine({}, { state: "post_verify" }),
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    };
+  }
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
   const portableAgent = portableAgentDisposition(
     sandboxName,
@@ -425,6 +468,28 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
     await deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    deps.reportDeploymentReadiness(deploymentHealthy);
+  } else if (terminalInferenceVerificationRequired) {
+    const agentName = selectedAgentName(agent);
+    if (!agentName) throw new Error("Terminal inference verification requires an agent name.");
+    const inference = (await deps.probeTerminalInference?.({
+      sandboxName,
+      agentName,
+      provider,
+      model,
+      preferredInferenceApi,
+    })) ?? { ok: false, detail: "bounded sandbox inference verification is unavailable" };
+    deploymentHealthy = inference.ok;
+    if (deploymentHealthy) {
+      logTerminalReadyBlock(sandboxName, agent, deps.log);
+    } else {
+      const message = terminalInferenceIncompleteMessage(
+        sandboxName,
+        inference.detail ?? "bounded sandbox inference verification failed",
+      );
+      verificationDiagnostics = [message];
+      deps.error(`  ${message}`);
+    }
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);

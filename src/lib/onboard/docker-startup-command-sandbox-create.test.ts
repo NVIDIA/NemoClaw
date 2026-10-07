@@ -182,10 +182,6 @@ describe("Docker startup-command sandbox creation", () => {
       expect.objectContaining({ message: expect.stringContaining("reconnects") }),
       expect.objectContaining({
         selectedMode: expect.objectContaining({ kind: "startup-command" }),
-        context: expect.objectContaining({
-          sandboxName: "alpha",
-          selectedMode: expect.objectContaining({ kind: "startup-command" }),
-        }),
       }),
     );
   });
@@ -353,7 +349,6 @@ describe("Docker startup-command sandbox creation", () => {
         // The printer must see the selected non-GPU operation even when the
         // recreation threw before producing a result (#12080).
         selectedMode: expect.objectContaining({ kind: "startup-command" }),
-        context: expect.objectContaining({ sandboxName: "alpha" }),
       }),
     );
   });

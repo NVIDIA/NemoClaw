@@ -3,6 +3,7 @@
 
 import { dockerLogs } from "../adapters/docker/container";
 import { dockerCapture } from "../adapters/docker/run";
+export { cliOpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics-cli";
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -17,6 +18,7 @@ import {
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import type {
   DockerGpuPatchBackend,
+  DockerGpuDiagnosticDeps,
   DockerGpuPatchDeps,
   DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
@@ -46,6 +48,7 @@ export {
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
   | "commandExecutor"
+  | "openShellGpuDiagnostics"
   | "runOpenshell"
   | "runCaptureOpenshell"
   | "sleep"
@@ -271,7 +274,8 @@ export function createDockerGpuSandboxCreatePatch(
     options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
   const onPatchFailureExit =
     options.overrides?.onPatchFailureExit ?? printDockerGpuPatchFailureAndExit;
-  const failureDiagnosticDeps = {
+  const failureDiagnosticDeps: DockerGpuDiagnosticDeps = {
+    openShellGpuDiagnostics: options.deps.openShellGpuDiagnostics,
     runCaptureOpenshell: options.deps.runCaptureOpenshell,
     dockerCapture: options.deps.dockerCapture,
     dockerLogs: options.deps.dockerLogs,
@@ -370,13 +374,11 @@ export function createDockerGpuSandboxCreatePatch(
       attachRuntimeRollbackError(failure, rollbackError);
     }
     onPatchFailureExit(options.sandboxName, failure, {
-      runCaptureOpenshell: options.deps.runCaptureOpenshell,
-      dockerCapture: options.deps.dockerCapture,
+      ...failureDiagnosticDeps,
       additionalSummaryLines: routeAdapter.additionalSummaryLines,
       // Carry the selected post-create operation into the failure printer so a
       // startup-command (non-GPU) failure never wears GPU failure wording (#12080).
       selectedMode: selectedMode(),
-      context: failureContext(),
     });
   };
 
@@ -502,7 +504,7 @@ export function createDockerGpuSandboxCreatePatch(
             captureFailedClone(options.sandboxName, result, options.deps)?.classification ?? null;
         } catch (error) {
           console.warn(
-            `  ⚠ Could not capture the failed GPU container before rollback: ${error instanceof Error ? error.message : String(error)}`,
+            `  ⚠ Could not capture the failed ${result.mode.kind === "startup-command" ? "startup-command" : "GPU"} container before rollback: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
@@ -515,11 +517,7 @@ export function createDockerGpuSandboxCreatePatch(
         ? "OpenShell supervisor did not reconnect to the recreated container; pre-patch sandbox restored."
         : "OpenShell supervisor did not reconnect to the recreated container and rollback failed; pre-patch sandbox was NOT restored.";
       onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
-        runCaptureOpenshell: options.deps.runCaptureOpenshell,
-        dockerCapture: options.deps.dockerCapture,
-        dockerLogs: options.deps.dockerLogs,
-        homedir: options.deps.homedir,
-        now: options.deps.now,
+        ...failureDiagnosticDeps,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
         preRollbackClassification,
         context: {
@@ -550,13 +548,11 @@ export function createDockerGpuSandboxCreatePatch(
         const failure = error;
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
+          ...failureDiagnosticDeps,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
           // A startup-command recreation failure must not fall back to GPU
           // failure wording on this deferred-supervisor exit (#12080).
           selectedMode: selectedMode(),
-          context: failureContext(),
         });
         throw failure;
       }
@@ -591,8 +587,7 @@ export function createDockerGpuSandboxCreatePatch(
             }
             cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
-              runCaptureOpenshell: options.deps.runCaptureOpenshell,
-              dockerCapture: options.deps.dockerCapture,
+              ...failureDiagnosticDeps,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
               context: {
                 ...failureContext(),
@@ -642,8 +637,7 @@ export function createDockerGpuSandboxCreatePatch(
         );
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
+          ...failureDiagnosticDeps,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
           context: {
             ...failureContext(),
@@ -676,8 +670,7 @@ export function createDockerGpuSandboxCreatePatch(
     printReadinessFailureIfEnabled() {
       if (!routeAdapter.enabled) return;
       printDockerGpuReadinessFailure(options.sandboxName, selectedMode(), {
-        runCaptureOpenshell: options.deps.runCaptureOpenshell,
-        dockerCapture: options.deps.dockerCapture,
+        ...failureDiagnosticDeps,
         context: failureContext(),
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
       });
@@ -706,8 +699,7 @@ export function createDockerGpuSandboxCreatePatch(
             `Sandbox '${sandboxName}' entered ${phase} phase after readiness; GPU proof skipped.`,
           );
           printDockerGpuProofFailure(sandboxName, failure, selectedMode(), {
-            runCaptureOpenshell: options.deps.runCaptureOpenshell,
-            dockerCapture: options.deps.dockerCapture,
+            ...failureDiagnosticDeps,
             context: currentFailureContext,
             additionalSummaryLines: routeAdapter.additionalSummaryLines,
           });
@@ -730,8 +722,7 @@ export function createDockerGpuSandboxCreatePatch(
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
         printDockerGpuProofFailure(sandboxName, failure, selectedMode(), {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
+          ...failureDiagnosticDeps,
           context: routeAdapter.enabled ? currentFailureContext : null,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
         });

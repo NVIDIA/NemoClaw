@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type OpenShellGatewayTarget = { kind: "named"; gatewayName: string } | { kind: "selected" };
+import type { OpenShellGatewayTarget } from "./gateway-scope";
+
+export type { OpenShellGatewayTarget } from "./gateway-scope";
 
 export type OpenShellSandboxReadiness = "ready" | "not_ready" | "terminal";
 
@@ -79,3 +81,8 @@ export function namedOpenShellGateway(gatewayName: string): OpenShellGatewayTarg
 export function selectedOpenShellGateway(): OpenShellGatewayTarget {
   return { kind: "selected" };
 }
+export type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+  OpenShellProviderMetadata,
+} from "./provider-adapter";

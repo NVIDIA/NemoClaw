@@ -77,6 +77,7 @@ function createDeps(
     getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
+    probeTerminalInference: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
     dashboard: vi.fn(async () => undefined),
@@ -109,6 +110,7 @@ function createDeps(
       getChatUiUrl: calls.getChatUiUrl,
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
+      probeTerminalInference: calls.probeTerminalInference,
       formatVerificationDiagnostics: calls.diagnostics,
       verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
@@ -152,6 +154,39 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("defers registry-bound runtime verification to the outer rebuild transaction", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "post_verify",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "finalizing" },
+    });
+    expect(calls.setDefaultSandbox).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+
+    const postVerify = await handlePostVerifyState({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+    expect(postVerify).toEqual({
+      stateResult: { type: "complete", updates: {}, metadata: { state: "post_verify" } },
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    });
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+  });
+
   it("completes providerless component activation without ordinary setup (#11486)", async () => {
     const { deps, calls } = createDeps();
     const result = await handleFinalizationPhase({
@@ -579,6 +614,82 @@ describe("finalization handlers", () => {
     expect(result.verificationDiagnostics).toEqual([]);
     expect(result.stateResult.type).toBe("complete");
   });
+
+  it.each([false, true])(
+    "verifies Deep Code OpenRouter inference before reporting the terminal ready (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps();
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
+
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+        agent,
+        deferRuntimeVerification,
+      });
+
+      expect(calls.probeTerminalInference).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "my-assistant",
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.log).toHaveBeenCalledWith(
+        "  ✓ LangChain Deep Agents Code terminal runtime is ready",
+      );
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+      expect(result.deploymentHealthy).toBe(true);
+      expect(result.stateResult.type).toBe("complete");
+    },
+  );
+
+  it.each([false, true])(
+    "keeps Deep Code OpenRouter onboarding incomplete when inference is unavailable (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps({
+        probeTerminalInference: vi.fn(async () => ({
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 503",
+        })),
+      });
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
+
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        agent,
+        deferRuntimeVerification,
+      });
+
+      expect(result).toMatchObject({
+        deploymentHealthy: false,
+        stateResult: {
+          type: "pause",
+          metadata: { state: "post_verify", reason: "deployment_not_ready" },
+        },
+      });
+      expect(result.verificationDiagnostics).toEqual([
+        expect.stringContaining("sandbox inference invocation probe returned HTTP 503"),
+      ]);
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("Deep Code inference for 'my-assistant' is not ready"),
+      );
+      expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("runtime is ready"));
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
+    },
+  );
 
   it("does not complete the session when deployment verification fails", async () => {
     const { deps, calls } = createDeps({

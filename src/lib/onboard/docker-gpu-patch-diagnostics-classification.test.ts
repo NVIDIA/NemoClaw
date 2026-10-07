@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuMode,
@@ -122,6 +123,67 @@ describe("Docker GPU patch diagnostics", () => {
     expect(snapshot.sandboxListLine).toBe("alpha   Error   1m ago");
     expect(snapshot.patchedContainerState?.ExitCode).toBe(125);
     expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
+  });
+
+  it("uses typed OpenShell observations as the sole phase authority when raw capture conflicts", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Provisioning\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   2s ago");
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects phase-shaped content from failed typed artifacts without raw fallback", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Error\n",
+        outcome: { kind: "failed", error: { kind: "capture", message: "exit 1" } },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "failed", error: { kind: "timeout", message: "timed out" } },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBeNull();
+    expect(snapshot.sandboxListLine).toBeNull();
+    expect(snapshot.openShellDiagnosticArtifacts).toHaveLength(2);
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
   it("classifies a dead patched container as patched_container_failed with the failed mode", () => {

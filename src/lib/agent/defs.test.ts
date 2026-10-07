@@ -136,45 +136,38 @@ describe("agent definitions", () => {
       expected_version: string;
       runtime: { kind: string };
       config: { dir: string };
-      state_dirs: { path: string; backup?: boolean }[];
-      state_files: { path: string; restore: Record<string, unknown> }[];
+      state_dirs?: unknown;
+      state_files?: unknown;
     };
 
     expect(manifest.name).toBe("pi");
     expect(manifest.expected_version).toBe("0.84.1");
     expect(manifest.runtime.kind).toBe("terminal");
     expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
-    expect(
-      manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path),
-    ).toEqual(["sessions", "prompts", "themes"]);
-    expect(
-      manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path),
-    ).toEqual(["tools", "bin"]);
-    expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
-    const restore = manifest.state_files[0]?.restore as {
-      merge?: string;
-      user_keys?: unknown[];
-    };
-    expect(restore?.merge).toBe("key-allowlist");
-    expect(restore?.user_keys).toEqual([
-      { key: "theme", type: "string", max_length: 128 },
-      { key: "hideThinkingBlock", type: "boolean" },
-      { key: "showCacheMissNotices", type: "boolean" },
-      { key: "quietStartup", type: "boolean" },
-      { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
-      { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
-      {
-        key: "defaultThinkingLevel",
-        type: "enum",
-        values: ["off", "minimal", "low", "medium", "high", "xhigh"],
-      },
-    ]);
+    expect(manifest.state_dirs).toBeUndefined();
+    expect(manifest.state_files).toBeUndefined();
   });
 
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
     expect(choices.map((choice) => choice.name)).toContain("hermes");
+  });
+
+  it("loads deferred onboarding as an explicit agent-manifest capability", () => {
+    expect(loadAgent("hermes").deferred_onboarding).toBe(true);
+    expect(loadAgent("langchain-deepagents-code").deferred_onboarding).toBe(true);
+    expect(loadAgent("openclaw").deferred_onboarding).toBe(false);
+  });
+
+  it("rejects a non-boolean deferred onboarding capability", () => {
+    const agentName = `invalid-deferred-onboarding-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "deferred_onboarding: enabled"].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/deferred_onboarding/);
   });
 
   it("uses agent display names in interactive choices", () => {
@@ -250,22 +243,23 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/YAML object/);
   });
 
-  it("rejects the superseded runtime auth directory inventory (#8006)", () => {
-    const agentName = `runtime-auth-inventory-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Runtime Auth Inventory",
-        "state_dirs:",
-        "  - identity",
-        "runtime_auth_state_dirs:",
-        "  - identity",
-      ].join("\n"),
-    );
+  it.each(["state_dirs", "state_files", "runtime_auth_state_dirs"])(
+    "rejects the retired %s inventory",
+    (field) => {
+      const agentName = `retired-state-inventory-${String(Date.now())}`;
+      writeTempAgentManifest(
+        agentName,
+        [
+          `name: ${agentName}`,
+          "display_name: Retired State Inventory",
+          `${field}:`,
+          "  - identity",
+        ].join("\n"),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/replaced.*backup: false/);
-  });
+      expect(() => loadAgent(agentName)).toThrow(new RegExp(`${field}.*retired`));
+    },
+  );
 
   it.each([1023, 70000])("rejects invalid forward_ports value %s in manifests", (port) => {
     const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;

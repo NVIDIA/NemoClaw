@@ -8,6 +8,16 @@ import { isDeepStrictEqual } from "node:util";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image-env";
 import { getBuildIdentity } from "../../core/version";
+import { CORPORATE_CA_EXPLICIT_ENV } from "../corporate-ca-policy";
+import { CorporateCaValidationError } from "../corporate-ca-types";
+import type { ToolDisclosure } from "../../tool-disclosure";
+import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import {
+  prepareExternalImageWorkloadSource,
+  resolveExternalImageToolDisclosure,
+  type PrepareExternalImageDependencies,
+} from "./external-image";
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -31,7 +41,38 @@ import {
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
   type SandboxWorkloadSource,
+  type ExternalImageWorkloadSource,
 } from "./source";
+
+export function prepareExternalImageForOnboardSource(
+  input: {
+    readonly reference: string;
+    readonly agentName: string;
+    readonly runtime: SandboxWorkloadRuntimeCapabilities;
+    readonly requestedToolDisclosure: ToolDisclosure | null;
+  },
+  dependencies: PrepareExternalImageDependencies,
+): {
+  readonly workload: ExternalImageWorkloadSource;
+  readonly toolDisclosure: ToolDisclosure;
+} {
+  const workload = prepareExternalImageWorkloadSource(input, dependencies);
+  return {
+    workload,
+    toolDisclosure: resolveExternalImageToolDisclosure(
+      workload.toolDisclosure,
+      input.requestedToolDisclosure,
+    ),
+  };
+}
+
+export function externalImageWorkloadMatches(
+  reference: string,
+  receipt: SandboxWorkloadReceipt | undefined,
+): boolean {
+  const cloned = cloneSandboxWorkloadReceipt(receipt);
+  return cloned?.kind === "external-image" && cloned.reference === reference;
+}
 
 type ResolveManagedImageCatalog = (options: {
   readonly release: string;
@@ -46,6 +87,7 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath?: string | null;
+  readonly preparedExternalImage?: ExternalImageWorkloadSource | null;
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
@@ -256,6 +298,14 @@ function diagnostic(error: unknown): string {
   return "managed image catalog resolution failed";
 }
 
+function rejectedCorporateCa(error: unknown): CorporateCaValidationError | null {
+  if (error instanceof CorporateCaValidationError) return error;
+  if (error instanceof Error && error.cause instanceof CorporateCaValidationError) {
+    return error.cause;
+  }
+  return null;
+}
+
 function unavailableResult(
   input: PrepareSandboxWorkloadSourceInput,
   message: string,
@@ -413,6 +463,21 @@ export async function prepareSandboxWorkloadSource(
   input: PrepareSandboxWorkloadSourceInput,
   dependencies: PrepareSandboxWorkloadSourceDependencies = {},
 ): Promise<PreparedSandboxWorkloadSource> {
+  if (input.preparedExternalImage) {
+    if (input.customDockerfilePath) {
+      throw new SandboxWorkloadPreparationError(
+        "a custom Dockerfile and a user-supplied image cannot both own workload selection",
+      );
+    }
+    if (input.preparedExternalImage.kind !== "external-image") {
+      throw new SandboxWorkloadPreparationError("the prepared external image is invalid");
+    }
+    return {
+      source: input.preparedExternalImage,
+      release: null,
+      fallbackDiagnostic: null,
+    };
+  }
   const policy = input.policy ?? input.runtime.managedImageSelectionPolicy;
   const acceptedCandidateContract = isCandidateManagedImageAgent(input.agentName)
     ? (input.acceptedCandidateContract ?? null)
@@ -499,13 +564,24 @@ export async function prepareSandboxWorkloadSource(
         ? readExactManagedImageCatalog(input.catalogPath)
         : await (
             dependencies.resolveCatalog ??
-            ((options) => resolveManagedImageCatalogFromGhcr(options))
+            ((options) =>
+              resolveManagedImageCatalogFromGhcr({
+                ...options,
+                ...(input.environment === undefined ? {} : { environment: input.environment }),
+              }))
           )({
             release,
             platform,
             ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
           });
   } catch (error) {
+    const corporateCaError = rejectedCorporateCa(error);
+    if (corporateCaError) {
+      throw new SandboxWorkloadPreparationError(
+        `${CORPORATE_CA_EXPLICIT_ENV} was rejected: ${corporateCaError.reason}`,
+        { cause: error },
+      );
+    }
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(
         `managed image catalog '${release}' failed validation`,

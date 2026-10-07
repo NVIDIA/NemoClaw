@@ -332,7 +332,7 @@ beforeEach(() => {
   dockerInvocationsFile = path.join(tmpDir, "docker-invocations.log");
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
-  fs.mkdirSync(registryDir, { recursive: true });
+  fs.mkdirSync(registryDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(installerInvocationsFile, "");
   fs.writeFileSync(dockerInvocationsFile, "");
   // Image freshness has its own tests; this process fixture represents unchanged inputs.

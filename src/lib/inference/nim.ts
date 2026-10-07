@@ -27,10 +27,12 @@ import { isSafeModelId } from "../validation";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
+  isDgxStationGb300GpuName,
   nvidiaFirmwareProductClass,
   readBoundedNvidiaFirmwareValue,
 } from "./dgx-station-identity";
 import {
+  aggregateVerifiedGpuCapacity,
   type Arm64ContainerGpuProver,
   type ContainerGpuProofResult,
   type ContainerGpuProofStatus,
@@ -103,6 +105,8 @@ export interface GpuDetection {
   containerGpuProof?: ContainerGpuProofStatus;
   /** Immutable Windows product observation used by the N1x WSL classification. */
   n1xWslProduct?: boolean | null;
+  /** Immutable Windows product observation used by Station GB300 Ollama selection. */
+  stationGb300WslProduct?: boolean | null;
 }
 
 export interface DetectGpuDeps {
@@ -116,6 +120,8 @@ export interface DetectGpuDeps {
   onContainerGpuProof?: (proof: ContainerGpuProofStatus) => void;
   /** Product observation collected once by the effectful preflight boundary. */
   n1xWslProduct?: boolean | null;
+  /** Product observation collected once by the effectful preflight boundary. */
+  stationGb300WslProduct?: boolean | null;
   /** Read-only command transport used by observation-only readiness callers. */
   runCaptureImpl?: typeof runCapture;
   /** Override WSL detection for deterministic tests. */
@@ -127,12 +133,17 @@ export interface DetectGpuDeps {
   onTrustGateRejection?: (reason: string) => void;
 }
 
-function n1xWslProductObservationFromDeps(
+function wslProductObservationFromDeps(
   deps: DetectGpuDeps,
-): Pick<GpuDetection, "n1xWslProduct"> {
-  return Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
-    ? { n1xWslProduct: deps.n1xWslProduct ?? null }
-    : {};
+): Pick<GpuDetection, "n1xWslProduct" | "stationGb300WslProduct"> {
+  return {
+    ...(Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
+      ? { n1xWslProduct: deps.n1xWslProduct ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(deps, "stationGb300WslProduct")
+      ? { stationGb300WslProduct: deps.stationGb300WslProduct ?? null }
+      : {}),
+  };
 }
 
 // Group GPUs by their nvidia-smi model name, preserving first-appearance order.
@@ -487,6 +498,60 @@ function classifyWslNvidiaPlatform(
     : detectedPlatform;
 }
 
+function gpuRowsMatch(
+  hostRows: readonly { name: string; memoryMB: number }[],
+  provedRows: readonly { name: string; totalMemoryMB: number }[],
+): boolean {
+  const counts = (rows: readonly { name: string; memoryMB: number }[]) => {
+    const result = new Map<string, number>();
+    for (const row of rows) {
+      const key = `${row.name}\u0000${String(row.memoryMB)}`;
+      result.set(key, (result.get(key) ?? 0) + 1);
+    }
+    return result;
+  };
+  const host = counts(hostRows);
+  const proved = counts(provedRows.map((row) => ({ name: row.name, memoryMB: row.totalMemoryMB })));
+  return host.size === proved.size && [...host].every(([key, count]) => proved.get(key) === count);
+}
+
+function isN1xWslOllamaEligible(
+  proofPassed: boolean,
+  capacity: ReturnType<typeof aggregateVerifiedGpuCapacity>,
+  platform: NvidiaPlatform,
+  n1xWslProduct: boolean | null | undefined,
+): boolean {
+  return (
+    proofPassed &&
+    capacity !== undefined &&
+    capacity.availableMemoryMB >= 30_000 &&
+    (platform === "n1x" || n1xWslProduct === true)
+  );
+}
+
+function isStationGb300WslOllamaEligible(
+  runningInWsl: boolean,
+  proof: ContainerGpuProofResult | null,
+  capacity: ReturnType<typeof aggregateVerifiedGpuCapacity>,
+  stationGb300WslProduct: boolean | null | undefined,
+): boolean {
+  return (
+    runningInWsl &&
+    proof?.providerId === "docker" &&
+    stationGb300WslProduct === true &&
+    capacity !== undefined &&
+    capacity.availableMemoryMB >= 30_000 &&
+    proof.verifiedDevices?.some(({ name }) => isDgxStationGb300GpuName(name)) === true
+  );
+}
+
+function provedAvailableMemory(
+  selected: boolean,
+  availableMemoryMB: number,
+): Pick<GpuDetection, "availableMemoryMB"> | Record<string, never> {
+  return selected ? { availableMemoryMB } : {};
+}
+
 export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   const runCaptureImpl = deps.runCaptureImpl ?? runCapture;
   const runningInWsl = deps.isWsl ?? detectWsl();
@@ -500,7 +565,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       { isWsl: runningInWsl, runCaptureImpl },
     );
     if (output) {
-      type ParsedGpu = { name: string; memoryMB: number; freeMemoryMB: number };
+      type ParsedGpu = {
+        name: string;
+        memoryMB: number;
+        freeMemoryMB: number;
+        freeMemoryMBKnown: boolean;
+      };
       const parsed: ParsedGpu[] = [];
       for (const raw of output.split("\n")) {
         const line = raw.trim();
@@ -519,7 +589,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         parsed.push({
           name,
           memoryMB,
+          // A genuine 0 (GPU fully occupied by another workload) must stay
+          // distinguishable from an unparseable `[N/A]` reading downstream —
+          // nimUsableMemoryMB() only falls back to totalMemoryMB when
+          // availableMemoryMB is absent, not when it is 0.
           freeMemoryMB: isNaN(freeMemoryMB) ? 0 : freeMemoryMB,
+          freeMemoryMBKnown: !isNaN(freeMemoryMB),
         });
       }
       if (parsed.length > 0) {
@@ -538,30 +613,34 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           detectedPlatform === "station" ||
           detectedPlatform === "n1x" ||
           detectedPlatform === "jetson";
-        // The all-GPU CUDA workload proves that at least one usable device
-        // exists. It does not establish which nvidia-smi rows or capacities
-        // are genuine, so a multi-row response stays untrusted.
+        // Multi-row reports are accepted only when the provider-owned proof
+        // ran CUDA on every container-visible device and returned matching
+        // identity and capacity evidence for every host row.
         // Null when the proof passed; otherwise a fixed-text fragment naming
         // why it did not, composed into the onTrustGateRejection reason.
         type BoundedCudaProofAttempt =
           | { proof: ContainerGpuProofResult; rejection: null }
           | { proof: null; rejection: string };
         const runBoundedCudaProof = (): BoundedCudaProofAttempt => {
-          if (parsed.length !== 1) {
-            return {
-              proof: null,
-              rejection: "the bounded CUDA proof was not attempted for multiple GPU rows",
-            };
-          }
           const prover = deps.proveArm64ContainerGpu ?? null;
           const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
           if (!proof) {
             return { proof: null, rejection: "the bounded CUDA proof was not attempted" };
           }
-          deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: proof.passed });
-          return proof.passed
-            ? { proof, rejection: null }
-            : { proof: null, rejection: "the bounded CUDA proof failed" };
+          if (!proof.passed) {
+            deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: false });
+            return { proof: null, rejection: "the bounded CUDA proof failed" };
+          }
+          const verified = proof.verifiedDevices;
+          if (!verified || verified.length !== parsed.length || !gpuRowsMatch(parsed, verified)) {
+            deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: false });
+            return {
+              proof: null,
+              rejection: "the bounded CUDA proof did not verify every reported GPU row",
+            };
+          }
+          deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: true });
+          return { proof, rejection: null };
         };
         let trusted: ParsedGpu[];
         let boundedCudaProof: ContainerGpuProofResult | null = null;
@@ -628,44 +707,62 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
           0,
         );
+        // Only surface the aggregate when every GPU's free-memory reading
+        // actually parsed; a genuine 0 (fully-occupied GPU) must still be
+        // reported, not conflated with an unparseable `[N/A]` row.
+        const availableMemoryMBKnown = trusted.every((p: ParsedGpu) => p.freeMemoryMBKnown);
         const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
-        const verifiedCapacity = boundedCudaProof?.verifiedCapacity;
+        const verifiedCapacity = aggregateVerifiedGpuCapacity(boundedCudaProof?.verifiedDevices);
         // OEM N1X units report chassis models such as `SKU 1` or `83N7`, so
         // the proof-backed GPU identity qualifies on its own; the chassis
         // observation remains an alternative for a GPU name outside the
         // accepted N1X identities.
-        const n1xWslOllamaEligible =
-          containerGpuProofPassed &&
+        const n1xWslOllamaEligible = isN1xWslOllamaEligible(
+          containerGpuProofPassed,
+          verifiedCapacity,
+          platform,
+          deps.n1xWslProduct,
+        );
+        const stationGb300WslOllamaEligible = isStationGb300WslOllamaEligible(
+          runningInWsl,
+          boundedCudaProof,
+          verifiedCapacity,
+          deps.stationGb300WslProduct,
+        );
+        const largeWslOllamaEligible = n1xWslOllamaEligible || stationGb300WslOllamaEligible;
+        const proofCapacitySelected =
           verifiedCapacity !== undefined &&
-          verifiedCapacity.availableMemoryMB >= 30_000 &&
-          (platform === "n1x" || deps.n1xWslProduct === true);
-        // Keep the 30B/35B timeout protection except for the planned
-        // identity-qualified WSL RTX Spark N1X path (#10954).
+          (largeWslOllamaEligible || (boundedCudaProof?.verifiedDevices?.length ?? 0) > 1);
+        // Keep the 30B/35B timeout protection except for the accepted
+        // identity-qualified WSL N1x and Station GB300 paths (#10954, #12470).
         const computeConstrained =
-          !n1xWslOllamaEligible &&
+          !largeWslOllamaEligible &&
           (platform === "jetson" || platform === "n1x" || containerGpuProofPassed);
-        const selectedTotalMemoryMB = n1xWslOllamaEligible
-          ? verifiedCapacity.totalMemoryMB
-          : totalMemoryMB;
-        const selectedAvailableMemoryMB = n1xWslOllamaEligible
-          ? verifiedCapacity.availableMemoryMB
-          : availableMemoryMB;
-        return {
+        const selectedTotalMemoryMB =
+          proofCapacitySelected && verifiedCapacity
+            ? verifiedCapacity.totalMemoryMB
+            : totalMemoryMB;
+        const selectedAvailableMemoryMB =
+          proofCapacitySelected && verifiedCapacity
+            ? verifiedCapacity.availableMemoryMB
+            : availableMemoryMB;
+        const detection: GpuDetection = {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
           gpus: trusted.map((p) => ({
             name: p.name,
-            memoryMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : p.memoryMB,
+            memoryMB: p.memoryMB,
           })),
           count: trusted.length,
           totalMemoryMB: selectedTotalMemoryMB,
-          ...(selectedAvailableMemoryMB > 0
+          ...(largeWslOllamaEligible || availableMemoryMBKnown
             ? { availableMemoryMB: selectedAvailableMemoryMB }
             : {}),
-          perGpuMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : trusted[0].memoryMB,
+          ...provedAvailableMemory(proofCapacitySelected, selectedAvailableMemoryMB),
+          perGpuMB: trusted[0].memoryMB,
           nimCapable: canRunNimWithMemory(selectedTotalMemoryMB),
           platform,
           spark: platform === "spark",
@@ -681,8 +778,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
                 },
               }
             : {}),
-          ...n1xWslProductObservationFromDeps(deps),
+          ...wslProductObservationFromDeps(deps),
         };
+        return detection;
       }
     }
   } catch {

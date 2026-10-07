@@ -5,9 +5,9 @@
 # Case: Deep Agents Code interactive TUI model turn (#5620, #11847).
 #
 # This live check runs two interactive sessions against a real Deep Agents Code
-# sandbox. It proves the sandbox still blocks memfd creation, the real QuickJS
-# runtime initializes without that optimization, and each TUI completes a model
-# turn. Completed sessions must not leak DCode/LangGraph processes. The check
+# sandbox. It proves the sandbox still blocks memfd creation, the pinned QuickJS
+# tool bridge executes a shell command and restores interpreter state. Each TUI
+# completes a model turn. Completed sessions must not leak DCode/LangGraph processes. The check
 # retains only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
@@ -83,21 +83,7 @@ sandbox_exec() {
 }
 
 sandbox_quickjs_memfd_probe() {
-  sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
-}
-
-sandbox_is_ready() {
-  openshell sandbox list 2>&1 \
-    | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }'
-}
-
-wait_for_sandbox_ready() {
-  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  while :; do
-    sandbox_is_ready && return 0
-    [ "$SECONDS" -ge "$deadline" ] && return 1
-    sleep 1
-  done
+  sandbox_exec 'timeout --signal=TERM --kill-after=5s 35s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py --require-memfd-denied'
 }
 
 is_positive_integer() {
@@ -549,10 +535,10 @@ main() {
 
   local quickjs_probe_output
   if quickjs_probe_output="$(sandbox_quickjs_memfd_probe)" \
-    && grep -Fxq "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK" <<<"$quickjs_probe_output"; then
-    pass "OpenShell blocks memfd creation and the real QuickJS runtime initializes"
+    && grep -Fxq "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK" <<<"$quickjs_probe_output"; then
+    pass "OpenShell blocks memfd creation and QuickJS tool execution survives REPL restoration"
   else
-    fail_test "QuickJS runtime did not initialize while OpenShell blocked memfd creation"
+    fail_test "QuickJS memfd-denial, tool execution, or REPL restoration validation failed"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi

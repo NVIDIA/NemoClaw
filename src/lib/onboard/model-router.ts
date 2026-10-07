@@ -5,6 +5,12 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  type BlueprintInferenceProfile,
+  type BlueprintRouterConfig,
+  DEFAULT_MODEL_ROUTER_PORT,
+  loadBlueprintProfile,
+} from "../core/model-router-port";
 import { GATEWAY_PORT } from "../core/ports";
 import { requireValue } from "../core/require-value";
 import { compactText } from "../core/url-utils";
@@ -39,8 +45,7 @@ import {
   doesModelRouterProcessOwnPort,
   getRouterHealthSnapshot,
   inspectModelRouterProcessForPort,
-  isRouterHealthy,
-  ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
+  isRouterResponsive,
   type RouterHealthSnapshot,
   stopModelRouterProcess,
 } from "./model-router-process";
@@ -54,18 +59,14 @@ export {
 } from "./model-router-command";
 
 // The prefill router downloads and loads its routing model before it serves
-// /health. Allow a cold host to finish while bounding both elapsed time and
-// the number of health checks.
+// /health. Allow a cold host to finish while bounding elapsed time and the
+// number of health observations.
 const ROUTER_HEALTH_RETRIES = 300;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
-// LiteLLM's /health live-probes every upstream endpoint per request, so it
-// can need far longer than the 3-second liveness budget to answer (#8962).
-// The startup poll keeps the 3-second budget and reads the body, so it
-// never accepts a fast 200 that names zero healthy endpoints; recovery for
-// a router whose /health outruns that budget runs through the body-checked
-// final snapshot after the poll exhausts its retries.
-const ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS = 30_000;
+// Reconciliation is outside the startup budget. Allow LiteLLM's 60-second
+// upstream probes to finish before restarting a recorded router.
+const ROUTER_RECONCILE_HEALTH_TIMEOUT_MS = 65_000;
 const ROUTER_LOG_TAIL_LINES = 20;
 const ROUTER_LOG_TAIL_MAX_BYTES = 64 * 1024;
 const ROUTER_LOG_TAIL_LINE_MAX_CHARS = 300;
@@ -76,21 +77,12 @@ const MODEL_ROUTER_VENV_DIR = path.join(
 );
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
-export type BlueprintRouterConfig = {
-  enabled?: boolean;
-  port?: number;
-  pool_config_path?: string;
-  credential_env?: string;
-};
-
-export type BlueprintInferenceProfile = {
-  provider_name?: string;
-  endpoint?: string;
-  model: string;
-  credential_env?: string;
-  credential_default?: string;
-  router: BlueprintRouterConfig;
-};
+export {
+  type BlueprintInferenceProfile,
+  type BlueprintRouterConfig,
+  DEFAULT_MODEL_ROUTER_PORT,
+  loadBlueprintProfile,
+} from "../core/model-router-port";
 
 type ModelRouterProxyConfigResult = {
   status: number | null;
@@ -134,40 +126,18 @@ export type StartModelRouterDeps = {
   readPoolConfig: (poolConfigPath: string) => string | null;
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
-  isRouterHealthy: (port: number, timeoutMs?: number) => Promise<boolean>;
-  getRouterHealthSnapshot: (port: number, timeoutMs?: number) => Promise<RouterHealthSnapshot>;
+  isRouterResponsive: (port: number, timeoutMs?: number) => Promise<boolean>;
+  getRouterHealthSnapshot: (
+    port: number,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ) => Promise<RouterHealthSnapshot>;
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   isProcessAlive: (pid: number) => boolean;
   terminateProcess: (pid: number) => void;
   getProviderKey: () => string;
 };
-
-/**
- * Load a named inference profile and router config from blueprint.yaml.
- * Returns null if the blueprint or profile is missing.
- */
-export function loadBlueprintProfile(
-  profileName: string,
-  rootDir: string = ROOT,
-): BlueprintInferenceProfile | null {
-  try {
-    const YAML = require("yaml");
-    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
-    if (!fs.existsSync(blueprintPath)) return null;
-    const raw = fs.readFileSync(blueprintPath, "utf8");
-    const parsed = YAML.parse(raw);
-    const profile = parsed?.components?.inference?.profiles?.[profileName];
-    if (!profile) return null;
-    const router = { ...(parsed?.components?.router || {}) };
-    if (typeof profile.credential_env === "string" && profile.credential_env.trim().length > 0) {
-      router.credential_env = profile.credential_env;
-    }
-    return { ...profile, router } as BlueprintInferenceProfile;
-  } catch {
-    return null;
-  }
-}
 
 function modelRouterPackageDir(): string {
   return path.join(ROOT, MODEL_ROUTER_RELATIVE_DIR);
@@ -317,7 +287,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
     },
     resolveProviderCredential,
     buildSubprocessEnv,
-    isRouterHealthy,
+    isRouterResponsive,
     getRouterHealthSnapshot,
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     now: () => performance.now(),
@@ -394,9 +364,9 @@ export async function startModelRouter(
     if (!credEnvVars.OPENAI_API_KEY) credEnvVars.OPENAI_API_KEY = _providerKey;
   }
 
-  if (await deps.isRouterHealthy(port)) {
+  if (await deps.isRouterResponsive(port)) {
     throw new Error(
-      `Port ${port} already has a healthy router endpoint; refusing to start a second router.`,
+      `Port ${port} already has a responsive router endpoint; refusing to start a second router.`,
     );
   }
 
@@ -432,15 +402,22 @@ export async function startModelRouter(
   }
   let childExited = false;
   let childExitDetail = "";
+  let resolveChildExit: () => void = () => undefined;
+  const childExitSignal = new Promise<void>((resolve) => {
+    resolveChildExit = resolve;
+  });
+  const childExitObservation = childExitSignal.then(() => ({ kind: "child-exit" as const }));
   child.onError((err: Error) => {
     childExited = true;
     childExitDetail = `child failed to start: ${err.message}`;
+    resolveChildExit();
   });
   child.onExit((code: number | null, signal: string | null) => {
     childExited = true;
     if (!childExitDetail) {
       childExitDetail = `child exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`;
     }
+    resolveChildExit();
   });
   child.unref();
 
@@ -452,24 +429,33 @@ export async function startModelRouter(
     );
   }
 
-  // Reserve the final-snapshot window inside the startup budget so a failed
-  // startup never exceeds the 600 seconds the error message reports.
-  const startupDeadline =
-    deps.now() + ROUTER_STARTUP_TIMEOUT_MS - ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS;
+  const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
   let healthAttempts = 0;
+  let lastSnapshot: RouterHealthSnapshot | null = null;
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
     await deps.sleep(delayMs);
     if (childExited) break;
     const remainingMs = startupDeadline - deps.now();
     if (remainingMs <= 0) break;
-    const healthTimeoutMs = Math.max(
-      1,
-      Math.min(ROUTER_HEALTH_REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)),
-    );
+    // The request owns the remaining startup budget. If the server accepts a
+    // request and never completes it, do not start another server-side health
+    // cycle whose upstream probes could overlap (#12089).
+    const healthTimeoutMs = Math.max(1, Math.ceil(remainingMs));
+    const healthAbort = new AbortController();
+    const observation = await Promise.race([
+      deps
+        .getRouterHealthSnapshot(port, healthTimeoutMs, healthAbort.signal)
+        .then((snapshot) => ({ kind: "health" as const, snapshot })),
+      childExitObservation,
+    ]);
+    if (observation.kind === "child-exit") {
+      healthAbort.abort();
+      break;
+    }
     healthAttempts += 1;
-    const pollSnapshot = await deps.getRouterHealthSnapshot(port, healthTimeoutMs);
-    const healthy = isRouterSnapshotReady(pollSnapshot);
+    lastSnapshot = observation.snapshot;
+    const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
@@ -478,30 +464,28 @@ export async function startModelRouter(
       break;
     }
   }
-  // One 30-second body read after the poll exhausts its retries. When the
-  // router process is still running, this snapshot is the only source of
-  // the endpoint error — and a healthy body is proof of recovery: kill only
-  // a router that did not prove itself healthy.
-  const finalSnapshot: RouterHealthSnapshot = childExited
-    ? { healthy: false, body: null }
-    : await deps.getRouterHealthSnapshot(port, ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS);
-  if (isRouterSnapshotReady(finalSnapshot) && deps.isProcessAlive(pid)) {
-    return pid;
-  }
   try {
     deps.terminateProcess(pid);
   } catch {
     // already dead
   }
-  const lastHealthError = firstUnhealthyEndpointError(finalSnapshot.body);
+  const lastHealthError = firstUnhealthyEndpointError(lastSnapshot?.body ?? null);
+  const lastHealthObservation = formatHealthObservation(lastSnapshot);
   const logTail = routerLog === null ? "" : deps.readRouterLogTail(logPath, routerLog.startOffset);
   throw new Error(
     `Model Router failed to become healthy on port ${port} within ${ROUTER_STARTUP_TIMEOUT_MS / 1000} seconds (completed health checks: ${healthAttempts})` +
       (childExitDetail ? ` (${childExitDetail})` : "") +
+      (lastHealthObservation ? ` (${lastHealthObservation})` : "") +
       (lastHealthError ? ` (last health error: ${lastHealthError})` : "") +
       (routerLog === null ? "" : `. Router log: ${logPath}`) +
       (logTail ? `\n  Last router log lines:\n${logTail}` : ""),
   );
+}
+
+function formatHealthObservation(snapshot: RouterHealthSnapshot | null): string {
+  if (!snapshot) return "";
+  const status = snapshot.statusCode === null ? "no HTTP status" : `HTTP ${snapshot.statusCode}`;
+  return `last health check: ${snapshot.outcome}, ${status}, ${snapshot.elapsedMs} ms, ${snapshot.capturedBodyBytes} body bytes`;
 }
 
 /** Router readiness: /health answered 2xx and names at least one healthy endpoint. */
@@ -578,8 +562,6 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
-export const DEFAULT_MODEL_ROUTER_PORT = 4000;
-
 export function resolveModelRouterPort(): number {
   return getRoutedProfile().router?.port || DEFAULT_MODEL_ROUTER_PORT;
 }
@@ -623,6 +605,12 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
+  const session = onboardSession.loadSession();
+  if (session?.routerPort != null && session.routerPort !== routerPort) {
+    throw new Error(
+      `The recorded Model Router port ${session.routerPort} differs from configured port ${routerPort}. Restore the recorded port and clean up the existing router before changing ports.`,
+    );
+  }
   const routerCredentialEnv =
     bp.router.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
   const routerCredential =
@@ -633,22 +621,19 @@ export async function reconcileModelRouter(): Promise<void> {
   }
   saveCredential(routerCredentialEnv, routerCredential);
   const routerCredentialHash = hashCredential(routerCredential);
-  const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
-  // One snapshot answers both questions: `healthy` is the occupied-port check,
-  // and `isRouterSnapshotReady` is the single authority for declaring the
-  // router usable, exactly as it is for the startup poll. Budget the body read,
-  // because /health probes every upstream endpoint and can answer well after
-  // the 3-second liveness budget.
-  const snapshot = await getRouterHealthSnapshot(
-    routerPort,
-    ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS,
-  );
-  if (snapshot.healthy) {
-    const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
+  const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
+  const responsive = await isRouterResponsive(routerPort);
+  const orphan = recordedProcessOwnsRouter ? null : inspectModelRouterProcessForPort(routerPort);
+  const knownProcessExists = recordedProcessOwnsRouter || orphan?.status === "found";
+  if (responsive || knownProcessExists) {
+    const snapshot = responsive
+      ? await getRouterHealthSnapshot(routerPort, ROUTER_RECONCILE_HEALTH_TIMEOUT_MS)
+      : null;
     if (
+      snapshot &&
       routerCredentialHash &&
       recordedCredentialHash === routerCredentialHash &&
       recordedProcessOwnsRouter &&
@@ -656,6 +641,12 @@ export async function reconcileModelRouter(): Promise<void> {
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
+      if (session?.routerPort !== routerPort) {
+        onboardSession.updateSession((current: Session) => {
+          current.routerPort = routerPort;
+          return current;
+        });
+      }
       return;
     }
     if (recordedProcessOwnsRouter) {
@@ -670,15 +661,14 @@ export async function reconcileModelRouter(): Promise<void> {
       // requiring a manual stop-and-retry. Only stop it if the cmdline
       // confirms it is actually model-router proxy — never kill an unrelated
       // service that happens to occupy the port. See issue #5169.
-      const orphan = inspectModelRouterProcessForPort(routerPort);
-      if (orphan.status === "found") {
+      if (orphan?.status === "found") {
         console.log(`  Stopping orphaned model router (PID ${orphan.pid})...`);
         await stopModelRouterProcess(orphan.pid, routerPort);
       } else {
         const inventoryDetail =
-          orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
+          orphan?.status === "unavailable" ? " The host process inventory is unavailable." : "";
         throw new Error(
-          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
+          `Port ${routerPort} already has a responsive router endpoint, but its credential state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
         );
       }
     }
@@ -689,6 +679,7 @@ export async function reconcileModelRouter(): Promise<void> {
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;
+    current.routerPort = routerPort;
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });

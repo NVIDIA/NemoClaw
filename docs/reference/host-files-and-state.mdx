@@ -33,9 +33,14 @@ Share redacted diagnostics only.
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
-| `~/.nemoclaw/credentials.json` | Legacy plaintext credential file from earlier releases. Onboarding stages allowlisted values, registers them with the OpenShell gateway, and securely deletes the file only after verifying their migration. Current releases do not create this file. | No; run `$$nemoclaw onboard` to complete migration and cleanup so you do not lose a credential that is not yet registered with the gateway. |
+| `~/.nemoclaw/credentials.json` | Legacy plaintext credential file from earlier releases. Onboarding stages allowlisted values and registers them with the OpenShell gateway. After verified migration, it removes only unchanged migrated entries and preserves all others. It securely deletes the file when no entries remain. See [Credential Storage](../security/credential-storage) for retained-file and empty-file cleanup behavior. | No; run `$$nemoclaw onboard` to complete migration and cleanup so you do not lose a credential that is not yet registered with the gateway. |
 | `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. See [Malformed Registry File](#malformed-registry-file) when a command reports that this file is not valid JSON. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
-| `<selected-state-root>/onboard-session.json` | Resume or incomplete-state record for an onboarding attempt that did not complete. It can contain secret-free external component activation evidence bound to the sandbox identity fingerprint and lifecycle generation. | Only when you intentionally want to discard the failed session and `externalComponentActivation` is absent. Prefer `$$nemoclaw onboard --fresh` when available. If that field is present, preserve the file, sandbox registry, and sandbox for an identity-verified recovery decision. Version 1 does not support resume or recovery for that activation state. |
+<AgentOnly variant="openclaw,hermes">
+| `<selected-state-root>/state/tunnel/cloudflared.pid` | Owner-only PID record for the Cloudflare tunnel managed by the selected OpenShell gateway port. It lets tunnel lifecycle commands inspect, report, and safely stop the recorded process. | No while the process is live or its identity cannot be inspected. Use `$$nemoclaw tunnel stop` instead of deleting this file manually. |
+| `<selected-state-root>/state/tunnel/cloudflared.log` | Owner-only lifecycle log for the Cloudflare tunnel managed by the selected OpenShell gateway port. NemoClaw reads it to find a quick-tunnel URL and retain tunnel diagnostics. | After `$$nemoclaw tunnel stop` confirms that the process exited. Deleting the file removes the retained URL and diagnostics. |
+</AgentOnly>
+| `<selected-state-root>/onboard-session.json` | Active onboarding session or rebuild recovery journal. Other sandboxes' interrupted rebuilds can be retained separately. It can contain secret-free external component activation evidence bound to the sandbox identity fingerprint and lifecycle generation. | Do not delete it to resolve an interrupted rebuild. For an ordinary failed onboarding attempt, prefer `$$nemoclaw onboard --fresh` when `externalComponentActivation` is absent. If that field is present, preserve the file, sandbox registry, and sandbox for an identity-verified recovery decision. Version 1 does not support resume or recovery for that activation state. |
+| `<selected-state-root>/.onboard-rebuild-<sandbox>.json` | Retained rebuild session for one sandbox. NemoClaw restores it to the active session when that sandbox rebuilds. | No. Rerun `$$nemoclaw <sandbox> rebuild` with the same settings and preserve the recovery files. |
 | `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending` | Owner-only identity for an installer-selected alternate port whose onboarding is deferred or incomplete. When `NEMOCLAW_GATEWAY_PORT` is unset, the installer and CLI use this port so later or resumed onboarding and cleanup stay in the same state root. Successful installer-driven or direct CLI onboarding promotes it to `automatic-gateway-port`. | Preserve a valid marker; ordinary cleanup must use the reported gateway-scoped uninstall guidance. Fresh onboarding retains this automatic port and promotes it on success. If the resolver specifically reports an invalid automatic marker, inspect and remove only that invalid marker, or set `NEMOCLAW_GATEWAY_PORT` explicitly to target another environment. |
 | `~/.nemoclaw/gateways/<port>/automatic-gateway-port` | Owner-only completed identity for an installer-selected alternate port. When `NEMOCLAW_GATEWAY_PORT` is unset, later installer and CLI processes restore this port instead of using `8080`. | Preserve a valid marker; uninstalling this gateway removes it with the port-scoped state. If the resolver specifically reports an invalid automatic marker, inspect and remove only that invalid marker, or set `NEMOCLAW_GATEWAY_PORT` explicitly to target another environment. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
@@ -47,8 +52,9 @@ Share redacted diagnostics only.
 | `~/.nemoclaw/ollama-backend` | Host-global legacy route URL used to restart the Ollama auth proxy and retained for compatibility with earlier releases. | No while any gateway uses the shared proxy. Rerun onboarding if this file is missing or damaged. |
 | `~/.nemoclaw/ollama-backend.json` | Mode-`0600`, versioned descriptor that identifies whether the matching legacy route fronts Ollama or a compatible endpoint. Recovery trusts its kind only when both files contain the same URL. | Yes, but recovery uses neutral remediation until onboarding recreates the descriptor. |
 | `~/.nemoclaw/ollama-proxy-port` | Host-global port used by the Ollama auth proxy and every Local Ollama sandbox route on the host. A command with a different `NEMOCLAW_OLLAMA_PROXY_PORT` stops before changing the shared proxy. | No while any gateway uses Local Ollama. Full uninstall uses this file to find the proxy and removes it with the other shared proxy state. |
-| `~/.nemoclaw/dual-station-vllm-api-key` | Owner-only host-global bearer API key shared by authenticated NemoClaw-managed vLLM profiles. | No while any managed vLLM runtime uses it. Full uninstall removes it only after matching runtime cleanup succeeds and no sibling gateway remains. |
-| `~/.nemoclaw/host-local-vllm-runtime.json` | Owner-only, credential-free receipt for a catalog-selected single-host vLLM runtime. It binds the immutable catalog, preset, and recipe digests to the container ID and API-key fingerprint. | No while that runtime exists. Recovery and full uninstall fail closed if its profile labels do not match this receipt, and uninstall removes it only after container cleanup succeeds. |
+| `~/.nemoclaw/dual-station-vllm-api-key` | Owner-only host-global bearer API key shared by authenticated NemoClaw-managed vLLM profiles. | No while a managed vLLM runtime uses it. An eligible `destroy` removes it only after the authenticated single-host container is removed or confirmed absent and no registered `vllm-local` consumer remains. Preservation options and distributed ownership keep it. Full uninstall removes it only after matching runtime cleanup succeeds and no sibling gateway remains. |
+| `~/.nemoclaw/host-local-vllm-runtime.json` | Owner-only, credential-free receipt for a catalog-selected single-host vLLM runtime. It binds the immutable catalog, preset, and recipe digests to the container ID and API-key fingerprint. | No while that runtime exists. Recovery, destroy, and full uninstall fail closed if its profile labels do not match this receipt, and destroy or uninstall removes it only after container cleanup succeeds. |
+| `~/.nemoclaw/host-local-vllm-pending-retirement.json` | Owner-only, credential-free record of one eligible `vllm-local` sandbox name whose managed `nemoclaw-vllm` retirement is pending. Written before registry removal; a later eligible `destroy` replaces it. | No while retirement is pending. After registry removal, preserve it for a `destroy` retry with the same sandbox name. A settled retry clears the record, including when another `vllm-local` consumer remains, a distributed receipt owns the runtime, or `--keep-vllm` is requested. Full uninstall removes it with the other host-global state. |
 | `~/.nemoclaw/managed-llama-cpp/api-key` | Owner-only bearer API key mounted read-only into the managed llama.cpp container. It is absent from process arguments, logs, receipts, sandbox registry state, and status output. | No while the managed llama.cpp runtime exists. A retry reuses the same key. Destroy or full uninstall removes it only after runtime cleanup succeeds. |
 | `~/.nemoclaw/managed-llama-cpp/owner.json` | Owner-only, credential-free binding from one gateway to the sandbox, recipe, catalog digest, preset digest, and recipe digest that owns the managed llama.cpp runtime. | No while the managed llama.cpp runtime exists. Destroy or full uninstall removes it only after cleanup succeeds. |
 | `~/.nemoclaw/managed-llama-cpp/receipt.json` | Owner-only runtime receipt that binds the Docker authority, container ID, network, image digest, model identity, and lifecycle generation. It contains no API key. | No while the managed llama.cpp runtime exists. Recovery and cleanup use it and preserve it when ownership cannot be proved. |
@@ -97,22 +103,21 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination for lifecycle locks, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard recovery context. |
-| `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state and configured external roots created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from copied JSON, YAML, and `.env` files. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
-| `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
+<AgentOnly variant="openclaw">
+| `~/.nemoclaw/snapshots/` | Legacy copies of host `~/.openclaw` state and configured external roots. Current releases do not create or restore these snapshots. | Only after you no longer need the legacy copy. The host CLI does not expose the direct runner's retention actions. |
+</AgentOnly>
+| `~/.nemoclaw/rebuild-backups/` | Internal whole-native-state handoffs written by `backup-all` and rebuild flows. | Only after you no longer need rebuild recovery. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
 | `~/.cache/huggingface/` | Shared Hugging Face cache used by managed vLLM and managed llama.cpp model acquisition. The llama.cpp path resolves the YAML-declared revision and GGUF file, then verifies its size, SHA-256 digest, and filesystem identity before launch. Other applications can use the same cache. | Only after stopping every process that uses the cache. Sandbox destroy and full uninstall without `--delete-models` preserve it. Full uninstall with `--delete-models` deletes its non-credential data after managed model runtimes stop and only when no sibling gateway remains. The `token` and `stored_tokens` authentication files remain. Affected applications must download and verify their cached files again. |
 
-## Migration Snapshot Retention
+<AgentOnly variant="openclaw">
 
-Before NemoClaw retains a migration snapshot, it recursively sanitizes the copied OpenClaw state and every configured external root.
-It preserves empty or comment-only YAML files and omits copied JSON, YAML, or `.env` files that it cannot sanitize.
-If NemoClaw cannot remove an unsafe copied artifact, snapshot creation fails and attempts to delete the incomplete snapshot directory.
-Sanitization requires `python3` on a POSIX host so every traversal and mutation can remain anchored to opened directory descriptors.
-It fails closed if a copied file or parent directory changes identity during sanitization.
+## Legacy Migration Snapshot Cleanup
 
-The direct blueprint runner accepts these action arguments for migration snapshots:
+Current releases leave existing migration snapshots under `~/.nemoclaw/snapshots/` unchanged.
+The direct blueprint runner retains these action arguments to inspect or remove the legacy copies:
 
 ```text
 snapshots list
@@ -124,10 +129,13 @@ These fragments are not standalone shell commands, and the host `nemoclaw` CLI d
 An integration that invokes the direct runner can use `snapshots list` first to inspect the available timestamped copies.
 `snapshots prune` keeps the requested number of newest snapshots; `--keep 0` removes all of them.
 `snapshots delete` accepts only one timestamped directory directly under `~/.nemoclaw/snapshots/`.
-Both deletion commands are irreversible: they do not modify a running sandbox, but they remove host state that could otherwise be used for rollback or restore.
+Both deletion commands are irreversible.
+They do not modify a running sandbox, but they remove the selected legacy copies.
 
-Snapshot sanitization and deletion require `python3` on a POSIX host.
-Listing works on native Windows, but migration snapshot creation and deletion do not; use WSL for those operations on Windows.
+Snapshot deletion requires `python3` on a POSIX host.
+Listing works on native Windows, but deletion does not; use WSL to delete legacy snapshots on Windows.
+
+</AgentOnly>
 
 ## Uninstall Behavior
 
@@ -174,6 +182,6 @@ For operational uninstall steps, refer to:
 <AgentOnly variant="deepagents">
 
 - [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the generic uninstall flow.
-- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) before removing state you may need later.
+- [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before removing state you may need later.
 
 </AgentOnly>

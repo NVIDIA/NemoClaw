@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
 import type {
   V1Alpha1Export,
@@ -8,6 +9,14 @@ import type {
   V1Alpha1ExportSandbox,
 } from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
+
+const OLLAMA_SERVICE_NAME = "ollama-auth";
+const VLLM_SERVICE_NAME = "vllm";
+
+function targetBridgeAddress(documentUid: NemoClawConfigDocumentUid): string {
+  const subnet = createHash("sha256").update(documentUid).digest()[0]!;
+  return `172.30.${subnet}.1`;
+}
 
 function providerLocalName(provider: string): string {
   const normalized = provider
@@ -19,16 +28,29 @@ function providerLocalName(provider: string): string {
 
 function exportedProviderName(inference: VerifiedExportSource["inference"]): string {
   if ("serving" in inference)
-    return inference.serving.backend === "vllm" ? "managed-vllm" : "local-ollama";
+    return inference.serving.backend === "vllm" ? "managed-vllm" : "local";
   return providerLocalName(inference.provider);
+}
+
+function bareSha256Digest(digest: string): string {
+  const match = /^sha256:([a-f0-9]{64})$/u.exec(digest);
+  if (!match) throw new Error("Verified Ollama model digest is invalid.");
+  return match[1];
 }
 
 function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
 ): V1Alpha1Export["spec"]["inferenceProviders"][number] {
-  if ("serving" in source.inference)
-    throw new Error("Deferred local inference cannot be exported to v1alpha1.");
+  if ("serving" in source.inference) {
+    return {
+      name,
+      provider: "openai",
+      api: "openai-completions",
+      serviceRef:
+        source.inference.serving.backend === "ollama" ? OLLAMA_SERVICE_NAME : VLLM_SERVICE_NAME,
+    };
+  }
   const driver: "anthropic" | "openai" =
     source.inference.api === "anthropic-messages" ? "anthropic" : "openai";
   const provider = {
@@ -40,6 +62,71 @@ function inferenceProvider(
   return source.inference.credentialEnv === undefined
     ? provider
     : { ...provider, credential: { env: source.inference.credentialEnv } };
+}
+
+function ollamaService(
+  source: VerifiedExportSource,
+  bridgeAddress: string,
+): NonNullable<V1Alpha1Export["spec"]["services"]>[string] {
+  if (!("serving" in source.inference) || source.inference.serving.backend !== "ollama") {
+    throw new Error("Only verified attached Ollama inference can create an Ollama proxy service.");
+  }
+  const { daemon, proxy, model } = source.inference.serving;
+  return {
+    kind: "ollamaProxy",
+    image: null,
+    endpoint: `http://${bridgeAddress}:${proxy.hostPort}/v1`,
+    upstream: {
+      endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
+      model: { name: model.servedName, digest: bareSha256Digest(model.digest) },
+    },
+  };
+}
+
+function vllmService(
+  source: VerifiedExportSource,
+): NonNullable<V1Alpha1Export["spec"]["services"]>[string] {
+  if (!("serving" in source.inference) || source.inference.serving.backend !== "vllm") {
+    throw new Error("Only verified managed vLLM inference can create a vLLM service.");
+  }
+  const { model, hostPort } = source.inference.serving;
+  return {
+    kind: "vllm",
+    authentication: "bearer",
+    hardware: {
+      architecture: "amd64",
+      minComputeCapability: 90,
+      minGpuMemoryBytes: 96_000_000_000,
+      minDriverMajor: 580,
+    },
+    container: { ipc: "host", sharedMemoryGiB: 32 },
+    image: null,
+    model: { repository: model.id, revision: model.revision },
+    serving: {
+      modelName: model.servedName,
+      mambaBackend: "flashinfer",
+      enforceEager: false,
+      toolParser: "qwen3_coder",
+      reasoningParser: "nemotron_v3",
+      port: hostPort,
+      contextTokens: 65_536,
+      maxSequences: 1,
+      batchTokens: 4096,
+      startupTimeoutSeconds: 1800,
+    },
+    memory: { gpuMemoryUtilization: 0.75 },
+  };
+}
+
+function exportServices(
+  source: VerifiedExportSource,
+  bridgeAddress: string,
+): V1Alpha1Export["spec"]["services"] | undefined {
+  if (!("serving" in source.inference)) return undefined;
+  if (source.inference.serving.backend === "ollama") {
+    return { [OLLAMA_SERVICE_NAME]: ollamaService(source, bridgeAddress) };
+  }
+  return { [VLLM_SERVICE_NAME]: vllmService(source) };
 }
 
 function agentSettings(source: VerifiedExportSource) {
@@ -70,7 +157,7 @@ function exportAgent(
     name: agent.name,
     ...(tools === undefined ? {} : { tools }),
     ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
-      ? { integrationRefs: ["brave-search" as const] }
+      ? { integrationRefs: [`${source.webSearch.provider}-search` as const] }
       : {}),
     ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
@@ -86,23 +173,6 @@ function exportAgent(
       ],
     },
   };
-}
-
-function exportAgents(
-  source: VerifiedExportSource,
-  providerName: string,
-): readonly V1Alpha1ExportAgent[] {
-  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
-  return [
-    primary,
-    ...(source.additionalAgents ?? []).map((agent) =>
-      exportAgent(source, providerName, {
-        name: agent.name,
-        primary: false,
-        tools: agent.tools,
-      }),
-    ),
-  ];
 }
 
 function targetProcess(policy: Record<string, unknown>): void {
@@ -134,22 +204,21 @@ function targetFilesystem(
 
 function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
   const policy = structuredClone(source.policy) as Record<string, unknown>;
+  const networks = policy.network_policies as
+    | Record<string, { endpoints?: Record<string, unknown>[] }>
+    | undefined;
+  for (const network of Object.values(networks ?? {})) {
+    for (const endpoint of network.endpoints ?? []) delete endpoint.provider_credentialed;
+  }
+  const landlock = policy.landlock as Record<string, unknown> | undefined;
+  // The pinned v1 consumer names fail-closed Landlock enforcement hard_requirement.
+  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
   targetProcess(policy);
   targetFilesystem(policy, source.agent);
   return policy;
 }
 
-export interface ExportConfigBuildIdentity {
-  readonly documentName: NemoClawConfigDocumentName;
-  readonly documentUid: NemoClawConfigDocumentUid;
-}
-
-/** Map one verified export source to an unbound aggregate document. */
-export function buildExportConfig(
-  source: VerifiedExportSource,
-  identity: ExportConfigBuildIdentity,
-): V1Alpha1Export {
-  const providerName = exportedProviderName(source.inference);
+function exportSandbox(source: VerifiedExportSource, providerName: string): V1Alpha1ExportSandbox {
   const sandboxBase = {
     name: source.sandboxName,
     runtime: {
@@ -163,7 +232,7 @@ export function buildExportConfig(
       ? {}
       : {
           integrations: {
-            "brave-search": {
+            [`${source.webSearch.provider}-search`]: {
               kind: "webSearch" as const,
               provider: source.webSearch.provider,
               credential: source.webSearch.credential,
@@ -182,8 +251,24 @@ export function buildExportConfig(
       : {
           ...sandboxBase,
           harness: { kind: source.agent, ...agentSettings(source) },
-          agents: exportAgents(source, providerName),
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
         };
+  return sandbox;
+}
+
+export interface ExportConfigBuildIdentity {
+  readonly documentName: NemoClawConfigDocumentName;
+  readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+/** Map one verified export source to an unbound aggregate document. */
+export function buildExportConfig(
+  source: VerifiedExportSource,
+  identity: ExportConfigBuildIdentity,
+): V1Alpha1Export {
+  const providerName = exportedProviderName(source.inference);
+  const services = exportServices(source, targetBridgeAddress(identity.documentUid));
+  const sandbox = exportSandbox(source, providerName);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -193,6 +278,7 @@ export function buildExportConfig(
         management: "managed",
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
+      ...(services ? { services } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],
       sandboxes: [sandbox],
     },

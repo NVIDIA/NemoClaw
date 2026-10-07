@@ -23,9 +23,20 @@ const MANAGED_REFERENCE_PATTERN = new RegExp(
   "u",
 );
 const MANAGED_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const EXTERNAL_REFERENCE_PATTERN =
+  /^(?=.{1,512}$)[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/u;
+const RUNTIME_IMAGE_CONTENT_ID_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const RELEASE_PATTERN = /^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
 const MAX_COHORT_BYTES = 128;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
+
+export function isExactExternalImageReference(value: unknown): value is string {
+  return typeof value === "string" && EXTERNAL_REFERENCE_PATTERN.test(value);
+}
+
+export function isRuntimeImageContentId(value: unknown): value is `sha256:${string}` {
+  return typeof value === "string" && RUNTIME_IMAGE_CONTENT_ID_PATTERN.test(value);
+}
 const STANDARD_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const MAX_CORPORATE_CA_BYTES = 128 * 1024;
 const MAX_CORPORATE_CA_ENCODED_BYTES = Math.ceil(MAX_CORPORATE_CA_BYTES / 3) * 4;
@@ -89,6 +100,24 @@ export function cloneSandboxWorkloadReceipt(
       kind: "legacy-dockerfile",
       reference: value.reference,
       shared: false,
+    };
+  }
+  if (value.kind === "external-image") {
+    if (
+      value.shared !== true ||
+      !isExactExternalImageReference(value.reference) ||
+      !MANAGED_PLATFORMS.has(value.platform) ||
+      !isRuntimeImageContentId(value.runtimeImageContentId)
+    ) {
+      return undefined;
+    }
+    return {
+      schemaVersion: 1,
+      kind: "external-image",
+      reference: value.reference,
+      platform: value.platform,
+      runtimeImageContentId: value.runtimeImageContentId,
+      shared: true,
     };
   }
   const encodedProfileBytes = decodeCanonicalBase64Url(value.encodedProfile);
