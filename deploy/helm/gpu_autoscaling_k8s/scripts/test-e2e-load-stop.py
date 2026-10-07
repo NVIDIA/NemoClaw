@@ -22,4 +22,17 @@ assert reached(7, 8, 8) is True, "desired 8 is at the demo target"
 assert reached(8, 7, 8) is True
 assert reached(8, 8, 8) is True
 assert reached(2, 3, 8) is False
+
+import subprocess
+import sys
+
+missing_host = subprocess.run(
+    [sys.executable, str(SCRIPT), "--users", "1", "--output", "/tmp/e2e-openclaw-host-required"],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+assert missing_host.returncode == 2, missing_host.stderr
+assert "in-sandbox load helpers" in missing_host.stderr
 print("OK: HPA helper reports the 8 GPU target without treating a failed poll as 8")
+print("OK: OpenClaw client requires --host and does not start in-sandbox helpers")

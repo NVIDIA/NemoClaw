@@ -17,6 +17,8 @@
 #
 # simpler option — from the same DGX in another terminal:
 #   E2E_USERS=5 ./scripts/client.sh
+# Both paths send chat.send from this client to published :18789+i.
+# They do not copy a load helper into the sandbox.
 # Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
 # Latency HPA ramps 2048 tokens until 6 GPUs, then 32, then stops at 8.
 
@@ -129,28 +131,22 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 ((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh"
 
-echo "Checking each sandbox listens on :18789 (do not send chat if this fails)"
+echo "Checking published host ports :18789+i (same path as the laptop client)"
 unhealthy=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
-  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
-  # curl %{http_code} is literal; do not expand it in the sandbox shell.
-  # shellcheck disable=SC2016
-  # shellcheck disable=SC2016 # remote script: $ns/$code must expand inside the sandbox
-  if kubectl exec -n "${OPENSHELL_NAMESPACE}" "${name}" -c agent -- bash -c '
-    for ns in /run/netns/*; do
-      [ -e "$ns" ] || continue
-      code="$(nsenter --net="$ns" curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true)"
-      case "$code" in 200|401) exit 0 ;; esac
-    done
-    exit 1
-  ' >/dev/null 2>&1; then
-    echo "  sandbox ${i}: :18789 up"
-  else
-    echo "ERROR: sandbox ${i} is Running but OpenClaw is not listening on :18789. Run agentscaling_gpuutil.sh or agentscaling_latency.sh start." >&2
-    unhealthy=1
-  fi
+  port=$((18789 + i))
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/health" 2>/dev/null || true)"
+  case "${code}" in
+    200 | 401)
+      echo "  user ${i} → http://127.0.0.1:${port}/health"
+      ;;
+    *)
+      echo "ERROR: http://127.0.0.1:${port}/health HTTP ${code:-down}. Run agentscaling_gpuutil.sh or agentscaling_latency.sh so :18789+i is published." >&2
+      unhealthy=1
+      ;;
+  esac
 done
-((unhealthy == 0)) || fail "client will not send chat until every sandbox listens on :18789"
+((unhealthy == 0)) || fail "client will not send chat until every http://127.0.0.1:18789+i/health answers"
 
 echo "Pinning OpenClaw max_tokens=${MAX_TOKENS} (keep provisioned model; one chat.send per sandbox)"
 for ((i = 0; i < E2E_USERS; i += 1)); do
@@ -175,4 +171,6 @@ exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
   --hpa-namespace "${NAMESPACE}" \
   --hpa-name "${HPA_NAME}" \
-  --scale-down-wait-loops "${SCALE_DOWN_WAIT_LOOPS}"
+  --scale-down-wait-loops 0 \
+  --host 127.0.0.1 \
+  --chat-only

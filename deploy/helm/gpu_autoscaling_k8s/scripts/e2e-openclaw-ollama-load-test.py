@@ -10,11 +10,14 @@ The client does not set the HPA metric.
 Each user talks only to its sandbox (:18789). 1:1 mapping.
 Do not spawn `openclaw agent -m` (that starts a second Node CLI).
 
-    openshell sandbox exec → chat.send on ws://127.0.0.1:18789/ws
+    client host → published :18789+i WebSocket chat.send
+    (laptop: E2E_CLIENT_HOST=dgx-ip; same DGX: --host 127.0.0.1)
 
 The agent then calls https://inference.local (Envoy load balancer → Ollama HPA).
 This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs).
 This is not in-sandbox curl to inference.local.
+This does not copy a load helper into the sandbox. Leftover e2e-openclaw-load
+processes inside sandboxes are killed at start and stop so they cannot scale HPA.
 Hermes + vLLM is a later e2e and is not this script.
 
 Usage (laptop HTTP):
@@ -165,6 +168,37 @@ def publish_ramp_to_sandboxes(prefix: str, users: int, payload: dict[str, object
                     "bash",
                     "-c",
                     f"echo {blob} | base64 -d > {SANDBOX_RAMP_FILE}",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            continue
+
+
+def clear_ramp_from_sandboxes(prefix: str, users: int) -> None:
+    """Drop leftover latency stop files so GPU-util chats keep running."""
+    kubectl = shutil.which("kubectl")
+    if not kubectl or users < 1:
+        return
+    for user_id in range(users):
+        name = sandbox_name(prefix, user_id)
+        try:
+            subprocess.run(
+                [
+                    kubectl,
+                    "exec",
+                    "-n",
+                    SANDBOX_NS,
+                    name,
+                    "-c",
+                    "agent",
+                    "--",
+                    "rm",
+                    "-f",
+                    SANDBOX_RAMP_FILE,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -500,7 +534,8 @@ async def simulate_user_http(
     env["E2E_ESCALATE_FACTOR"] = "0.35"
     env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
     env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
-    if os.environ.get("E2E_LATENCY_RAMP_FILE"):
+    env["E2E_LATENCY_RAMP"] = os.environ.get("E2E_LATENCY_RAMP") or "0"
+    if env["E2E_LATENCY_RAMP"] == "1" and os.environ.get("E2E_LATENCY_RAMP_FILE"):
         env["E2E_LATENCY_RAMP_FILE"] = os.environ["E2E_LATENCY_RAMP_FILE"]
     if os.environ.get("E2E_CHAT_PAUSE_SEC"):
         env["E2E_CHAT_PAUSE_SEC"] = os.environ["E2E_CHAT_PAUSE_SEC"]
@@ -595,6 +630,7 @@ async def simulate_user(
         "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
         "MAX_TOKENS=\"$8\" E2E_DRAIN_SEC=\"${9:-8}\" "
+        "E2E_LATENCY_RAMP=\"${10:-0}\" "
         "E2E_LATENCY_RAMP_FILE=/tmp/e2e-latency-ramp.json "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
         "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
@@ -622,6 +658,7 @@ async def simulate_user(
         f"agent:main:{sandbox}",
         str(os.environ.get("MAX_TOKENS") or "1024"),
         str(os.environ.get("E2E_DRAIN_SEC") or "8"),
+        str(os.environ.get("E2E_LATENCY_RAMP") or "0"),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -692,17 +729,25 @@ async def run_test(args: argparse.Namespace) -> int:
         endpoints = users_from_http_host(args.host, args.users, args.discovery_port)
     elif args.endpoints:
         endpoints = load_endpoints(Path(args.endpoints))
-    if endpoints and args.users > len(endpoints):
+    if not endpoints:
+        print(
+            "OpenClaw client must use --host (published :18789+i). "
+            "It does not start in-sandbox load helpers.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.users > len(endpoints):
         print(
             f"--users {args.users} but HTTP at {args.host or args.endpoints} has {len(endpoints)} users",
             file=sys.stderr,
         )
         return 2
+    stop_sandbox_chats(args.prefix, args.users)
 
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
     if endpoints:
-        print("  Path: laptop HTTP / WebSocket to published host ports.")
+        print("  Path: client HTTP / WebSocket to published host ports.")
         for i in range(args.users):
             ep = endpoint_for_user(endpoints, i)
             print(
@@ -756,6 +801,9 @@ async def run_test(args: argparse.Namespace) -> int:
             f"then {latency_ramp.token_bands()[1]}, stop at {args.target_pods}",
             flush=True,
         )
+    elif not endpoints:
+        os.environ["E2E_LATENCY_RAMP"] = "0"
+        clear_ramp_from_sandboxes(args.prefix, args.users)
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, last_ramp_tokens
@@ -798,38 +846,21 @@ async def run_test(args: argparse.Namespace) -> int:
                 continue
 
     poll_task = None if skip_hpa else asyncio.create_task(poll_hpa())
-    if endpoints:
-        user_tasks = [
-            asyncio.create_task(
-                simulate_user_http(
-                    user_id=i,
-                    endpoint=endpoint_for_user(endpoints, i),
-                    inflight=args.inflight_per_user,
-                    inflight_start=args.inflight_start,
-                    duration_sec=args.duration,
-                    timeout_sec=args.timeout,
-                    stop_event=stop_load,
-                    log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
-                )
+    user_tasks = [
+        asyncio.create_task(
+            simulate_user_http(
+                user_id=i,
+                endpoint=endpoint_for_user(endpoints, i),
+                inflight=args.inflight_per_user,
+                inflight_start=args.inflight_start,
+                duration_sec=args.duration,
+                timeout_sec=args.timeout,
+                stop_event=stop_load,
+                log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
             )
-            for i in range(args.users)
-        ]
-    else:
-        user_tasks = [
-            asyncio.create_task(
-                simulate_user(
-                    user_id=i,
-                    prefix=args.prefix,
-                    inflight=args.inflight_per_user,
-                    inflight_start=args.inflight_start,
-                    duration_sec=args.duration,
-                    timeout_sec=args.timeout,
-                    stop_event=stop_load,
-                    log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
-                )
-            )
-            for i in range(args.users)
-        ]
+        )
+        for i in range(args.users)
+    ]
 
     deadline = time.monotonic() + args.duration + 30
     results: list[object] = []
@@ -846,8 +877,7 @@ async def run_test(args: argparse.Namespace) -> int:
         results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
     finally:
         stop_load.set()
-        if not endpoints:
-            stop_sandbox_chats(args.prefix, args.users)
+        stop_sandbox_chats(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):
@@ -962,7 +992,7 @@ def main() -> int:
     parser.add_argument(
         "--host",
         default=os.environ.get("E2E_CLIENT_HOST", ""),
-        help="DGX IP published for laptop HTTP (user i → host:18789+i).",
+        help="Published host for client HTTP (laptop: dgx-ip; same DGX: 127.0.0.1).",
     )
     parser.add_argument(
         "--discovery-port",
@@ -1004,6 +1034,13 @@ def main() -> int:
             check_listeners=False,
         )
         return 0
+    if not args.host and not args.endpoints:
+        print(
+            "OpenClaw client must use --host (published :18789+i). "
+            "It does not start in-sandbox load helpers.",
+            file=sys.stderr,
+        )
+        return 2
     try:
         return asyncio.run(run_test(args))
     except KeyboardInterrupt:

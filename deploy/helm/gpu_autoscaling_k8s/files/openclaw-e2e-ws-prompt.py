@@ -107,7 +107,12 @@ def estimate_tokens(text: str) -> int:
 
 
 def _read_latency_ramp() -> dict[str, object] | None:
-    """Optional JSON from the client: {"max_tokens": 2048, "stop": false, "short": false}."""
+    """Optional JSON from the latency client: {"max_tokens": 2048, "stop": false, "short": false}.
+
+    GPU-util must ignore a leftover stop file from the previous latency run.
+    """
+    if os.environ.get("E2E_LATENCY_RAMP") != "1":
+        return None
     path = os.environ.get("E2E_LATENCY_RAMP_FILE") or ""
     if not path:
         return None
