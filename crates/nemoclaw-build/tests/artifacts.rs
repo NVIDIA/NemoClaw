@@ -43,6 +43,31 @@ fn pinned_archive_extracts_only_the_exact_native_binary() {
 }
 
 #[test]
+fn every_bundle_platform_pins_the_official_helm_provider_archive() {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    assert_eq!(pins["helmProvider"], "3.3.0");
+    for platform in [
+        "linux_arm64",
+        "linux_amd64",
+        "darwin_arm64",
+        "darwin_amd64",
+        "windows_amd64",
+    ] {
+        let artifact = &pins["platforms"][platform]["helmProvider"];
+        assert_eq!(
+            artifact["url"],
+            format!(
+                "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_{platform}.zip"
+            )
+        );
+        let checksum = artifact["sha256"].as_str().unwrap();
+        assert_eq!(checksum.len(), 64);
+        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
 fn source_archive_is_reproducible_and_rejects_paths_outside_its_root() {
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a");
@@ -319,6 +344,105 @@ fn docker_provider_bundle_retains_the_verified_binary_and_license() {
         nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.5.0", "linux_arm64")
             .is_err()
     );
+}
+
+#[cfg(feature = "sdk")]
+#[test]
+fn helm_provider_bundle_retains_the_native_binary_and_upstream_license() {
+    for platform in [
+        "linux_arm64",
+        "linux_amd64",
+        "darwin_arm64",
+        "darwin_amd64",
+        "windows_amd64",
+    ] {
+        let extension = if platform == "windows_amd64" {
+            ".exe"
+        } else {
+            ""
+        };
+        let name = format!("terraform-provider-helm_v3.3.0_x5{extension}");
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (entry, bytes) in [
+            (name.as_str(), "native provider"),
+            ("LICENSE.txt", "unchanged upstream MPL license"),
+        ] {
+            zip.start_file(entry, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        let archive = zip.finish().unwrap().into_inner();
+        let root = tempfile::tempdir().unwrap();
+        let files =
+            nemoclaw_build::helm_provider::install(root.path(), &archive, "3.3.0", platform)
+                .unwrap();
+        let binary =
+            format!("providers/registry.opentofu.org/hashicorp/helm/3.3.0/{platform}/{name}");
+        assert_eq!(
+            std::fs::read(root.path().join(&binary)).unwrap(),
+            b"native provider"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("licenses/helm-provider-LICENSE")).unwrap(),
+            b"unchanged upstream MPL license"
+        );
+        assert_eq!(files.len(), 2);
+        for (path, hash) in files {
+            assert_eq!(
+                hash,
+                nemoclaw_sdk::bundle::hash_file(&root.path().join(path)).unwrap()
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(root.path().join(binary))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+        }
+    }
+}
+
+#[cfg(feature = "sdk")]
+#[test]
+fn helm_provider_rejects_incomplete_or_substituted_inputs_before_writing() {
+    for (name, version, platform) in [
+        ("terraform-provider-helm_v3.3.0_x5", "3.3.0", "linux_amd64"),
+        ("LICENSE.txt", "3.3.0", "linux_amd64"),
+        ("terraform-provider-helm_v3.3.0_x5", "3.2.0", "linux_amd64"),
+        (
+            "terraform-provider-helm_v3.3.0_x5",
+            "3.3.0",
+            "../../outside",
+        ),
+        (
+            "terraform-provider-helm_v3.3.0_x5",
+            "3.3.0",
+            "windows_amd64",
+        ),
+        (
+            "nested/terraform-provider-helm_v3.3.0_x5",
+            "3.3.0",
+            "linux_amd64",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            nemoclaw_build::helm_provider::install(
+                root.path(),
+                &archive(name, b"fixture"),
+                version,
+                platform
+            )
+            .is_err()
+        );
+        assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
+    }
 }
 
 #[test]

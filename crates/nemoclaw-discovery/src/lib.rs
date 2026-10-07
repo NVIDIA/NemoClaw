@@ -79,8 +79,13 @@ pub async fn observe(
                     image,
                     requirements,
                     platform: requested,
+                    metadata_env,
                 }) => {
-                    let mut observed = observe_fabric(engines, engine, image).await;
+                    // A cluster image is read from its metadata bundle, not an engine.
+                    let mut observed = match metadata_env {
+                        Some(name) => nemoclaw_sdk::image_metadata::observe(secrets, name, image),
+                        None => observe_fabric(engines, engine, image).await,
+                    };
                     let platform = platform(requested);
                     judge_image(
                         &mut observed,

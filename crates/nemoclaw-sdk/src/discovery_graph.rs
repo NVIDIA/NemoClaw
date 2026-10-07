@@ -25,6 +25,7 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
             image,
             requirements,
             platform,
+            metadata_env,
         }) => {
             let mut inputs = json!({
                 "engine": literal(engine),
@@ -33,6 +34,9 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
                     &serde_json::to_string(requirements).expect("Fabric requirements")
                 ),
             });
+            if let Some(metadata_env) = metadata_env {
+                inputs["metadata_env"] = json!(metadata_env);
+            }
             if platform.is_some() {
                 for field in ["architecture", "operating_system"] {
                     inputs[field] = json!(format!(
@@ -122,7 +126,11 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     },
                 )?;
             }
-            DiscoveryQuery::Fabric(FabricRequest { requirements, .. }) => {
+            DiscoveryQuery::Fabric(FabricRequest {
+                requirements,
+                metadata_env,
+                ..
+            }) => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
                 let name = format!("sandbox_{images}");
                 images += 1;
@@ -144,7 +152,11 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         "error_message": rejection
                     }, {
                         "condition": "${self.runtime_json != \"\"}",
-                        "error_message": format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
+                        "error_message": if metadata_env.is_some() || document.spec.gateway.runtime().provider.is_kubernetes() {
+                            format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
+                        } else {
+                            format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
+                        }
                     }] });
                 })?;
             }

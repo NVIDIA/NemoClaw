@@ -2,6 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+
+#[test]
+fn bundle_rejects_a_missing_or_tampered_helm_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let helm = format!(
+        "providers/registry.opentofu.org/hashicorp/helm/3.3.0/{}/{}",
+        platform().unwrap(),
+        executable("terraform-provider-helm_v3.3.0_x5")
+    );
+    let mut manifest = Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: crate::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    for name in required_files(&manifest.version).unwrap() {
+        if name == helm {
+            continue;
+        }
+        let path = directory.path().join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"fixture binary").unwrap();
+        manifest.files.insert(name, hash_file(&path).unwrap());
+    }
+    let manifest_path = directory.path().join("manifest.json");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(
+        Bundle::open(directory.path()).is_err(),
+        "a bundle without its pinned Helm provider must be rejected"
+    );
+
+    let helm_path = directory.path().join(&helm);
+    fs::create_dir_all(helm_path.parent().unwrap()).unwrap();
+    fs::write(&helm_path, b"provider binary").unwrap();
+    manifest.files.insert(helm, hash_file(&helm_path).unwrap());
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    Bundle::open(directory.path()).unwrap();
+
+    fs::write(&helm_path, b"tampered provider").unwrap();
+    assert!(Bundle::open(directory.path()).is_err());
+    fs::remove_file(&helm_path).unwrap();
+    assert!(Bundle::open(directory.path()).is_err());
+}
+
 #[test]
 fn bundle_requires_all_native_binaries_and_checks_every_digest() {
     let dir = tempfile::tempdir().unwrap();

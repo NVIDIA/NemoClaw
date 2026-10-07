@@ -23,6 +23,7 @@ These guides describe the v1 development branch.
 |---|---|
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
+| Run sandboxes on an existing Kubernetes or OpenShift cluster | [Deploy to Kubernetes or OpenShift](kubernetes.md) |
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |

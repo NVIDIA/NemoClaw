@@ -117,6 +117,12 @@ impl Document {
         let mut sandbox_names = std::collections::BTreeSet::new();
         for sandbox in &self.spec.sandboxes {
             require(
+                self.spec.gateway.runtime().provider.is_kubernetes()
+                    || sandbox.image.metadata.is_none(),
+                "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
+            )?;
+            credential(&sandbox.image.metadata)?;
+            require(
                 sandbox_names.insert(&sandbox.name),
                 "sandbox names must be unique",
             )?;
@@ -168,6 +174,9 @@ impl Document {
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
+        if self.kubernetes.is_some() {
+            return validate_endpoint(&self.endpoint, true);
+        }
         let authority = self
             .endpoint
             .strip_prefix("http://")

@@ -4,6 +4,183 @@ use crate::config::Gateway;
 
 use super::*;
 
+pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
+    let original =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(original).unwrap();
+    value["spec"]["gateway"] = json!({
+        "management":"managed", "runtime":{"provider":"kubernetes"}, "endpoint":"https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
+            "authentication":{"profile":"development"}
+        }
+    });
+    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    (document, generations)
+}
+
+/// The listed variables reach OpenTofu with their resolved values, and an
+/// unset one fails before any cluster operation, like a credential reference.
+#[test]
+fn a_kubernetes_targets_listed_variables_reach_its_providers() {
+    struct Values;
+    impl Secrets for Values {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            match name {
+                "TEST_KUBECONFIG" => Ok("/private/kubeconfig".into()),
+                "AWS_PROFILE" => Ok("cluster-admin".into()),
+                _ => Err(crate::ObservationError::Authentication),
+            }
+        }
+    }
+    let (document, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(Values));
+    let environment = deployment
+        .provider_environment(&document, temporary.path(), true)
+        .unwrap();
+    assert_eq!(environment["AWS_PROFILE"], "cluster-admin");
+
+    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "AWS_REGION"]);
+    let unset = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    assert!(
+        deployment
+            .provider_environment(&unset, temporary.path(), true)
+            .is_err()
+    );
+}
+
+#[test]
+fn relative_kubeconfig_keeps_its_callers_meaning_in_provider_directories() {
+    struct Kubeconfig(String);
+    impl Secrets for Kubeconfig {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            assert_eq!(name, "TEST_KUBECONFIG");
+            Ok(self.0.clone())
+        }
+    }
+    // Do not change the process working directory: other tests run in parallel.
+    let caller = std::env::current_dir().unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix(".kubeconfig-test-")
+        .tempdir_in(&caller)
+        .unwrap();
+    let config = directory.path().join("cluster.json");
+    save_json(&config, &json!({
+        "apiVersion": "v1", "kind": "Config", "current-context": "test-cluster",
+        "clusters": [{"name": "fixture", "cluster": {"server": "https://127.0.0.1:9"}}],
+        "contexts": [{"name": "test-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
+        "users": [{"name": "fixture", "user": {}}],
+    })).unwrap();
+    let relative = config.strip_prefix(&caller).unwrap().to_path_buf();
+    let direct = crate::kubernetes::ClusterTarget {
+        kubeconfig: relative.clone(),
+        context: "test-cluster".into(),
+    };
+    let selected = crate::kubernetes::server(&direct).unwrap();
+    let deployment = Deployment::new(&directory.path().join("state"), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(Kubeconfig(
+            relative.to_string_lossy().into_owned(),
+        )));
+    let (document, _) = kubernetes_context();
+    for stage in ["runtime", ".export-copy"] {
+        let working_directory = directory.path().join("state").join(stage);
+        let environment = deployment
+            .provider_environment(&document, &working_directory, true)
+            .unwrap();
+        for name in [
+            "TEST_KUBECONFIG",
+            crate::kubernetes::gateway::KUBECONFIG_ENV,
+        ] {
+            let provider_target = crate::kubernetes::ClusterTarget {
+                kubeconfig: working_directory.join(&environment[name]),
+                context: "test-cluster".into(),
+            };
+            assert_eq!(
+                crate::kubernetes::server(&provider_target).ok(),
+                Some(selected.clone()),
+                "the {stage} provider must resolve {name} to the caller's selected cluster"
+            );
+        }
+    }
+}
+
+#[test]
+fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
+    struct ProvisioningOnly;
+    impl Secrets for ProvisioningOnly {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            if name == "TEST_KUBECONFIG" {
+                Ok("/private/kubeconfig".into())
+            } else {
+                Err(crate::ObservationError::Authentication)
+            }
+        }
+    }
+    let (mut document, _) = kubernetes_context();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "UNREAD_INFERENCE_KEY".into(),
+    });
+    let temporary = tempfile::tempdir().unwrap();
+    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(ProvisioningOnly));
+    let expected = temporary
+        .path()
+        .join("kubernetes")
+        .to_string_lossy()
+        .into_owned();
+    // The SDK makes the kubeconfig path absolute; on Windows that adds a drive.
+    let kubeconfig = std::path::absolute("/private/kubeconfig")
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    for directory in [
+        temporary.path().join("runtime"),
+        temporary.path().join(".export-copy"),
+    ] {
+        let environment = deployment
+            .provider_environment(&document, &directory, true)
+            .unwrap();
+        assert_eq!(environment[crate::kubernetes::STATE_ENV], expected);
+        assert_eq!(environment["TEST_KUBECONFIG"], kubeconfig);
+        assert_eq!(
+            environment
+                .get(crate::kubernetes::gateway::KUBECONFIG_ENV)
+                .map(String::as_str),
+            Some(kubeconfig.as_str())
+        );
+        assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
+        assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
+    }
+    deployment.operation_environment.insert(
+        crate::kubernetes::TOKEN_ENV.into(),
+        "synthetic-token".into(),
+    );
+    let environment = deployment
+        .provider_environment(&document, temporary.path(), true)
+        .unwrap();
+    assert_eq!(environment[crate::kubernetes::TOKEN_ENV], "synthetic-token");
+    for name in [
+        crate::kubernetes::STATE_ENV,
+        crate::kubernetes::TOKEN_ENV,
+        crate::kubernetes::CA_ENV,
+        crate::kubernetes::CERT_ENV,
+        crate::kubernetes::KEY_ENV,
+    ] {
+        assert!(matches!(
+            credential_environment([name], &ProvisioningOnly, temporary.path()),
+            Err(Error::Conflict(_))
+        ));
+    }
+}
+
 #[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
     for address in [
@@ -269,6 +446,34 @@ fn credential_references_cannot_override_opentofu_control_variables() {
         env: "TF_CLI_CONFIG_FILE".into(),
     });
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
+}
+
+#[test]
+fn credential_references_cannot_override_helm_or_kubernetes_controls() {
+    struct Unresolved;
+    impl Secrets for Unresolved {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            panic!("reject a reserved credential reference before resolving its value")
+        }
+    }
+    for name in [
+        "HELM_DRIVER",
+        "HELM_NAMESPACE",
+        "HELM_REGISTRY_CONFIG",
+        "KUBE_HOST",
+        "KUBE_TOKEN",
+        "KUBE_CONFIG_PATH",
+        "KUBE_CONFIG_PATHS",
+        "KUBE_INSECURE",
+    ] {
+        assert!(
+            matches!(
+                credential_environment([name], &Unresolved, Path::new("state")),
+                Err(Error::Conflict(_))
+            ),
+            "reserved Helm/Kubernetes reference {name} was accepted",
+        );
+    }
 }
 
 #[cfg(unix)]

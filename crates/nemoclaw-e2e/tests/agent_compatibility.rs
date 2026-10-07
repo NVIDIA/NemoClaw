@@ -39,8 +39,8 @@ fn default_policy_denies_undeclared_egress_and_keeps_programs_read_only() {
     assert!(policy.network_policies.is_empty());
     assert!(policy.network_middlewares.is_empty());
     let process = policy.process.unwrap();
-    assert_eq!(process.run_as_user, "1000");
-    assert_eq!(process.run_as_group, "1000");
+    assert_eq!(process.run_as_user, "10001");
+    assert_eq!(process.run_as_group, "10001");
     let filesystem = policy.filesystem.unwrap();
     assert!(!filesystem.include_workdir);
     assert!(filesystem.read_write.iter().any(|path| path == "/sandbox"));

@@ -39,6 +39,10 @@ pub struct FabricRequest {
     /// The engine whose platform the image must run on: a managed
     /// gateway's. An external gateway's image store does not establish it.
     pub platform: Option<DiscoveryRequest>,
+    /// On Kubernetes and OpenShift, where no engine can inspect the image,
+    /// the environment variable naming its metadata bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_env: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +74,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
             .map(DiscoveryQuery::Inference),
     );
     let mut engines = crate::services::discovery_engines(document)?;
-    if let Some(gateway) = document.spec.gateway.as_managed() {
+    if let Some(gateway) = document.spec.gateway.as_local_managed() {
         engines.insert(gateway.engine.clone());
     }
     queries.extend(
@@ -78,16 +82,20 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
             .into_iter()
             .map(|engine| DiscoveryQuery::Hardware(HardwareRequest { engine })),
     );
+    // A cluster has no engine to read images from; their metadata bundles
+    // answer instead.
+    let kubernetes = document.spec.gateway.runtime().provider.is_kubernetes();
     let engine = match &document.spec.gateway {
+        _ if kubernetes => "",
         Gateway::Managed(gateway) => &gateway.engine,
         Gateway::External(gateway) => &gateway.engine,
     };
     let platform = document
         .spec
         .gateway
-        .as_managed()
+        .as_local_managed()
         .map(|_| DiscoveryRequest {
-            engine: engine.clone(),
+            engine: engine.into(),
             compute_driver: document.spec.gateway.runtime().provider,
         });
     queries.extend(platform.clone().map(DiscoveryQuery::Engine));
@@ -95,10 +103,15 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
     for sandbox in sandboxes {
         queries.push(DiscoveryQuery::Fabric(FabricRequest {
-            engine: engine.clone(),
+            engine: engine.into(),
             image: sandbox.image.ref_.clone(),
             requirements: FabricRequirements::for_sandbox(document, sandbox)?,
             platform: platform.clone(),
+            metadata_env: sandbox
+                .image
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.env.clone()),
         }));
     }
     Ok(queries)

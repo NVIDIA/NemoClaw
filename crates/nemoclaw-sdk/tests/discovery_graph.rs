@@ -162,6 +162,7 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
             image: sandbox.image.ref_.clone(),
             requirements: FabricRequirements::for_sandbox(&document, sandbox).unwrap(),
             platform: Some(platform),
+            metadata_env: None,
         })
     );
 }

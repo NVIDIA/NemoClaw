@@ -8,6 +8,8 @@ pub mod docker_provider;
 pub mod docs;
 #[cfg(feature = "sdk")]
 pub mod fern;
+#[cfg(feature = "sdk")]
+pub mod helm_provider;
 pub mod images;
 #[cfg(feature = "sdk")]
 pub mod schema;

@@ -41,6 +41,9 @@ impl<'a> BackendRegistry<'a> {
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
             return Ok(Some(Box::new(crate::managed::ManagedBackend::new(engine))));
         }
+        if crate::kubernetes::KubernetesBackend::supports(kind) {
+            return Ok(Some(Box::new(crate::kubernetes::KubernetesBackend::new())));
+        }
         if installers::ollama::ProxyBackend::supports(kind) {
             let endpoint = row
                 .get("engine")

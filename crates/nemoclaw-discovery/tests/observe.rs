@@ -34,6 +34,7 @@ fn image(endpoint: &str, platform: Option<DiscoveryRequest>) -> DiscoveryQuery {
         image: "runtime:test".into(),
         requirements: FabricRequirements::default(),
         platform,
+        metadata_env: None,
     })
 }
 

@@ -53,6 +53,8 @@ fn selector_names_round_trip_without_changing_wire_values() {
     round_trip(&[
         (ComputeDriver::Docker, "docker"),
         (ComputeDriver::Podman, "podman"),
+        (ComputeDriver::Kubernetes, "kubernetes"),
+        (ComputeDriver::OpenShift, "openshift"),
     ]);
     round_trip(&[
         (InferenceProviderKind::Openai, "openai"),
