@@ -116,3 +116,33 @@ impl ProxyBackend {
         Err(ObservationError::Query.into())
     }
 }
+
+/// Name the authored service and its upstream in external-model diagnostics.
+pub(crate) fn describe_model_error(error: String, attributes: &crate::Row) -> String {
+    let name = attributes.get("name").map_or("unknown", String::as_str);
+    let source = name.split_once("-ollama-proxy-").map_or_else(
+        || format!("external Ollama model/{}", name.escape_default()),
+        |(_, service)| format!("services.{}.upstream", service.escape_default()),
+    );
+    // This package accepts only local, unauthenticated HTTP upstreams.
+    // Invalid state must not echo userinfo, query strings, or fragments.
+    let endpoint = attributes
+        .get("upstream")
+        .and_then(|endpoint| url::Url::parse(endpoint).ok())
+        .filter(|url| {
+            url.scheme() == "http"
+                && url.path() == "/v1"
+                && url.port().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && match url.host() {
+                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                    _ => false,
+                }
+        });
+    let endpoint = endpoint.map(|url| format!(" ({url})")).unwrap_or_default();
+    format!("{source}{endpoint}: {error}")
+}

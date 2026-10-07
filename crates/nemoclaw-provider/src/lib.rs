@@ -9,13 +9,52 @@ use tf_provider::value::Value;
 /// OpenTofu string attributes, including distinct null and unknown values.
 pub type State = BTreeMap<String, Value<String>>;
 
-/// Stable resource schema and the fields permitted to change in place.
+/// Plans a computed attribute's update value from prior state; `None` keeps the proposal.
+pub type PlanComputed = fn(name: &str, prior: &State) -> Option<Value<String>>;
+
+/// Whether a change to a mutable field still requires replacement.
+pub type Replaces = fn(field: &str, prior: &State, proposed: &State) -> bool;
+
+/// Validates an encoded `spec` input for a resource kind.
+pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_sdk::Error>;
+
+/// Adds resource context to a diagnostic from the resource's known attributes.
+pub type Describe = fn(error: String, attributes: &Row) -> String;
+
+/// Whether an absent observation or a planned deletion would lose a binding
+/// that must be retained.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Protection {
+    #[default]
+    None,
+    Always,
+    /// Explicit teardown may delete the resource.
+    UnlessDestroying,
+}
+
+/// Stable resource schema, the fields permitted to change in place, and the
+/// rules that govern its planning and observation.
 #[derive(Clone, Debug)]
 pub struct Definition {
     pub kind: &'static str,
     pub fields: Vec<&'static str>,
     pub mutable: Vec<&'static str>,
-    pub observed_running: bool,
+    /// Inputs that may be omitted; omission on create selects the empty default.
+    pub optional: Vec<&'static str>,
+    /// Optional inputs whose omission on update selects the empty default
+    /// instead of carrying the prior value forward.
+    pub reset_when_omitted: Vec<&'static str>,
+    /// Attributes the backend observes, with their update planning rule.
+    pub computed: Vec<(&'static str, PlanComputed)>,
+    pub protection: Protection,
+    /// Refuse replacement because it would discard retained identity or files.
+    pub refuse_replacement: bool,
+    /// During teardown, keep the prior `running` observation instead of
+    /// planning another installation attempt.
+    pub keep_running_during_destroy: bool,
+    pub replaces: Option<Replaces>,
+    pub validate_spec: Option<ValidateSpec>,
+    pub describe: Option<Describe>,
 }
 
 impl Definition {
@@ -24,15 +63,81 @@ impl Definition {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            observed_running: matches!(
-                kind,
-                "managed_gateway"
-                    | "agent_configuration"
-                    | nemoclaw_sdk::kubernetes::GATEWAY_KIND
-                    | nemoclaw_sdk::kubernetes::STORAGE_KIND
-                    | nemoclaw_sdk::kubernetes::AUTH_KIND
-            ),
+            optional: Vec::new(),
+            reset_when_omitted: Vec::new(),
+            computed: Vec::new(),
+            protection: Protection::None,
+            refuse_replacement: false,
+            keep_running_during_destroy: false,
+            replaces: None,
+            validate_spec: None,
+            describe: None,
         }
+    }
+    pub fn optional(mut self, fields: &[&'static str]) -> Self {
+        self.optional.extend_from_slice(fields);
+        self
+    }
+    pub fn reset_when_omitted(mut self, fields: &[&'static str]) -> Self {
+        self.reset_when_omitted.extend_from_slice(fields);
+        self
+    }
+    pub fn computed(mut self, name: &'static str, plan: PlanComputed) -> Self {
+        self.computed.push((name, plan));
+        self
+    }
+    pub fn protect(mut self, protection: Protection) -> Self {
+        self.protection = protection;
+        self
+    }
+    pub fn refuse_replacement(mut self) -> Self {
+        self.refuse_replacement = true;
+        self
+    }
+    pub fn keep_running_during_destroy(mut self) -> Self {
+        self.keep_running_during_destroy = true;
+        self
+    }
+    pub fn replaces(mut self, rule: Replaces) -> Self {
+        self.replaces = Some(rule);
+        self
+    }
+    pub fn validate_spec(mut self, validate: ValidateSpec) -> Self {
+        self.validate_spec = Some(validate);
+        self
+    }
+    pub fn describe(mut self, describe: Describe) -> Self {
+        self.describe = Some(describe);
+        self
+    }
+    pub fn is_optional(&self, field: &str) -> bool {
+        self.optional.contains(&field)
+    }
+    pub fn is_computed(&self, field: &str) -> bool {
+        self.computed.iter().any(|(name, _)| *name == field)
+    }
+    /// Every attribute in the schema: inputs, identity, and observations.
+    pub fn attributes(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.fields.iter().copied().chain(["id"]).chain(
+            self.computed
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| !self.fields.contains(name)),
+        )
+    }
+}
+
+/// Carry the prior observation forward, or plan it as unknown before one exists.
+pub fn carry_prior(name: &str, prior: &State) -> Option<Value<String>> {
+    Some(prior.get(name).cloned().unwrap_or(Value::Unknown))
+}
+
+/// Carry a running observation forward, but plan another installation attempt
+/// when the prior observation found the process stopped.
+pub fn rerun_when_stopped(name: &str, prior: &State) -> Option<Value<String>> {
+    match prior.get(name) {
+        Some(Value::Value(value)) if value == "false" => Some(Value::Unknown),
+        other => other.cloned(),
     }
 }
 
@@ -50,66 +155,24 @@ pub fn plan_update(
     {
         proposed.insert("id".into(), id.clone());
     }
-    if definition.kind == "gateway_storage" {
-        proposed.insert(
-            "data_path".into(),
-            prior.get("data_path").cloned().unwrap_or(Value::Unknown),
-        );
-    }
-    if definition.observed_running {
-        match prior.get("running") {
-            Some(Value::Value(value)) if value == "false" => {
-                proposed.insert("running".into(), Value::Unknown);
-            }
-            Some(value) => {
-                proposed.insert("running".into(), value.clone());
-            }
-            None => {}
+    for (name, plan) in &definition.computed {
+        if let Some(value) = plan(name, prior) {
+            proposed.insert((*name).into(), value);
         }
     }
-    if definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND {
-        proposed.insert(
-            "release_present".into(),
-            prior
-                .get("release_present")
-                .cloned()
-                .unwrap_or(Value::Unknown),
-        );
-        let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
-        proposed.insert(
-            "gateway_values".into(),
-            prior
-                .get("gateway_values")
-                .filter(|_| prepared)
-                .cloned()
-                .unwrap_or(Value::Unknown),
-        );
-    }
-    let authentication_changed = definition.kind == "provider"
-        && authentication_mode(prior) != authentication_mode(&proposed);
     let replacements = definition
         .fields
         .iter()
         .copied()
         .filter(|field| {
             (!definition.mutable.contains(field)
-                || (*field == "credential_env" && authentication_changed))
+                || definition
+                    .replaces
+                    .is_some_and(|replaces| replaces(field, prior, &proposed)))
                 && proposed.get(*field) != prior.get(*field)
         })
         .collect();
     (proposed, replacements)
-}
-
-fn authentication_mode(state: &State) -> Option<bool> {
-    let mut authenticated = false;
-    for field in ["credential_env", "credential_source"] {
-        match state.get(field) {
-            Some(Value::Unknown) => return None,
-            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
-            Some(Value::Null) | None => {}
-        }
-    }
-    Some(authenticated)
 }
 
 mod resource;
@@ -127,6 +190,13 @@ mod readiness;
 mod runtime_image;
 mod sandbox_readiness;
 pub use provider::NemoClawProvider;
+
+/// The definition this provider serves for a resource kind.
+pub fn resource_definition(kind: &str) -> Option<Definition> {
+    provider::definitions()
+        .into_iter()
+        .find(|definition| definition.kind == kind)
+}
 
 /// OpenShell resource operations owned by this provider.
 pub mod openshell;

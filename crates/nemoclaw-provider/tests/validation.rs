@@ -31,7 +31,10 @@ fn resource() -> ResourceAdapter {
             "inference_service",
             &["spec", "image_pull_policy"],
             &["image_pull_policy"],
-        ),
+        )
+        .optional(&["image_pull_policy"])
+        .reset_when_omitted(&["image_pull_policy"])
+        .validate_spec(nemoclaw_sdk::services::validate_resource_spec),
         Arc::new(Offline),
     )
 }
@@ -70,7 +73,8 @@ async fn planning_blocks_incompatible_creates_and_updates_but_defers_unknown_con
     use tf_provider::value::Value as TofuValue;
     let backend = Arc::new(IncompatibleHost(AtomicUsize::new(0)));
     let resource = ResourceAdapter::new(
-        Definition::new("inference_service", &["spec"], &[]),
+        Definition::new("inference_service", &["spec"], &[])
+            .validate_spec(nemoclaw_sdk::services::validate_resource_spec),
         backend.clone(),
     );
     let config: State = serde_json::from_value(
