@@ -217,12 +217,34 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
 
 export class OpenClawNpmRemediationCommandError extends Error {
   readonly couldNotStart: boolean;
+  readonly timedOut: boolean;
+  readonly timeoutMs: number;
 
-  constructor(error?: NodeJS.ErrnoException) {
+  constructor(error: NodeJS.ErrnoException | undefined, timeoutMs: number) {
     const couldNotStart = ["ENOENT", "EACCES", "EPERM"].includes(error?.code ?? "");
-    super(couldNotStart ? "Remediation command could not start." : "Remediation command failed.");
+    const timedOut = error?.code === "ETIMEDOUT";
+    let message = "Remediation command failed.";
+    if (couldNotStart) message = "Remediation command could not start.";
+    else if (timedOut) {
+      message = `Remediation command timed out after ${describeOpenClawNpmRemediationTimeout(timeoutMs)}.`;
+    }
+    super(message);
     this.couldNotStart = couldNotStart;
+    this.timedOut = timedOut;
+    this.timeoutMs = timeoutMs;
   }
+}
+
+export function describeOpenClawNpmRemediationTimeout(timeoutMs: number): string {
+  if (timeoutMs % 60_000 === 0) {
+    const minutes = timeoutMs / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  if (timeoutMs % 1_000 === 0) {
+    const seconds = timeoutMs / 1_000;
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  return `${timeoutMs} ms`;
 }
 
 export function runOpenClawNpmRemediationCommand(
@@ -243,7 +265,7 @@ export function runOpenClawNpmRemediationCommand(
     timeout: timeoutMs,
   });
   if (result.error || result.status !== 0) {
-    throw new OpenClawNpmRemediationCommandError(result.error);
+    throw new OpenClawNpmRemediationCommandError(result.error, timeoutMs);
   }
   return result.stdout;
 }
@@ -1794,11 +1816,13 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (error instanceof OpenClawNpmRemediationCommandError) {
-    return error.couldNotStart
-      ? "OpenClaw npm remediation could not start a required command."
-      : "OpenClaw npm remediation command failed.";
+    if (error.couldNotStart) return "OpenClaw npm remediation could not start a required command.";
+    if (error.timedOut) {
+      return `OpenClaw npm remediation command timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    }
+    return "OpenClaw npm remediation command failed.";
   }
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("Missing --")) {

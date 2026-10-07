@@ -18,6 +18,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
+  fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
   patchLegacyOpenClawCorePackageGraph,
@@ -488,8 +489,13 @@ describe("OpenClaw npm remediation", () => {
     expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
     expect(failure).toMatchObject({
       couldNotStart: false,
-      message: "Remediation command failed.",
+      timedOut: true,
+      timeoutMs: 750,
+      message: "Remediation command timed out after 750 ms.",
     });
+    expect(fatalOpenClawNpmRemediationDiagnostic(failure)).toBe(
+      "OpenClaw npm remediation command timed out after 750 ms.",
+    );
     expect(String(failure)).not.toContain("private command output");
     expect(Date.now() - startedAt).toBeLessThan(5_000);
   });

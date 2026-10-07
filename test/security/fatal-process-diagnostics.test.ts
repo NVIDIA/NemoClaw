@@ -7,6 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  fatalMessagingBuildDiagnostic,
+  OfficialPluginRemediationError,
+} from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { OpenClawNpmRemediationCommandError } from "../../scripts/lib/openclaw-npm-remediation.mts";
 
 import { createSlackRemediationFixture } from "../support/slack-remediation-fixture";
 
@@ -47,6 +52,19 @@ function encodedMessagingPlan(renderTarget: string | null): string {
 }
 
 describe("fatal process diagnostics", () => {
+  it("reports remediation timeouts without exposing child details", () => {
+    const timeout = Object.assign(new Error(CREDENTIAL_CANARY), { code: "ETIMEDOUT" });
+    const remediationError = new OpenClawNpmRemediationCommandError(timeout, 15 * 60_000);
+    const diagnostic = fatalMessagingBuildDiagnostic(
+      new OfficialPluginRemediationError("slack", remediationError),
+    );
+
+    expect(diagnostic).toBe(
+      "Official OpenClaw plugin 'slack' remediation command timed out after 15 minutes.",
+    );
+    expect(diagnostic).not.toContain(CREDENTIAL_CANARY);
+  });
+
   it.each([
     {
       failure: "tar failure",

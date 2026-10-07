@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  describeOpenClawNpmRemediationTimeout,
   OpenClawNpmRemediationCommandError,
   remediateInstalledOfficialOpenClawPlugin,
   remediateReviewedOpenClawPluginArchive,
@@ -188,14 +189,18 @@ class OfficialPluginProvenanceError extends MessagingBuildApplierError {
 class MessagingBuildCommandError extends MessagingBuildApplierError {}
 class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
 
-class OfficialPluginRemediationError extends MessagingBuildApplierError {
+export class OfficialPluginRemediationError extends MessagingBuildApplierError {
   readonly pluginId: string;
   readonly couldNotStart: boolean;
+  readonly timedOut: boolean;
+  readonly timeoutMs: number;
 
   constructor(pluginId: string, error: OpenClawNpmRemediationCommandError) {
     super("Official OpenClaw plugin remediation command failed.");
     this.pluginId = pluginId;
     this.couldNotStart = error.couldNotStart;
+    this.timedOut = error.timedOut;
+    this.timeoutMs = error.timeoutMs;
   }
 }
 
@@ -2244,11 +2249,15 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalMessagingBuildDiagnostic(error: unknown): string {
+export function fatalMessagingBuildDiagnostic(error: unknown): string {
   if (error instanceof OfficialPluginRemediationError) {
-    return error.couldNotStart
-      ? `Official OpenClaw plugin '${error.pluginId}' remediation could not start a required command.`
-      : `Official OpenClaw plugin '${error.pluginId}' remediation command failed.`;
+    if (error.couldNotStart) {
+      return `Official OpenClaw plugin '${error.pluginId}' remediation could not start a required command.`;
+    }
+    if (error.timedOut) {
+      return `Official OpenClaw plugin '${error.pluginId}' remediation command timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    }
+    return `Official OpenClaw plugin '${error.pluginId}' remediation command failed.`;
   }
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
