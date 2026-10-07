@@ -10,7 +10,7 @@ export default class InferenceGetCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Show the selected NemoClaw inference path";
   static description =
-    "Read the selected sandbox's native NVIDIA provider path or the live shared OpenShell route.";
+    "Read the selected sandbox's native inference path or the live shared OpenShell route.";
   static usage = ["inference get [--json]"];
   static examples = ["<%= config.bin %> inference get", "<%= config.bin %> inference get --json"];
   static flags = {};
