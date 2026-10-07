@@ -716,3 +716,54 @@ describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
     expect(stderr).not.toContain("SECURITY PROBE SKIPPED");
   });
 });
+
+describe("isProxyHealthy (#12394)", () => {
+  const tempHomes: string[] = [];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete require.cache[LIFECYCLE_DIST];
+    delete require.cache[PROXY_DIST];
+    while (tempHomes.length > 0) {
+      fs.rmSync(tempHomes.pop() as string, { force: true, recursive: true });
+    }
+  });
+
+  // The proxy PID stays live while the proxy answers 502 for a down Ollama.
+  function probeHealth(curl: { status: number; stdout: string }): boolean {
+    const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-proxy-health-"));
+    tempHomes.push(home);
+    vi.stubEnv("HOME", home);
+    delete require.cache[LIFECYCLE_DIST];
+    delete require.cache[PROXY_DIST];
+    const lifecycle = require(LIFECYCLE_DIST) as typeof import("../local-adapter-lifecycle");
+    const stateDir = lifecycle.SHARED_LOCAL_ADAPTER_STATE_DIR;
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242", { mode: 0o600 });
+    fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "token", { mode: 0o600 });
+    const runner = require(RUNNER_DIST);
+    const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
+    const originalRunCapture = runner.runCapture;
+    runner.runCapture = () => "node /opt/nemoclaw/scripts/ollama-auth-proxy.mts";
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      ...curl,
+      signal: null,
+      output: [],
+      pid: 1,
+      stderr: "",
+    });
+    try {
+      const proxy = require(PROXY_DIST) as typeof import("./proxy");
+      return proxy.isProxyHealthy();
+    } finally {
+      runner.runCapture = originalRunCapture;
+    }
+  }
+
+  it.each([
+    ["is down", { status: 0, stdout: "502" }, false],
+    ["serves its model list", { status: 0, stdout: "200" }, true],
+  ] as const)("reports health when Ollama behind a live proxy %s", (_state, curl, healthy) => {
+    expect(probeHealth(curl)).toBe(healthy);
+  });
+});
