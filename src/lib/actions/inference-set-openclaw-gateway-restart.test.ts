@@ -279,7 +279,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         deps,
       ),
     ).rejects.toThrow(
-      "The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
+      "managed OpenClaw gateway restart/recovery did not complete successfully (health timeout). The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
     );
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
@@ -436,18 +436,24 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       },
     });
 
-    await expect(
-      runInferenceSet(
+    let errorMessage = "";
+    try {
+      await runInferenceSet(
         {
           provider: "nvidia-prod",
           model: "nvidia/model-a",
           noVerify: true,
         },
         deps,
-      ),
-    ).rejects.toThrow(
-      "The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
+      );
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain(
+      "restart/recovery did not complete successfully (restart exception). The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
     );
+    expect(errorMessage).not.toContain("raw restart detail must stay private");
 
     expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
       "Inference route synced",
