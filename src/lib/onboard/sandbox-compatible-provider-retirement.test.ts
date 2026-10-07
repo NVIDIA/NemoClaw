@@ -8,7 +8,7 @@ import { retireDestroyedSandboxCompatibleProvider } from "./sandbox-provider-cle
 describe("destroyed sandbox compatible provider retirement", () => {
   async function fixture() {
     const f = await nativeCompatibleFixture();
-    const getAuthority = vi.fn(() => f.receipt);
+    const getAuthority = vi.fn<() => typeof f.receipt | undefined>(() => f.receipt);
     const clearAuthority = vi.fn();
     const run = (deletionConfirmed = true) =>
       retireDestroyedSandboxCompatibleProvider(
@@ -56,6 +56,23 @@ describe("destroyed sandbox compatible provider retirement", () => {
     });
     await expect(f.run()).rejects.toThrow("remains attached");
     expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.clearAuthority).not.toHaveBeenCalled();
+  });
+  it.each([
+    {
+      ok: true as const,
+      value: { name: "replacement", type: "replacement", configKeys: [], credentialKeys: [] },
+    },
+    {
+      ok: false as const,
+      error: { kind: "transport" as const, reason: "connection_loss" as const, message: "unknown" },
+    },
+  ])("refuses missing authority unless provider absence is confirmed: %j", async (observation) => {
+    const f = await fixture();
+    f.getAuthority.mockReturnValue(undefined);
+    vi.spyOn(f.providerAdapter, "getProvider").mockResolvedValue(observation);
+    await expect(f.run()).rejects.toThrow("ownership changed");
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.clearAuthority).not.toHaveBeenCalled();
   });
   it("propagates uncertain deletion so the caller retains sandbox recovery state", async () => {

@@ -6,6 +6,7 @@ import {
   readNativeBedrockProviderAuthority,
   applyNativeBedrockProviderAuthority,
 } from "./native-bedrock-provider-authority-state";
+import { requireMatchingNativeCompatibleAttachment } from "../../inference/native-compatible/contract";
 import { requireMatchingNativeBedrockAttachment } from "../../inference/native-bedrock/contract";
 
 import {
@@ -247,6 +248,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    ...(rest.nativeCompatibleProviderAttachment !== undefined
+      ? {
+          nativeCompatibleProviderAttachment: requireMatchingNativeCompatibleAttachment(
+            rest.nativeCompatibleProviderAttachment,
+            rest,
+          ),
+        }
+      : {}),
     ...(rest.nativeBedrockProviderAttachment !== undefined
       ? {
           nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(
@@ -319,6 +328,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    ...(rest.nativeCompatibleProviderAttachment !== undefined
+      ? {
+          nativeCompatibleProviderAttachment: requireMatchingNativeCompatibleAttachment(
+            rest.nativeCompatibleProviderAttachment,
+            rest,
+          ),
+        }
+      : {}),
     ...(rest.nativeBedrockProviderAttachment !== undefined
       ? {
           nativeBedrockProviderAttachment: requireMatchingNativeBedrockAttachment(

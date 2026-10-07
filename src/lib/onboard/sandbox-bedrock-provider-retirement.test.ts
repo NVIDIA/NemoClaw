@@ -44,7 +44,7 @@ function fixture() {
     deleteProvider,
     detachProvider,
   } as unknown as OpenShellProviderAdapter;
-  const getAuthority = vi.fn(() => receipt);
+  const getAuthority = vi.fn<() => typeof receipt | undefined>(() => receipt);
   const clearAuthority = vi.fn();
   const run = (gatewayName = binding.gatewayName) =>
     retireDestroyedSandboxBedrockProvider(
@@ -132,4 +132,20 @@ describe("destroyed sandbox Bedrock provider retirement", () => {
     expect(f.deleteProvider).toHaveBeenCalledOnce();
     expect(f.clearAuthority).not.toHaveBeenCalled();
   });
+  it.each(["replacement", "unknown"] as const)(
+    "refuses %s provider observation without authority",
+    async (kind) => {
+      const f = fixture();
+      f.getAuthority.mockReturnValue(undefined);
+      f.getProvider.mockReset();
+      f.getProvider.mockResolvedValue(
+        kind === "replacement"
+          ? { ok: true, value: f.metadata }
+          : { ok: false, error: { kind: "timeout", message: "unknown" } },
+      );
+      await expect(f.run()).rejects.toThrow("ownership changed");
+      expect(f.deleteProvider).not.toHaveBeenCalled();
+      expect(f.clearAuthority).not.toHaveBeenCalled();
+    },
+  );
 });

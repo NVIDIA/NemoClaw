@@ -106,6 +106,54 @@ describe("destroy compatible inference cleanup boundary", () => {
     },
   );
 
+  it.each(["compatible", "bedrock"] as const)(
+    "retries %s cleanup after retirement succeeded and a later service stop failed",
+    async (kind) => {
+      const compatible = await nativeCompatibleFixture();
+      const bedrock = nativeBedrockSwitchFixture("nemoclaw-19080");
+      let compatibleAuthority: typeof compatible.receipt | undefined = compatible.receipt;
+      let bedrockAuthority: typeof bedrock.receipt | undefined = bedrock.receipt;
+      const h = createDestroyHarness({
+        registeredSandboxCount: 1,
+        registryEntryOverrides:
+          kind === "compatible"
+            ? { nativeCompatibleProviderAttachment: compatible.receipt }
+            : { nativeBedrockProviderAttachment: bedrock.receipt },
+      });
+      h.retireCompatibleProviderSpy.mockImplementation((input) =>
+        retireDestroyedSandboxCompatibleProvider(input, {
+          providerAdapter: compatible.providerAdapter,
+          getAuthority: () => compatibleAuthority,
+          clearAuthority: () => {
+            compatibleAuthority = undefined;
+          },
+        }),
+      );
+      h.retireBedrockProviderSpy.mockImplementation((input) =>
+        retireDestroyedSandboxBedrockProvider(input, {
+          providerAdapter: bedrock.providerAdapter,
+          getAuthority: () => bedrockAuthority,
+          clearAuthority: () => {
+            bedrockAuthority = undefined;
+          },
+        }),
+      );
+      h.stopAllSpy.mockImplementationOnce(() => {
+        throw new Error("service stop failed");
+      });
+      await expect(h.destroySandbox("alpha", { yes: true, cleanupGateway: false })).rejects.toThrow(
+        "service stop failed",
+      );
+      const selected = kind === "compatible" ? compatible : bedrock;
+      expect(selected.adapter.deleteProvider).toHaveBeenCalledOnce();
+      expect(h.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(h.compareAndSwapSessionSpy).not.toHaveBeenCalled();
+      await h.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+      expect(selected.adapter.deleteProvider).toHaveBeenCalledOnce();
+      expect(h.removeSandboxSpy).toHaveBeenCalledOnce();
+    },
+  );
+
   it("retains provider access reserved by a pending peer after deleting the selected sandbox", async () => {
     const { receipt } = await nativeCompatibleFixture();
     const h = createDestroyHarness({

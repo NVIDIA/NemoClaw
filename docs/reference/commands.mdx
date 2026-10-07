@@ -3474,9 +3474,9 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 ### `$$nemoclaw inference get`
 
 Show the provider and model for the selected inference path.
-When the selected sandbox has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
-For other providers, the command reports the active live route from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
-For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe, unambiguous, and reusable.
+When the selected sandbox has a valid native NVIDIA, hosted compatible, or Bedrock attachment, the command reports its recorded provider, model, and endpoint without reading the shared gateway route.
+For selections that use the shared inference route, the command reports the active live route from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+For a legacy shared-route compatible provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe, unambiguous, and reusable.
 Use this command when you want the selected inference path without the rest of the sandbox status output.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
@@ -3485,13 +3485,13 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the recorded provider-and-model output.
+A valid native attachment adds the recorded endpoint to the provider-and-model output. NVIDIA uses its fixed endpoint, hosted compatible providers use their validated HTTPS endpoint, and Bedrock uses its verified adapter endpoint.
 Other managed providers keep the provider-and-model output.
-Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
+Legacy shared-route compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
 Refer to [View the Selected Inference Path](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When `<name>` has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+When `<name>` has a valid native NVIDIA, hosted compatible, or Bedrock attachment, the command reports its recorded provider, model, and endpoint without reading the shared gateway route.
 Otherwise, when that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
 It does not search registries for other gateway ports.
 When the live provider and model match the sandbox's recorded route, text and JSON output identify a `llama-cpp-local` route as `managed` or `attached`.

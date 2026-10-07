@@ -270,10 +270,16 @@ export async function retireDestroyedSandboxCompatibleProvider(
     gatewayName,
     expected.profileId,
   );
+  const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
+  if (
+    !authority &&
+    (await providerRetirementAlreadyComplete(adapter, gatewayName, expected.providerName))
+  )
+    return;
   if (!isDeepStrictEqual(authority, expected))
     throw new Error("Compatible provider ownership changed; sandbox recovery state retained.");
   const result = await retireNativeCompatibleProvider({
-    adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
+    adapter,
     target: { kind: "named", gatewayName },
     expected,
     clearAuthority: () =>
@@ -297,15 +303,36 @@ export async function retireDestroyedSandboxBedrockProvider(
     gatewayName,
     expected.profileId,
   );
+  const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
+  if (
+    expected.gatewayName === gatewayName &&
+    !authority &&
+    (await providerRetirementAlreadyComplete(adapter, gatewayName, expected.providerName))
+  )
+    return;
   if (expected.gatewayName !== gatewayName || !isDeepStrictEqual(authority, expected))
     throw new Error("Bedrock provider ownership changed; sandbox recovery state retained.");
   const result = await retireNativeBedrockProvider({
-    adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
+    adapter,
     expected,
     clearAuthority: () =>
       (deps.clearAuthority ?? clearNativeBedrockProviderAuthority)(gatewayName, expected),
   });
   requireProviderRetirement(result.status, gatewayName, expected.providerName);
+}
+
+// A later sandbox cleanup step can fail after provider retirement clears authority.
+// Reconcile that retry through observed absence, never through a replacement provider.
+async function providerRetirementAlreadyComplete(
+  adapter: OpenShellProviderAdapter,
+  gatewayName: string,
+  providerName: string,
+): Promise<boolean> {
+  const observed = await adapter.getProvider({
+    target: { kind: "named", gatewayName },
+    providerName,
+  });
+  return !observed.ok && observed.error.kind === "command" && observed.error.reason === "not_found";
 }
 
 function requireProviderRetirement(
