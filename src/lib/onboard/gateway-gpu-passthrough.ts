@@ -153,6 +153,13 @@ export async function reconcileGatewayGpuReuseForGpuIntent({
       confirmedDockerDriverGateway,
     )
   ) {
+    // Docker-driver gateways skip the legacy GPU inspection; still surface
+    // that the sandbox may be recreated with different GPU capability (#12680)
+    if (gatewayReuseState === "healthy" && gpuPassthrough && confirmedDockerDriverGateway) {
+      console.log(
+        "  Reusing the existing gateway; the sandbox will be recreated with GPU passthrough if the GPU capability changed.",
+      );
+    }
     return gatewayReuseState;
   }
 
