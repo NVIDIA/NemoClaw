@@ -591,6 +591,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) delete process.env.OPENSHELL_GATEWAY;
     };
     if (!reusedRegistration) {
+      getGatewayOwner();
       const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });
       if (!added.ok) {
         getGatewayOwner();
@@ -599,6 +600,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       }
       createdRegistration = true;
     }
+    getGatewayOwner();
     const selected = await deps.lifecycle.selectGateway(request);
     const observed = await observeRegistration();
     if (
