@@ -334,6 +334,7 @@ async function checkSandboxExecutableReadiness(
   if (result.outcome.kind === "failed") {
     return "probe_failed";
   }
+  if (result.outcome.signal) return "probe_failed";
   if (result.outcome.exitCode === 0) return "ready";
   const output = normalizedOpenShellCommandOutput(result);
   return output.trim().length === 0 || OPENSHELL_SANDBOX_NOT_READY.test(output)
