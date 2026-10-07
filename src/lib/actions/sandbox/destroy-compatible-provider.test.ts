@@ -29,26 +29,31 @@ describe("destroy compatible inference cleanup boundary", () => {
     resetDestroyModuleCache();
     fs.rmSync(home, { recursive: true, force: true });
   });
-  it("retires after confirmed deletion and before removing recovery state", async () => {
-    const { receipt } = await nativeCompatibleFixture();
-    const h = createDestroyHarness({
-      registryEntryOverrides: { nativeCompatibleProviderAttachment: receipt },
-    });
-    h.retireCompatibleProviderSpy.mockImplementation(async () => {
-      expect(h.events).toContain("delete");
-      expect(h.removeSandboxSpy).not.toHaveBeenCalled();
-    });
-    await h.destroySandbox("alpha", { yes: true, cleanupGateway: false });
-    expect(h.retireCompatibleProviderSpy).toHaveBeenCalledWith(
-      {
-        deletionConfirmed: true,
-        gatewayName: "nemoclaw-19080",
-        expected: receipt,
-      },
-      { runOpenshell: expect.any(Function) },
-    );
-    expect(h.removeSandboxSpy).toHaveBeenCalledOnce();
-  });
+  // The first invocation loads the shared destroy dependency graph before exercising cleanup.
+  it(
+    "retires after confirmed deletion and before removing recovery state",
+    { timeout: 30_000 },
+    async () => {
+      const { receipt } = await nativeCompatibleFixture();
+      const h = createDestroyHarness({
+        registryEntryOverrides: { nativeCompatibleProviderAttachment: receipt },
+      });
+      h.retireCompatibleProviderSpy.mockImplementation(async () => {
+        expect(h.events).toContain("delete");
+        expect(h.removeSandboxSpy).not.toHaveBeenCalled();
+      });
+      await h.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+      expect(h.retireCompatibleProviderSpy).toHaveBeenCalledWith(
+        {
+          deletionConfirmed: true,
+          gatewayName: "nemoclaw-19080",
+          expected: receipt,
+        },
+        { runOpenshell: expect.any(Function) },
+      );
+      expect(h.removeSandboxSpy).toHaveBeenCalledOnce();
+    },
+  );
   it("keeps the registry and session when retirement remains uncertain", async () => {
     const { receipt } = await nativeCompatibleFixture();
     const h = createDestroyHarness({
