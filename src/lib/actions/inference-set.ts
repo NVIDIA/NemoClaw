@@ -1585,7 +1585,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeNvidiaDetached = false;
   let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
+    if (selectingNativeNvidia) {
       appliedInferenceSelection = false;
       return null;
     }

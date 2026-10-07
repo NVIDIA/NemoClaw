@@ -1451,7 +1451,17 @@ export function createProviderEffectBoundary(input: {
   };
   if (!input.deferred) {
     return {
-      validateBeforeCreate: validate,
+      validateBeforeCreate: async () => {
+        if (
+          usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
+          !input.expectedNativeNvidiaProviderAttachment
+        ) {
+          throw new Error(
+            `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+          );
+        }
+        await validate();
+      },
       publishBeforeCreate: async () => {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
