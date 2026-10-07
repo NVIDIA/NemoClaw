@@ -65,6 +65,34 @@ describe("native hosted provider ownership", () => {
       ).toBeUndefined();
     },
   );
+  it("uses gateway ownership despite a stale peer attachment", () => {
+    const current = { ...openaiReceipt, providerId: "new-registration" };
+    expect(
+      resolveGatewayNativeHostedProviderAuthority({
+        profile: openai,
+        gatewayName: "alpha",
+        gatewayAuthority: current,
+        sandboxes: [
+          {
+            gatewayName: "alpha",
+            nativeHostedProviderAttachment: openaiReceipt,
+            nativeHostedProviderAuthorities: [openaiReceipt],
+          },
+        ],
+      }),
+    ).toEqual(current);
+  });
+  it("does not promote retained peer receipts to gateway ownership", () => {
+    expect(
+      resolveGatewayNativeHostedProviderAuthority({
+        profile: openai,
+        gatewayName: "alpha",
+        recordedGatewayName: "alpha",
+        recordedAuthorities: [openaiReceipt],
+        sandboxes: [{ gatewayName: "alpha", nativeHostedProviderAttachment: openaiReceipt }],
+      }),
+    ).toBeUndefined();
+  });
   it("rejects legacy peer Slice 1 proof without gateway authority", () => {
     expect(
       resolveGatewayNativeHostedProviderAuthority({

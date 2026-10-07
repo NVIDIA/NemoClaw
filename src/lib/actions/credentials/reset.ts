@@ -18,7 +18,7 @@ import { CLI_NAME } from "../../cli/branding";
 import {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,

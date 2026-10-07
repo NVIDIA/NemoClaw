@@ -7,6 +7,8 @@ export interface NativeHostedProfile {
   readonly profileId: string;
   readonly providerName: string;
   readonly endpoint: string;
+  // Host credentials can use a different name from the OpenShell profile binding.
+  readonly hostCredentialEnv?: "NOUS_API_KEY";
   readonly credentialEnv:
     | "NVIDIA_INFERENCE_API_KEY"
     | "OPENAI_API_KEY"
@@ -59,6 +61,7 @@ export const NATIVE_HOSTED_PROFILES: readonly NativeHostedProfile[] = [
   {
     label: "Hermes Provider",
     logicalProvider: "hermes-provider",
+    hostCredentialEnv: "NOUS_API_KEY",
     profileId: "nemoclaw-hermes-inference-v1",
     providerName: "nemoclaw-hermes-provider-v1",
     endpoint: "https://inference-api.nousresearch.com/v1",

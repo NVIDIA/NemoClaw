@@ -21,6 +21,95 @@ describe("runInferenceSet Hermes routing", () => {
     portableMocks.assertUnavailable.mockReset();
   });
 
+  it("creates the first native Hermes provider from its Nous API key", async () => {
+    const deps = createDeps({
+      config: {
+        model: { default: "baseline", provider: "custom", base_url: "https://inference.local/v1" },
+      },
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        provider: "compatible-endpoint",
+        model: "baseline",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      resolveCredentialValue: (name) => (name === "NOUS_API_KEY" ? "nous-test-credential" : ""),
+    });
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    const attach = vi.spyOn(deps.providerAdapter, "attachProvider");
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "selected-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "nemoclaw-hermes-provider-v1",
+        credentials: [{ name: "OPENAI_API_KEY", value: "nous-test-credential" }],
+      }),
+    );
+    expect(attach).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerName: "nemoclaw-hermes-provider-v1",
+        sandboxName: "hermes",
+      }),
+    );
+    expect(deps.calls.resolveCredentialValue).toHaveBeenCalledWith("NOUS_API_KEY");
+    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).not.toContain(
+      "nous-test-credential",
+    );
+    expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain(
+      "nous-test-credential",
+    );
+  });
+
+  it("reuses an owned Hermes provider without a manual Nous API key", async () => {
+    const deps = createDeps({
+      config: {
+        model: {
+          default: "baseline",
+          provider: "custom",
+          base_url: "https://inference-api.nousresearch.com/v1",
+        },
+      },
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        provider: "hermes-provider",
+        model: "baseline",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "owned-oauth-provider",
+        },
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      resolveCredentialValue: () => "",
+    });
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    const update = vi.spyOn(deps.providerAdapter, "updateProvider");
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "selected-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
     portableMocks.assertUnavailable.mockImplementation(() => {
       throw new Error("schema-5 rejected");

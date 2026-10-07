@@ -1075,8 +1075,15 @@ Trusted workflow qualification uses an explicitly selected target and a nonempty
 `targets` input. Each selection runs on Docker and receives only its declared
 provider credential. These targets are excluded from the default suite. The
 trusted workflow revision must contain this selection and credential transport
-before it can dispatch a candidate PR; candidate code cannot authorize its own
-credential access. Approved credential provisioning and a canonical supported
+before it can dispatch a candidate PR. Dispatch from `main`; arbitrary branch
+dispatches are rejected, including an empty candidate checkout. PR selections
+use the existing current-head/exact-base identity authorization. Before dispatch,
+review the complete selected candidate diff: candidate test and CLI code can
+read and use the selected provider key. This follows the existing manual PR E2E
+trust contract, not a credential-isolated execution boundary. Record the candidate
+and workflow SHAs and selected credential source; after failure inspect artifacts,
+clean up retained resources, and rotate or revoke exposed credentials when necessary.
+The workflow does not revoke provider keys. Approved credential provisioning and a canonical supported
 model remain prerequisites. The existing manifest binds the candidate revision,
 selected target, and switch artifacts to the workflow result.
 

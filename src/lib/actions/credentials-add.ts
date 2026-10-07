@@ -23,10 +23,7 @@ import {
   persistNativeHostedProviderAuthority,
   nativeHostedProviderProfilePath,
 } from "../inference/native-hosted";
-import {
-  normalizeNativeNvidiaProviderAttachment,
-  NativeNvidiaProviderError,
-} from "../inference/native-nvidia";
+import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
 import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_AGENTS,
@@ -481,10 +478,7 @@ export async function runCredentialsAddAction(
           `  Select it with '${CLI_NAME} inference set --provider ${provider} --model <model>'.`,
         ]);
       } catch (error) {
-        const detail =
-          error instanceof NativeNvidiaProviderError || error instanceof Error
-            ? error.message
-            : String(error);
+        const detail = error instanceof Error ? error.message : String(error);
         return fail([`  Could not register provider '${provider}'.`, `  ${detail}`]);
       }
     });

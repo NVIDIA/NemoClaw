@@ -14,7 +14,7 @@ import { isValidNativeProviderGateway as isValidName } from "./native-nvidia-pro
 import {
   normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import type { SandboxRegistry } from "./types";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";

@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runInNewContext } from "node:vm";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
-import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
+import {
+  FIXED_HOSTED_CREDENTIAL_PREDICATE,
+  validateStandardProfileWorkflowBoundary,
+} from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 import {
   FIXED_HOSTED_PLAN_SCRIPT,
   FIXED_HOSTED_RUN_SCRIPT,
@@ -20,7 +24,10 @@ import {
 } from "../../../tools/e2e/workflow-plan.mts";
 import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
 
-const explicit = { hostedModel: "approved/model", eventName: "workflow_dispatch" };
+const explicit = {
+  hostedModel: "approved/model",
+  eventName: "workflow_dispatch",
+};
 
 describe("fixed hosted qualification planning", () => {
   it.each(FIXED_HOSTED_QUALIFICATIONS)(
@@ -70,6 +77,52 @@ describe("fixed hosted qualification planning", () => {
     expect(() =>
       buildE2eWorkflowPlan({ targets: id }, { ...explicit, hostedModel: "$(leak)" }),
     ).toThrow(/model/);
+  });
+
+  it.each([
+    ["direct main", "refs/heads/main", "", "false", "workflow_dispatch", true],
+    ["validated PR", "refs/heads/main", "candidate", "true", "workflow_dispatch", true],
+    ["arbitrary branch", "refs/heads/feature", "", "false", "workflow_dispatch", false],
+    [
+      "branch with authorized PR",
+      "refs/heads/feature",
+      "candidate",
+      "true",
+      "workflow_dispatch",
+      false,
+    ],
+    ["unvalidated PR", "refs/heads/main", "candidate", "false", "workflow_dispatch", false],
+    ["automatic event", "refs/heads/main", "", "false", "push", false],
+  ])(
+    "guards fixed hosted credential delivery: %s",
+    (_label, ref, checkout, allowed, event, expected) => {
+      expect(
+        runInNewContext(
+          FIXED_HOSTED_CREDENTIAL_PREDICATE.replaceAll(
+            "needs.generate-matrix",
+            'needs["generate-matrix"]',
+          ),
+          {
+            github: { repository: "NVIDIA/NemoClaw", ref, event_name: event },
+            inputs: { checkout_sha: checkout },
+            needs: {
+              "generate-matrix": {
+                outputs: { e2e_credentials_allowed: allowed },
+              },
+            },
+          },
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it("rejects removing the fixed hosted trusted-main job gate", () => {
+    const workflow = readWorkflow();
+    (workflow.jobs as Record<string, { if: string }>)["catalogue-fixed-hosted"]!.if =
+      "${{ needs.generate-matrix.outputs.catalogue_fixed_hosted_matrix != '[]' }}";
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-fixed-hosted must use its generated catalogue matrix",
+    );
   });
 
   it("rejects credential crossover in the trusted caller", () => {
@@ -156,10 +209,16 @@ ${FIXED_HOSTED_RUN_SCRIPT}
 
   it.each([
     { scenario: "target mismatch", override: { TARGET_ID: "hermes-e2e" } },
-    { scenario: "test file mismatch", override: { TEST_FILE: "test/e2e/live/hermes-e2e.test.ts" } },
+    {
+      scenario: "test file mismatch",
+      override: { TEST_FILE: "test/e2e/live/hermes-e2e.test.ts" },
+    },
     { scenario: "shard mismatch", override: { SHARD: "nvidia-prod" } },
     { scenario: "missing model", override: { HOSTED_MODEL: "" } },
-    { scenario: "unsafe model", override: { HOSTED_MODEL: "model\nATTACKER=value" } },
+    {
+      scenario: "unsafe model",
+      override: { HOSTED_MODEL: "model\nATTACKER=value" },
+    },
     { scenario: "unknown target", override: { CATALOGUE_ID: "unknown" } },
   ])("refuses invalid qualification metadata [$scenario]", ({ override }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fixed-hosted-denial-"));

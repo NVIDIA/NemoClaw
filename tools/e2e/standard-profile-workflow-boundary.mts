@@ -38,8 +38,10 @@ const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+export const FIXED_HOSTED_CREDENTIAL_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const FIXED_HOSTED_CALLER_SECRET =
-  "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hermes-fixed-bearer-inference-switch' && secrets.NOUS_API_KEY || matrix.id == 'hermes-fixed-openrouter-inference-switch' && secrets.OPENROUTER_API_KEY || matrix.id == 'openclaw-fixed-openai-inference-switch' && secrets.OPENAI_API_KEY || (matrix.id == 'hermes-fixed-anthropic-inference-switch' || matrix.id == 'openclaw-fixed-anthropic-inference-switch') && secrets.ANTHROPIC_API_KEY || '') || '' }}";
+  "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hermes-fixed-bearer-inference-switch' && secrets.NOUS_API_KEY || matrix.id == 'hermes-fixed-openrouter-inference-switch' && secrets.OPENROUTER_API_KEY || matrix.id == 'openclaw-fixed-openai-inference-switch' && secrets.OPENAI_API_KEY || (matrix.id == 'hermes-fixed-anthropic-inference-switch' || matrix.id == 'openclaw-fixed-anthropic-inference-switch') && secrets.ANTHROPIC_API_KEY || '') || '' }}";
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -166,7 +168,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
     if (
-      job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
+      job.if !==
+        `\${{ ${matrixOutput} != '[]'${profile === "fixed-hosted" ? ` && ${FIXED_HOSTED_CREDENTIAL_PREDICATE}` : ""} }}` ||
       record(record(job.strategy).matrix).include !== `\${{ fromJSON(${matrixOutput}) }}`
     ) {
       errors.push(`${contract.job} must use its generated catalogue matrix`);
@@ -216,7 +219,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
+        profile === "fixed-hosted"
+          ? `\${{ ${FIXED_HOSTED_CREDENTIAL_PREDICATE} }}`
+          : "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -232,7 +237,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
           callerSecrets[name] !==
           (name === "HOSTED_PROVIDER_API_KEY"
             ? FIXED_HOSTED_CALLER_SECRET
-            : guardedCallerSecret(name)),
+            : profile === "fixed-hosted"
+              ? `\${{ ${FIXED_HOSTED_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`
+              : guardedCallerSecret(name)),
       )
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);

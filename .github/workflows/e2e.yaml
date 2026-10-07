@@ -3301,7 +3301,7 @@ jobs:
   catalogue-fixed-hosted:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix, package-openshell-sdk]
-    if: ${{ needs.generate-matrix.outputs.catalogue_fixed_hosted_matrix != '[]' }}
+    if: ${{ needs.generate-matrix.outputs.catalogue_fixed_hosted_matrix != '[]' && github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -3341,11 +3341,11 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      HOSTED_PROVIDER_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hermes-fixed-bearer-inference-switch' && secrets.NOUS_API_KEY || matrix.id == 'hermes-fixed-openrouter-inference-switch' && secrets.OPENROUTER_API_KEY || matrix.id == 'openclaw-fixed-openai-inference-switch' && secrets.OPENAI_API_KEY || (matrix.id == 'hermes-fixed-anthropic-inference-switch' || matrix.id == 'openclaw-fixed-anthropic-inference-switch') && secrets.ANTHROPIC_API_KEY || '') || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      HOSTED_PROVIDER_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hermes-fixed-bearer-inference-switch' && secrets.NOUS_API_KEY || matrix.id == 'hermes-fixed-openrouter-inference-switch' && secrets.OPENROUTER_API_KEY || matrix.id == 'openclaw-fixed-openai-inference-switch' && secrets.OPENAI_API_KEY || (matrix.id == 'hermes-fixed-anthropic-inference-switch' || matrix.id == 'openclaw-fixed-anthropic-inference-switch') && secrets.ANTHROPIC_API_KEY || '') || '' }}
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})

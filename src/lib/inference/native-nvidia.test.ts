@@ -2,63 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { describe, expect, it, vi } from "vitest";
-
-import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { describe, expect, it } from "vitest";
 import { parseCheckedInProviderProfileContract } from "../adapters/openshell/provider-profile";
 import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "./native-nvidia";
-
+  normalizeNativeNvidiaProviderAttachment,
+} from "./native-nvidia/contract";
 import {
-  ensureNativeHostedProvider,
-  persistNativeHostedProviderAuthority,
-  ensureNativeHostedProviderAttached,
   nativeHostedProviderProfilePath,
-  NativeHostedProviderError,
-  verifyNativeHostedProviderAttachment,
+  normalizeNativeHostedProviderAttachment,
 } from "./native-hosted";
 import { nativeHostedProfile } from "./native-hosted/profiles";
 
 const profile = nativeHostedProfile("nvidia-prod")!;
 
-const target = { kind: "named", gatewayName: "nemoclaw" } as const;
-
-function metadata(overrides: Record<string, unknown> = {}) {
-  return {
-    name: NVIDIA_HOSTED_NATIVE_PROVIDER,
-    type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-    credentialKeys: [NVIDIA_HOSTED_CREDENTIAL_ENV],
-    configKeys: [],
-    revision: { id: "provider-id", resourceVersion: 1 },
-    ...overrides,
-  };
-}
-
-function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellProviderAdapter {
-  return {
-    importProviderProfile: vi.fn(() => ({ ok: true })),
-    getProvider: vi.fn(async () => ({ ok: true, value: metadata() })),
-    createProvider: vi.fn(async () => ({ ok: true })),
-    updateProvider: vi.fn(async () => ({ ok: true })),
-    listProviderAttachments: vi.fn(async () => ({
-      ok: true,
-      value: { names: [NVIDIA_HOSTED_NATIVE_PROVIDER] },
-    })),
-    listProviders: vi.fn(),
-    inspectProviderProfile: vi.fn(),
-    deleteProvider: vi.fn(),
-    detachProvider: vi.fn(async () => ({ ok: true })),
-    attachProvider: vi.fn(async () => ({ ok: true })),
-    configureProviderRefresh: vi.fn(),
-    getProviderRefreshStatus: vi.fn(),
-    ...overrides,
-  } as OpenShellProviderAdapter;
-}
-
-describe("native NVIDIA OpenShell provider", () => {
+describe("native NVIDIA receipt compatibility", () => {
   it("ships a profile limited to the native models and chat-completions operations (#12558)", () => {
     const source = fs.readFileSync(nativeHostedProviderProfilePath(profile), "utf8");
     const contract = parseCheckedInProviderProfileContract(source);
@@ -80,401 +39,26 @@ describe("native NVIDIA OpenShell provider", () => {
     );
   });
 
-  it("creates the internal provider once and records its immutable identity (#12558)", async () => {
-    const getProvider = vi
-      .fn<OpenShellProviderAdapter["getProvider"]>()
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { kind: "command", reason: "not_found", message: "not found" },
-      })
-      .mockResolvedValueOnce({ ok: true, value: metadata() });
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
-      ok: true,
-    }));
-    const providerAdapter = adapter({ getProvider, createProvider });
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: providerAdapter,
-        target,
-        credentialValue: "opaque-test-secret",
-      }),
-    ).resolves.toEqual({
-      schemaVersion: 1,
-      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-      providerId: "provider-id",
-    });
-    expect(createProvider).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        name: NVIDIA_HOSTED_NATIVE_PROVIDER,
-        type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-        credentials: [{ name: NVIDIA_HOSTED_CREDENTIAL_ENV, value: "opaque-test-secret" }],
-        config: [],
-      }),
-    );
-  });
-
-  it("removes a new provider when authority persistence fails (#12562)", async () => {
-    let providerPresent = true;
-    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
-      providerPresent
-        ? { ok: true, value: metadata() }
-        : {
-            ok: false,
-            error: { kind: "command", reason: "not_found", message: "not found" },
-          },
-    );
-    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
-      providerPresent = false;
-      return { ok: true };
-    });
+  it("preserves a Slice 1 receipt in both receipt readers", () => {
     const receipt = {
       schemaVersion: 1,
       profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
       providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-      providerId: "provider-id",
-    } as const;
-
-    await expect(
-      persistNativeHostedProviderAuthority({
-        profile,
-        adapter: adapter({ getProvider, deleteProvider }),
-        target,
-        gatewayName: "nemoclaw",
-        receipt,
-        readAuthority: () => undefined,
-        writeAuthority: () => {
-          throw new Error("state directory is read-only");
-        },
-      }),
-    ).rejects.toThrow(/newly created provider was removed.*state directory is read-only/su);
-    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
-      target,
-      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-    });
+      providerId: "legacy-provider-id",
+    };
+    expect(normalizeNativeNvidiaProviderAttachment(receipt)).toEqual(receipt);
+    expect(normalizeNativeHostedProviderAttachment(receipt)).toEqual(receipt);
   });
 
-  it("keeps a provider when a failed write persisted its authority (#12562)", async () => {
+  it("rejects a hosted vendor receipt in the legacy NVIDIA reader", () => {
+    const openai = nativeHostedProfile("openai-api")!;
     const receipt = {
       schemaVersion: 1,
-      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-      providerId: "provider-id",
-    } as const;
-    let authority:
-      | Parameters<typeof persistNativeHostedProviderAuthority>[0]["receipt"]
-      | undefined;
-    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
-
-    await expect(
-      persistNativeHostedProviderAuthority({
-        profile,
-        adapter: adapter({ deleteProvider }),
-        target,
-        gatewayName: "nemoclaw",
-        receipt,
-        readAuthority: () => authority,
-        writeAuthority: (_gatewayName, value) => {
-          authority = value;
-          throw new Error("directory sync failed");
-        },
-      }),
-    ).resolves.toBeUndefined();
-    expect(deleteProvider).not.toHaveBeenCalled();
-  });
-
-  it("refuses cleanup when the provider identity changed after a failed write (#12562)", async () => {
-    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
-
-    await expect(
-      persistNativeHostedProviderAuthority({
-        profile,
-        adapter: adapter({
-          getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-            ok: true,
-            value: metadata({
-              revision: { id: "replacement-id", resourceVersion: 2 },
-            }),
-          })),
-          deleteProvider,
-        }),
-        target,
-        gatewayName: "nemoclaw",
-        receipt: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "provider-id",
-        },
-        readAuthority: () => undefined,
-        writeAuthority: () => {
-          throw new Error("state directory is read-only");
-        },
-      }),
-    ).rejects.toThrow(/credentials reset nvidia-prod.*identity changed/su);
-    expect(deleteProvider).not.toHaveBeenCalled();
-  });
-
-  it("observes an ambiguous create result without issuing a second mutation (#12558)", async () => {
-    const getProvider = vi
-      .fn<OpenShellProviderAdapter["getProvider"]>()
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { kind: "command", reason: "not_found", message: "not found" },
-      })
-      .mockResolvedValueOnce({ ok: true, value: metadata() });
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
-      ok: false,
-      error: { kind: "timeout", message: "timed out" },
-    }));
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({ getProvider, createProvider }),
-        target,
-        credentialValue: "opaque-test-secret",
-      }),
-    ).resolves.toMatchObject({ providerId: "provider-id" });
-    expect(createProvider).toHaveBeenCalledOnce();
-  });
-
-  it("creates from an existing gateway credential when recreation has no local key (#12558)", async () => {
-    const getProvider = vi
-      .fn<OpenShellProviderAdapter["getProvider"]>()
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { kind: "command", reason: "not_found", message: "not found" },
-      })
-      .mockResolvedValueOnce({ ok: true, value: metadata() });
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
-      ok: true,
-    }));
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({ getProvider, createProvider }),
-        target,
-        credentialValue: null,
-        reuseExistingCredential: true,
-      }),
-    ).resolves.toMatchObject({ providerId: "provider-id" });
-    expect(createProvider).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        name: NVIDIA_HOSTED_NATIVE_PROVIDER,
-        credentials: [],
-        fromExisting: true,
-      }),
-    );
-  });
-
-  it("refuses a replaced provider before rotating its credential (#12558)", async () => {
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({
-          getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-            ok: true,
-            value: metadata({ revision: { id: "replacement-id", resourceVersion: 1 } }),
-          })),
-          updateProvider,
-        }),
-        target,
-        credentialValue: "opaque-test-secret",
-        expected: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "recorded-id",
-        },
-      }),
-    ).rejects.toThrow(/changed identity.*No provider was changed/u);
-    expect(updateProvider).not.toHaveBeenCalled();
-  });
-
-  it("refuses an existing provider without an ownership receipt before mutation (#12558)", async () => {
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
-    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({ updateProvider, attachProvider }),
-        target,
-        credentialValue: "opaque-test-secret",
-      }),
-    ).rejects.toThrow(/already exists without a matching NemoClaw ownership receipt/u);
-    expect(updateProvider).not.toHaveBeenCalled();
-    expect(attachProvider).not.toHaveBeenCalled();
-  });
-
-  it("does not record a receipt after an ambiguous credential update (#12558)", async () => {
-    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-      ok: true,
-      value: metadata(),
-    }));
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
-      ok: false,
-      error: { kind: "timeout", message: "timed out" },
-    }));
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({ getProvider, updateProvider }),
-        target,
-        credentialValue: "replacement-secret",
-        expected: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "provider-id",
-        },
-      }),
-    ).rejects.toThrow(/did not confirm.*credential update.*No provider receipt was recorded/u);
-    expect(updateProvider).toHaveBeenCalledOnce();
-    expect(getProvider).toHaveBeenCalledOnce();
-  });
-
-  it("refuses to replace a recorded provider that is missing (#12558)", async () => {
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: adapter({
-          getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-            ok: false,
-            error: { kind: "command", reason: "not_found", message: "not found" },
-          })),
-          createProvider,
-        }),
-        target,
-        credentialValue: "opaque-test-secret",
-        expected: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "recorded-id",
-        },
-      }),
-    ).rejects.toThrow(/is missing.*No provider was changed/u);
-    expect(createProvider).not.toHaveBeenCalled();
-  });
-
-  it("fails before provider mutation when the profile collides (#12558)", async () => {
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
-    const providerAdapter = adapter({
-      importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
-        ok: false,
-        error: {
-          kind: "command",
-          reason: "profile_incompatible",
-          message: "different profile",
-        },
-      })),
-      createProvider,
-    });
-
-    await expect(
-      ensureNativeHostedProvider({
-        profile,
-        adapter: providerAdapter,
-        target,
-        credentialValue: "opaque-test-secret",
-      }),
-    ).rejects.toThrow(/conflicts with NemoClaw's checked-in security boundary/u);
-    expect(createProvider).not.toHaveBeenCalled();
-  });
-
-  it("requires the exact provider attachment before native inference is published (#12558)", async () => {
-    const providerAdapter = adapter({
-      listProviderAttachments: vi.fn<OpenShellProviderAdapter["listProviderAttachments"]>(
-        async () => ({ ok: true, value: { names: [] } }),
-      ),
-    });
-
-    await expect(
-      verifyNativeHostedProviderAttachment({
-        profile,
-        adapter: providerAdapter,
-        target,
-        sandboxName: "alpha",
-      }),
-    ).rejects.toThrow(NativeHostedProviderError);
-    await expect(
-      verifyNativeHostedProviderAttachment({
-        profile,
-        adapter: providerAdapter,
-        target,
-        sandboxName: "alpha",
-      }),
-    ).rejects.toThrow(/does not have its native NVIDIA inference provider attached/u);
-  });
-
-  it("removes a newly attached provider when attachment verification fails (#12558)", async () => {
-    const listProviderAttachments = vi
-      .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } });
-    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
-      ok: true,
-      value: { changed: true },
-    }));
-    const providerAdapter = adapter({ listProviderAttachments, detachProvider });
-
-    await expect(
-      ensureNativeHostedProviderAttached({
-        profile,
-        adapter: providerAdapter,
-        target,
-        sandboxName: "alpha",
-        expected: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "provider-id",
-        },
-      }),
-    ).rejects.toThrow(/does not have its native NVIDIA inference provider attached/u);
-    expect(detachProvider).toHaveBeenCalledExactlyOnceWith({
-      target,
-      sandboxName: "alpha",
-      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-    });
-  });
-
-  it("preserves verification and cleanup failures after a new attachment (#12558)", async () => {
-    const listProviderAttachments = vi
-      .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: { names: [NVIDIA_HOSTED_NATIVE_PROVIDER] },
-      });
-
-    await expect(
-      ensureNativeHostedProviderAttached({
-        profile,
-        adapter: adapter({ listProviderAttachments }),
-        target,
-        sandboxName: "alpha",
-        expected: {
-          schemaVersion: 1,
-          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          providerId: "provider-id",
-        },
-      }),
-    ).rejects.toThrow(
-      /does not have its native NVIDIA inference provider attached[\s\S]*did not confirm removal/u,
-    );
+      profileId: openai.profileId,
+      providerName: openai.providerName,
+      providerId: "openai-id",
+    };
+    expect(normalizeNativeNvidiaProviderAttachment(receipt)).toBeUndefined();
+    expect(normalizeNativeHostedProviderAttachment(receipt)).toEqual(receipt);
   });
 });

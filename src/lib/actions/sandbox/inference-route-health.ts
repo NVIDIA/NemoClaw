@@ -18,7 +18,7 @@ import {
 import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../inference/openrouter";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {

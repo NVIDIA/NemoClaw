@@ -26,7 +26,7 @@ import {
   isNativeNvidiaProvider,
   normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import {
   classifyInferenceRouteFailureLabel,
   formatUntrustedProbeDetail,

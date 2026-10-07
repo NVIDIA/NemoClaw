@@ -1002,9 +1002,7 @@ async function prepareNativeHostedSelection(input: {
     target,
     profile,
     credentialValue:
-      input.provider === "hermes-provider"
-        ? null
-        : input.deps.resolveCredentialValue(profile.credentialEnv) || null,
+      input.deps.resolveCredentialValue(profile.hostCredentialEnv ?? profile.credentialEnv) || null,
     ...(input.expectedAttachment?.profileId === profile.profileId
       ? { expected: input.expectedAttachment }
       : {}),

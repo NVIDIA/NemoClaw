@@ -64,22 +64,8 @@ export function resolveGatewayNativeHostedProviderAuthority(input: {
   if (input.recordedGatewayName === input.gatewayName) {
     collect(input.recordedAttachment);
   }
-  if (input.profile.logicalProvider === "nvidia-prod") {
-    return normalizeNativeHostedProviderAuthorities(receipts)?.[0];
-  }
-  if (input.recordedGatewayName === input.gatewayName) {
-    for (const receipt of normalizeNativeHostedProviderAuthorities(input.recordedAuthorities) ?? [])
-      collect(receipt);
-  }
-  for (const sandbox of input.sandboxes) {
-    if (sandbox.gatewayName !== input.gatewayName) continue;
-    collect(sandbox.nativeHostedProviderAttachment);
-    collect(sandbox.nativeNvidiaProviderAttachment);
-    collect(sandbox.nativeNvidiaProviderAuthority);
-    for (const receipt of normalizeNativeHostedProviderAuthorities(
-      sandbox.nativeHostedProviderAuthorities,
-    ) ?? [])
-      collect(receipt);
-  }
+  // Only the selected sandbox's active attachment may corroborate the gateway
+  // identity. Peer and retained receipts describe earlier selections, so they
+  // cannot establish ownership or veto a newly registered gateway provider.
   return normalizeNativeHostedProviderAuthorities(receipts)?.[0];
 }

@@ -43,8 +43,8 @@ flowchart TB
 
 NemoClaw sits above OpenShell in the operator workflow.
 It calls OpenShell APIs and CLI commands to create and configure the sandbox that runs Hermes.
-Models and endpoints sit behind OpenShell's inference routing.
-NemoClaw onboarding connects your provider choice to that route, including the Hermes Provider route when you onboard through `nemohermes`.
+Fixed hosted providers, including Hermes Provider, use native endpoints through OpenShell providers attached to the selected sandbox.
+Custom, local, and Model Router selections use the shared `inference.local` route.
 
 The following table shows the scope of each component in the stack.
 
@@ -75,10 +75,10 @@ The following table compares custom OpenShell integration with `nemohermes onboa
 | Capability | Custom OpenShell + Hermes | `nemohermes onboard` |
 |---|---|---|
 | Sandbox isolation | Yes, when you apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges enforcement through your policy. | Yes. NemoClaw applies these through the blueprint and layers a Hermes-specific restrictive policy on top. |
-| Credential handling | You create OpenShell providers manually with `openshell provider create` and configure placeholder resolution at egress. | NemoClaw creates OpenShell providers during onboarding and filters sensitive host environment variables from the sandbox creation command to reduce accidental leakage through build args. |
+| Credential handling | You create OpenShell providers manually with `openshell provider create` and configure placeholder resolution at egress. | OpenShell retains provider credentials outside the sandbox; Hermes uses a placeholder that OpenShell resolves at egress. NemoClaw filters sensitive host environment variables from sandbox creation to reduce accidental leakage through build args. |
 | Image hardening | Depends on your base image and install steps. | NemoClaw removes build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image to reduce attack surface. |
 | Filesystem policy | You define read-only and read-write paths in policy YAML. | NemoClaw defines a targeted layout: system paths (`/usr`, `/lib`, `/etc`) are read-only; `/sandbox` and `/sandbox/.hermes` are writable for agent state and configuration. |
-| Inference setup | You configure OpenShell inference routing and Hermes `config.yaml` manually. | NemoClaw validates the selected provider and model from the host, configures the OpenShell route, and writes the managed model settings into `/sandbox/.hermes/config.yaml`. Hermes Provider onboarding is available through `nemohermes`. |
+| Inference setup | You configure OpenShell inference routing and Hermes `config.yaml` manually. | NemoClaw validates the selected provider and model from the host and writes managed model settings into `/sandbox/.hermes/config.yaml`. Fixed hosted providers use sandbox-attached OpenShell providers and native endpoints. Custom, local, and Model Router selections use the shared `inference.local` route. |
 | Managed MCP | You register providers, network policy, and Hermes MCP configuration yourself. | NemoClaw manages authenticated HTTPS Streamable HTTP MCP server lifecycle, ownership records, policy, and credential placeholders through host-side commands. |
 | Channel messaging | OpenShell delivers channel credentials through its provider system and L7 proxy. You configure Hermes platform adapters manually. | NemoClaw configures supported channels during onboarding or through lifecycle commands and writes the managed Hermes channel settings. |
 | Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. Repeated onboarding uses the selected blueprint and recorded configuration; host and platform differences can still affect the result. |

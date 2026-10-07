@@ -14,7 +14,7 @@ import {
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
 import { nativeHostedProfile, NATIVE_HOSTED_PROFILES } from "./native-hosted/profiles";
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia/contract";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
@@ -38,9 +38,8 @@ export {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
-  resolveGatewayNativeNvidiaProviderAuthority,
-} from "./native-nvidia";
-export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
+} from "./native-nvidia/contract";
+export type { NativeNvidiaProviderAttachment } from "./native-nvidia/contract";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =

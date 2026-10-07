@@ -29,7 +29,7 @@ import {
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia/contract";
 
 describe("resolveAgentDefaultCloudModel", () => {
   it("uses the Deep Agents manifest default", () => {
