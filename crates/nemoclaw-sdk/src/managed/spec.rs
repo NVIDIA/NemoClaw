@@ -144,7 +144,13 @@ impl Spec {
                 "managed resource lacks ownership or generation",
             ));
         }
-        if self.process.is_some() && self.compute_driver != ComputeDriver::Docker {
+        if self.gateway.kubernetes.is_some()
+            || !matches!(
+                self.compute_driver,
+                ComputeDriver::Docker | ComputeDriver::Podman
+            )
+            || (self.process.is_some() && self.compute_driver != ComputeDriver::Docker)
+        {
             return Err(Error::Conflict("unsupported managed compute driver"));
         }
         if self

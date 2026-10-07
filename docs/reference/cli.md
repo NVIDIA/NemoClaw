@@ -43,7 +43,7 @@ Credential values are not written to desired state, output, diagnostics, or depl
 | Option | Scope | Meaning |
 |---|---|---|
 | `--state-dir DIR` | All commands | Deployment state directory for lifecycle commands; defaults to `.nemoclaw` |
-| `--bundle DIR` | All commands | Explicit verified bundle for lifecycle commands and optional onboarding discovery; defaults to the bundle containing the CLI |
+| `--bundle DIR` | All commands | Explicit verified bundle for lifecycle commands; defaults to the bundle containing the CLI |
 | `--verbose`, `-v` | All commands | Include internal resource addresses and completed-step timings |
 | `--progress MODE` | All commands | `auto` (default) selects inline terminal progress or plain redirected output; `plain` disables animation; `off` suppresses progress |
 | `--output FILE`, `-o FILE` | `export`, `onboard` | Write YAML to a file; onboarding requires a new file |

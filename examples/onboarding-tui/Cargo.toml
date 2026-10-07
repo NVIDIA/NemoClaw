@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 nemoclaw-authoring = { path = "../../crates/nemoclaw-authoring" }
+nemoclaw-discovery = { path = "../../crates/nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../../crates/nemoclaw-sdk" }
 clap.workspace = true
 crossterm.workspace = true

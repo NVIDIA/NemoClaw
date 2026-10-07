@@ -347,6 +347,37 @@ The installer contract has no separate recovery operation and does not create an
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
 
+### Recover an Interrupted Helm Removal
+
+This procedure applies to managed Kubernetes and OpenShift deployments using the native Helm provider graph.
+For deployments using the earlier combined gateway resource, follow the [migration policy](migration.md#move-from-the-combined-kubernetes-gateway-resource) with their original tooling.
+
+During destroy, the pinned Helm provider can lose a release binding when its release lookup fails, even though the release remains in the cluster.
+Before removing a bound release, NemoClaw saves a private checkpoint at `runtime/helm-recovery.json` under the deployment state directory.
+If removal fails or is interrupted, recovery can restore only that missing binding while preserving the current authentication and storage bindings and any completed removals.
+Restoring the binding does not reinstall the release or undo cluster changes.
+If authentication cleanup already confirmed that the release and gateway are absent, recovery does not restore the deleted binding.
+
+Keep the bundle that started this destroy, the deployment YAML, and the entire state directory, including the checkpoint under `runtime/` and the receipt and retained key material under `kubernetes/`.
+Correct the reported Kubernetes API connectivity or permission failure before resuming destroy.
+From the directory containing the deployment YAML, use the retained bundle and the same state directory:
+
+```sh
+deployment_bundle=/absolute/path/to/retained-bundle
+"$deployment_bundle/bin/nemoclaw" --bundle "$deployment_bundle" \
+  destroy --state-dir .local/deployment
+```
+
+Destroy validates the checkpoint against the original bundle, intent, and state before restoring a missing binding.
+It then obtains a fresh plan, verifies resource identities, and continues the remaining removal; authentication cleanup still requires confirmed release and gateway absence.
+Cancellation or a process interruption can leave the checkpoint for the next destroy attempt.
+
+If `plan --destroy` reports that Helm binding recovery is pending, run the destroy command above; preview does not restore bindings.
+Apply and export remain unavailable while destroy is unfinished.
+If the checkpoint is missing, unreadable, or inconsistent with the current state, retain all evidence and resolve the error; recovery does not infer ownership or adopt an existing release.
+Do not edit OpenTofu state, import the release, delete the checkpoint, or replace the current state with an older copy.
+After destroy succeeds, the namespace, encryption key, and persistent volumes remain subject to the existing [retention rules](state.md#deletion-and-retention).
+
 ## Destroy
 
 Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.

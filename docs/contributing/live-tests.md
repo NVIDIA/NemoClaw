@@ -9,6 +9,64 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Kubernetes Gateway Without the Helm CLI
+
+On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run the live and chart-render tests with a fresh kind cluster:
+
+```sh
+cargo ci build
+cargo ci bundle
+cargo ci live-kind
+```
+
+The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
+The agent test uses the public SDK to deploy a gateway and sandbox from that image.
+It supplies a caller-relative kubeconfig and expects apply to fail only at `data.nemoclaw_sandbox_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
+Export must still reproduce the authored configuration without readiness checks; destroy then retains gateway storage.
+The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
+These three live tests request no inference and need no GPU or credentials.
+The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.
+Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
+
+The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
+Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` to retain the cluster on either outcome, then delete it with the printed kind command after inspection.
+The gateway test's private state directory remains as described below, including when the runner deletes the cluster.
+
+To render the pinned chart through the bundled provider without cluster access:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-sdk --test integration \
+    kubernetes_gateway::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
+```
+
+The render test also rejects an unavailable chart digest.
+
+To run only the gateway test, use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
+Supply its explicit kubeconfig and context, and a verified immutable bundle built from the checkout:
+
+```sh
+NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
+NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-sdk --test integration \
+    kubernetes_live::the_gateway_installs_authenticates_and_is_removed_keeping_storage \
+    -- --ignored --exact --nocapture
+```
+
+The test runs the compiled runtime and teardown graphs through the bundled OpenTofu and providers.
+Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
+The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
+It removes and reinstalls the native Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
+It creates no agent sandbox and requests no inference.
+
+The test prints the path to its private temporary state directory and retains it after success or failure.
+That directory contains OpenTofu state, saved plans, the authored document, generated signing and TLS material, and private diagnostic output; keep it private and outside Git.
+Raw OpenTofu output is suppressed from the test log because it can contain deployment values; each command's stdout and stderr remain in `diagnostics/` with mode `0600` on Unix.
+Successful completion retains cluster storage; dispose of the owned test cluster and then remove the printed state directory when finished.
+If the test fails, keep the same state and inspect its owned resources before cleanup.
+
 ## Dependency Upgrade Test
 
 Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.

@@ -65,6 +65,21 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
             mutable: &[],
         },
         ResourceSchema {
+            kind: crate::kubernetes::STORAGE_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::GATEWAY_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::AUTH_KIND,
+            fields: &["spec", "running", "release_present", "gateway_values"],
+            mutable: &["running", "release_present", "gateway_values"],
+        },
+        ResourceSchema {
             kind: "ollama_proxy_storage",
             fields: &["name", "owner", "generation", "engine"],
             mutable: &[],
@@ -99,7 +114,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
         retained_storage: matches!(
             kind,
-            installers::ollama::STORAGE_KIND | installers::vllm::STORAGE_KIND
+            installers::ollama::STORAGE_KIND
+                | installers::vllm::STORAGE_KIND
+                | crate::kubernetes::STORAGE_KIND
         ),
         runtime_process: matches!(
             kind,

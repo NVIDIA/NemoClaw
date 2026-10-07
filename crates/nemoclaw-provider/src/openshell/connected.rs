@@ -21,16 +21,7 @@ impl ConnectedOpenShellGateway {
     pub(in crate::openshell) async fn gateway_capabilities(
         &self,
     ) -> Result<nemoclaw_sdk::discovery::GatewayCapabilities, ObservationError> {
-        let response = tokio::time::timeout(Duration::from_secs(30), async {
-            self.client
-                .raw_grpc()
-                .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
-                .await
-        })
-        .await
-        .map_err(|_| ObservationError::Transport)?
-        .map_err(|error| remote_error(&error))?;
-        response.into_inner().try_into()
+        nemoclaw_discovery::gateway::capabilities(&self.client).await
     }
 
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {

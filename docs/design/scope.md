@@ -15,7 +15,8 @@ NemoClaw provides a public desired-state SDK, CLI, and OpenTofu provider.
 | CLI | Arguments, terminal output, and exit codes |
 | OpenTofu | Graph execution and resource state |
 | Docker provider | Docker gateway, inference, and proxy containers; images, model-cache volumes, and service-owned networks |
-| NemoClaw provider | OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence |
+| Helm provider | Installation, upgrade, and removal of the pinned OpenShell chart release |
+| NemoClaw provider | OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, Kubernetes storage and development authentication, readiness observations, and application-specific persistence |
 | Hosted runtime | Startup capacity checks, model preparation, and application health |
 | Fabric | Agent runtime health semantics and adapter checks |
 

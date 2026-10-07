@@ -142,8 +142,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation
@@ -209,8 +209,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation
@@ -276,8 +276,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation

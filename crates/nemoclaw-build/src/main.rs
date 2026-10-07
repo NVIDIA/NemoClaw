@@ -122,6 +122,17 @@ enum ImageAction {
         #[arg(required = true)]
         images: Vec<String>,
     },
+    /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
+    ExportMetadata {
+        /// A local image, by tag or digest.
+        image: String,
+        /// linux/arm64 or linux/amd64.
+        #[arg(long)]
+        platform: String,
+        /// Where to write the bundle; refuses an existing file.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -138,6 +149,9 @@ struct Pins {
     #[cfg(feature = "sdk")]
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
+    #[cfg(feature = "sdk")]
+    #[serde(rename = "helmProvider")]
+    helm_provider: String,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
     /// Pinned OpenShell images; the Docker live tests pull these.
     #[serde(default)]
@@ -251,6 +265,13 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             .ok_or("missing Docker provider platform pin")?,
     )
     .await?;
+    let helm_archive = download(
+        pins.platforms
+            .get(platform)
+            .and_then(|p| p.get("helmProvider"))
+            .ok_or("missing Helm provider platform pin")?,
+    )
+    .await?;
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
@@ -321,6 +342,14 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             &pins.docker_provider,
             platform,
         )?);
+    manifest
+        .files
+        .extend(nemoclaw_build::helm_provider::install(
+            root,
+            &helm_archive,
+            &pins.helm_provider,
+            platform,
+        )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::write(
@@ -386,6 +415,11 @@ async fn main() -> Result<()> {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(root, image)
             }),
+            ImageAction::ExportMetadata {
+                image,
+                platform,
+                output,
+            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
         }
         .map_err(Into::into);
     }

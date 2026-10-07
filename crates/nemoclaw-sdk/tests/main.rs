@@ -5,6 +5,8 @@
 
 #[path = "support/examples.rs"]
 mod examples;
+#[path = "support/kube_api.rs"]
+mod kube_api;
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
 #[path = "support/config.rs"]
@@ -26,6 +28,10 @@ mod config_diagnostics;
 mod config_input;
 #[path = "config_kinds.rs"]
 mod config_kinds;
+#[path = "config_kubernetes.rs"]
+mod config_kubernetes;
+#[path = "config_openshift.rs"]
+mod config_openshift;
 #[path = "config_scenarios.rs"]
 mod config_scenarios;
 #[path = "config_schema.rs"]
@@ -36,8 +42,8 @@ mod config_validation;
 mod container_inputs;
 #[path = "deployment.rs"]
 mod deployment;
-#[path = "discovery.rs"]
-mod discovery;
+#[path = "discovery_graph.rs"]
+mod discovery_graph;
 #[path = "engine_endpoint.rs"]
 mod engine_endpoint;
 #[path = "error.rs"]
@@ -70,6 +76,28 @@ mod inference_settings;
 mod inline_recipe;
 #[path = "interfaces.rs"]
 mod interfaces;
+#[path = "kubernetes_auth.rs"]
+mod kubernetes_auth;
+#[path = "kubernetes_cluster.rs"]
+mod kubernetes_cluster;
+#[path = "kubernetes_compile.rs"]
+mod kubernetes_compile;
+#[path = "kubernetes_connect.rs"]
+mod kubernetes_connect;
+#[path = "kubernetes_connection.rs"]
+mod kubernetes_connection;
+#[path = "kubernetes_gateway.rs"]
+mod kubernetes_gateway;
+#[path = "kubernetes_live.rs"]
+mod kubernetes_live;
+#[path = "kubernetes_managed_compile.rs"]
+mod kubernetes_managed_compile;
+#[path = "kubernetes_operations.rs"]
+mod kubernetes_operations;
+#[path = "kubernetes_receipt.rs"]
+mod kubernetes_receipt;
+#[path = "kubernetes_storage.rs"]
+mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
 #[path = "managed_hermes.rs"]

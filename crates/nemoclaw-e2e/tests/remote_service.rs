@@ -139,11 +139,22 @@ async fn lifecycle(
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
-    std::os::unix::fs::symlink(
-        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
-        root.join("bin/ssh"),
+    // OpenTofu passes its providers only platform variables, so the fake ssh
+    // finds its state through this wrapper, not the test's environment.
+    let ssh = root.join("bin/ssh");
+    fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\nNEMOCLAW_TEST_REMOTE='{}' exec '{}' \"$@\"\n",
+            root.display(),
+            env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+        ),
     )
     .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().driver = Some("podman".into());
     gateway.state.lock().unwrap().inference_exit = 1;

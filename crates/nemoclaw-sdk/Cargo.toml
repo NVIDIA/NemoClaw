@@ -20,8 +20,10 @@ serde_json.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
+base64 = "0.22.1"
 bollard.workspace = true
 nemoclaw-provider = { path = "../nemoclaw-provider" }
+reqwest.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 tokio = { workspace = true, features = ["test-util"] }
 
@@ -48,10 +50,15 @@ tempfile.workspace = true
 getrandom.workspace = true
 process-wrap.workspace = true
 tokio-util.workspace = true
-reqwest.workspace = true
-futures-util.workspace = true
 bollard-stubs = "=1.53.1-rc.29.3.1"
 interprocess = { version = "2.4.4", features = ["tokio"] }
+kube.workspace = true
+rustls.workspace = true
+k8s-openapi.workspace = true
+base64 = "0.22.1"
+# Development issuer certificates and token signing.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+ring = "0.17.14"
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

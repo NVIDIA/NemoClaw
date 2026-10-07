@@ -24,7 +24,14 @@ impl Definition {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            observed_running: matches!(kind, "managed_gateway" | "agent_configuration"),
+            observed_running: matches!(
+                kind,
+                "managed_gateway"
+                    | "agent_configuration"
+                    | nemoclaw_sdk::kubernetes::GATEWAY_KIND
+                    | nemoclaw_sdk::kubernetes::STORAGE_KIND
+                    | nemoclaw_sdk::kubernetes::AUTH_KIND
+            ),
         }
     }
 }
@@ -74,6 +81,24 @@ pub fn plan_update(
             None => {}
         }
     }
+    if definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND {
+        proposed.insert(
+            "release_present".into(),
+            prior
+                .get("release_present")
+                .cloned()
+                .unwrap_or(Value::Unknown),
+        );
+        let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
+        proposed.insert(
+            "gateway_values".into(),
+            prior
+                .get("gateway_values")
+                .filter(|_| prepared)
+                .cloned()
+                .unwrap_or(Value::Unknown),
+        );
+    }
     let authentication_changed = definition.kind == "provider"
         && authentication_mode(prior) != authentication_mode(&proposed);
     let replacements = definition
@@ -110,6 +135,7 @@ mod gateway;
 pub mod hardware;
 mod hardware_data;
 mod inference_discovery;
+pub mod kubernetes;
 mod provider;
 mod readiness;
 mod runtime_image;
@@ -120,13 +146,11 @@ pub use provider::NemoClawProvider;
 pub mod openshell;
 
 pub mod docker;
-pub mod engine_observation;
 pub mod hardware_observation;
 pub mod managed;
 pub mod services;
 pub(crate) use nemoclaw_sdk::{
-    CancellationToken, Error, ObservationError, Progress, backend, config, fabric_capabilities,
-    fabric_catalog,
+    CancellationToken, Error, ObservationError, Progress, backend, config,
 };
 
 mod download;

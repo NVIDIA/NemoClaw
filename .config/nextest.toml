@@ -15,6 +15,8 @@ test-threads = 4
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
 default-filter = '''
 test(native_state_json_preserves_module_and_instance_identity_without_refresh)
+| (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
+| (package(nemoclaw-sdk) & test(runtime_export_declares_the_native_helm_provider_inputs))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
     | test(/^sandbox_readiness::/) | test(/^opentofu_openshell::/) | test(/^deployment::/)
@@ -38,13 +40,28 @@ default-filter = '''
 | (package(nemoclaw-build) & (
     test(runtime_archive_loads_with_its_exported_digest)
     | test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache)
+    | test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
 ))
-| (package(nemoclaw-sdk) & test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu))
+| (package(nemoclaw-sdk) & (
+    test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu)
+    | test(the_issuer_image_serves_both_documents_over_https)
+))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''
+
+[profile.live-kind]
+inherits = "ci"
+test-threads = 1
+slow-timeout = { period = "120s", terminate-after = 10 }
+default-filter = '''
+package(nemoclaw-sdk) & (test(/^kubernetes_live::/) | test(/^kubernetes_gateway::/))
+'''
+
+[profile.live-kind.junit]
+path = "live-kind.xml"
 
 [profile.live-docker.junit]
 path = "live-docker.xml"

@@ -73,6 +73,9 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
+        "kubernetes_storage",
+        "kubernetes_auth",
+        "kubernetes_gateway",
     ] {
         assert!(resources.contains_key(name));
     }
@@ -101,6 +104,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "tls_certificate_env",
         "tls_key_env",
         "destroy",
+        "platform_only",
     ] {
         assert!(schema.block.attributes.contains_key(name));
     }
@@ -136,11 +140,42 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
         let running = schema.block.attributes.get("running");
         assert_eq!(
             running.is_some(),
-            matches!(kind.as_str(), "managed_gateway" | "agent_configuration"),
+            matches!(
+                kind.as_str(),
+                "managed_gateway"
+                    | "agent_configuration"
+                    | "kubernetes_storage"
+                    | "kubernetes_auth"
+                    | "kubernetes_gateway"
+            ),
             "{kind}"
         );
         if let Some(running) = running {
             assert!(matches!(running.constraint, AttributeConstraint::Computed));
+        }
+        let release_present = schema.block.attributes.get("release_present");
+        assert_eq!(
+            release_present.is_some(),
+            kind == "kubernetes_auth",
+            "{kind}"
+        );
+        if let Some(release_present) = release_present {
+            assert!(matches!(
+                release_present.constraint,
+                AttributeConstraint::Computed
+            ));
+        }
+        let gateway_values = schema.block.attributes.get("gateway_values");
+        assert_eq!(
+            gateway_values.is_some(),
+            kind == "kubernetes_auth",
+            "{kind}"
+        );
+        if let Some(gateway_values) = gateway_values {
+            assert!(matches!(
+                gateway_values.constraint,
+                AttributeConstraint::Computed
+            ));
         }
         let digest = schema.block.attributes.get("digest");
         assert_eq!(digest.is_some(), kind == "ollama_external_model", "{kind}");
