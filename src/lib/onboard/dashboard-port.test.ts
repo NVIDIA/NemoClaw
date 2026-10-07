@@ -313,7 +313,7 @@ describe("typed OpenShell dashboard-port observation", () => {
     ["foreign", 19000],
     ["registered", 19000],
   ] as const)(
-    "preserves the occupied-port remedy with %s occupancy on preferred port %i",
+    "reports both recovery actions with %s occupancy on preferred port %i",
     (occupiedKind, preferredPort) => {
       const candidatePorts = [
         ...new Set([preferredPort, ...Array.from({ length: 11 }, (_, index) => 18789 + index)]),
@@ -330,9 +330,35 @@ describe("typed OpenShell dashboard-port observation", () => {
       );
       expect(() =>
         findAvailableDashboardPortFromObservations("cursor", preferredPort, observations, registry),
-      ).toThrow("Free a sandbox or use --control-ui-port <N> with a port outside this range.");
+      ).toThrow(
+        "Free a sandbox or use --control-ui-port <N> with a port outside this range.\n" +
+          "Some candidate ports have unverified OpenShell forward ownership.\n" +
+          "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+      );
+      expect(() =>
+        findAvailableDashboardPortFromObservations("cursor", preferredPort, observations, registry),
+      ).toThrow(
+        `${preferredPort} → ${occupiedKind === "foreign" ? "foreign OpenShell forward" : "other"}`,
+      );
     },
   );
+
+  it("keeps the occupancy remedy when every candidate has a foreign owner", () => {
+    const observations = Array.from({ length: 11 }, (_, index) =>
+      forwardObservation("cursor", 18789 + index, "foreign"),
+    );
+    observations.push(forwardObservation("cursor", 19000, "indeterminate"));
+    expect(() => findAvailableDashboardPortFromObservations("cursor", 18789, observations)).toThrow(
+      new Error(
+        "All dashboard ports in range 18789-18799 are occupied:\n" +
+          Array.from(
+            { length: 11 },
+            (_, index) => `  ${18789 + index} → foreign OpenShell forward`,
+          ).join("\n") +
+          "\nFree a sandbox or use --control-ui-port <N> with a port outside this range.",
+      ),
+    );
+  });
 
   it("still blocks allocation when a forward observation fails for another reason", () => {
     expect(() =>

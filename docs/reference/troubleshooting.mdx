@@ -354,9 +354,22 @@ Fix the host firewall, VPN, or DNS policy so the host can resolve the provider e
 
 ### Port already in use
 
-The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`. If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port. If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
+The NemoClaw dashboard uses port `18789` by default, and the gateway uses port `8080`.
+For a new sandbox, onboarding scans dashboard ports `18789` through `18799` and uses the next port verified available.
+It skips occupied candidates and candidates whose OpenShell forward ownership cannot be verified.
+If no candidate is available, the error lists the blocked ports and their observed states or registered owners.
+The list includes a blocked preferred dashboard port outside the default range.
+For occupied dashboard ports, free a sandbox or use `--control-ui-port` with a verified available port outside the range.
 
-NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent. When all ports in the API range are occupied, the error lists the owner for each port. Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`.
+It rejects every port in that range as a dashboard port for any agent.
+Hermes API allocation also skips unverified candidates and requires a port verified available.
+For occupied API ports, destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+
+If every candidate has unverified ownership, restore OpenShell forward ownership verification before rerunning onboarding.
+For mixed failures, the error preserves the occupied-port remedies and also directs you to restore verification for the unverified ports.
+A different verified available dashboard port can avoid blocked candidates, but changing the port does not repair ownership verification.
+Repeated onboarding and resume keep registered ports; they stop if ownership of a registered port cannot be verified.
 
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before its receipt-owned ForwardTcp service starts. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 

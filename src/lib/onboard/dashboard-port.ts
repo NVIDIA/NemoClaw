@@ -457,10 +457,18 @@ export function findAvailablePortInRangeFromObservations(
   }
 
   const lines = [...occupied.entries()]
-    .filter(([port]) => Number(port) >= range.start && Number(port) <= range.end)
-    .map(([port, owner]) => `  ${port} → ${owner}`)
+    .filter(([port]) => portsToScan.includes(Number(port)))
+    .map(([port, owner]) => {
+      const foreign = observations.some(
+        (observation) =>
+          observation.state === "foreign" && observation.forward.port === Number(port),
+      );
+      const description =
+        registryOccupiedPorts.get(port) ?? (foreign ? "foreign OpenShell forward" : owner);
+      return `  ${port} → ${description}`;
+    })
     .join("\n");
-  const ownershipUnverified = portsToScan.every(
+  const ownershipUnverifiedPorts = portsToScan.filter(
     (port) =>
       !registryOccupiedPorts.has(String(port)) &&
       observations.some(
@@ -471,15 +479,22 @@ export function findAvailablePortInRangeFromObservations(
           observation.error.kind === "ownership",
       ),
   );
-  if (ownershipUnverified) {
+  const ownershipRemedy =
+    "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.";
+  if (ownershipUnverifiedPorts.length === portsToScan.length) {
     throw new Error(
       `No ${range.label} port in range ${range.start}-${range.end} has verified OpenShell forward ownership:\n${lines}\n` +
-        "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+        ownershipRemedy,
     );
   }
+  const mixedOwnershipRemedy =
+    ownershipUnverifiedPorts.length > 0
+      ? `\nSome candidate ports have unverified OpenShell forward ownership.\n${ownershipRemedy}`
+      : "";
   throw new Error(
     `All ${range.label} ports in range ${range.start}-${range.end} are occupied:\n${lines}\n` +
-      range.remedy,
+      range.remedy +
+      mixedOwnershipRemedy,
   );
 }
 

@@ -57,6 +57,15 @@ When creating a Hermes sandbox, if another sandbox or a host listener already ho
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
+When allocating ports for a new sandbox, NemoClaw skips candidates whose OpenShell forward ownership cannot be verified.
+It can select a later candidate only when that port is verified available.
+If no candidate is available, the error lists each blocked port, including a preferred dashboard port outside the default range.
+When every candidate has unverified ownership, restore OpenShell forward ownership verification before rerunning onboarding.
+For mixed failures, the error includes both verification recovery and the existing occupied-port remedies.
+Refer to [Port already in use](../../reference/troubleshooting#port-already-in-use) for those recovery actions.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
 Sandbox-scoped commands, including `exec`, `status`, `start`, and `stop`, address the sandbox through its recorded gateway binding. `NEMOCLAW_GATEWAY_PORT` selects the gateway for onboarding and new gateway-scoped setup; it does not redirect an existing sandbox command.
@@ -73,7 +82,7 @@ A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--contr
 <AgentOnly variant="openclaw,hermes">
 Repeated onboarding and resume keep the sandbox's registered dashboard port and restore a missing forward on that port.
 If the port is already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
-Ports registered to another sandbox, foreign listeners, or unverified ownership stop onboarding with a port conflict error.
+For that registered port, another sandbox's registration, a foreign listener, or unverified ownership still stops onboarding with a port conflict error.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
