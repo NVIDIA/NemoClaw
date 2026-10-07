@@ -91,6 +91,7 @@ createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName,
   provider: "nvidia-prod",
   model: "nvidia/nemotron-3-super-120b-a12b",

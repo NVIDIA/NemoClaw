@@ -228,6 +228,7 @@ const removeSandbox = (name) => {
 };
 registry.removeSandbox = removeSandbox;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -480,6 +481,7 @@ if (mode === "seed") {
 }
 
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: null,
   model: null,

@@ -56,6 +56,7 @@ registry.addExtraProvider("brave-search");
 registry.addExtraProvider("custom-provider");
 registry.addExtraProvider("my-slack-bridge");
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -232,8 +233,10 @@ const createReservedSandbox = () => {
             "provider get -g nemoclaw custom-provider",
             "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw my-slack-bridge",
-            "provider get -g nemoclaw nvidia-prod",
-            "provider get -g nemoclaw nvidia-prod",
+            "provider get -g nemoclaw nemoclaw-nvidia-prod-v1",
+            "provider get -g nemoclaw nemoclaw-nvidia-prod-v1",
+            "provider get -g nemoclaw nemoclaw-nvidia-prod-v1",
+            "provider get -g nemoclaw nemoclaw-nvidia-prod-v1",
             "provider get -g nemoclaw tavily-search",
           ].sort(),
         );

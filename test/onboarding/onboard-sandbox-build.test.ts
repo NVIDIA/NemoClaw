@@ -129,6 +129,7 @@ runner.runCapture = (command) => {
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -386,6 +387,7 @@ runner.runCapture = (command) => {
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "hermes-sandbox",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -607,6 +609,7 @@ runner.runCapture = (command) => {
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -724,6 +727,7 @@ runner.runCapture = (command) => {
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -844,6 +848,7 @@ runner.runCapture = (command) => {
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",

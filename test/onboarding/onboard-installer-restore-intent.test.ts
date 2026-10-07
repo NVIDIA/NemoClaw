@@ -122,6 +122,7 @@ const sourceEntry = fixtureMocks.sandboxLifecycleFixture({
   toolDisclosure: "progressive",
 });
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",

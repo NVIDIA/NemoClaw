@@ -238,11 +238,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.endsWith("provider get -g nemoclaw openai-api")) {
+  if (normalized.endsWith("provider get -g nemoclaw nemoclaw-openai-api-v1")) {
     return {
-      status: 1,
-      stdout: "",
-      stderr: "provider 'openai-api' not found",
+      status: 0,
+      stdout: "Name: nemoclaw-openai-api-v1\nType: nemoclaw-openai-inference-v1\nCredential keys: OPENAI_API_KEY\nConfig keys: <none>\nId: provider-revision-1\nResource version: 1\n",
     };
   }
   const sandboxResult = createdSandbox.run(command);
@@ -263,6 +262,7 @@ runner.runCapture = (command) => {
 };
 fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeHostedCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "openai-api",
   model: "gpt-5.4",

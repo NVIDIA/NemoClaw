@@ -225,6 +225,13 @@ function mockNvidiaProviderGetRun(command, gatewayName) {
   const request = parseNamedProviderGet(command, gatewayName);
   if (request === null) return null;
   if (request.error) return request.error;
+  if (request.providerName === "nemoclaw-nvidia-prod-v1") {
+    return {
+      status: 0,
+      stdout:
+        "Name: nemoclaw-nvidia-prod-v1\nType: nemoclaw-nvidia-inference-v1\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\nId: provider-revision-1\nResource version: 1\n",
+    };
+  }
   if (request.providerName !== "nvidia-prod") return null;
   return {
     status: 0,
@@ -301,6 +308,7 @@ function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
   createdSandbox = null,
+  nativeNvidiaProvider = false,
 }) {
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
@@ -322,6 +330,10 @@ function createStatefulMessagingProviderRunner({
     const sandboxResult = createdSandbox?.run(command) ?? null;
     if (sandboxResult !== null) return sandboxResult;
 
+    if (nativeNvidiaProvider && args.at(-1) === "nemoclaw-nvidia-prod-v1") {
+      const nativeProvider = mockNvidiaProviderGetRun(command, "nemoclaw");
+      if (nativeProvider !== null) return nativeProvider;
+    }
     const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
     if (providerAction === "profile") {
       const profileActionIndex = providerIndex + 2;
@@ -379,6 +391,12 @@ function createStatefulMessagingProviderRunner({
         : { status: 1, stderr: `provider '${name}' not found` };
     }
     if (providerAction === "update") {
+      const nativeUpdateArgs = exactOpenShellArgs(command);
+      if (
+        nativeNvidiaProvider &&
+        nativeUpdateArgs?.join(" ") === "provider update -g nemoclaw nemoclaw-nvidia-prod-v1"
+      )
+        return { status: 0 };
       const name = providerNameAfterAction(args, providerIndex);
       const credentialIndex = args.indexOf("--credential");
       const credential = credentialIndex >= 0 ? args[credentialIndex + 1] : null;
@@ -526,7 +544,7 @@ function mockOnboardRunCapture(command, options = {}) {
 
 function exactOpenShellArgs(command) {
   const args = Array.isArray(command) ? command.map(String) : [];
-  const verbs = new Set(["gateway", "policy", "sandbox"]);
+  const verbs = new Set(["gateway", "policy", "sandbox", "provider"]);
   if (verbs.has(args[0])) return args;
   if (args.length > 1 && verbs.has(args[1])) return args.slice(1);
   if (
@@ -632,6 +650,7 @@ function createCreatedSandboxFixture(options = {}) {
     return nonces[0];
   };
 
+  let attachedProviders = [];
   const isCreated = () => state.lifecycleState === "created";
   const observe = (command, allowPublishedUnscopedGet) => {
     const details = commandDetails(command);
@@ -651,6 +670,16 @@ function createCreatedSandboxFixture(options = {}) {
       }
       return isCreated()
         ? `Name: ${state.sandboxName}\nId: ${state.sandboxId}\nPhase: ${state.phase}\n`
+        : "";
+    }
+    if (
+      action === "provider" &&
+      args[args.indexOf("sandbox") + 2] === "list" &&
+      gatewayName === state.gatewayName &&
+      args.at(-1) === state.sandboxName
+    ) {
+      return isCreated()
+        ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n${attachedProviders.map((name) => `${name} ${name === "nemoclaw-nvidia-prod-v1" ? "nemoclaw-nvidia-inference-v1" : "fixture-provider"} 1 0`).join("\n")}\n`
         : "";
     }
     if (action !== "list") return null;
@@ -724,6 +753,9 @@ function createCreatedSandboxFixture(options = {}) {
     if (state.lifecycleState !== "absent") {
       throw new Error("Created sandbox fixture cannot create a deleted sandbox.");
     }
+    attachedProviders = details.args.flatMap((arg, index) =>
+      arg === "--provider" ? [details.args[index + 1]] : [],
+    );
     state.createAttemptNonce = createAttemptNonce;
     state.ownerScopedIdentityObserved = false;
     assertState();
@@ -744,6 +776,9 @@ function createCreatedSandboxFixture(options = {}) {
       throw new Error("Created sandbox fixture can recreate only a deleted sandbox.");
     }
     const createAttemptNonce = nonceFromCreateCommand(command);
+    attachedProviders = commandDetails(command).args.flatMap((arg, index, args) =>
+      arg === "--provider" ? [args[index + 1]] : [],
+    );
     state.generation += 1;
     const replacementFingerprint = sandboxIdentity.fingerprintOpenShellSandboxId(initialSandboxId);
     state.sandboxId = `sbx-recreated-${state.generation}-${replacementFingerprint}`;
@@ -798,11 +833,54 @@ function createCreatedSandboxFixture(options = {}) {
   });
 }
 
+// Direct-create tests bypass the onboarding machine, which normally supplies this
+// receipt to the real create-plan resolver from the inference reservation.
+function installNativeHostedCreateIntentFixture(sandboxName, profile) {
+  const owner = require(
+    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create-intent-resolution.ts"),
+  );
+  const createResolver = owner.createSandboxCreateIntentResolver;
+  owner.createSandboxCreateIntentResolver = (...args) => {
+    const resolver = createResolver(...args);
+    const resolvePortableLifecycle = resolver.resolvePortableLifecycle;
+    resolver.resolvePortableLifecycle = (input, options) =>
+      resolvePortableLifecycle(
+        input.sandboxName === sandboxName &&
+          input.inferenceProvider === profile.logicalProvider &&
+          input.nativeHostedProviderAttachment === undefined &&
+          !options.resolvedIntent
+          ? {
+              ...input,
+              inferenceProvider: profile.providerName,
+              nativeHostedProviderAttachment: {
+                schemaVersion: 1,
+                profileId: profile.profileId,
+                providerName: profile.providerName,
+                providerId: "provider-revision-1",
+              },
+            }
+          : input,
+        options,
+      );
+    return resolver;
+  };
+}
+
 function installVerifiedSandboxCreateFixture(registry, options) {
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   mockStructuredOpenShellCaptureFromRunner({ gatewayName, gatewayPort, sandboxName });
+  if (
+    (options.nativeNvidiaCreateIntent === true && options.provider === "nvidia-prod") ||
+    options.nativeHostedCreateIntent === true
+  ) {
+    const { nativeHostedProfile } = require(
+      path.resolve(__dirname, "../../src/lib/inference/native-hosted/profiles.ts"),
+    );
+    const profile = nativeHostedProfile(options.provider);
+    if (profile) installNativeHostedCreateIntentFixture(sandboxName, profile);
+  }
   const sessionId = options.sessionId || "integration-fixture-session";
   const selection = {
     provider: options.provider,

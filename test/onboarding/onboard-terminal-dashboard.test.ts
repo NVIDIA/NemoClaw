@@ -212,6 +212,7 @@ registry.removeSandbox = () => true;
 const createFixture =
   scenario === "create"
     ? fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+        nativeNvidiaCreateIntent: true,
         sandboxName,
         provider: "nvidia-prod",
         model: "gpt-5.4",

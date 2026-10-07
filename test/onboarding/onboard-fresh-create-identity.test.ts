@@ -513,6 +513,7 @@ managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps =
 	}
 	const durableGetSandbox = registry.getSandbox.bind(registry);
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  gatewayName: ${JSON.stringify(gatewayName)},
 	  gatewayPort: ${String(gatewayPort)},
@@ -988,7 +989,7 @@ if (${JSON.stringify(
         assert.equal("policyAuthority" in payload.registeredSandbox, false);
         assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
         assert.match(payload.createCommand, /--policy \S+/u);
-        assert.match(payload.createCommand, /--provider nvidia-prod/u);
+        assert.match(payload.createCommand, /--provider nemoclaw-nvidia-prod-v1/u);
       };
       const assertProviderlessApfCreation = () => {
         assertProviderlessInference();

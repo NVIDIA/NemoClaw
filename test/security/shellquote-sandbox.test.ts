@@ -118,7 +118,7 @@ runner.run = (command, opts = {}) => {
       stderr: Buffer.alloc(0),
     };
   }
-  return createdSandbox.run(command) ?? { status: 0 };
+  return fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw") ?? createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", file, args, command: asText([file, ...args]), env: opts.env || null });
@@ -157,6 +157,7 @@ registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 registry.updateSandbox = () => true;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  nativeNvidiaCreateIntent: true,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",

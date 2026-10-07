@@ -37,9 +37,15 @@ type ProviderBoundaryResult = {
   result: string;
 };
 
+const expectedAttachmentCalls = [
+  ["provider", "list", "-g", "nemoclaw", "my-assistant"],
+  ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+  ["provider", "list", "-g", "nemoclaw", "my-assistant"],
+];
 const expectedProviderCalls = [
-  ["provider", "get", "-g", "nemoclaw", "nvidia-prod"],
-  ["provider", "update", "-g", "nemoclaw", "nvidia-prod"],
+  ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+  ["provider", "update", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+  ...expectedAttachmentCalls,
 ];
 
 function shellQuote(value: string): string {
@@ -152,11 +158,15 @@ runner.run = (command) => {
   if (providerArgs) providerCalls.push(providerArgs);
   const providerGet = fixtureMocks.mockNvidiaProviderGetRun(command, gatewayName);
   if (providerGet !== null) return providerGet;
-  if (text === "provider update -g nemoclaw nvidia-prod") {
+  const providerList = text === "provider list -g nemoclaw my-assistant"
+    ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" +
+      "nemoclaw-nvidia-prod-v1 nemoclaw-nvidia-inference-v1 1 0\n" }
+    : null;
+  if (text === "provider update -g nemoclaw nemoclaw-nvidia-prod-v1") {
     events.push("provider:update");
     return { status: 0, stdout: "" };
   }
-  return createdSandbox.run(command) ?? { status: 0, stdout: "" };
+  return providerList ?? createdSandbox.run(command) ?? { status: 0, stdout: "" };
 };
 runner.runCapture = (command) => {
   const captured = createdSandbox.capture(command);
@@ -178,6 +188,7 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   gatewayName,
   agentName: portableMode ? "hermes" : "langchain-deepagents-code",
   provider: inferenceProvider,
+  nativeNvidiaCreateIntent: !portableMode,
   model: "gpt-5.4",
 });
 if (!portableMode) {
@@ -355,6 +366,12 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
         basePolicyPath: ${JSON.stringify(path.join(repoRoot, "agents/hermes/policy-additions.yaml"))},
         sandboxName,
         inferenceProvider,
+        nativeHostedProviderAttachment: inferenceProvider === "nvidia-prod" ? {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-revision-1",
+        } : undefined,
         channels: [],
         enabledChannels: [],
         disabledChannelNames: new Set(),
@@ -424,7 +441,9 @@ describe("sandbox-create provider publication branches", () => {
     "carries the real Portable caller request through the receipt-owned lifecycle adapter (#12119)",
     { timeout: 60_000 },
     async () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-real-boundary-"));
+      const tmpDir = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-real-boundary-")),
+      );
       const executablePath = path.join(tmpDir, "openshell");
       const statePath = path.join(tmpDir, "sandbox-created");
       const invocationPath = path.join(tmpDir, "openshell-invocations.log");
@@ -839,7 +858,10 @@ describe("sandbox-create provider publication branches", () => {
       const payload = runProviderBoundary("ordinary-resume");
 
       assert.equal(payload.result, "my-assistant");
-      assert.deepEqual(payload.providerCalls, expectedProviderCalls);
+      assert.deepEqual(payload.providerCalls, [
+        ...expectedProviderCalls,
+        ...expectedAttachmentCalls,
+      ]);
       assert.equal(payload.portableTransactions, 0);
       assert.match(payload.firstError ?? "", /registry publication/u);
       assert.equal(payload.gpuCreateCalls, 2);

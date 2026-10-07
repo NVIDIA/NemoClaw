@@ -193,6 +193,7 @@ runner.run = (command, opts = {}) => {
 	const getSandbox = () => registeredSandbox || sourceSandbox;
 	registry.getSandbox = getSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
@@ -366,6 +367,7 @@ runner.run = (command) => {
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
@@ -550,6 +552,7 @@ runner.run = (command) => {
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
@@ -711,6 +714,7 @@ runner.run = (command) => {
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
@@ -1069,6 +1073,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
@@ -1230,6 +1235,7 @@ runner.run = (command, opts = {}) => {
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+	  nativeNvidiaCreateIntent: true,
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
