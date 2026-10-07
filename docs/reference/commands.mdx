@@ -3512,7 +3512,7 @@ $$nemoclaw my-assistant inference get
 
 <AgentOnly variant="openclaw">
 
-Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. The command updates the selected inference path, synchronizes the running agent configuration and its integrity hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the route and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
+Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. The command updates the selected inference path, synchronizes the running agent configuration and its integrity hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the selected inference path and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized inference selection, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the selected inference path and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3555,7 +3555,7 @@ Pass both `--provider` and `--model` when you want NemoClaw to update the select
 
 <AgentOnly variant="openclaw">
 
-If NemoClaw cannot confirm the native OpenClaw config batch, the OpenShell route and registry remain committed, but `inference set` exits with status `1`.
+If NemoClaw cannot confirm the native OpenClaw config batch, the selected inference path and registry remain committed, but `inference set` exits with status `1`.
 Rerun the same `inference set` command to converge the config.
 When the changed route lacks context-window evidence, the retry removes the previous route's context-window value so OpenClaw uses its default.
 A same-route retry preserves an existing context-window value.
@@ -3565,7 +3565,7 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 
 <AgentOnly variant="hermes">
 
-If the in-sandbox config write or integrity hash update fails, the OpenShell route and NemoClaw registry remain committed, but the command exits with status `1` and points you to `$$nemoclaw <name> rebuild`.
+If the in-sandbox config write or integrity hash update fails, the selected inference path and NemoClaw registry remain committed, but the command exits with status `1` and points you to `$$nemoclaw <name> rebuild`.
 
 </AgentOnly>
 
