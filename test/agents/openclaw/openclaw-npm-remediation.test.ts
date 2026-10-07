@@ -25,6 +25,8 @@ import {
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
   patchOpenClawSlackProxyPackageGraph,
+  OpenClawNpmRemediationCommandError,
+  runOpenClawNpmRemediationCommand,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -467,6 +469,31 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
+  it("bounds a non-returning remediation command and keeps its diagnostic generic", () => {
+    const startedAt = Date.now();
+    let failure: unknown;
+    try {
+      runOpenClawNpmRemediationCommand(
+        process.execPath,
+        ["-e", 'process.stdout.write("private command output"); setInterval(() => {}, 1000);'],
+        undefined,
+        process.env,
+        64 * 1024 * 1024,
+        100,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
+    expect(failure).toMatchObject({
+      couldNotStart: false,
+      message: "Remediation command failed.",
+    });
+    expect(String(failure)).not.toContain("private command output");
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
   it("replaces bundled Slack proxy-addr bytes and rejects an unexpected source version", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-slack-proxy-"));
     temporaryDirectories.push(directory);

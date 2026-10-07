@@ -135,6 +135,7 @@ const OTEL_CORE_INTEGRITY =
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const PROXY_ADDR_VERSION = "2.0.8";
+const REMEDIATION_COMMAND_TIMEOUT_MS = 15 * 60_000;
 const PROXY_ADDR_INTEGRITY =
   "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
 const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
@@ -224,6 +225,29 @@ export class OpenClawNpmRemediationCommandError extends Error {
   }
 }
 
+export function runOpenClawNpmRemediationCommand(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  maxBuffer = 64 * 1024 * 1024,
+  timeoutMs = REMEDIATION_COMMAND_TIMEOUT_MS,
+) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf-8",
+    env,
+    killSignal: "SIGKILL",
+    maxBuffer,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+  });
+  if (result.error || result.status !== 0) {
+    throw new OpenClawNpmRemediationCommandError(result.error);
+  }
+  return result.stdout;
+}
+
 function run(
   command: string,
   args: readonly string[],
@@ -231,17 +255,7 @@ function run(
   env: NodeJS.ProcessEnv,
   maxBuffer = 64 * 1024 * 1024,
 ) {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf-8",
-    env,
-    maxBuffer,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error || result.status !== 0) {
-    throw new OpenClawNpmRemediationCommandError(result.error);
-  }
-  return result.stdout;
+  return runOpenClawNpmRemediationCommand(command, args, cwd, env, maxBuffer);
 }
 
 function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.ProcessEnv): void {
