@@ -175,32 +175,24 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
   }
 }
 
-// Under installer restore intent, a registry sandbox is eligible for prepared-
-// backup recovery only when its persisted binding resolves to the selected
-// gateway. Ready/Running sandboxes are eligible only when upgrade classification
-// also proves them stale. A current sandbox observed Stopped is likewise healthy
-// when the registry retains intentional-stop state; this matters when the
-// installer's second verification pass follows a successful recovery. Other
-// non-Ready or absent sandboxes remain eligible because the replaced gateway may
-// expose legacy state optimistically or not at all.
-// Observation alone is insufficient: a sandbox bound to a different recorded
-// gateway may be Ready there, so recovering it would clobber a healthy sandbox.
-// resolveSandboxGatewayName throws on an invalid persisted
-// binding — report that fixed, sanitized condition and treat it as ineligible so
-// a corrupted registry row never drives a recreate. Remove this guard only when
-// every registry write path validates gateway bindings before persistence.
+// Prepared recovery must target the sandbox's recorded gateway. Ready rows
+// require staleness or an explicitly confirmed legacy OpenClaw probe failure.
+// Current, intentionally stopped sandboxes remain healthy on the installer's
+// second verification pass. Other non-Ready or absent rows can need recovery
+// because the replacement gateway may expose incomplete legacy state.
+// Invalid gateway bindings fail closed before a registry row can drive recreation.
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
-  staleNames: Set<string>,
+  recoveryRequiredNames: Set<string>,
   observedStoppedNames: Set<string>,
   selectedGatewayName: string,
 ): boolean {
-  if (liveNames.has(sandbox.name) && !staleNames.has(sandbox.name)) return false;
+  if (liveNames.has(sandbox.name) && !recoveryRequiredNames.has(sandbox.name)) return false;
   if (
     sandbox.stopped === true &&
     observedStoppedNames.has(sandbox.name) &&
-    !staleNames.has(sandbox.name)
+    !recoveryRequiredNames.has(sandbox.name)
   ) {
     return false;
   }
@@ -412,26 +404,41 @@ export async function upgradeSandboxes(
   // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
-    const staleLiveNames = new Set(
-      stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
+    const recoveryRequiredNames = new Set(staleNames);
+    // A legacy gateway can report Ready while the old agent is unreachable.
+    // Missing provenance cannot establish image drift, so preserve the installer's
+    // explicit recovery authorization when that legacy OpenClaw probe fails.
+    for (const sandbox of managedUpgradeSandboxes) {
+      if (
+        liveNames.has(sandbox.name) &&
+        versions.get(sandbox.name)?.unavailableReason === "probe-failed" &&
+        confirmedLegacyManagedNames.has(sandbox.name) &&
+        (sandbox.agent == null || sandbox.agent === "openclaw") &&
+        !sandboxState.hasPositiveManagedImageEvidence(sandbox)
+      ) {
+        recoveryRequiredNames.add(sandbox.name);
+      }
+    }
+    const recoveryLiveNames = new Set(
+      [...recoveryRequiredNames].filter((name) => liveNames.has(name)),
     );
     const gatewayEligible = managedUpgradeSandboxes.filter((sandbox) =>
       isPreparedRecoveryCandidate(
         sandbox,
         liveNames,
-        staleNames,
+        recoveryRequiredNames,
         observedStoppedNames,
         selectedGatewayName,
       ),
     );
-    const staleLiveCandidates = gatewayEligible.filter((sandbox) =>
-      staleLiveNames.has(sandbox.name),
+    const recoveryLiveCandidates = gatewayEligible.filter((sandbox) =>
+      recoveryLiveNames.has(sandbox.name),
     );
     const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
       nonReadyLiveNames.has(sandbox.name),
     );
     const absentCandidates = gatewayEligible.filter(
-      (sandbox) => !staleLiveNames.has(sandbox.name) && !nonReadyLiveNames.has(sandbox.name),
+      (sandbox) => !recoveryLiveNames.has(sandbox.name) && !nonReadyLiveNames.has(sandbox.name),
     );
     const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
       absentCandidates,
@@ -443,7 +450,7 @@ export async function upgradeSandboxes(
       if (!confirmedAbsentNames.has(sandbox.name)) becameReadyNames.add(sandbox.name);
     }
     recoveryCandidates = [
-      ...staleLiveCandidates,
+      ...recoveryLiveCandidates,
       ...nonReadyCandidates,
       ...confirmedAbsentCandidates,
     ];
