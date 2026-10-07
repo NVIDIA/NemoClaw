@@ -4,16 +4,44 @@
 
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+
+
+def satisfies(version, specifier):
+    """Check a version against the comparison clauses Fabric's adapters use.
+
+    The image has no pip, so this replaces its vendored packaging module. It
+    rejects any clause it does not understand rather than accept it.
+    """
+
+    def parse(text):
+        return tuple(int(part) for part in text.split("."))
+
+    current = parse(version)
+    checks = {
+        ">=": lambda bound: current >= bound,
+        "<": lambda bound: current < bound,
+        "==": lambda bound: current[: len(bound)] == bound,
+    }
+    for clause in specifier.split(","):
+        clause = clause.strip()
+        operator = next((op for op in (">=", "==", "<") if clause.startswith(op)), None)
+        if operator is None or not clause[len(operator) :].strip().replace(".", "").isdigit():
+            raise ValueError(f"unsupported requires-python clause: {clause!r}")
+        if not checks[operator](parse(clause[len(operator) :].strip())):
+            return False
+    return True
 
 
 class AgentImage(unittest.TestCase):
@@ -37,7 +65,6 @@ class AgentImage(unittest.TestCase):
         self.assertEqual(response["error"]["effects"], "none")
 
     def test_shared_python_satisfies_every_pinned_fabric_adapter(self):
-        from pip._vendor.packaging.specifiers import SpecifierSet
 
         # Every harness uses the same base, including adapters not in this image.
         with tarfile.open("/opt/nemoclaw/source/fabric.tar.gz") as source:
@@ -52,9 +79,22 @@ class AgentImage(unittest.TestCase):
             for item in projects:
                 project = tomllib.loads(source.extractfile(item).read().decode())["project"]
                 with self.subTest(adapter=project["name"]):
-                    self.assertIn(
-                        platform.python_version(), SpecifierSet(project["requires-python"])
+                    self.assertTrue(
+                        satisfies(platform.python_version(), project["requires-python"]),
+                        project["requires-python"],
                     )
+
+    def test_fabric_environment_carries_no_package_installer(self):
+        # Images install everything at build time; an installer only adds size.
+        prefix = Path(sys.prefix)
+        self.assertIsNone(importlib.util.find_spec("pip"))
+        self.assertEqual(sorted(path.name for path in (prefix / "bin").glob("pip*")), [])
+
+    def test_only_javascript_harnesses_carry_node(self):
+        # OpenClaw's CLI, Hermes's TUI, and the TypeScript Pi adapter run on Node.js.
+        expected = os.environ["NEMOCLAW_TEST_HARNESS"] in {"openclaw", "hermes", "pi"}
+        self.assertEqual(shutil.which("node") is not None, expected)
+        self.assertEqual(Path("/usr/local/lib/node_modules").exists(), expected)
 
     def test_catalog_carries_installed_runtime_directories(self):
         catalog = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])
@@ -163,6 +203,9 @@ class AgentImage(unittest.TestCase):
             self.assertFalse(list(Path("/app/dist/state").glob("*.sqlite*")))
             self.assertFalse(Path("/app/dist/config-journal-fingerprint.key").exists())
             self.assertFalse(Path("/tmp/plugin-build").exists())
+            # The agent reads OpenClaw but must not change it.
+            self.assertEqual(Path("/app").stat().st_uid, 0)
+            self.assertFalse(os.access("/app/dist/extensions", os.W_OK))
             for name in ("brave", "tavily"):
                 self.assertIn(name, set(plugins))
                 self.assertEqual(plugins[name]["origin"], "bundled")
@@ -188,8 +231,25 @@ class AgentImage(unittest.TestCase):
         )
         for path in root.glob("*.py"):
             self.assertEqual(path.read_bytes(), (sources / "local" / path.name).read_bytes())
-        self.assertEqual(os.getuid(), 1000)
-        self.assertEqual(Path("/sandbox").stat().st_uid, 1000)
+        # OpenShell's Kubernetes driver runs sandboxes as 10001:10001, and
+        # Docker and Podman use the image's own user, so one ID fits all three.
+        self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))
+        self.assertEqual(Path("/sandbox").stat().st_uid, 10001)
+        # OpenShell seeds a Kubernetes workspace by copying the image's
+        # /sandbox, and its supervisor makes probe directories under TMPDIR
+        # before Fabric starts; the seed must already hold that directory.
+        runtime = json.loads(Path("/opt/nemoclaw/runtime.json").read_text())
+        temporary = Path(runtime["environment"]["TMPDIR"])
+        self.assertTrue(temporary.is_relative_to("/sandbox"), temporary)
+        self.assertTrue(temporary.is_dir(), temporary)
+        self.assertEqual(temporary.stat().st_uid, 10001)
+        # On OpenShift, OpenShell copies that seed as the namespace's own UID,
+        # not 10001, so every directory in it must be readable by others.
+        # The copy itself is private: OpenShell creates each directory 0700.
+        for path in [Path("/sandbox"), *Path("/sandbox").rglob("*")]:
+            mode = path.lstat().st_mode
+            needed = 0o005 if path.is_dir() else 0o004
+            self.assertEqual(mode & needed, needed, f"{path} is not readable by another UID")
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 

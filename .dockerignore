@@ -6,6 +6,16 @@
 !image/**
 !ruff.toml
 !docker-bake.hcl
+# The Ollama proxy image compiles its crate from the Cargo workspace.
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!LICENSE
+!crates/
+!crates/**
+!examples/onboarding-tui/
+!examples/onboarding-tui/**
+**/target
 **/node_modules
 **/__pycache__
 **/.ruff_cache

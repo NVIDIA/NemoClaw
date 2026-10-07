@@ -4,25 +4,15 @@ use super::*;
 #[tokio::test]
 #[cfg(unix)]
 async fn docker_transport_distinguishes_confirmed_absence_from_failed_observation() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for (status, body, absent) in [
         (404, r#"{"message":"missing"}"#, true),
         (403, r#"{"message":"secret-sentinel"}"#, false),
         (500, r#"{"message":"secret-sentinel"}"#, false),
         (200, "{", false),
     ] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("engine.sock");
-        let listener = tokio::net::UnixListener::bind(&path).unwrap();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(socket.read_u8().await.unwrap());
-            }
-            socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-        });
-        let engine = Engine::connect(&format!("unix://{}", path.display())).unwrap();
+        let server =
+            super::fixture::Fixture::start(move |_| Some((status, body.as_bytes().to_vec()))).await;
+        let engine = Engine::connect(&server.endpoint).unwrap();
         let observed = engine.container("owned").await;
         if absent {
             assert!(observed.unwrap().is_none());
@@ -30,7 +20,6 @@ async fn docker_transport_distinguishes_confirmed_absence_from_failed_observatio
             let error = observed.unwrap_err();
             assert!(!error.to_string().contains("secret-sentinel"));
         }
-        server.await.unwrap();
     }
 }
 #[test]

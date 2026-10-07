@@ -67,7 +67,7 @@ target "ollama-proxy" {
 
 # Checks use disposable build stages and never start deployed resources.
 group "check" {
-  targets = ["lint", "unit-tests", "proxy-tests"]
+  targets = ["lint", "unit-tests", "reference-tests", "proxy-tests"]
 }
 
 target "lint" {
@@ -87,4 +87,17 @@ target "proxy-tests" {
   output = ["type=cacheonly"]
   target = "test"
   tags = []
+}
+
+# The reference image has no Fabric dependency or production adapter.
+target "dummy" {
+  inherits = ["_fabric"]
+  target = "dummy"
+  tags = ["${IMAGE_PREFIX}:dummy"]
+}
+
+target "reference-tests" {
+  inherits = ["_fabric"]
+  target = "reference-tests"
+  output = ["type=cacheonly"]
 }

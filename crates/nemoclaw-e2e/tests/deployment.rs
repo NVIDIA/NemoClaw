@@ -253,9 +253,9 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
         "{error}"
     );
     assert!(
-        error
-            .to_string()
-            .contains("gateway compute driver is podman, but runtime.provider is docker"),
+        error.to_string().contains(
+            "gateway compute driver is podman, but spec.gateway.runtime.provider is docker"
+        ),
         "{error}"
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -827,25 +827,29 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
                 .unwrap()
         );
         assert!(!original.to_string().contains("fixture-only-inference-key"));
-        assert!(
-            fixture
-                .state
-                .lock()
-                .unwrap()
-                .exec_calls
-                .iter()
-                .any(|command| {
-                    command
-                        .first()
-                        .is_some_and(|entrypoint| entrypoint == "/usr/local/bin/fabric-agent")
-                        && command
-                            .get(1)
-                            .is_some_and(|operation| operation == "configure")
-                        && command.windows(2).any(|args| {
-                            args[0] == "--config" && args[1].starts_with("/sandbox/.nemoclaw-")
-                        })
-                })
-        );
+        {
+            // Configuration travels on the configure command's stdin, not a staged file.
+            let state = fixture.state.lock().unwrap();
+            assert!(
+                state
+                    .exec_calls
+                    .iter()
+                    .zip(&state.exec_stdin)
+                    .any(|(command, stdin)| {
+                        command
+                            .first()
+                            .is_some_and(|entrypoint| entrypoint == "/usr/local/bin/fabric-agent")
+                            && command
+                                .get(1)
+                                .is_some_and(|operation| operation == "configure")
+                            && command
+                                .windows(2)
+                                .any(|args| args[0] == "--config" && args[1] == "-")
+                            && serde_json::from_slice::<serde_json::Value>(stdin).ok()
+                                == Some(original.clone())
+                    })
+            );
+        }
         // Native settings belong to the owned Fabric configuration. Refresh must
         // detect drift without mutating either the host or durable deployment.
         fixture
@@ -1203,6 +1207,9 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    // Keep passive discovery identical across applies. An unroutable endpoint can
+    // fail as either a transport error or a timeout.
+    document.spec.inference_providers[0].endpoint = "http://127.0.0.1:9/v1".into();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({

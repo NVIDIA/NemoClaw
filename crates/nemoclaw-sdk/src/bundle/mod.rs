@@ -107,9 +107,31 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
             platform()?,
             executable(&format!("terraform-provider-nemoclaw_v{version}"))
         ),
+        helm_provider_path(&platform()?)?,
+        "licenses/helm-provider-LICENSE".into(),
         crate::config::schema::SCHEMA_PATH.into(),
     ])
 }
+
+pub fn helm_provider_path(platform: &str) -> Result<String, Error> {
+    if !matches!(
+        platform,
+        "linux_arm64" | "linux_amd64" | "darwin_arm64" | "darwin_amd64" | "windows_amd64"
+    ) {
+        return Err(Error::Bundle("unsupported Helm provider platform"));
+    }
+    let extension = if platform.starts_with("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    let address = crate::kubernetes::gateway::PROVIDER_ADDRESS;
+    let version = crate::kubernetes::gateway::PROVIDER_VERSION;
+    Ok(format!(
+        "providers/{address}/{version}/{platform}/terraform-provider-helm_v{version}_x5{extension}"
+    ))
+}
+
 pub fn hash_file(path: &Path) -> Result<String, Error> {
     nemoclaw_runtime::files::hash_file(path).map_err(Into::into)
 }

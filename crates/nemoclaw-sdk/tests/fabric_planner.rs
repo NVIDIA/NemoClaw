@@ -49,6 +49,32 @@ fn canonical_fabric_planner_owns_unknown_adapter_settings_and_model_validation()
     assert!(plan_configuration(&missing, config()).is_err());
 }
 
+/// An image without the selected harness can never run it, so the image is
+/// unsupported for the configuration rather than unverified.
+#[test]
+fn an_image_without_the_selected_adapter_is_unsupported_on_the_adapter_id() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["adapter_id"] = "org.fixture.absent-adapter".into();
+    let report = assess_fabric(
+        &catalog(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    assert_eq!(report.status, Support::Unsupported);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.status == Support::Unsupported
+                && check.reason.starts_with("harness.adapter_id:")),
+        "{:?}",
+        report.checks
+    );
+}
+
 #[test]
 fn public_fabric_configuration_passes_through_without_overriding_deployment_bindings() {
     use nemoclaw_sdk::config::Document;
@@ -247,6 +273,10 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
     assert_eq!(status(&raw), Support::Supported);
+    // Interface version 1 is one exact shape; images built for another are rebuilt.
+    raw["bridge"]["input_sources"] = json!(["file", "stdin"]);
+    assert!(FabricCatalog::from_json(&raw.to_string()).is_err());
+    raw["bridge"] = bridge.clone();
     raw["bridge"]["interface_version"] = 2.into();
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
@@ -287,5 +317,31 @@ fn relocated_image_runtime_read_requirements_replace_client_layout_assumptions()
             },
         );
         assert_eq!(report.status, expected, "{:?}", report.checks);
+    }
+}
+
+#[test]
+fn explicit_filesystem_grants_reject_nul_in_required_paths_and_grants() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    for (path, grant) in [
+        ("/opt/hermes\0private", "/opt"),
+        ("/opt\0private/hermes", "/opt\0private"),
+    ] {
+        let mut catalog = catalog();
+        catalog
+            .runtime_files
+            .insert("org.fixture.new-adapter".into(), vec![path.into()]);
+        let report = assess_fabric(
+            &catalog,
+            &FabricRequirements {
+                configuration: config(),
+                filesystem_read: Some(vec![grant.into()]),
+            },
+        );
+        assert_eq!(report.status, Support::Unsupported, "{path:?} in {grant:?}");
+        assert!(report.checks.iter().any(|check| {
+            check.requirement == "deployment_filesystem_grant"
+                && check.status == Support::Unsupported
+        }));
     }
 }

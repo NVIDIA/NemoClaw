@@ -4,6 +4,44 @@
 use super::*;
 use nemoclaw_sdk::{Error, backend::Mutation};
 use serde_json::Value;
+use std::time::Duration;
+
+fn configuration_failure(stage: &str, code: &str, runtime_state: Option<&str>) -> ObservationError {
+    // Only fixed public vocabulary crosses the diagnostic boundary.
+    let stage = match stage {
+        "validate" => "validate",
+        "start" => "start",
+        "stop" => "stop",
+        "invoke" => "invoke",
+        "generation" => "generation",
+        "request" => "request",
+        "transport" => "transport",
+        _ => "unknown",
+    };
+    let code = match code {
+        "pi_model_unknown" => "pi_model_unknown",
+        "pi_model_invalid" => "pi_model_invalid",
+        "lifecycle_adapter_start_failed" => "lifecycle_adapter_start_failed",
+        "lifecycle_adapter_stop_failed" => "lifecycle_adapter_stop_failed",
+        "lifecycle_adapter_invoke_failed" => "lifecycle_adapter_invoke_failed",
+        "fabric_validate_failed" => "fabric_validate_failed",
+        "stale_generation" => "stale_generation",
+        "fabric_start_failed" => "fabric_start_failed",
+        "fabric_stop_failed" => "fabric_stop_failed",
+        "fabric_invoke_failed" => "fabric_invoke_failed",
+        _ => "fabric_configuration_failed",
+    };
+    let runtime_state = match runtime_state {
+        Some("running") => "running",
+        Some("stopped") => "unavailable",
+        _ => "unknown",
+    };
+    ObservationError::FabricConfiguration {
+        stage,
+        code,
+        runtime_state,
+    }
+}
 
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
@@ -102,7 +140,7 @@ impl OpenShell {
                 return Err(ObservationError::BindingMismatch);
             }
             parent.insert("config_json".into(), encoded);
-            self.configure_agent(&parent, false)
+            self.configure_agent(&parent)
                 .await
                 .map_err(Error::into_observation)?;
             let mut row = desired.clone();
@@ -136,5 +174,105 @@ impl OpenShell {
         // The sandbox owns this runtime. Forgetting its configuration binding
         // must not mutate or delete a runtime independently of that sandbox.
         Ok(())
+    }
+}
+
+impl OpenShell {
+    pub async fn configure_agent(&self, binding: &Row) -> Result<(), Error> {
+        let generation = tokio::time::timeout(Duration::from_secs(120), async {
+            loop {
+                let phase = self.gateway.sandbox_phase(binding, true).await?;
+                if phase == SandboxPhase::Ready
+                    && let Some(generation) = self.agent_snapshot(binding).await?.generation
+                {
+                    return Ok::<_, Error>(generation);
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
+        let config: serde_json::Value = serde_json::from_str(value(binding, "config_json"))
+            .map_err(|_| ObservationError::Query)?;
+        let response = self
+            .bridge_input(binding, "configure", &config, Some(&generation))
+            .await?;
+        if response.status != "succeeded" {
+            let failure = response
+                .error
+                .as_ref()
+                .ok_or(ObservationError::Incomplete)?;
+            return Err(configuration_failure(
+                &failure.stage,
+                &failure.code,
+                response
+                    .result
+                    .as_ref()
+                    .and_then(|result| result["runtime_state"].as_str()),
+            )
+            .into());
+        }
+        let result = response
+            .result
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        if result["generation"].as_str().is_none_or(str::is_empty)
+            || result["runtime_state"] != "running"
+            || result["runtime_id"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(ObservationError::Incomplete.into());
+        }
+        Ok(())
+    }
+    pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
+        let snapshot = self.agent_snapshot(binding).await?;
+        let desired: serde_json::Value = serde_json::from_str(value(binding, "config_json"))
+            .map_err(|_| ObservationError::Query)?;
+        if snapshot.runtime_state != "running" || snapshot.applied_config.as_ref() != Some(&desired)
+        {
+            return Err(Error::Conflict(
+                "agent configuration cannot be independently established",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn configuration_diagnostics_preserve_only_known_fields() {
+        let failure = super::configuration_failure(
+            "start",
+            "lifecycle_adapter_start_failed",
+            Some("stopped"),
+        );
+        let text = failure.to_string();
+        assert!(text.contains("lifecycle_adapter_start_failed"));
+        assert!(text.contains("agent runtime is unavailable"));
+        assert!(!text.contains("private-value"));
+        assert_eq!(
+            super::configuration_failure("private-value", "private-value", Some("private-value")),
+            nemoclaw_sdk::ObservationError::FabricConfiguration {
+                stage: "unknown",
+                code: "fabric_configuration_failed",
+                runtime_state: "unknown",
+            }
+        );
+    }
+
+    #[test]
+    fn pi_model_failure_keeps_the_code_and_named_sandbox_without_native_details() {
+        let error = super::configuration_failure("start", "pi_model_unknown", Some("stopped"));
+        let message = crate::resource::observation_message(error, Some("coder"));
+        for expected in [
+            "sandbox/coder",
+            "pi_model_unknown",
+            "start",
+            "resources retained",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
+        assert!(!message.contains("PRIVATE_SENTINEL"));
     }
 }

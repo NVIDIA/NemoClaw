@@ -4,8 +4,6 @@
 """Candidate transfer must retain the exact source and immutable image identity."""
 
 import json
-import runpy
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,27 +49,6 @@ class CandidateImage(unittest.TestCase):
         with patch.object(brev_image.subprocess, "run") as load:
             self.assertEqual(brev_image.load(self.root, self.revision), self.digest)
             load.assert_called_once()
-
-    def test_oci_export_labels_the_installed_catalog_before_recording_digest(self):
-        self.docker.side_effect = [
-            json.dumps({"target": {"openclaw": {"tags": ["nc-fabric:openclaw"]}}}).encode(),
-            json.dumps(self.catalog).encode(),
-        ]
-        with patch.object(sys, "argv", [
-            "build_fabric.py", "--platform", "linux/amd64", "--output",
-            "type=oci,dest=candidate/image.tar", "--metadata-file", "candidate/metadata.json",
-            "openclaw",
-        ]), patch.object(brev_image.subprocess, "run") as run:
-            runpy.run_path(str(ROOT / "image/build_fabric.py"), run_name="__main__")
-        exports = [c.args[0] for c in run.call_args_list if "openclaw.output=type=oci,dest=candidate/image.tar" in c.args[0]]
-        self.assertEqual(len(exports), 1)
-        export = exports[0]
-        label = next(v for v in export if v.startswith("openclaw.labels.io.nemoclaw.fabric.catalog="))
-        self.assertEqual(json.loads(label.split("=", 1)[1]), self.catalog)
-        self.assertEqual(export[export.index("--metadata-file") + 1], "candidate/metadata.json")
-        discovery = self.docker.call_args_list[1].args[0]
-        self.assertIn("--network=none", discovery)
-        self.assertIn("--installed", discovery)
 
     def test_loaded_image_requires_openclaw_runtime_metadata(self):
         self.record()

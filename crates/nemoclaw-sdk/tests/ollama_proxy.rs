@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#[path = "support/provider_scope.rs"]
-mod provider_scope;
+use crate::provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::{Document, Gateway, schema::input_schema},
@@ -27,7 +26,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
     let mut value = input();
     value["spec"]["gateway"] =
         json!({"management":"external", "endpoint":"http://127.0.0.1:17671"});
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     value["spec"]["services"]["ollama-auth"]["engine"] = json!("unix:///tmp/proxy-engine.sock");
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
@@ -392,7 +391,7 @@ fn proxy_requires_a_managed_docker_gateway_and_uses_its_engine() {
             .to_string()
             .contains("managed local Docker gateway")
     );
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     assert!(
         Document::parse(value.to_string().as_bytes())
             .unwrap_err()

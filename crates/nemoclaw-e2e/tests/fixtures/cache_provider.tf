@@ -31,6 +31,8 @@ resource "docker_container" "runtime" {
   count                 = var.enabled ? 1 : 0
   name                  = var.name
   image                 = data.docker_image.fixture.id
+  # Root writes the credential into the fresh volume whatever the image's user.
+  user                  = "0"
   entrypoint            = var.fail_start ? ["/does-not-exist"] : ["python3", "-c"]
   command               = ["import pathlib,secrets,time; p=pathlib.Path('/credentials/key'); p.exists() or p.write_text(secrets.token_hex(32)); pathlib.Path('/data/model').write_text('reconstructed'); time.sleep(3600)"]
   env                   = ["REVISION=${var.revision}"]

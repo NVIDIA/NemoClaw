@@ -4,6 +4,7 @@
 #[cfg(unix)]
 use nemoclaw_e2e::assert_same_managed_resources;
 use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 #[cfg(unix)]
 use nemoclaw_sdk::{
@@ -11,11 +12,7 @@ use nemoclaw_sdk::{
     config::Document,
 };
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+use std::{fs, path::PathBuf, process::Output};
 
 // Compiled deployment planning requires a currently Unix-only image engine.
 #[cfg(unix)]
@@ -23,7 +20,6 @@ use std::{
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
 async fn production_provider_applies_refreshes_and_destroys_the_reference_graph() {
     let fixture = Fixture::start().await;
-    let directory = tempfile::tempdir().unwrap();
     let tofu = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit pinned OpenTofu path"),
     );
@@ -32,14 +28,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
             .expect("explicit built production provider path"),
     );
     assert!(tofu.is_absolute() && provider.is_absolute());
-    fs::copy(
-        provider,
-        directory.path().join(nemoclaw_sdk::bundle::executable(
-            "terraform-provider-nemoclaw",
-        )),
-    )
-    .unwrap();
-    fs::write(directory.path().join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(directory.path().to_str().unwrap()).unwrap())).unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let mut document = Document::parse(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
@@ -52,16 +41,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         .collect();
     let mut graph = compile(&document, &generations, "0.1.0").unwrap();
     fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
-    let run = |args: &[&str]| -> Output {
-        Command::new(&tofu)
-            .args(args)
-            .current_dir(directory.path())
-            .env("TF_CLI_CONFIG_FILE", directory.path().join("tofu.rc"))
-            .env("CHECKPOINT_DISABLE", "1")
-            .env("TF_IN_AUTOMATION", "1")
-            .output()
-            .unwrap()
-    };
+    let run = |args: &[&str]| -> Output { directory.command().args(args).output().unwrap() };
     let success = |args: &[&str]| -> Output {
         let output = run(args);
         assert!(
@@ -124,7 +104,8 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
                     "gateway runs OpenShell incompatible-version, but this build requires {version}"
                 ),
                 "driver" => {
-                    "gateway compute driver is podman, but runtime.provider is docker".into()
+                    "gateway compute driver is podman, but spec.gateway.runtime.provider is docker"
+                        .into()
                 }
                 _ => "gateway reports 2 compute drivers, but exactly one is required".into(),
             };
@@ -202,7 +183,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
             assert!(
                 normalized.contains(if failure == "driver" {
                     "Gateway is incompatible with this configuration: gateway compute driver is \
-                     podman, but runtime.provider is docker."
+                     podman, but spec.gateway.runtime.provider is docker."
                 } else {
                     "Gateway capability observation failed"
                 }),
@@ -298,7 +279,6 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
 async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     let fixture = Fixture::start().await;
     fixture.state.lock().unwrap().fail_read = Some(("gateway", tonic::Code::Unavailable));
-    let directory = tempfile::tempdir().unwrap();
     let tofu = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit pinned OpenTofu path"),
     );
@@ -306,14 +286,7 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
         std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit production provider path"),
     );
     assert!(tofu.is_absolute() && provider.is_absolute());
-    fs::copy(
-        provider,
-        directory.path().join(nemoclaw_sdk::bundle::executable(
-            "terraform-provider-nemoclaw",
-        )),
-    )
-    .unwrap();
-    fs::write(directory.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(directory.path().to_str().unwrap()).unwrap())).unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     fs::write(directory.path().join("main.tf.json"), json!({
         "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
         "provider":{"nemoclaw":{"endpoint":fixture.endpoint}},
@@ -325,14 +298,7 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
         "output":{"compatible":{"value":"${data.nemoclaw_gateway_capabilities.current.compatible}"}}
     }).to_string()).unwrap();
     let run = |args: &[&str]| {
-        let output = Command::new(&tofu)
-            .args(args)
-            .current_dir(directory.path())
-            .env("TF_CLI_CONFIG_FILE", directory.path().join("tofu.rc"))
-            .env("CHECKPOINT_DISABLE", "1")
-            .env("TF_IN_AUTOMATION", "1")
-            .output()
-            .unwrap();
+        let output = directory.command().args(args).output().unwrap();
         assert!(
             output.status.success(),
             "{}\n{}",

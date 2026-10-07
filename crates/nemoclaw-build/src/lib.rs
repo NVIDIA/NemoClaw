@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use std::io::{Cursor, Read};
+pub mod ci;
 #[cfg(feature = "sdk")]
 pub mod docker_provider;
 #[cfg(feature = "sdk")]
 pub mod docs;
+#[cfg(feature = "sdk")]
+pub mod fern;
+#[cfg(feature = "sdk")]
+pub mod helm_provider;
+pub mod images;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;

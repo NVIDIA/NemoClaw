@@ -76,6 +76,23 @@ async fn invalid_and_partial_messages_do_not_poison_other_connections() {
 }
 
 #[tokio::test]
+async fn end_marker_closes_the_connection_after_delivering_prior_events() {
+    let (callback, mut events) = collect();
+    let listener = Listener::start(callback).unwrap();
+    let mut stream = Stream::connect(name(&listener.endpoint).unwrap())
+        .await
+        .unwrap();
+    let mut bytes = serde_json::to_vec(&event("gateway")).unwrap();
+    bytes.extend_from_slice(b"\n\n");
+    stream.write_all(&bytes).await.unwrap();
+    // Closing is the listener's acknowledgement that the events were delivered.
+    let _ = tokio::time::timeout(Duration::from_secs(2), stream.read_u8())
+        .await
+        .expect("listener kept the connection open after the end marker");
+    assert_eq!(events.try_recv().unwrap(), event("gateway"));
+}
+
+#[tokio::test]
 async fn dropping_listener_closes_connections_and_removes_its_socket() {
     let (callback, _) = collect();
     let listener = Listener::start(callback).unwrap();

@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemoclaw-ollama-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Authenticated, model-pinned access to an externally owned Ollama daemon."
+
+[[bin]]
+name = "nemoclaw-ollama-proxy"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# The proxy runs only in its Linux container image.
+[target.'cfg(target_os = "linux")'.dependencies]
+bytes = "1"
+futures-util.workspace = true
+getrandom.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+rustix = { workspace = true, features = ["process"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "signal"] }
+url.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util"] }

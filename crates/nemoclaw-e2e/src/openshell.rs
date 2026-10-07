@@ -11,8 +11,21 @@ use std::{
 };
 use tonic::{Request, Response, Status, body::Body};
 
+/// Optional real image execution behind the deterministic gateway protocol.
+/// Resource discovery remains simulated; command bytes and exit status are not.
+pub trait SandboxExecution: Send + Sync {
+    fn create(
+        &self,
+        sandbox: &p::Sandbox,
+        credentials: &HashMap<String, String>,
+    ) -> Result<(), Status>;
+    fn delete(&self, sandbox: &p::Sandbox) -> Result<(), Status>;
+    fn exec(&self, request: &p::ExecSandboxRequest) -> Result<std::process::Output, Status>;
+}
+
 #[derive(Default)]
 pub struct State {
+    pub sandbox_execution: Option<Arc<dyn SandboxExecution>>,
     pub driver: Option<String>,
     pub gateway_info: Option<p::GetGatewayInfoResponse>,
     pub gateway_reads: usize,
@@ -34,7 +47,10 @@ pub struct State {
     pub exec_environments: Vec<HashMap<String, String>>,
     pub fabric_configurations: HashMap<String, serde_json::Value>,
     pub fabric_stopped: HashSet<String>,
-    pub staged_files: HashMap<String, Vec<u8>>,
+    /// Stdin sent with each exec call, parallel to `exec_calls`.
+    pub exec_stdin: Vec<Vec<u8>>,
+    /// Files present in the fake sandbox for bridge commands that name a path.
+    pub sandbox_files: HashMap<String, Vec<u8>>,
     pub fabric_generations: HashMap<String, usize>,
     pub host_unavailable_checks: usize,
     pub exec_response: Option<Vec<u8>>,
@@ -528,6 +544,17 @@ fn create_sandbox(
         }),
         ..Default::default()
     };
+    if let Some(execution) = &state.sandbox_execution {
+        let mut credentials = HashMap::new();
+        for name in &sandbox.spec.as_ref().unwrap().providers {
+            let provider = state
+                .providers
+                .get(&format!("{}/{}", workspace(&q.workspace_scope)?, name))
+                .ok_or_else(|| Status::failed_precondition("sandbox provider is absent"))?;
+            credentials.extend(provider.credentials.clone());
+        }
+        execution.create(&sandbox, &credentials)?;
+    }
     state.sandboxes.insert(key.clone(), sandbox.clone());
     if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
         let metadata = state
@@ -566,10 +593,15 @@ fn delete_sandbox(
     state: &mut State,
     q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.name);
     let sandbox = state
         .sandboxes
-        .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .get(&key)
         .ok_or_else(|| Status::not_found("absent"))?;
+    if let Some(execution) = &state.sandbox_execution {
+        execution.delete(sandbox)?;
+    }
+    let sandbox = state.sandboxes.remove(&key).unwrap();
     state.effects += 1;
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("secret-sentinel: deletion reply lost"));
@@ -627,6 +659,41 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         let Some(sandbox) = state.sandboxes.get(&format!("{scope}/{}", request.sandbox)) else {
             return std::future::ready(Err(Status::not_found("absent")));
         };
+        if let Some(execution) = state.sandbox_execution.clone() {
+            state.exec_calls.push(request.command.clone());
+            state.exec_stdin.push(request.stdin.clone());
+            state.exec_environments.push(request.environment.clone());
+            drop(state);
+            let output = match execution.exec(&request) {
+                Ok(output) => output,
+                Err(error) => return std::future::ready(Err(error)),
+            };
+            let mut events = Vec::new();
+            for data in output.stdout.chunks(64 * 1024) {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                        p::ExecSandboxStdout {
+                            data: data.to_vec(),
+                        },
+                    )),
+                }));
+            }
+            for data in output.stderr.chunks(64 * 1024) {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stderr(
+                        p::ExecSandboxStderr {
+                            data: data.to_vec(),
+                        },
+                    )),
+                }));
+            }
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
+                    exit_code: output.status.code().unwrap_or(1),
+                })),
+            }));
+            return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::iter(events)))));
+        }
         let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
         let launch = &sandbox.spec.as_ref().unwrap().command;
         let operation_index = launch.len() - 3;
@@ -638,22 +705,6 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         let mut events = Vec::new();
         let mut exit = state.exec_exit;
         let mut output = state.exec_response.clone();
-        if request
-            .command
-            .get(2)
-            .is_some_and(|c| c.contains("Stage a bounded JSON file"))
-        {
-            state
-                .staged_files
-                .insert(request.command[3].clone(), request.stdin);
-        }
-        if request
-            .command
-            .get(2)
-            .is_some_and(|code| code.contains(".unlink(missing_ok=True)"))
-        {
-            state.staged_files.remove(request.command.last().unwrap());
-        }
         if is_bridge {
             let operation = request
                 .command
@@ -669,6 +720,15 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             };
             let mut error = None;
             let mut changed = false;
+            // Like the image host, read `-` from stdin and any other value as a sandbox file.
+            let config = match flag("--config") {
+                Some("-") => serde_json::from_slice::<serde_json::Value>(&request.stdin).ok(),
+                Some(path) => state
+                    .sandbox_files
+                    .get(path)
+                    .and_then(|payload| serde_json::from_slice(payload).ok()),
+                None => None,
+            };
             if matches!(operation, "configure" | "prepare") && exit == 0 {
                 if flag("--expected-generation")
                     != Some(
@@ -687,9 +747,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         serde_json::json!({"code":"stale_generation", "stage":"generation", "message":"stale generation", "effects":"none"}),
                     );
                     exit = 1;
-                } else {
-                    let payload = &state.staged_files[flag("--config").unwrap()];
-                    let config: serde_json::Value = serde_json::from_slice(payload).unwrap();
+                } else if let Some(config) = config {
                     changed = if operation == "prepare" {
                         state.fabric_configurations.contains_key(&sandbox_id)
                             && !state.fabric_stopped.contains(&sandbox_id)
@@ -722,6 +780,11 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     if stopped {
                         state.fabric_configurations.remove(&sandbox_id);
                     }
+                } else {
+                    error = Some(
+                        serde_json::json!({"code":"invalid_file","stage":"request","message":"invalid input","effects":"none"}),
+                    );
+                    exit = 1;
                 }
             }
             let model = state.fabric_configurations.get(&sandbox_id);
@@ -793,6 +856,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     .is_some_and(|operation| operation == "configure")
                 && std::mem::take(&mut state.lose_configure_reply));
         state.exec_environments.push(request.environment);
+        state.exec_stdin.push(request.stdin);
         state.exec_calls.push(request.command);
         if !truncated {
             events.push(Ok(p::ExecSandboxEvent {

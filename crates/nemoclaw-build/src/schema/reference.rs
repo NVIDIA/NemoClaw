@@ -17,7 +17,7 @@ pub fn render_reference(schema: &Value) -> Result<String, String> {
         "# YAML Configuration Reference\n\n",
         "<!-- Generated from the SDK schema. Edit Rust field descriptions and constraints, then run cargo run --locked -p nemoclaw-build -- schema. -->\n\n",
         "This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.\n",
-        "See [schema maintenance](../configuration-schema.md) for generation and validation commands.\n\n",
+        "See [schema maintenance](../contributing/configuration-schema.md) for generation and validation commands.\n\n",
         "Paths use `[]` for an array element and `{key}` for a map entry.\n",
         "Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.\n",
         "An optional object can contain required fields if you choose to declare it.\n",

@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::examples;
+use crate::provider_scope;
 
-#[path = "support/examples.rs"]
-mod examples;
-
-#[path = "support/provider_scope.rs"]
-mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, targets},
     config::Document,

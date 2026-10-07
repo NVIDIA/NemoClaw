@@ -1,0 +1,60 @@
+{
+  "data": {
+    "nemoclaw_engine_capabilities": {
+      "current": {
+        "compute_driver": "docker",
+        "engine": "unix:///var/run/docker.sock",
+        "lifecycle": {
+          "postcondition": [
+            {
+              "condition": "${self.status != \"unavailable\"}",
+              "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
+            }
+          ]
+        }
+      }
+    },
+    "nemoclaw_fabric_capabilities": {
+      "sandbox_0": {
+        "architecture": "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).architecture}",
+        "engine": "unix:///var/run/docker.sock",
+        "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
+        "lifecycle": {
+          "postcondition": [
+            {
+              "condition": "${self.compatibility_status != \"unsupported\"}",
+              "error_message": "${join(\"; \", concat([\"sandbox/assistant: adapter/nvidia.fabric.openclaw compatibility rejected\"], [for check in jsondecode(self.observation_json).compatibility.checks : format(\"%s: %s\", check.requirement, check.reason) if check.status == \"unsupported\"]))}"
+            },
+            {
+              "condition": "${self.runtime_json != \"\"}",
+              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained."
+            }
+          ]
+        },
+        "operating_system": "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).operating_system}",
+        "requirements_json": "{\"configuration\":{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"primary\"},\"models\":{\"default\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}}"
+      }
+    },
+    "nemoclaw_inference_capabilities": {
+      "endpoint_0": {
+        "api": "openai-completions",
+        "credential_env": "NVIDIA_API_KEY",
+        "endpoint": "https://integrate.api.nvidia.com/v1"
+      }
+    },
+    "nemoclaw_target_hardware": {
+      "target_0": {
+        "engine": "unix:///var/run/docker.sock"
+      }
+    }
+  },
+  "output": {
+    "value": {
+      "endpoint_0": "${data.nemoclaw_inference_capabilities.endpoint_0.observation_json}",
+      "engine": "${data.nemoclaw_engine_capabilities.current.observation_json}",
+      "gateway": "${data.nemoclaw_gateway_capabilities.current.observation_json}",
+      "sandbox_0": "${data.nemoclaw_fabric_capabilities.sandbox_0.observation_json}",
+      "target_0": "${data.nemoclaw_target_hardware.target_0.observation_json}"
+    }
+  }
+}

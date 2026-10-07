@@ -2,14 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
-#[cfg(test)]
-mod scenarios;
-mod template;
 mod tui;
-
-#[cfg(test)]
-use nemoclaw_authoring::Answers;
-use nemoclaw_authoring::{Capabilities, Draft, Session, TargetFacts};
+use nemoclaw_authoring::{Capabilities, new_deployment_uid};
+use nemoclaw_authoring::{JourneyDefinition, JourneyScope, JourneyState, PartialDocument};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
 use std::{
     io::{IsTerminal, Read, Write},
@@ -23,62 +18,73 @@ pub enum Source<'a> {
 }
 
 /// Run the questionnaire and save to a new file. Cancellation writes nothing.
-/// Engine checks are read-only; this never creates deployment state or applies resources.
+/// With `discover`, the target's engines, image, gateway, model catalog, and
+/// credential references are read; without it, they remain explicitly
+/// unverified. Reads never create deployment state or apply resources.
 pub async fn author(
     source: Source<'_>,
     output: &Path,
-    cancel: &CancellationToken,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    author_with_bundle(source, output, None, cancel).await
-}
-
-/// Author using read-only provider discovery when a verified bundle is available.
-/// Without a bundle, target capabilities remain explicitly unverified.
-pub async fn author_with_bundle(
-    source: Source<'_>,
-    output: &Path,
-    bundle: Option<&Path>,
+    discover: bool,
     cancel: &CancellationToken,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
     let capabilities = Capabilities::available();
-    let draft = load(source, &capabilities)?;
+    let state = load_journey(source, &capabilities)?;
     if output.try_exists()? {
         return Err("output already exists; choose a new path with --output".into());
     }
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(draft) = tui::run(capabilities, draft, cancel, bundle).await? else {
+    let Some(document) = tui::run(capabilities, state, cancel, discover).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
-    let review = draft.review()?;
-    write_path(output, review.yaml().as_bytes())?;
+    write_path(output, document.yaml()?.as_bytes())?;
     Ok(true)
 }
 
-fn load(
+fn load_journey(
     source: Source<'_>,
     capabilities: &Capabilities,
-) -> Result<Draft, Box<dyn std::error::Error>> {
-    let draft = match source {
-        Source::Defaults => template::onboarding_template()
-            .draft(&TargetFacts::new("local machine"), capabilities)?,
-        Source::Template(path) => {
-            let original = read_draft(path)?;
-            Session::new()?.draft_from_template(original.document().clone())?
-        }
+) -> Result<JourneyState, Box<dyn std::error::Error>> {
+    let bytes = match source {
+        Source::Defaults => include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec(),
+        Source::Template(path) => read_template(path)?,
     };
-    capabilities.preserving_draft(&draft)?;
-    Ok(draft)
+    let partial = PartialDocument::from_yaml(&bytes)?;
+    let mut supplied = partial.supplied().clone();
+    let metadata = supplied
+        .as_object_mut()
+        .ok_or("template root must be an object")?
+        .entry("metadata")
+        .or_insert_with(|| serde_json::json!({}));
+    metadata
+        .as_object_mut()
+        .ok_or("template metadata must be an object")?
+        .insert("uid".into(), serde_json::json!(new_deployment_uid()?));
+    let partial = PartialDocument::from_yaml(&serde_json::to_vec(&supplied)?)?;
+    JourneyDefinition::new("onboarding", partial)
+        .ask([
+            "/metadata/name",
+            "/spec/sandboxes/0/harness/kind",
+            "/spec/gateway/runtime/provider",
+            "inference:preset",
+        ])
+        .ask([JourneyScope::InferenceApi])
+        .ask([JourneyScope::RouteModels])
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .ask([JourneyScope::NativeSettings])
+        .ask([JourneyScope::DeploymentFields])
+        .start(capabilities)
+        .map_err(Into::into)
 }
 
-fn read_draft(path: &Path) -> Result<Draft, Box<dyn std::error::Error>> {
+fn read_template(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
         .take(MAX_DOCUMENT_BYTES + 1)
@@ -86,7 +92,7 @@ fn read_draft(path: &Path) -> Result<Draft, Box<dyn std::error::Error>> {
     if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
         return Err("configuration exceeds 1 MiB".into());
     }
-    Ok(Draft::from_yaml(&bytes)?)
+    Ok(bytes)
 }
 
 fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -106,126 +112,106 @@ fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nemoclaw_authoring::{AnswerStatus, EditableField};
 
     #[test]
-    fn built_in_defaults_use_the_partial_template() {
+    fn default_source_starts_a_sparse_journey_with_existing_questions() {
         let capabilities = Capabilities::available();
-        let draft = load(Source::Defaults, &capabilities).unwrap();
-        for field in [
-            EditableField::Harness,
-            EditableField::Runtime,
-            EditableField::Inference,
-            EditableField::Api,
-            EditableField::DeploymentName,
-            EditableField::Model,
-        ] {
-            assert_eq!(draft.answer_status(field), AnswerStatus::Suggested);
-        }
-        assert_eq!(draft.guided_fields(&capabilities).unwrap().len(), 6);
-        assert_eq!(
-            draft.guided_answers(&capabilities).unwrap(),
-            Answers::onboarding_defaults()
-        );
-    }
-
-    #[test]
-    fn saved_unknown_harness_is_a_template_without_losing_defaults() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("unknown.yaml");
-        let defaults = load(Source::Defaults, &Capabilities::available()).unwrap();
-        let mut document = defaults.document().clone();
-        let harness = document.spec.sandboxes[0].harness.as_mut().unwrap();
-        harness.kind = "fixture-reopen-adapter".parse().unwrap();
-        harness.settings = Some(
-            [("custom_option".into(), "retained".into())]
-                .into_iter()
-                .collect(),
-        );
-        let yaml = serde_saphyr::to_string(&document).unwrap();
-        std::fs::write(&path, &yaml).unwrap();
-        let original = Draft::from_yaml(yaml.as_bytes()).unwrap();
-        let capabilities = Capabilities::available();
-        let retained = capabilities.preserving_draft(&original).unwrap();
-        assert_eq!(
-            original.guided_answers(&retained).unwrap().harness.as_str(),
-            "fixture-reopen-adapter"
-        );
+        let journey = load_journey(Source::Defaults, &capabilities).unwrap();
+        let resolution = journey.resolve(&capabilities).unwrap();
+        assert!(resolution.question("/metadata/name").is_some());
+        assert!(resolution.question("inference:preset").is_some());
         assert!(
-            !retained
-                .harnesses()
-                .iter()
-                .any(|harness| harness.as_str() == "fixture-reopen-adapter"),
-            "retained intent is not advertised capability"
-        );
-        let template = load(Source::Template(&path), &capabilities).unwrap();
-        assert_ne!(
-            template.document().metadata.uid,
-            original.document().metadata.uid
-        );
-        assert_eq!(
-            template.document().spec.sandboxes,
-            original.document().spec.sandboxes
-        );
-        assert_eq!(
-            template.guided_answers(&retained).unwrap(),
-            original.guided_answers(&retained).unwrap()
+            resolution
+                .question("/spec/gateway/runtime/provider")
+                .is_some()
         );
     }
 
     #[test]
-    fn generated_output_is_atomically_parseable() {
-        let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("deployment.yaml");
+    fn tui_accepts_a_resolved_question_through_journey_state() {
         let capabilities = Capabilities::available();
-        let authored = Session::new()
-            .unwrap()
-            .project(&capabilities, &Answers::onboarding_defaults())
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard = tui::JourneyWizard::new(capabilities, state);
+        assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
+        wizard
+            .submit(Some(serde_json::json!("guided-deployment")))
             .unwrap();
-        write_path(&output, authored.yaml().as_bytes()).unwrap();
-        let document =
-            nemoclaw_sdk::config::Document::parse(std::fs::File::open(&output).unwrap()).unwrap();
-        assert_eq!(&document, authored.document());
+        assert_eq!(
+            wizard.state().values().pointer("/metadata/name"),
+            Some(&serde_json::json!("guided-deployment"))
+        );
     }
 
     #[test]
-    fn oversized_template_input_is_rejected() {
-        let directory = tempfile::tempdir().unwrap();
-        let input = directory.path().join("large.yaml");
-        std::fs::write(&input, vec![b' '; (MAX_DOCUMENT_BYTES + 1) as usize]).unwrap();
-        assert_eq!(
-            read_draft(&input).unwrap_err().to_string(),
-            "configuration exceeds 1 MiB"
-        );
-    }
-    #[test]
-    fn each_template_run_writes_a_new_deployment_without_changing_defaults() {
+    fn template_runs_replace_only_the_identity_and_preserve_the_source() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("template.yaml");
+        let original = include_bytes!("../../../examples/onboarding/openclaw.yaml");
+        std::fs::write(&path, original).unwrap();
         let capabilities = Capabilities::available();
-        let original = load(Source::Defaults, &capabilities).unwrap();
-        let yaml = original.review().unwrap().yaml().to_owned();
-        std::fs::write(&path, &yaml).unwrap();
-        let template = load(Source::Template(&path), &capabilities).unwrap();
-        assert_ne!(
-            template.document().metadata.uid,
-            original.document().metadata.uid
-        );
+        let first = load_journey(Source::Template(&path), &capabilities).unwrap();
+        let second = load_journey(Source::Template(&path), &capabilities).unwrap();
+        let mut first_values = first.values().clone();
+        let first_uid = first_values.pointer("/metadata/uid").cloned().unwrap();
+        let second_uid = second.values().pointer("/metadata/uid").cloned().unwrap();
+        assert_ne!(first_uid, second_uid);
+        first_values["metadata"]["uid"] = second_uid;
+        assert_eq!(&first_values, second.values());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn sparse_template_input_enforces_size_and_single_sandbox_bounds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("template.yaml");
+        std::fs::write(&path, vec![b' '; (MAX_DOCUMENT_BYTES + 1) as usize]).unwrap();
         assert_eq!(
-            template.guided_answers(&capabilities).unwrap(),
-            original.guided_answers(&capabilities).unwrap()
+            read_template(&path).unwrap_err().to_string(),
+            "configuration exceeds 1 MiB"
         );
-        let another = load(Source::Template(&path), &capabilities).unwrap();
-        assert_ne!(
-            another.document().metadata.uid,
-            template.document().metadata.uid
+
+        let mut values: serde_json::Value =
+            serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+                .unwrap();
+        let second = values["spec"]["sandboxes"][0].clone();
+        values["spec"]["sandboxes"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+        let yaml = serde_json::to_vec(&values).unwrap();
+        std::fs::write(&path, &yaml).unwrap();
+        assert!(load_journey(Source::Template(&path), &Capabilities::available()).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), yaml);
+    }
+
+    #[test]
+    fn unknown_adapter_template_keeps_authored_settings_and_reports_unverified_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("unknown.yaml");
+        let mut values: serde_json::Value =
+            serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+                .unwrap();
+        values["spec"]["sandboxes"][0]["harness"] = serde_json::json!({
+            "kind": "fixture-reopen-adapter",
+            "settings": {"custom_option": "retained"}
+        });
+        std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+        let capabilities = Capabilities::available();
+        let journey = load_journey(Source::Template(&path), &capabilities).unwrap();
+        assert_eq!(
+            journey
+                .values()
+                .pointer("/spec/sandboxes/0/harness/settings/custom_option"),
+            Some(&serde_json::json!("retained"))
         );
-        let output = directory.path().join("new-deployment.yaml");
-        write_path(&output, template.review().unwrap().yaml().as_bytes()).unwrap();
-        let generated =
-            nemoclaw_sdk::config::Document::parse(std::fs::File::open(output).unwrap()).unwrap();
-        assert_eq!(&generated, template.document());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), yaml);
+        let resolution = journey.resolve(&capabilities).unwrap();
+        assert!(
+            resolution
+                .unverified()
+                .iter()
+                .any(|reason| reason.contains("adapter schema"))
+        );
+        assert!(resolution.materialized_document().is_none());
     }
 
     #[test]
@@ -242,32 +228,15 @@ mod tests {
     }
 
     #[test]
-    fn template_with_additional_settings_is_rejected_without_discarding_them() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("template.yaml");
-        let capabilities = Capabilities::available();
-        let original = load(Source::Defaults, &capabilities).unwrap();
-        let mut document = original.document().clone();
-        document
-            .spec
-            .sandboxes
-            .push(document.spec.sandboxes[0].clone());
-        document.spec.sandboxes[1].name = "second".into();
-        document.spec.sandboxes[1].agent.name = "second".into();
-        let yaml = document.yaml().unwrap();
-        std::fs::write(&path, &yaml).unwrap();
-        assert!(load(Source::Template(&path), &capabilities).is_err());
-        assert_eq!(std::fs::read_to_string(path).unwrap(), yaml);
-    }
-
-    #[test]
     fn bundled_template_is_supported_by_the_questionnaire() {
         let capabilities = Capabilities::available();
         let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../onboarding/openclaw.yaml");
-        let draft = load(Source::Template(&template), &capabilities).unwrap();
+        let state = load_journey(Source::Template(&template), &capabilities).unwrap();
         assert_eq!(
-            draft.guided_answers(&capabilities).unwrap().model,
-            "nvidia/nemotron-3-super-120b-a12b"
+            state
+                .values()
+                .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+            Some(&serde_json::json!("nvidia/nemotron-3-super-120b-a12b"))
         );
     }
 }

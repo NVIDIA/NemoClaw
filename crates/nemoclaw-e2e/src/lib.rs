@@ -4,10 +4,10 @@
 //! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod image_runtime;
 pub mod openshell;
+pub mod tofu;
 
-#[cfg(unix)]
-#[path = "../../test-support/docker.rs"]
-pub mod docker;
+#[path = "../../test-support/http.rs"]
+pub mod http_fixture;
 
 /// OpenTofu may reorder cached precondition results and advance the serial on
 /// otherwise unchanged apply. Sandbox observations also carry a fresh operation

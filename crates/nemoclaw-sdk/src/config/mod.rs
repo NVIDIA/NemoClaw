@@ -7,6 +7,7 @@ pub(crate) mod constraints;
 pub mod credential_metadata;
 mod engine_endpoint;
 mod execution;
+pub use constraints::GATEWAY_ENGINE;
 pub use engine_endpoint::validate_engine_endpoint;
 pub(crate) mod integration_policy;
 mod integrations;
@@ -29,6 +30,8 @@ pub use sandbox_policy::policy_json;
 mod network;
 pub use network::*;
 mod kinds;
+mod kubernetes;
+pub use kubernetes::*;
 #[doc(hidden)]
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
@@ -48,35 +51,46 @@ pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 /// Configuration diagnostics omit credentials and arbitrary source values.
 pub use nemoclaw_runtime::config::ConfigError;
 
+/// Parse a bounded YAML value without claiming it is a complete configuration.
+/// Authoring can inspect sparse input before constructing a [`Document`].
+pub fn parse_yaml_value(input: impl Read) -> Result<serde_json::Value, ConfigError> {
+    read_yaml(input).map(|(_, tree)| tree)
+}
+
+fn read_yaml(input: impl Read) -> Result<(String, serde_json::Value), ConfigError> {
+    let mut bytes = Vec::new();
+    input
+        .take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ConfigError::new("cannot read configuration"))?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(ConfigError::new("configuration exceeds 1 MiB"));
+    }
+    let text =
+        String::from_utf8(bytes).map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+    yaml_source::validate_tags(&text)?;
+    let mut options = serde_saphyr::Options::default();
+    options.with_snippet = false;
+    let mut budget = serde_saphyr::Budget::default();
+    budget.max_aliases = 0;
+    budget.max_anchors = 0;
+    budget.max_merge_keys = 0;
+    options.budget = Some(budget);
+    options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+    options.reject_unsupported_tags = true;
+    let tree =
+        serde_saphyr::from_str_with_options(&text, options).map_err(yaml_source::syntax_error)?;
+    Ok((text, tree))
+}
+
 impl Document {
     /// Read, default, and validate a configuration document.
     ///
     /// # Errors
     /// Returns an error for unreadable, oversized, malformed, or invalid input.
     pub fn parse(input: impl Read) -> Result<Self, ConfigError> {
-        let mut bytes = Vec::new();
-        input
-            .take(MAX_DOCUMENT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| ConfigError::new("cannot read configuration"))?;
-        if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(ConfigError::new("configuration exceeds 1 MiB"));
-        }
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
-        yaml_source::validate_tags(text)?;
-        let mut options = serde_saphyr::Options::default();
-        options.with_snippet = false;
-        let mut budget = serde_saphyr::Budget::default();
-        budget.max_aliases = 0;
-        budget.max_anchors = 0;
-        budget.max_merge_keys = 0;
-        options.budget = Some(budget);
-        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
-        options.reject_unsupported_tags = true;
-        let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(yaml_source::syntax_error)?;
-        schema::validate_input(&tree, Some(text))?;
+        let (text, tree) = read_yaml(input)?;
+        schema::validate_input(&tree, Some(&text))?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
@@ -141,6 +155,10 @@ impl Document {
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
+        if let Some(kubernetes) = g.as_kubernetes() {
+            names.push(kubernetes.kubeconfig.env.as_str());
+            names.extend(kubernetes.environment.iter().map(String::as_str));
+        }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());
         }
@@ -159,6 +177,9 @@ impl Document {
             }
         }
         for sandbox in &self.spec.sandboxes {
+            if let Some(metadata) = &sandbox.image.metadata {
+                names.push(metadata.env.as_str());
+            }
             for binding in sandbox
                 .integration_bindings(&self.spec.integrations)
                 .expect("validated integration references")
@@ -174,7 +195,9 @@ impl Document {
     }
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
-        if let Gateway::Managed(gateway) = gateway {
+        if let Gateway::Managed(gateway) = gateway
+            && gateway.kubernetes.is_none()
+        {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
             default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
@@ -189,8 +212,11 @@ impl Document {
         for service in self.spec.services.values_mut() {
             crate::services::defaults(service);
         }
-        for sandbox in &mut self.spec.sandboxes {
-            default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
+        // Cluster sandboxes have no engine-supplied default image.
+        if !self.spec.gateway.runtime().provider.is_kubernetes() {
+            for sandbox in &mut self.spec.sandboxes {
+                default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
+            }
         }
     }
 }
@@ -241,6 +267,11 @@ impl ManagedGateway {
     /// # Errors
     /// Returns an error for malformed IPv4 CIDRs or an address overflow.
     pub fn bridge(&self) -> Result<String, ConfigError> {
+        if self.kubernetes.is_some() {
+            return Err(ConfigError::new(
+                "Kubernetes gateways have no local engine bridge",
+            ));
+        }
         bridge_address(&self.network_cidr)
     }
 }
@@ -249,6 +280,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl Gateway {
+    /// The compute driver this gateway runs every sandbox with.
+    pub fn runtime(&self) -> &Runtime {
+        match self {
+            Self::Managed(gateway) => &gateway.runtime,
+            Self::External(gateway) => &gateway.runtime,
+        }
+    }
+    /// The compute driver setting, for changing it.
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        match self {
+            Self::Managed(gateway) => &mut gateway.runtime,
+            Self::External(gateway) => &mut gateway.runtime,
+        }
+    }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {
         match self {
@@ -270,6 +315,16 @@ impl Gateway {
             Self::External(_) => None,
         }
     }
+    /// Explicit existing-cluster settings for a managed Kubernetes gateway.
+    pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
+        self.as_managed()
+            .and_then(|gateway| gateway.kubernetes.as_ref())
+    }
+    /// Local Docker or Podman installation settings; excludes Kubernetes targets.
+    pub fn as_local_managed(&self) -> Option<&ManagedGateway> {
+        self.as_managed()
+            .filter(|gateway| gateway.kubernetes.is_none())
+    }
     /// Mutable installation settings, when this deployment manages the gateway.
     pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
         match self {
@@ -278,8 +333,9 @@ impl Gateway {
         }
     }
     pub(crate) fn managed(&self) -> Result<&ManagedGateway, ConfigError> {
-        self.as_managed()
-            .ok_or(ConfigError::new("operation requires a managed gateway"))
+        self.as_local_managed().ok_or(ConfigError::new(
+            "operation requires a managed local gateway",
+        ))
     }
     pub fn credential(&self) -> Option<&Credential> {
         match self {

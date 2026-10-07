@@ -5,6 +5,7 @@
 
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
+The [authoring domain model](../../docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
 It writes validated YAML and can read target observations through a verified native bundle.
 Review reminds you to set missing credential references before applying, without retaining their values.
 Onboarding does not create deployment state or apply resources.
@@ -22,15 +23,13 @@ nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
 Omit the template to use the built-in defaults.
-Those defaults come from a partial template in this example. It leaves the six original guided
-fields open and supplies preset values for the rest of the document.
+Those defaults come from the example YAML template.
+The journey definition asks for deployment name, harness, runtime, inference preset, API, and model, then covers applicable Fabric and deployment settings.
 The template's choices are preselected; Enter accepts an answer.
-The questionnaire chooses an unresolved question whose dependencies are resolved, preferring questions that constrain more remaining choices.
-It skips inactive fields and choices with only one supported answer.
+The authoring resolver recomputes applicable questions after each answer and follows the definition's order for explicitly asked fields.
 You can go back to change an answer.
-If a change affects answers you already accepted, the questionnaire shows them before making the change.
-Accept the revision to revisit affected questions, or go back to keep the current configuration.
-Unrelated accepted answers are preserved and skipped when continuing forward.
+If a change affects accepted answers, the resolver reopens the dependent questions and keeps their supplied values as suggestions.
+Going back restores the previous state; unrelated accepted answers stay accepted.
 
 After accepting a harness, **Ctrl+D** requests delegation of the remaining suggested settings.
 When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
@@ -57,24 +56,6 @@ The standalone example uses the same questionnaire:
 cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-### Watch and replay the built-in guided scenario
-
-This local scenario needs Python 3 and tmux.
-It creates a tmux session, a temporary YAML file, and a screen transcript; it does not contact a deployment target or apply resources.
-From the repository root, build the example and start the replay:
-
-```sh
-cargo build -p nemoclaw-onboarding
-python3 examples/onboarding-tui/scripts/replay_guided.py --wait-for-viewer --keep-session --delay 2
-```
-
-The driver prints a `tmux attach-session -r` command.
-Run it in another terminal to watch; replay waits for that viewer before answering.
-It checks each expected screen, saves YAML to a new temporary path, checks selected fields, and writes a JSONL screen transcript beside the YAML.
-Omit `--wait-for-viewer` and use `--delay 0` for a fast unattended replay.
-The scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
-If a question changes, replay stops and prints the unexpected screen; inspect the transcript and rerun with new output paths after updating the expected steps.
-
 Both entrypoints treat input YAML only as defaults for a new deployment.
 There is no mode for editing an existing deployment or retaining the template's UID.
 Both entrypoints accept the single-sandbox deployment examples as templates, including existing managed inference services and multiple model routes.
@@ -83,39 +64,40 @@ Loading a template preserves its deployment fields, references, and native setti
 
 ## Target checks
 
-For a managed gateway, the Podman preset requires local Linux and is disabled on macOS and other hosts.
-Choose Docker to continue on those hosts.
-An external gateway runs on its own host, so its Podman selection is preserved without applying the local host restriction.
+For a managed gateway, Podman requires a supported local rootless Linux target. The questionnaire records the selected runtime without treating the author's workstation as that target.
+When a verified bundle supplies target observations, a confirmed compatibility conflict blocks saving through the authoring resolver. Missing or unknown observations remain unverified; review the target requirements before applying the saved desired state.
+An external gateway runs on its own host, and the questionnaire preserves its selected runtime.
 The preset does not configure Podman Machine or a remote Linux host.
 
-The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
+The CLI reads the target while you answer:
 
 ```sh
-nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
+nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
-For a managed gateway, it also checks engine prerequisites and hardware advertisements.
+Onboarding reads the selected Fabric image and the inference model catalog through the same functions the provider's plan data sources use; it needs no bundle and starts no OpenTofu process.
+For a managed gateway, it also checks engine prerequisites and reads hardware advertisements.
+Hardware observations do not affect questions or readiness yet.
 For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
 Onboarding uses that engine only to inspect the image; the image store's compute driver and hardware do not describe the external gateway.
-Changing the image engine discards the previous image observation.
-Omitting it leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
+Observations for a different engine or image are ignored.
+Omitting `spec.gateway.engine` leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
 Image compatibility does not verify the external gateway's execution platform or readiness.
-Independent requests share a plan, and duplicate requests are read once.
-It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes the relevant observations when entering review.
-Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
+Independent reads run concurrently, and duplicate requests are read once.
+It reads the model catalog when a model question opens for a new endpoint request.
+It reads target observations again each time you delegate with **Ctrl+D** or enter review.
+Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
+Each engine, image, hardware, and catalog read has a five-second timeout; a gateway capability call has thirty seconds.
 Discovery supports cancellation and does not pull images or start containers.
-An ordinary discovery plan has a 30-second overall bound; the separate gateway query has a 35-second bound.
 The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
-Without a usable bundle, onboarding uses bundled Fabric metadata and marks the target unverified.
-The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
+The standalone example does not read the target, so target compatibility remains unverified.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
-Unknown observations still allow saving after answering individually and selecting a runtime offered on this host, including when authoring for a target to prepare later.
+Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
-Discovery supplies choices and validation without displaying hardware inventories, model counts or successful-check summaries.
+Discovery supplies model choices and readiness checks without displaying hardware inventories, model counts or successful-check summaries.
 The TUI has no detailed diagnostic view.
 It retains incompatibility and unverified-target messages; review names missing credentials without blocking ordinary YAML authoring.
 These observations do not establish deployment readiness, successful authentication for every operation, model loading, or working inference.
@@ -124,16 +106,17 @@ Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
 
-When discovery returns a catalog for the current engine and image, its exact adapter IDs determine the offered harness choices.
+Harness choices and settings schemas come from the bundled catalog generated through the pinned Fabric discovery API, for the whole run.
+The selected image's catalog does not change the offered choices.
+Review checks the selected harness and its configuration against that image's catalog.
+If the image does not advertise the harness or rejects its requirements, review reports the conflict and saving stays blocked until you correct the selection.
+Without a usable image catalog, target compatibility remains unverified.
 Provider presets offer their transport protocols; Fabric's planner checks the selected protocol and complete configuration against the canonical adapter contract.
-The questionnaire keeps a currently selected value visible but disabled if that image does not advertise it; discovery does not silently replace an accepted answer.
-Observations from another engine or image do not constrain the current choices.
-Without a usable current image catalog, the questionnaire uses the bundled catalog generated through the pinned Fabric discovery API, and keeps target compatibility unverified.
 Authoring reads canonical adapter IDs, orders them alphabetically, and preserves the deployment fields owned by the SDK.
 Short aliases are not translated; use the exact adapter identifier.
 Onboarding and authoring contain no harness-specific allowlist, labels, ordering, or inference rules.
 The default selection comes from the bundled YAML template.
-A discovered identifier can be offered without changing the SDK identifier type or adding a frontend branch.
+A new catalog identifier can be offered without changing the SDK identifier type or adding a frontend branch.
 The SDK validates identifier syntax and the document structure; Fabric owns adapter availability and native settings validation.
 Custom adapters require an explicit immutable image containing their descriptor and implementation.
 For exact adapter IDs, Fabric's canonical descriptor `settings_schema` supplies setting questions, types, enum choices, defaults, and required fields.
@@ -162,10 +145,14 @@ Remote placement retains the authored SSH engine; an external gateway does not i
 Inline recipes and explicit policies are edited as complete JSON values using the SDK schema.
 The questionnaire does not invent missing service definitions or discover a qualified image/model revision catalog.
 
-Each answer must satisfy the field schema and the complete SDK document before replacing the previous configuration.
+Each answer must satisfy its active field schema before changing journey state.
+For deployment-scope edits to an already SDK-valid document, authoring also rejects changes that invalidate the complete SDK document.
+Sparse authoring can continue while unrelated required values are still missing; review and saving use the consolidated [authoring gates](../../docs/design/authoring-domain.md#resolution-and-validation-gates).
 Invalid answers leave the document unchanged.
 Unedited fields and reference scopes remain intact, including inline providers, named inference definitions, and public Fabric configuration.
-For multiple routes, choose the route to edit; other routes remain unchanged.
+For multiple routes, choose the route to edit.
+Model edits apply to the selected route.
+Shared-provider API, endpoint, or preset changes affect every referencing route and reopen its model decisions.
 Managed inference retains its service connection instead of being replaced by a hosted endpoint preset.
 
 Template authoring does not install or adopt a service, qualify its image, or establish that the target can run it.

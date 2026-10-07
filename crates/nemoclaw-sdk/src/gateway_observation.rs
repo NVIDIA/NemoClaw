@@ -25,14 +25,28 @@ pub struct GatewayObservation {
     pub compatible: Option<bool>,
 }
 impl GatewayObservation {
+    /// A read that could not be made, recorded as unknown rather than absent.
+    pub fn unknown(reason: &str) -> Self {
+        Self {
+            status: ObservationStatus::Unknown,
+            reason: Some(reason.into()),
+            source: "openshell_gateway_info".into(),
+            capabilities: None,
+            compatible: None,
+        }
+    }
+
     pub fn from_result(
         result: Result<GatewayCapabilities, ObservationError>,
         required: &[crate::config::ComputeDriver],
     ) -> Self {
         match result {
             Ok(capabilities) => {
-                let incompatibility =
-                    capabilities.incompatibility(required.iter().map(|driver| driver.as_str()));
+                let incompatibility = capabilities.incompatibility(
+                    required
+                        .iter()
+                        .map(|driver| driver.openshell_driver().as_str()),
+                );
                 let compatible = !required.is_empty() && incompatibility.is_none();
                 Self {
                     status: if compatible {
@@ -92,7 +106,7 @@ impl GatewayCapabilities {
                             .collect::<Vec<_>>()
                             .join(" / ");
                         format!(
-                            "gateway compute driver is {observed}, but runtime.provider is {driver}"
+                            "gateway compute driver is {observed}, but spec.gateway.runtime.provider is {driver}"
                         )
                     }),
             ),
@@ -105,7 +119,7 @@ impl GatewayCapabilities {
     }
 
     pub fn require(&self, driver: crate::config::ComputeDriver) -> Result<(), Error> {
-        match self.incompatibility([driver.as_str()]) {
+        match self.incompatibility([driver.openshell_driver().as_str()]) {
             Some(reason) => Err(Error::GatewayIncompatible(reason)),
             None => Ok(()),
         }
@@ -150,6 +164,47 @@ impl TryFrom<proto::GetGatewayInfoResponse> for GatewayCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openshift_uses_kubernetes_capabilities_without_weakening_driver_or_version_checks() {
+        let driver = crate::config::ComputeDriver::OpenShift;
+        let mut capabilities = GatewayCapabilities {
+            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            compute_drivers: vec![BTreeSet::from(["kubernetes".into()])],
+        };
+        capabilities.require(driver).unwrap();
+        assert_eq!(
+            GatewayObservation::from_result(Ok(capabilities.clone()), &[driver]).compatible,
+            Some(true)
+        );
+        capabilities.compute_drivers = vec![BTreeSet::from(["docker".into()])];
+        assert!(capabilities.require(driver).is_err());
+        capabilities.compute_drivers = vec![BTreeSet::from(["openshift".into()])];
+        assert!(capabilities.require(driver).is_err());
+        capabilities.compute_drivers = vec![BTreeSet::from(["kubernetes".into()])];
+        capabilities.gateway_version = "0.0.0".into();
+        assert!(capabilities.require(driver).is_err());
+    }
+
+    #[test]
+    fn kubernetes_gateway_requires_the_pinned_version_and_matching_driver() {
+        let driver = "kubernetes".parse().unwrap();
+        let mut capabilities = GatewayCapabilities {
+            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            compute_drivers: vec![BTreeSet::from(["kubernetes".into()])],
+        };
+        capabilities.require(driver).unwrap();
+        assert!(
+            capabilities
+                .require(crate::config::ComputeDriver::Docker)
+                .is_err()
+        );
+        capabilities.gateway_version = "other".into();
+        assert!(capabilities.require(driver).is_err());
+        capabilities.gateway_version = crate::artifact_pins::OPENSHELL_VERSION.into();
+        capabilities.compute_drivers = vec![BTreeSet::from(["docker".into()])];
+        assert!(capabilities.require(driver).is_err());
+    }
 
     #[test]
     fn gateway_compatibility_preserves_driver_aliases_and_rejects_ambiguous_or_incomplete_metadata()
@@ -220,7 +275,7 @@ mod tests {
         assert_eq!(
             observed(required, &[&["podman", "selected"]]).incompatibility(["docker"]),
             Some(
-                "gateway compute driver is podman / selected, but runtime.provider is docker"
+                "gateway compute driver is podman / selected, but spec.gateway.runtime.provider is docker"
                     .into()
             )
         );
@@ -239,14 +294,14 @@ mod tests {
             observed("0.0.1", &[&["docker"]]).incompatibility(["docker", "podman"]),
             Some(format!(
                 "gateway runs OpenShell 0.0.1, but this build requires {required}; \
-                 gateway compute driver is docker, but runtime.provider is podman"
+                 gateway compute driver is docker, but spec.gateway.runtime.provider is podman"
             ))
         );
         assert_eq!(
             observed("1.0\nforged", &[&["docker\u{7}"]]).incompatibility(["docker"]),
             Some(format!(
                 "gateway runs OpenShell 1.0\\nforged, but this build requires {required}; \
-                 gateway compute driver is docker\\u{{7}}, but runtime.provider is docker"
+                 gateway compute driver is docker\\u{{7}}, but spec.gateway.runtime.provider is docker"
             ))
         );
         let error = observed(required, &[&["podman"]])
@@ -256,7 +311,7 @@ mod tests {
         assert_eq!(
             error,
             "gateway is incompatible with this configuration: gateway compute driver is \
-             podman, but runtime.provider is docker"
+             podman, but spec.gateway.runtime.provider is docker"
         );
     }
 }
@@ -288,7 +343,7 @@ mod discovery_tests {
         assert_eq!(mismatch.status, ObservationStatus::Unavailable);
         assert_eq!(
             mismatch.reason.as_deref(),
-            Some("gateway compute driver is docker, but runtime.provider is podman")
+            Some("gateway compute driver is docker, but spec.gateway.runtime.provider is podman")
         );
         let old_version = GatewayObservation::from_result(
             Ok(GatewayCapabilities {
@@ -304,7 +359,7 @@ mod discovery_tests {
             old_version.reason,
             Some(format!(
                 "gateway runs OpenShell 0.0.1, but this build requires {}; gateway compute \
-                 driver is docker, but runtime.provider is podman",
+                 driver is docker, but spec.gateway.runtime.provider is podman",
                 crate::artifact_pins::OPENSHELL_VERSION
             ))
         );

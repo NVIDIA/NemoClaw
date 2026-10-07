@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::docker::Fixture;
+use nemoclaw_e2e::http_fixture::Fixture;
 use std::{
     io::Write,
     sync::{Arc, Mutex},

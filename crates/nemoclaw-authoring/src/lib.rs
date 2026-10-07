@@ -3,41 +3,40 @@
 
 //! Frontend-independent authoring of NemoClaw desired-state documents.
 //!
-//! A [`Draft`] owns the SDK's complete configuration [`nemoclaw_sdk::config::Document`].
-//! Guided fields are a fallible view over curated presets, not a parallel schema.
-//! Edits validate before replacing desired state, and generated YAML is checked by
-//! the SDK parser. Credential references never require loading credential values.
+//! A [`JourneyDefinition`] combines sparse desired-state values with question
+//! guidance. A [`JourneyState`] owns authored values, accepted decisions, and
+//! journey position. Its read-only resolver derives current questions and
+//! produces a validated SDK document when authoring decisions are complete.
+//! Credential references never require loading credential values.
 //! Prompts, rendering, file I/O, and deployment execution belong to consumers.
 
-mod answers;
 mod capabilities;
-mod delegation;
 mod deployment;
 mod diagnostics;
-mod draft;
-mod evidence;
-mod facts;
-mod graph;
-mod guided;
-mod journey;
-mod projection;
+mod discovery_queries;
+mod identity;
+mod journey_definition;
+mod journey_state;
+mod journey_tree;
+mod partial_document;
+mod provider_presets;
+mod target_assessment;
 
-pub use answers::{
-    AnswerOverrides, Answers, ApiChoice, HarnessChoice, ProviderPreset, RuntimeChoice,
-};
 pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
-pub use draft::{
-    AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
+pub use discovery_queries::{discovery_queries, inference_request_for_document};
+pub use identity::new_deployment_uid;
+pub use journey_definition::{
+    JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
 };
-pub use evidence::{
-    CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+pub use journey_state::{
+    DecisionStatus, JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason, JourneyResolution,
+    JourneyState,
 };
-pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
-pub use graph::{AnswerStatus, DependencyGraph};
-pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
-pub use journey::{PartialTemplate, TargetFacts, TargetStatus};
-pub use projection::Session;
+pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
+pub use provider_presets::ProviderPreset;
+pub use target_assessment::{CompatibilityStatus, DiscoveryAssessment, assess_target};
 
+mod fingerprint;
+mod sdk_schema;
 mod settings;
-pub use settings::SettingQuestion;

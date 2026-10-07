@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A deliberately sparse v1 single-sandbox authoring input. The inline forms,
+# one route, and external endpoint are structural choices supplied by the journey.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata: {}
+spec:
+  gateway: {}
+  inferenceProviders:
+    - name: nvidia-prod
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+  sandboxes:
+    - harness: {}
+      agent:
+        inference:
+          routes:
+            - providerRef: nvidia-prod
+              overrides: {}

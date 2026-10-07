@@ -35,7 +35,7 @@ NVIDIA notices identify NemoClaw contributions; they do not replace upstream own
 | `verify_packed.py` | Adapted from `files/build_ple_packed_table.py` on 2026-09-11. Verifies tensor shape, size, snapshot identity, and every packed row, then emits a hash. | AGPL-3.0-or-later |
 | `apply_patches.py` | Adapts `start.sh` patch installation and the `files/patch_ple_offload.py` worker patch. On 2026-09-11, added immutable input checks, source retention, and rejection of a missing packed PLE table. | AGPL-3.0-or-later |
 | `prepare.py`, `verify.py` | NemoClaw JSON protocol adapters that invoke the separately licensed preparation and verification programs as subprocesses. | Apache-2.0 |
-| `test_prepare.py`, `test_attribution.py`, `crates/nemoclaw-e2e/fixtures/spark_preparation.py` | NemoClaw tests of recovery, generated notices, and the upstream packed-table format. | Apache-2.0 |
+| `test_prepare.py`, `test_attribution.py` | NemoClaw tests of recovery and generated notices. | Apache-2.0 |
 
 On 2026-09-18, `apply_patches.py` renamed its generated-file hash mapping without changing `patched-files.json`.
 
@@ -67,11 +67,9 @@ Calling a recipe program does not replace that program's license with the caller
 ## Retained Sources
 
 The build recipe, original sources, modified sources, licenses, and immutable input pins remain available inside the image for inspection and source retrieval.
-The build does not publish artifacts.
 
 The supervisor and its standalone Rust workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
 The archive includes the runtime crate and its policy attribution, a pruned `Cargo.lock`, vendored dependencies with their original licenses, and Cargo source replacement configuration.
-On 2026-09-29, the archive was narrowed to runtime build inputs after serving and supervision moved out of the SDK.
 The supervisor is compiled offline from that exact archive.
 The archive excludes every `runtimes/` directory, including this recipe.
 This image retains its recipe scripts separately under `/opt/nemoclaw/source/` and `/opt/nemoclaw/recipe/`.
@@ -81,6 +79,5 @@ This image retains its recipe scripts separately under `/opt/nemoclaw/source/` a
 Building the retained supervisor requires the pinned Rust toolchain and a native C build toolchain.
 It does not require the Protocol Buffers compiler.
 
-These corrections apply to newly built artifacts; they do not alter previously built images or historical validation records.
 Retaining source and attribution does not itself provide the remote-user source offer required by AGPL section 13 for a modified network service.
 Deployment and distribution obligations must also be satisfied.

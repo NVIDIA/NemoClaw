@@ -232,7 +232,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     let cancel = CancellationToken::new();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     client
-        .verify_gateway(document.spec.sandboxes[0].runtime.provider)
+        .verify_gateway(document.spec.gateway.runtime().provider)
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);

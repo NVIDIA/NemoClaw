@@ -8,12 +8,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the crate and its dependencies once.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
 
 [dependencies]
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 getrandom.workspace = true
+jsonschema.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

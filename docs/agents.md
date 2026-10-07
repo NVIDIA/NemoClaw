@@ -43,17 +43,16 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON object from a file and returns Fabric's result in `result.fabric_result`.
-The caller stages and removes the file; see the [bridge commands](design/fabric-management.md#bridge-commands).
+Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
-Do not reuse the former NemoClaw `fabric.configuration` helper or assume a universal prompt/result shape.
-A qualified native request walkthrough for this migrated runtime remains **TBD**.
+Do not assume a universal prompt/result shape.
+No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
 Native gateway configuration and request semantics belong to the OpenClaw adapter.
 For browser access, see [agent interfaces](interfaces.md#openclaw-dashboard).
-The former adapter-specific NemoClaw probe commands are not part of the generic runtime contract.
 
 ## Native Controls at Initialization
 
@@ -93,8 +92,8 @@ Native delivery and live collector qualification remain separate from configurat
 
 Relay configuration belongs to Fabric's public configuration and the exact Hermes adapter contract.
 It does not trigger adapter selection in NemoClaw.
-Do not carry forward the former local-versus-upstream adapter switch or infer native API availability from a tracing setting.
-Qualification of the migrated Relay configuration, trace artifacts, and retained native sessions remains **TBD**.
+Do not infer native API availability from a tracing setting.
+Relay configuration, trace artifacts and retained sessions have not been tested live ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ## Define and Attach Integrations
 
@@ -148,7 +147,7 @@ The reserved `nemoclaw-tavily` profile authorizes the supported search/extract p
 Inference names using `tavily-search` or its registration prefix are reserved when attached.
 Unused definitions create no resources or credentials.
 Follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
-Live Tavily/OpenShell qualification for this migration remains **TBD**.
+Tavily search has not been tested live through OpenShell ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Hermes Native Server
 
@@ -163,7 +162,6 @@ Native file drift requires an observation contract supplied by Fabric; the gener
 The [Pi example](../examples/fabric-pi.yaml) supplies native registry metadata through `overrides.settings.model_metadata`.
 Fabric's Pi adapter owns that metadata's schema and mapping.
 The SDK forwards the selected provider API as a public model extension and preserves each named route plus the `default` role.
-The former `piModel` field and adapter-specific NemoClaw runtime wire are no longer accepted.
 
 Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.
 When sandbox identity, provider attachments, image, and policy remain unchanged, the runtime restarts inside the existing sandbox.
@@ -172,7 +170,7 @@ Changing sandbox resources can still require a separate deployment under the nor
 
 ## Runtime Lifecycle
 
-Build the selected agent image with its installed Fabric metadata using the [image procedure](inference.md#build-an-image-with-the-configuration-interface).
+Build the selected agent image with its installed Fabric metadata using the [image procedure](build.md#build-agent-images).
 Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect retained sandboxes, provider registrations, and storage.
 

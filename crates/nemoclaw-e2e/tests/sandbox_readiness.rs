@@ -2,21 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::{openshell::Fixture, tofu::TofuWorkspace};
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated gateway fixture"]
 async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindings() {
     let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
     let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     let fixture = Fixture::start().await;
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root.to_str().unwrap()).unwrap())).unwrap();
     let mut document = Document::parse(
         include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_slice(),
     )
@@ -29,14 +27,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     let mut graph = compile::compile(&document, &generations, "0.1.0").unwrap();
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
-        let output = Command::new(&tofu)
-            .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap();
+        let output = directory.command().args(args).output().unwrap();
         assert_eq!(
             output.status.success(),
             success,

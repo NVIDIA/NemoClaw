@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use nemoclaw_e2e::http_fixture as transport;
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 use serde_json::{Value, json};
 use std::{
     fs,
     path::PathBuf,
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -41,10 +40,8 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         };
         Some((200, serde_json::to_vec(&body).unwrap()))
     }).await;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root).unwrap())).unwrap();
     let config = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},
         "provider":{"nemoclaw":{}},
@@ -67,14 +64,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     });
     fs::write(root.join("main.tf.json"), config.to_string()).unwrap();
     let run = |args: &[&str]| {
-        let result = Command::new(&tofu)
-            .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap();
+        let result = directory.command().args(args).output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -107,123 +97,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
-async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initialization() {
-    use nemoclaw_sdk::{
-        CancellationToken,
-        bundle::{Manifest, hash_file, required_files},
-        config::ComputeDriver,
-        discovery::{DiscoveryRequest, ObservationStatus},
-        discovery_session::DiscoverySession,
-    };
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let bundle = tempfile::tempdir().unwrap();
-    let mut manifest = Manifest {
-        version: "0.1.0".into(),
-        rust: "test fixture".into(),
-        opentofu: nemoclaw_sdk::compile::OPENTOFU_VERSION.into(),
-        files: Default::default(),
-    };
-    for relative in required_files(&manifest.version).unwrap() {
-        let target = bundle.path().join(&relative);
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        if relative.starts_with("providers/") {
-            fs::copy(&provider, &target).unwrap();
-        } else if relative.starts_with("libexec/") {
-            fs::copy(&tofu, &target).unwrap();
-        } else {
-            fs::write(&target, b"isolated bundle fixture; unused by discovery").unwrap();
-        }
-        manifest.files.insert(relative, hash_file(&target).unwrap());
-    }
-    fs::write(
-        bundle.path().join("manifest.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    let catalog = FabricCatalog::bundled();
-    let catalog_json = serde_json::to_string(&catalog).unwrap();
-    let requests = Arc::new(AtomicUsize::new(0));
-    let seen = requests.clone();
-    let fixture=transport::Fixture::start(move |request| {
-        assert_eq!(request.method,"GET");
-        assert!(request.body.is_empty());
-        seen.fetch_add(1,Ordering::SeqCst);
-        let body=match request.path.as_str() {
-            "/info"=>json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"}),
-            "/images/labeled:image/json"=>json!({"Id":"sha256:fixture", "Config":{"Labels":{IMAGE_CATALOG_LABEL:catalog_json}}}),
-            other=>panic!("unexpected engine query {other}"),
-        };
-        Some((200,serde_json::to_vec(&body).unwrap()))
-    }).await;
-    let mut session = DiscoverySession::new(bundle.path()).unwrap();
-    let cancel = CancellationToken::new();
-    let start = std::time::Instant::now();
-    let observed = session
-        .engine(
-            &DiscoveryRequest {
-                engine: fixture.endpoint.clone(),
-                compute_driver: ComputeDriver::Docker,
-            },
-            &cancel,
-        )
-        .await
-        .unwrap();
-    eprintln!(
-        "SDK discovery cold initialization + engine plan/show: {:?}",
-        start.elapsed()
-    );
-    assert_eq!(observed.status, ObservationStatus::Available);
-    let start = std::time::Instant::now();
-    let observed = session
-        .fabric(&fixture.endpoint, "labeled:image", &cancel)
-        .await
-        .unwrap();
-    eprintln!("SDK discovery warm Fabric plan/show: {:?}", start.elapsed());
-    assert_eq!(observed.status, ObservationStatus::Available);
-    assert_eq!(observed.catalog, Some(catalog));
-    use nemoclaw_sdk::discovery_session::{DiscoveryObservation, DiscoveryQuery};
-    let query = DiscoveryQuery::Engine(DiscoveryRequest {
-        engine: fixture.endpoint.clone(),
-        compute_driver: ComputeDriver::Docker,
-    });
-    let start = std::time::Instant::now();
-    let batched = session
-        .batch(
-            &[
-                query.clone(),
-                DiscoveryQuery::Hardware {
-                    engine: fixture.endpoint.clone(),
-                },
-                DiscoveryQuery::Fabric {
-                    engine: fixture.endpoint.clone(),
-                    image: "labeled:image".into(),
-                },
-                query,
-            ],
-            &cancel,
-        )
-        .await
-        .unwrap();
-    eprintln!(
-        "SDK discovery warm engine/hardware/Fabric batch plan/show: {:?}",
-        start.elapsed()
-    );
-    assert_eq!(batched[0], batched[3]);
-    assert!(
-        matches!(&batched[1],DiscoveryObservation::Hardware(value) if value.architecture.as_deref()==Some("arm64") && !value.gpu_inventory_complete)
-    );
-    assert_eq!(requests.load(Ordering::SeqCst), 5);
-    assert!(!bundle.path().join("terraform.tfstate").exists());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
-async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_metadata() {
+async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -231,6 +105,10 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
         std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
     );
     assert!(tofu.is_absolute() && provider.is_absolute());
+    let document =
+        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
+            .unwrap();
+    let image = document.spec.sandboxes[0].image.ref_.clone();
     let mode = Arc::new(AtomicUsize::new(0));
     let current = mode.clone();
     let requests = Arc::new(AtomicUsize::new(0));
@@ -243,20 +121,24 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
             json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"})
         } else {
             assert!(request.path.starts_with("/images/") && request.path.ends_with("/json"));
-            let mut catalog=FabricCatalog::bundled();
+            let mut catalog=nemoclaw_e2e::image_runtime::catalog();
             match current.load(Ordering::SeqCst) {
-                1=>catalog.adapters.retain(|adapter|adapter.adapter_id()!="nvidia.fabric.openclaw"),
+                1=>{
+                    catalog.adapters.retain(|adapter|adapter.adapter_id()!="nvidia.fabric.openclaw");
+                    catalog.runtime.as_mut().unwrap().binaries.remove("nvidia.fabric.openclaw");
+                },
                 2=>return Some((200,br#"{"Id":"sha256:unlabeled","Config":{"Labels":{}}}"#.to_vec())),
                 3=>return Some((404,br#"{"message":"not found"}"#.to_vec())),
+                4=>{
+                    catalog.adapters.iter_mut().find(|adapter|adapter.adapter_id()=="nvidia.fabric.openclaw")
+                        .unwrap().descriptor.as_object_mut().unwrap().remove("extension_schemas");
+                },
                 _=>{}
             }
-            json!({"Id":"sha256:fixture", "Config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog).unwrap()}}})
+            json!({"Id":"sha256:fixture", "Architecture":"arm64", "Os":"linux", "RepoDigests":[image], "Config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog).unwrap()}}})
         };
         Some((200,serde_json::to_vec(&body).unwrap()))
     }).await;
-    let document =
-        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
-            .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"]["engine"] = json!(fixture.endpoint);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
@@ -287,19 +169,14 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
         },
         "output":output
     });
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(root).unwrap())).unwrap();
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
-    for selected in 0..4 {
+    for selected in 0..5 {
         mode.store(selected, Ordering::SeqCst);
-        let result = Command::new(&tofu)
+        let result = directory
+            .command()
             .args(["plan", "-input=false", "-no-color", "-out=plan.bin"])
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
             .output()
             .unwrap();
         let diagnostics = format!(
@@ -307,8 +184,40 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
-        assert_eq!(result.status.success(), selected != 1, "{diagnostics}");
-        if selected == 1 {
+        let compatible = match selected {
+            0 => Some("supported"),
+            4 => Some("unknown"),
+            _ => None,
+        };
+        assert_eq!(
+            result.status.success(),
+            compatible.is_some(),
+            "{diagnostics}"
+        );
+        if let Some(expected) = compatible {
+            let output = directory
+                .command()
+                .args(["show", "-json", "plan.bin"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+            let observation: Value = serde_json::from_str(
+                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_0"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(observation["catalog"]["runtime"].is_object());
+            assert!(
+                observation["compatibility"]["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|check| check["requirement"] == "fabric_plan"
+                        && check["status"] == expected)
+            );
+        } else if selected == 1 {
             assert!(
                 diagnostics.contains("Resource postcondition failed"),
                 "{diagnostics}"
@@ -317,235 +226,13 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
                 diagnostics.contains("sandbox/assistant: adapter/nvidia.fabric.openclaw"),
                 "{diagnostics}"
             );
-        }
-    }
-    assert_eq!(requests.load(Ordering::SeqCst), 12);
-    assert!(!root.join("terraform.tfstate").exists());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit Fabric descriptor, OpenTofu and provider paths; isolated engine fixture"]
-async fn fabric_owned_adapter_settings_reach_real_planning_without_consumer_manifests() {
-    use nemoclaw_sdk::{compile::compile, config::Document};
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("OpenTofu path"));
-    let provider =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("provider path"));
-    let descriptor_path = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_FABRIC_DESCRIPTOR").expect("Fabric-owned descriptor path"),
-    );
-    let descriptor: Value = serde_json::from_slice(&fs::read(&descriptor_path).unwrap()).unwrap();
-    let adapter_id = descriptor["adapter_id"].as_str().unwrap().to_owned();
-    let python = std::env::var_os("NEMOCLAW_TEST_FABRIC_PYTHON")
-        .expect("Fabric interpreter with installed fixture");
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path();
-    let bridge_directory =
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/fabric"))
-            .canonicalize()
-            .unwrap();
-    let runtime_manifest = root.join("runtime.json");
-    fs::write(
-        &runtime_manifest,
-        json!({
-            "schema_version": 1,
-            "command": [python.to_str().unwrap(), bridge_directory.join("fabric.py")],
-            "environment": {"ADAPTER_PYTHON": python.to_str().unwrap()},
-            "required_paths": [bridge_directory],
-            "policy": {
-                "version": 1,
-                "filesystem_policy": {"read_only": [bridge_directory], "read_write": [root]},
-                "process": {"run_as_user": "1000", "run_as_group": "1000"},
-                "network_policies": {}
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let bundled = FabricCatalog::bundled();
-    let packaged = Command::new(&python)
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../image/fabric/catalog.py"
-        ))
-        .args([
-            "--installed",
-            "--runtime-manifest",
-            runtime_manifest.to_str().unwrap(),
-            "--revision",
-            &bundled.fabric_revision,
-            "--source-sha256",
-            &bundled.source_sha256,
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        packaged.status.success(),
-        "{}",
-        String::from_utf8_lossy(&packaged.stderr)
-    );
-    let label = String::from_utf8(packaged.stdout).unwrap();
-    let catalog = FabricCatalog::from_json(&label).unwrap();
-    let record = catalog
-        .adapters
-        .iter()
-        .find(|record| record.adapter_id() == adapter_id)
-        .expect("installed Fabric fixture discovered by packaging");
-    for (field, value) in descriptor.as_object().unwrap() {
-        assert_eq!(
-            &record.descriptor[field], value,
-            "owner-authored field {field}"
-        );
-    }
-    assert!(
-        record
-            .provenance
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|source| source["source"] == "installed_package")
-    );
-    let fixture = transport::Fixture::start(move |request| {
-        assert_eq!(request.method,"GET");
-        assert!(request.body.is_empty());
-        let response = if request.path == "/info" {
-            json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"})
-        } else {
-            assert!(request.path.starts_with("/images/") && request.path.ends_with("/json"));
-            json!({"Id":"sha256:fixture","Architecture":"arm64","Os":"linux","RepoDigests":[format!("fixture-fabric@sha256:{}", "a".repeat(64))],"Config":{"Labels":{IMAGE_CATALOG_LABEL:label}}})
-        };
-        Some((200,serde_json::to_vec(&response).unwrap()))
-    }).await;
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(root).unwrap())).unwrap();
-    let from_wizard = std::env::var_os("NEMOCLAW_TEST_AUTHORED_YAML").is_some();
-    let authored = std::env::var_os("NEMOCLAW_TEST_AUTHORED_YAML")
-        .map(|path| fs::read_to_string(path).unwrap())
-        .unwrap_or_else(|| include_str!("../../../examples/onboarding/openclaw.yaml").into());
-    let mut input: Value = serde_saphyr::from_str(&authored).unwrap();
-    input["spec"]["gateway"]["engine"] = fixture.endpoint.clone().into();
-    let expected_harness = json!({"kind":adapter_id,"settings":{"mode":"advanced","budget":4}});
-    if from_wizard {
-        assert_eq!(input["spec"]["sandboxes"][0]["harness"], expected_harness);
-    } else {
-        input["spec"]["sandboxes"][0]["harness"] = expected_harness;
-    }
-    input["spec"]["sandboxes"][0]["image"] =
-        json!({"ref":format!("fixture-fabric@sha256:{}", "a".repeat(64))});
-    let model =
-        &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"];
-    if from_wizard {
-        assert_eq!(*model, "fixture-model");
-    } else {
-        *model = "fixture-model".into();
-    }
-    let generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .map(|name| (name.into(), "a".repeat(32)))
-    .into();
-    for valid in [true, false] {
-        if !valid {
-            input["spec"]["sandboxes"][0]["harness"]["settings"]
-                .as_object_mut()
-                .unwrap()
-                .remove("budget");
-        }
-        let document = Document::parse(input.to_string().as_bytes()).unwrap();
-        let compiled = compile(&document, &generations, "0.1.0").unwrap();
-        let graph = json!({
-            "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},
-            "provider":{"nemoclaw":{}},
-            "output":{"compatibility":{"value":"${data.nemoclaw_fabric_capabilities.sandbox_0.compatibility_status}"}},
-            "data":{
-                "nemoclaw_engine_capabilities":compiled["data"]["nemoclaw_engine_capabilities"],
-                "nemoclaw_fabric_capabilities":compiled["data"]["nemoclaw_fabric_capabilities"]
-            }
-        });
-        fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
-        let result = Command::new(&tofu)
-            .args(["plan", "-input=false", "-no-color", "-out=checked.plan"])
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap();
-        let diagnostics = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert_eq!(result.status.success(), valid, "{diagnostics}");
-        if valid {
-            let output = Command::new(&tofu)
-                .args(["show", "-json", "checked.plan"])
-                .current_dir(root)
-                .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-                .output()
-                .unwrap();
-            assert!(output.status.success());
-            let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(
-                plan["planned_values"]["outputs"]["compatibility"]["value"],
-                "supported"
-            );
-            let resource = compiled["resource"]["nemoclaw_agent_configuration"]
-                .as_object()
-                .unwrap()
-                .values()
-                .next()
-                .unwrap();
-            let config_path = root.join("fabric-config.json");
-            fs::write(&config_path, resource["config_json"].as_str().unwrap()).unwrap();
-            let result = Command::new(&python)
-                .args([
-                    "-c",
-                    r#"
-import asyncio, json, sys, tempfile
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from fabric import RuntimeHost
-async def run():
-    config = json.loads(Path(sys.argv[2]).read_text())
-    with tempfile.TemporaryDirectory() as directory:
-        # Owned test locations replace only deployment paths; native authored
-        # settings and the compiled model/adapter configuration stay unchanged.
-        config['environment']['workspace'] = directory
-        config['runtime']['artifacts'] = directory
-        host = RuntimeHost(config['metadata']['name'], Path(directory))
-        try:
-            configured = await host.handle({'operation':'configure', 'agent':config['metadata']['name'], 'config':config, 'expected_generation':host.snapshot()['generation']})
-            assert configured['status'] == 'succeeded', configured
-            result = await host.handle({'operation':'invoke', 'agent':config['metadata']['name'], 'input':{'proof':'authored'}})
-            assert result['status'] == 'succeeded', result
-            native = result['result']['fabric_result']
-            assert native['output']['settings'] == config['harness']['settings'], result
-            assert native['output']['input'] == {'proof':'authored'}, result
-        finally:
-            await host.stop()
-asyncio.run(run())
-"#,
-                ])
-                .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/fabric"))
-                .arg(&config_path)
-                .env("ADAPTER_PYTHON", &python)
-                .output()
-                .unwrap();
-            assert!(
-                result.status.success(),
-                "{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
         } else {
             assert!(
-                diagnostics.contains("Resource postcondition failed"),
+                diagnostics.contains("image runtime metadata is unavailable"),
                 "{diagnostics}"
             );
         }
     }
+    assert_eq!(requests.load(Ordering::SeqCst), 15);
     assert!(!root.join("terraform.tfstate").exists());
 }

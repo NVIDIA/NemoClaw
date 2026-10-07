@@ -11,11 +11,11 @@ Modifications on 2026-09-15:
 
 - Extend `fern/docs.yml` with Latest (main) and v1 version entries, retaining main's routes, redirects, components, styling, and Fern CLI pin.
 - Darken the light-mode accent to satisfy Fern's contrast check; retain NVIDIA green in dark mode.
-- Adapt PR preview, staging, release publishing, and preview cleanup behavior into `.github/workflows/docs.yml` and `tools/docs/fern.py`.
+- Adapt PR preview, staging, release publishing, and preview cleanup behavior into `.github/workflows/docs.yml` and `crates/nemoclaw-build/src/fern.rs`; on 2026-10-05 that publisher moved from `tools/docs/fern.py` to Rust without changing its behavior.
 - Generate v1 pages through Cargo and preserve main's generators in an isolated import pinned by `main-source.json`.
 - Use a separate locked npm manifest containing only `yaml` for the imported generators, executed with Node's built-in TypeScript support.
 - Rewrite imported absolute Markdown snippet paths from `/../docs/` to `/_main/docs/`; retain the original content and notices.
 - Isolate previews with `nemoclaw-v1` IDs and gate shared-site release publication on explicit enablement after publisher coordination.
 - Reuse the reviewed-npm setup action at immutable revision `98669f24d35f18e49b6b2769cd68709509ea24f2`; its upstream notice and audited npm identity remain in that action's repository checkout.
 
-The generator and tests under `crates/nemoclaw-build` are original NemoClaw code.
+The generator, its tests, and the publisher's tests under `crates/nemoclaw-build` are original NemoClaw code; `src/fern.rs` adapts main's publishing workflow as listed above.

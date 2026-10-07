@@ -2,6 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use crate::config::ComputeDriver;
+
+fn assert_kubernetes_rejected_by_managed_entrypoints(mut spec: Spec) {
+    spec.validate().unwrap();
+    for driver in [ComputeDriver::Kubernetes, ComputeDriver::OpenShift] {
+        spec.compute_driver = driver;
+        assert!(matches!(
+            spec.validate(),
+            Err(Error::Conflict("unsupported managed compute driver"))
+        ));
+        assert!(spec.json().is_err());
+        assert!(spec.container("/owned-data").is_err());
+        assert!(spec.runtime_configuration().is_err());
+    }
+}
+
+#[test]
+fn kubernetes_cannot_select_a_managed_gateway() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    assert!(spec.process.is_none());
+    assert_kubernetes_rejected_by_managed_entrypoints(spec);
+}
+
+#[test]
+fn kubernetes_cannot_select_a_managed_service_process() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    assert!(spec.process.is_some());
+    assert_kubernetes_rejected_by_managed_entrypoints(spec);
+}
+
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
@@ -278,7 +315,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_driver_default_host_callback_without_legacy_docker_fields() {
+fn managed_gateway_uses_driver_default_host_callback() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "../../../nemoclaw-provider/src/managed/reference.json"
     ))
@@ -373,21 +410,4 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
             .unwrap()
     );
     assert!(spec.binding_namespace(Some("random-first"), None).is_err());
-}
-
-#[test]
-fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
-    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-        "../../../nemoclaw-provider/src/managed/reference.json"
-    ))
-    .unwrap();
-    for fixture in fixtures {
-        let current: serde_json::Value =
-            serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
-        for management in ["managed", "external"] {
-            let mut legacy = current.clone();
-            legacy["gateway"]["management"] = json!(management);
-            assert!(serde_json::from_value::<Spec>(legacy).is_err());
-        }
-    }
 }

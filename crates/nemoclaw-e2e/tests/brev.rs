@@ -403,7 +403,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
     assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert_eq!(
-        document.spec.sandboxes[0].runtime.provider,
+        document.spec.gateway.runtime().provider,
         ComputeDriver::Docker
     );
     assert_eq!(
@@ -489,7 +489,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
 
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     client
-        .verify_gateway(document.spec.sandboxes[0].runtime.provider)
+        .verify_gateway(document.spec.gateway.runtime().provider)
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);

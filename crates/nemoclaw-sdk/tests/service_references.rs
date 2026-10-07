@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#[path = "support/provider_scope.rs"]
-mod provider_scope;
+use crate::provider_scope;
 
 use nemoclaw_sdk::{
     compile::{Generations, compile, runtime_targets},
@@ -54,37 +53,10 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
 }
 
 #[test]
-fn service_references_reject_missing_names_and_legacy_inline_installers() {
+fn service_references_reject_missing_names() {
     let mut missing = managed_ollama_service();
     missing["spec"]["inferenceProviders"][0]["serviceRef"] = json!("missing");
     assert!(Document::parse(missing.to_string().as_bytes()).is_err());
-
-    let mut legacy = managed_ollama_service();
-    let inline = legacy["spec"]["services"]
-        .as_object_mut()
-        .unwrap()
-        .remove("ollama-server")
-        .unwrap();
-    legacy["spec"].as_object_mut().unwrap().remove("services");
-    let provider = &mut legacy["spec"]["inferenceProviders"][0];
-    provider.as_object_mut().unwrap().remove("serviceRef");
-    provider["service"] = inline;
-    assert!(Document::parse(legacy.to_string().as_bytes()).is_err());
-}
-
-#[test]
-fn removed_ollama_backends_cannot_resolve_saved_resource_rows() {
-    let connections = nemoclaw_provider::docker::Connections::default();
-    let registry = nemoclaw_provider::services::BackendRegistry::new(&connections);
-    for kind in ["ollama", "ollama_storage", "ollama_model"] {
-        assert!(!nemoclaw_provider::services::installers::ollama::ProxyBackend::supports(kind));
-        assert!(
-            registry
-                .resolve(kind, &Default::default())
-                .unwrap()
-                .is_none()
-        );
-    }
 }
 
 #[test]
@@ -102,7 +74,7 @@ fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
             "endpoint".into(),
             serde_json::json!("https://inference.example/v1"),
         );
-        value["spec"]["sandboxes"][0]["runtime"]["provider"] = serde_json::json!("podman");
+        value["spec"]["gateway"]["runtime"]["provider"] = serde_json::json!("podman");
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }

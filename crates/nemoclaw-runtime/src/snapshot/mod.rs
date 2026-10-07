@@ -321,11 +321,6 @@ impl Client {
             return Ok(local);
         }
         if is_new {
-            if fs::symlink_metadata(directory.join(".nemoclaw-complete.json")).is_ok() {
-                return Err(failure(
-                    "unsupported legacy model metadata; retained for inspection",
-                ));
-            }
             let path = safe_path(directory, MANIFEST_FILE, true)?;
             save_json(&path, &local)?;
         }
