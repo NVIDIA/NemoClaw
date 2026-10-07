@@ -75,7 +75,21 @@ function prepare(
       runtime: options.runtime ?? RUNTIME,
     },
     {
-      capture: (_operation, args) => capture(args),
+      displayName: "Docker",
+      inspectLocal: (reference) => {
+        const inspection = capture(["image", "inspect", reference]);
+        return inspection.error
+          ? { status: "failed", error: inspection.error }
+          : inspection.status === 0
+            ? { status: "present", inspection }
+            : /(?:No such image|No such object)(?::|$)/iu.test(inspection.stderr)
+              ? { status: "absent" }
+              : { status: "failed" };
+      },
+      pull: (reference) => capture(["pull", reference]),
+      inspectPulled: (reference) => capture(["image", "inspect", reference]),
+      normalizeContentId: (value) =>
+        typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value) ? value : null,
     },
   );
 }
@@ -203,7 +217,7 @@ describe("external image preparation", () => {
       result({ status: 1, stdout: "", stderr: "", error: new Error("spawn docker ENOENT") }),
     );
 
-    expect(() => prepare(capture)).toThrow("Docker image inspection is unavailable");
+    expect(() => prepare(capture)).toThrow("Docker could not inspect the requested image locally");
     expect(capture).toHaveBeenCalledExactlyOnceWith(["image", "inspect", REFERENCE]);
   });
 
@@ -402,11 +416,15 @@ describe("external image runtime capability", () => {
     });
   });
 
-  it("keeps external images unsupported for Podman", () => {
+  it("projects exact-digest OpenClaw and Hermes support for Podman", () => {
     expect(
       resolveSandboxWorkloadRuntimeCapabilities({ driverName: "podman" }, undefined, "x64")
         .externalImages,
-    ).toBeNull();
+    ).toEqual({
+      exactDigestReferences: true,
+      platforms: ["linux/amd64"],
+      agents: ["openclaw", "hermes"],
+    });
   });
 });
 

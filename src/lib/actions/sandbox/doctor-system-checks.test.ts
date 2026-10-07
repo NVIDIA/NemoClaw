@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -161,7 +161,7 @@ describe("doctor system checks", () => {
     const { cloudflaredDoctorCheck } = requireDist(modulePath);
 
     expect(
-      cloudflaredDoctorCheck("my-sandbox", () => ({
+      cloudflaredDoctorCheck("my-sandbox", 18_789, () => ({
         kind: "unverified-pid-process",
         pid: 4242,
         reason: "inspection-unavailable",
@@ -173,5 +173,41 @@ describe("doctor system checks", () => {
       detail: "PID 4242, identity unavailable",
       hint: "process identity is unavailable; restore process inspection access, then retry",
     });
+  });
+
+  it("reports legacy tunnel migration conflicts without aborting doctor", () => {
+    const { cloudflaredDoctorCheck } = requireDist(modulePath);
+    const result = cloudflaredDoctorCheck("my-sandbox", 18_789, undefined, () => {
+      throw new Error("Multiple live cloudflared PID records exist");
+    });
+
+    expect(result).toMatchObject({
+      status: "warn",
+      detail: "Multiple live cloudflared PID records exist",
+      hint: "inspect each process and stop only the unintended one, then rerun `nemoclaw my-sandbox doctor`",
+    });
+  });
+
+  it("reads and migrates tunnel state for the sandbox gateway port", () => {
+    const home = mkdtempSync(join(tmpdir(), "nemoclaw-doctor-gateway-port-"));
+    const tunnelDir = join(home, ".nemoclaw", "gateways", "19080", "state", "tunnel");
+    const migrateState = vi.fn(() => false);
+    vi.stubEnv("HOME", home);
+    try {
+      mkdirSync(tunnelDir, { recursive: true });
+      writeFileSync(join(tunnelDir, "cloudflared.pid"), "not-a-pid", { mode: 0o600 });
+      const { cloudflaredDoctorCheck } = requireDist(modulePath);
+
+      expect(cloudflaredDoctorCheck("my-sandbox", 19_080, undefined, migrateState)).toMatchObject({
+        status: "warn",
+        detail: "stale PID file",
+      });
+      expect(migrateState).toHaveBeenCalledWith({
+        sandboxName: "my-sandbox",
+        gatewayPort: 19_080,
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

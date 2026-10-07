@@ -214,8 +214,13 @@ export type CleanupSandboxServicesDeps = {
     sandboxName: string;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
+    stopCloudflared?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
+  migrateLegacyCloudflaredState?: (
+    opts: { sandboxName: string; gatewayPort?: number },
+    deps?: { recoverySandboxName?: string },
+  ) => boolean;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -287,9 +292,11 @@ export async function cleanupSandboxServices(
   {
     stopHostServices = false,
     channelStopTransport,
+    gatewayPort,
   }: {
     stopHostServices?: boolean;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
+    gatewayPort?: number;
   } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
@@ -309,6 +316,7 @@ export async function cleanupSandboxServices(
       sandboxName: string;
       channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
+      stopCloudflared?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
@@ -316,6 +324,7 @@ export async function cleanupSandboxServices(
           sandboxName: string;
           channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
+          stopCloudflared?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
       };
@@ -374,6 +383,20 @@ export async function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const migrateLegacyCloudflaredState =
+    deps.migrateLegacyCloudflaredState ??
+    ((
+      opts: { sandboxName: string; gatewayPort?: number },
+      migrationDeps?: { recoverySandboxName?: string },
+    ) => {
+      const services = require("../../tunnel/services") as {
+        migrateLegacyCloudflaredState: (
+          options: { sandboxName: string; gatewayPort?: number },
+          deps?: { recoverySandboxName?: string },
+        ) => boolean;
+      };
+      return services.migrateLegacyCloudflaredState(opts, migrationDeps);
+    });
   const stopGooglechatWebhookTunnel =
     deps.stopGooglechatWebhookTunnel ??
     ((name: string) => {
@@ -397,6 +420,10 @@ export async function cleanupSandboxServices(
     });
 
   const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
+  migrateLegacyCloudflaredState(
+    { sandboxName: validatedSandboxName, gatewayPort },
+    { recoverySandboxName: validatedSandboxName },
+  );
   try {
     stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {
@@ -415,8 +442,8 @@ export async function cleanupSandboxServices(
   let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
     // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
-    // route or retained cleanup work. Don't probe an unrelated daemon for a
-    // sandbox with no Ollama ownership, and don't double-call cleanup here.
+    // route or retained cleanup work. The dashboard tunnel has independent
+    // host lifetime and must survive every sandbox destroy (#11628).
     try {
       ollamaCleanup = withOllamaModelOwnershipLock(() => {
         const sandbox = getSandbox(validatedSandboxName);
@@ -429,6 +456,7 @@ export async function cleanupSandboxServices(
           sandboxName: validatedSandboxName,
           ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
+          stopCloudflared: false,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
       });
@@ -1117,6 +1145,10 @@ async function destroySandboxUnlocked(
     await cleanupSandboxServices(
       sandboxName,
       {
+        gatewayPort:
+          registeredSandbox === null
+            ? (retainedRecoveryAuthority?.gatewayPort ?? registryAuthority.gatewayPort)
+            : registryAuthority.gatewayPort,
         stopHostServices: shouldStopHostServices,
         ...(destroyChannelStopTransport
           ? { channelStopTransport: destroyChannelStopTransport }
