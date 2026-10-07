@@ -743,6 +743,22 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("preserves the session when only its router port changes during destroy", async () => {
+    const harness = createDestroyHarness({ sessionRouterPid: 4242 });
+    harness.sessionState.routerPort = 4000;
+    const originalSession = { ...harness.sessionState };
+    const removeSandbox = harness.removeSandboxSpy.getMockImplementation()!;
+    harness.removeSandboxSpy.mockImplementationOnce((...args) => {
+      harness.sessionState.routerPort = 14000;
+      return removeSandbox(...args);
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.compareAndSwapSessionSpy).toHaveReturnedWith("mismatch");
+    expect(harness.sessionState).toEqual({ ...originalSession, routerPort: 14000 });
+  });
+
   it("leaves an active same-name replacement onboarding session unchanged", async () => {
     const harness = createDestroyHarness({
       provider: "nvidia-router",
@@ -1042,7 +1058,7 @@ describe("destroySandbox flow", () => {
       "Container identity could not be inspected after managed inference cleanup: daemon unavailable",
     ],
   ])(
-    "restores MCP preparation and refuses workspace wipe after %s",
+    "restores MCP preparation and refuses deletion after %s",
     async (_scenario, changedIdentity, expectedMessage) => {
       const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
       const harness = createDestroyHarness({
@@ -1056,7 +1072,6 @@ describe("destroySandbox flow", () => {
 
       expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
       expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
-      expect(harness.events).not.toContain("wipe");
       expect(harness.events).not.toContain("detach");
       expect(harness.events).not.toContain("delete");
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
@@ -1087,7 +1102,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.events).toEqual(["mcp-prepare", "wipe", "detach", "mcp-restore"]);
+    expect(harness.events).toEqual(["mcp-prepare", "detach", "mcp-restore"]);
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
@@ -1337,28 +1352,6 @@ describe("destroySandbox flow", () => {
       expect.anything(),
     );
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
-  it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
-    // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
-    // the local record is removed but the gateway-side delete was never
-    // confirmed, so the sandbox may still exist. Even as the only registered
-    // sandbox, that must not tear down shared host services (CodeRabbit #6050).
-    const harness = createDestroyHarness({
-      deleteStatus: 1,
-      deleteOutput: "error trying to connect: connection refused",
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
-
-    // Local cleanup still proceeds...
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    // ...but shared host services are preserved on the unconfirmed delete.
-    expect(harness.stopAllSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

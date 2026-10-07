@@ -166,13 +166,19 @@ describe("runInferenceSet OpenClaw routing", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "nvidia-prod",
         "--model",
         "nvidia/nemotron-3-super-120b-a12b",
-        "--no-verify",
       ],
-      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      },
     );
     expect(config.agents).toEqual({
       defaults: {
@@ -209,7 +215,11 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
       }),
     );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "nvidia-prod",

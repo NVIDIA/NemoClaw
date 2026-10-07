@@ -262,7 +262,7 @@ test(
     const adminConnect = await host.command(
       "bash",
       [
-        "-lc",
+        "-c",
         adminApprovalConnectScript(
           host.commandPath,
           SANDBOX_NAME,

@@ -39,6 +39,7 @@ export type RuntimeProviderMutationOperation =
   | "workload-cleanup";
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
+  | "external-image-preparation"
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
@@ -318,6 +319,12 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderExternalImageSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  readonly agents: readonly ("openclaw" | "hermes")[];
+};
+
 export type RuntimeProviderNativeArtifactSupport = {
   readonly exactDigestReferences: boolean;
   readonly platforms: readonly "windows/x64"[];
@@ -328,6 +335,8 @@ export type RuntimeProviderNativeArtifactSupport = {
 
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  /** Missing or null until this provider supports user-supplied immutable images. */
+  readonly externalImageSupport?: RuntimeProviderExternalImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
   /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
   readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
@@ -431,18 +440,30 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly paths: readonly string[];
 }
 
+export interface RuntimeProviderStoppedNativeHomeCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly expectedResourceHandle?: string;
+  readonly root: string;
+  readonly protectedPaths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
       "registeredSandboxNames" | "sandbox" | "sandboxName"
-    >,
+    > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  clearStoppedNativeHome?(
+    input: RuntimeProviderStoppedNativeHomeCleanupInput,
   ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(
@@ -560,9 +581,8 @@ export interface RuntimeProviderSnapshotRestoreSource {
 }
 
 export interface RuntimeProviderStoppedStateProjection {
-  readonly directories: readonly string[];
-  readonly prefixes: readonly string[];
-  readonly files: readonly string[];
+  /** Canonical complete native home/workspace root owned by the stopped runtime. */
+  readonly nativeRoot: string;
   readonly managedStateRoots?: readonly {
     readonly mountTarget: string;
     readonly resourceIdentity: string;
@@ -572,7 +592,7 @@ export interface RuntimeProviderStoppedStateProjection {
 
 export interface RuntimeProviderStoppedStateCapture {
   /** The caller owns the private destination fd and archive validation. */
-  capture(archiveFd: number): Promise<void>;
+  capture(archiveFd: number, maxBytes: number): Promise<void>;
   assertCurrent(): void;
 }
 

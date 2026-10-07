@@ -23,7 +23,10 @@ import {
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
+import {
+  DGX_STATION_DISPATCH_TARGET,
+  JETSON_DISPATCH_TARGET,
+} from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
@@ -628,6 +631,16 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
+  if (
+    (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
+    !(
+      (selectors.jobs === DGX_STATION_DISPATCH_TARGET && !selectors.targets) ||
+      (selectors.targets === DGX_STATION_DISPATCH_TARGET && !selectors.jobs)
+    )
+  ) {
+    throw new Error(`${DGX_STATION_DISPATCH_TARGET} must be selected by itself`);
+  }
+
   if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {
     throw new Error(`${STAGING_BREV_IDENTITY_JOB_ID} must be selected by itself`);
   }
@@ -813,6 +826,16 @@ export function buildE2eWorkflowPlan(
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
       (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
     );
+    const unresolvedRiskJobIds = riskJobIds.filter((id) => {
+      const workflowJob = inventory.targetToJob.get(id) ?? id;
+      if (inventory.workflowJobs.includes(workflowJob)) return false;
+      return !selectedCatalogueTargets.some((target) => target.id === id || target.targetId === id);
+    });
+    if (unresolvedRiskJobIds.length > 0) {
+      throw new Error(
+        `PR risk plan requires E2E identifiers that do not resolve to selected work: ${unresolvedRiskJobIds.join(",")}`,
+      );
+    }
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
       ...registryTargetsForChangedFiles(changedFiles, gatewayRuntimes),

@@ -26,6 +26,7 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml"
 const META_JOBS = new Set([
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
+  "portable-podman-toolchain",
   "native-runtime-qualification-producer-plan",
   "release-qualification",
   "relevant-e2e",
@@ -375,10 +376,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
-      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+      "Manual PR E2E concurrency must not cancel an active hardware or Launchable dispatch",
     );
   }
 
@@ -600,6 +601,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedPortablePodmanCleanupCheckout =
+        jobName === "portable-hermes-finalization" &&
+        step.name === "Check out trusted workflow cleanup authority" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.["fetch-depth"] === 1 &&
+        step.with?.["persist-credentials"] === false;
       const trustedE2ePlannerCheckout =
         jobName === "generate-matrix" &&
         step.name === "Check out trusted E2E planner" &&
@@ -642,8 +649,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
-        jobName === "jetson-nvmap-gpu" &&
-        step.name === "Check out trusted Jetson controller" &&
+        ((jobName === "jetson-nvmap-gpu" && step.name === "Check out trusted Jetson controller") ||
+          (jobName === "dgx-station-express" &&
+            step.name === "Check out trusted Station controller")) &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedOpenShellDevToolingCheckout =
@@ -653,6 +661,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
       const nativeRuntimeQualificationCheckout =
+        (jobName === "portable-podman-toolchain" &&
+          step.name === "Check out the pinned Podman 5.7 source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "0370128fc8dcae93533334324ef838db8f8da8cb" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
         (jobName === "native-runtime-qualification-podman-toolchain" &&
           step.name === "Check out the pinned Podman source" &&
           step.with?.repository === "podman-container-tools/podman" &&
@@ -698,6 +713,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedCheckout =
         trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
+        trustedPortablePodmanCleanupCheckout ||
         trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
         trustedReleaseQualificationCheckout ||

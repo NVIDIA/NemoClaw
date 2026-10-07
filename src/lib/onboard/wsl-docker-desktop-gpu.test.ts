@@ -440,7 +440,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     }
   });
 
-  it("carries two Docker GPU rows through detection to larger Ollama selection (#12073)", () => {
+  it("selects the larger Ollama model for a proven WSL Station GB300 (#12470)", () => {
     const uuid = "123e4567-e89b-42d3-a456-426614174011";
     const resourceName = `nemoclaw-gpu-proof-${uuid}`;
     const containerId = "e".repeat(64);
@@ -480,7 +480,8 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
             : "",
         ),
         isWsl: true,
-        n1xWslProduct: true,
+        n1xWslProduct: false,
+        stationGb300WslProduct: true,
       });
 
       expect(gpu).toMatchObject({

@@ -11,6 +11,7 @@ import {
   type SetupInference,
   type SetupInferenceDeps,
 } from "../../src/lib/onboard/setup-inference.js";
+import { redact } from "../../src/lib/security/redact.js";
 
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
   upsertProvider: (
@@ -374,11 +375,48 @@ export function createDirectSetupInferenceHarnessFactory(
         _gatewayName: string,
         operation: () => Promise<T> | T,
       ) => await operation(),
+      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
+        await operation(),
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
+      inferenceRouteMutator: {
+        async setInferenceRoute(request) {
+          const args = ["inference", "set", "-g", request.target.gatewayName];
+          if (request.verification === "skip") args.push("--no-verify");
+          args.push("--provider", request.route.provider, "--model", request.route.model);
+          if (request.verificationTimeoutSeconds !== undefined) {
+            args.push("--timeout", String(request.verificationTimeoutSeconds));
+          }
+          const result = runOpenshell(args, { ignoreError: true });
+          const diagnostic = redact(
+            String(result.stderr || result.stdout || "route update failed"),
+          );
+          return result.status === 0
+            ? { ok: true as const }
+            : {
+                ok: false as const,
+                ambiguous: result.status === null,
+                error: {
+                  kind: "command" as const,
+                  reason: result.status === null ? ("indeterminate" as const) : ("failed" as const),
+                  exitCode: result.status,
+                  message:
+                    result.status === null
+                      ? "OpenShell inference route update returned an inconclusive result."
+                      : diagnostic,
+                },
+              };
+        },
+      },
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => ({
+          ok: true as const,
+          value: { state: "unconfigured" as const },
+        }),
+      },
       upsertProvider: async (
         name: string,
         type: string,
