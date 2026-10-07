@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveNemoclawStateDir } from "../state/paths";
 import type { SandboxEntry } from "../state/registry";
 import type { ReleaseGatewayPortResult } from "./gateway-port-release";
 import type { GatewayStopDeps } from "./gateway-stop";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
-import { stopAll } from "./services";
+import { resolveServicePidDir, resolveTunnelPidDir, stopAll } from "./services";
 
 const neutralOllamaCleanup = () => undefined;
 
@@ -25,6 +26,26 @@ vi.mock("../adapters/docker", () => ({
 vi.mock("../adapters/openshell/resolve", () => ({
   resolveOpenshell: vi.fn(() => null),
 }));
+
+describe("gateway-scoped host-side tunnel PID directory (#11628)", () => {
+  it("uses one dashboard tunnel directory for every sandbox selection", () => {
+    const alpha = resolveTunnelPidDir({ sandboxName: "alpha" });
+    const beta = resolveTunnelPidDir({ sandboxName: "beta" });
+
+    expect(alpha).toBe(beta);
+    expect(alpha).toBe(join(resolveNemoclawStateDir(), "tunnel"));
+  });
+
+  it("keeps purpose-specific service directories sandbox scoped", () => {
+    expect(resolveServicePidDir({ sandboxName: "alpha" })).toBe("/tmp/nemoclaw-services-alpha");
+    expect(resolveServicePidDir({ sandboxName: "beta" })).toBe("/tmp/nemoclaw-services-beta");
+  });
+
+  it("honors an explicit PID directory for dedicated tunnel consumers", () => {
+    const pidDir = join(tmpdir(), "googlechat-owned-tunnel");
+    expect(resolveTunnelPidDir({ pidDir, sandboxName: "alpha" })).toBe(pidDir);
+  });
+});
 
 function sandboxList(sandboxes: SandboxEntry[]): NonNullable<GatewayStopDeps["listSandboxes"]> {
   return vi.fn(() => ({ sandboxes, defaultSandbox: sandboxes[0]?.name ?? null }));

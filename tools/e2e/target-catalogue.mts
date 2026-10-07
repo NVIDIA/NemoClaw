@@ -1532,6 +1532,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Cloudflare tunnel",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     timeoutMinutes: 75,
     installMode: "none",
     restoreCli: true,
@@ -1548,9 +1549,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: {
       ...hostedInference,
       ...nonInteractive,
+      NEMOCLAW_GATEWAY_PORT: "18080",
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life",
       NEMOCLAW_DASHBOARD_PORT: "18790",
-      OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_GATEWAY: "nemoclaw-18080",
     },
   }),
   runtimeAgnosticTarget("whatsapp-qr-compact", {
