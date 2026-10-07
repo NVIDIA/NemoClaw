@@ -64,6 +64,8 @@ run_apt() {
   fi
   if [ "$status" -eq 124 ]; then
     echo "::error title=APT $operation timed out::Ubuntu package $operation exceeded 300 seconds." >&2
+  elif [ "$status" -eq 137 ]; then
+    echo "::error title=APT $operation was force-killed::Ubuntu package $operation exited with status 137; it may have exceeded 300 seconds and been killed by timeout." >&2
   else
     echo "::error title=APT $operation failed::Ubuntu package $operation exited with status $status." >&2
   fi

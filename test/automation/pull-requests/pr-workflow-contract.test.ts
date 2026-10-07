@@ -3,7 +3,15 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -96,18 +104,22 @@ function runPinnedAptFixture(
   const aptCalls = join(temp, "apt-calls");
   const timeoutCalls = join(temp, "timeout-calls");
   mkdirSync(fakeBin);
-  mkdirSync(runnerTemp);
+  mkdirSync(runnerTemp, { mode: 0o700 });
   writeFileSync(aptCalls, "");
   writeFileSync(timeoutCalls, "");
   writeFileSync(
     join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$APT_CALLS"
+if [[ "$1" == chmod && "$3" == "$RUNNER_TEMP" ]]; then
+  command chmod "$2" "$3" || exit $?
+fi
 if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
 if [[ "$1" == apt-get && "$FAKE_APT_MODE" == update-error ]]; then
   for ((line=1; line<=100; line++)); do printf 'apt diagnostic %s\\n' "$line" >&2; done
   exit 86
 fi
+if [[ "$1" == apt-get && "$FAKE_APT_MODE" == force-killed ]]; then exit 137; fi
 if [[ "$1" == apt-get && "$FAKE_APT_MODE" == install-error && "$*" == *' install '* ]]; then exit 100; fi
 exit 0
 `,
@@ -126,6 +138,18 @@ if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$
   writeFileSync(join(fakeBin, "stat"), "#!/usr/bin/env bash\nprintf '700\\n'\n", {
     mode: 0o755,
   });
+  writeFileSync(
+    join(fakeBin, "dpkg-query"),
+    "#!/usr/bin/env bash\ncase \"${*: -1}\" in fd-find) printf '9.0.0-1';; ripgrep) printf '14.1.0-1';; *) exit 1;; esac\n",
+    { mode: 0o755 },
+  );
+  writeFileSync(join(fakeBin, "fdfind"), "#!/usr/bin/env bash\nprintf 'fdfind 9.0.0\\n'\n", {
+    mode: 0o755,
+  });
+  writeFileSync(join(fakeBin, "rg"), "#!/usr/bin/env bash\nprintf 'ripgrep 14.1.0\\n'\n", {
+    mode: 0o755,
+  });
+  writeFileSync(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   const env = {
     ...process.env,
     ADVISOR_DIR: process.cwd(),
@@ -149,6 +173,7 @@ if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$
     return {
       status: result.status,
       stderr: String(result.stderr),
+      runnerTempMode: statSync(runnerTemp).mode & 0o777,
       calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
       timeoutCalls: readFileSync(timeoutCalls, "utf8").trim().split("\n"),
     };
@@ -599,7 +624,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       expect(result.stderr).toContain("apt diagnostic 100");
       expect(result.stderr).not.toContain("apt diagnostic 1\n");
       expect(result.stderr.split("\n")).toHaveLength(62);
-      expect(result.calls.some((call) => /^chmod 700 .*\/runner-temp$/u.test(call))).toBe(true);
+      expect(result.runnerTempMode).toBe(0o700);
       const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
       expect(aptCalls).toHaveLength(1);
       expect(aptCalls[0]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
@@ -619,6 +644,23 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(lists[1]).toBe(lists[0]);
     expect(aptCalls[1]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
     expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
+  });
+
+  it.each([
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
+    ],
+  ])("installs the pinned packages through the %s workflow step (#11320)", (_name, installStep) => {
+    const result = runPinnedAptFixture("success", installStep);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.runnerTempMode).toBe(0o700);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
     expect(aptCalls[1]).toContain(
       "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
     );
@@ -646,6 +688,14 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status).toBe(100);
     expect(result.stderr).toContain("APT install failed");
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
+  });
+
+  it("reports a possible force-killed timeout without claiming its cause (#11320)", () => {
+    const result = runPinnedAptFixture("force-killed");
+    expect(result.status).toBe(137);
+    expect(result.stderr).toContain("APT update was force-killed");
+    expect(result.stderr).toContain("may have exceeded 300 seconds");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
   });
 
   it("rejects a missing Ubuntu source before APT runs (#11320)", () => {
