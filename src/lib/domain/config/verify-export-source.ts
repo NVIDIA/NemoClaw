@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with {
+  "resolution-mode": "import",
+};
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
@@ -14,6 +16,7 @@ import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
 } from "../../inference/native-nvidia/contract";
+import { requireMatchingNativeCompatibleAttachment } from "../../inference/native-compatible/contract";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import {
   buildManagedStartupProfile,
@@ -526,6 +529,20 @@ function deepAgentsObservability(
   return agent === "langchain-deepagents-code" ? false : null;
 }
 
+function expectedExportRoute(
+  entry: ObservedExportRegistry,
+  agent: string,
+  provider: string,
+  model: string,
+  api: string,
+) {
+  const route = resolveManagedStartupInferenceRoute(agent, provider, model, api);
+  const receipt = exportNativeCompatibleReceipt(entry);
+  return receipt
+    ? { ...route, inferenceBaseUrl: receipt.endpointUrl, inferenceApi: receipt.api }
+    : route;
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
   if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
@@ -540,7 +557,8 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   ) {
     throw new Error("The inference selection is incomplete.");
   }
-  const inference = resolveManagedStartupInferenceRoute(
+  const inference = expectedExportRoute(
+    entry,
     agent,
     selected.provider,
     selected.model,
@@ -583,7 +601,9 @@ function exportedObservability(
   if (profile.agentConfig.agent !== "openclaw" || !profile.agentConfig.otel.enabled)
     return undefined;
   const { enabled, endpointUrl, serviceName, sampleRate } = profile.agentConfig.otel;
-  const value = { otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate } };
+  const value = {
+    otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate },
+  };
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
@@ -741,7 +761,10 @@ function supportedObservabilityProfile(
   const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
   return {
     ...expected,
-    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+    agentConfig: {
+      ...expected.agentConfig,
+      otel: { ...telemetry, endpointUrl },
+    },
   };
 }
 
@@ -758,7 +781,10 @@ function expectedProfileWithObservedHostSettings(
         servingPreset === null ||
         servingPreset === EXPORTED_VLLM_PROFILE_ID)
     ) {
-      expected = { ...expected, inference: { ...expected.inference, servingPreset } };
+      expected = {
+        ...expected,
+        inference: { ...expected.inference, servingPreset },
+      };
     }
     // Managed workload authority validates the CA bundle and digest before this comparison.
     // V1 omits the source host's CA trust; all other profile fields remain checked.
@@ -809,40 +835,86 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
+function exportNativeCompatibleReceipt(entry: ObservedExportRegistry) {
+  try {
+    return requireMatchingNativeCompatibleAttachment(
+      entry.nativeCompatibleProviderAttachment,
+      entry,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function compatibleEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (!evidence || evidence.source.kind !== "native-compatible-profile") return false;
+  const receipt = exportNativeCompatibleReceipt(snapshot.registry);
+  return (
+    !!receipt &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+      ],
+      [
+        receipt.profileId,
+        receipt.providerName,
+        receipt.providerId,
+        receipt.api,
+        receipt.endpointUrl,
+        receipt.endpointUrl,
+      ],
+    )
+  );
+}
+
+function nvidiaEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (!evidence || evidence.source.kind !== "managed-profile") return false;
+  const receipt = normalizeNativeNvidiaProviderAttachment(
+    snapshot.registry.nativeNvidiaProviderAttachment,
+  );
+  return (
+    receipt !== undefined &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        receipt.providerName,
+        receipt.providerId,
+        NVIDIA_HOSTED_LOGICAL_PROVIDER,
+        "openai-completions",
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_CREDENTIAL_ENV,
+      ],
+    )
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
-  if (evidence.source.kind === "managed-profile") {
-    const receipt = normalizeNativeNvidiaProviderAttachment(
-      snapshot.registry.nativeNvidiaProviderAttachment,
-    );
-    return (
-      receipt !== undefined &&
-      isDeepStrictEqual(
-        [
-          evidence.source.profileId,
-          evidence.provider.name,
-          evidence.provider.id,
-          inference.provider,
-          inference.api,
-          inference.endpoint,
-          evidence.endpoint,
-          inference.credentialEnv,
-        ],
-        [
-          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          receipt.providerName,
-          receipt.providerId,
-          NVIDIA_HOSTED_LOGICAL_PROVIDER,
-          "openai-completions",
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_CREDENTIAL_ENV,
-        ],
-      )
-    );
-  }
+  if (evidence.source.kind === "native-compatible-profile")
+    return compatibleEndpointEvidenceMatches(snapshot);
+  if (evidence.source.kind === "managed-profile") return nvidiaEndpointEvidenceMatches(snapshot);
   if (evidence.source.kind === "builtin-profile") {
     return (
       inference.credentialEnv !== null &&
@@ -916,9 +988,9 @@ function validateSandboxIdentity(
 
 function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
-  const nativeReceipt = normalizeNativeNvidiaProviderAttachment(
-    entry.nativeNvidiaProviderAttachment,
-  );
+  const nativeReceipt =
+    exportNativeCompatibleReceipt(entry) ??
+    normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment);
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
   const webSearch = exportWebSearchBinding(entry);
@@ -1230,8 +1302,10 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 
 function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
   return (
+    exportNativeCompatibleReceipt(snapshot.registry)?.providerName ??
     normalizeNativeNvidiaProviderAttachment(snapshot.registry.nativeNvidiaProviderAttachment)
-      ?.providerName ?? snapshot.inference.provider
+      ?.providerName ??
+    snapshot.inference.provider
   );
 }
 
@@ -1523,7 +1597,10 @@ function completeVerifiedSource(
     ...projectVerifiedExecution(settings),
     ...projectVerifiedWebSearch(entry),
     ...verifiedHermesAuth(entry),
-    runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
+    runtime: {
+      provider: entry.openshellDriver,
+      imageRef: authority?.receipt.reference,
+    },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
     ...projectVerifiedTools(entry, authority),
     ...projectHostSettings(entry, authority),

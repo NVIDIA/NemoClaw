@@ -48,6 +48,91 @@ import {
   braveProvider,
 } from "./live-export-source-test-fixture";
 
+import * as compatibleExport from "./native-inference-export";
+const observeCompatibleExport = compatibleExport.nativeCompatibleEvidence;
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
+
+function mockNativeCompatibleSource() {
+  const identity = nativeCompatibleEndpointIdentity({
+    endpointUrl: "https://api.example.com/v1",
+    api: "openai-completions",
+    addresses: ["93.184.216.34"],
+  });
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: identity.profileId,
+    providerName: identity.providerName,
+    providerId: "compatible-provider-id",
+    endpointUrl: identity.endpoint,
+    api: identity.api,
+    addresses: identity.addresses!,
+  };
+  const route = {
+    providerKey: "inference",
+    primaryModelRef: `inference/${entry.model}`,
+    inferenceBaseUrl: receipt.endpointUrl,
+    inferenceCompat: { supportsStore: false },
+  };
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    inference: {
+      ...startupInput.inference,
+      upstreamProvider: "compatible-endpoint",
+      routeProvider: route.providerKey,
+      primaryModelRef: route.primaryModelRef,
+      routedBaseUrl: route.inferenceBaseUrl,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  });
+  mockSupportedLiveSource(3, 3, {
+    ...entry,
+    provider: "compatible-endpoint",
+    endpointUrl: receipt.endpointUrl,
+    credentialEnv: "CUSTOM_API_KEY",
+    nativeCompatibleProviderAttachment: receipt,
+    workload: {
+      ...entry.workload,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  });
+  const sandbox = inventory().sandbox;
+  raw.getSandbox.mockResolvedValue({
+    sandbox: { ...sandbox, spec: { ...sandbox.spec, providers: [receipt.providerName] } },
+  });
+  const adapter = {
+    inspectProviderProfile: vi.fn(async () => ({
+      ok: true as const,
+      value: { credentialKeys: ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"] },
+    })),
+    getProvider: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        name: receipt.providerName,
+        type: receipt.profileId,
+        credentialKeys: ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: receipt.providerId, resourceVersion: 5 },
+      },
+    })),
+    listProviderAttachments: vi.fn(async () => ({
+      ok: true as const,
+      value: { names: [receipt.providerName] },
+    })),
+  };
+  vi.spyOn(compatibleExport, "nativeCompatibleEvidence").mockImplementation(
+    (source, gateway, sandbox, signal) =>
+      observeCompatibleExport(
+        source,
+        gateway,
+        sandbox,
+        signal,
+        adapter as unknown as NonNullable<Parameters<typeof observeCompatibleExport>[4]>,
+      ),
+  );
+  return adapter;
+}
+
 function mockSearchLiveSource(
   searchProvider: "brave" | "tavily",
   agent: "openclaw" | "hermes" = "openclaw",
@@ -699,6 +784,53 @@ describe("live export snapshot reader", () => {
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalled();
+  });
+
+  it("exports native compatible without reading the unrelated shared route", async () => {
+    mockNativeCompatibleSource();
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
+  });
+
+  it("refuses native compatible export when its endpoint boundary is not verified", async () => {
+    const adapter = mockNativeCompatibleSource();
+    adapter.inspectProviderProfile.mockRejectedValue(new Error("Profile drift"));
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result.ok).toBe(false);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("stops native compatible export after cancellation during attachment observation", async () => {
+    const adapter = mockNativeCompatibleSource();
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    adapter.listProviderAttachments.mockImplementation(async () => {
+      controller.abort();
+      return {
+        ok: true as const,
+        value: {
+          names: [
+            nativeCompatibleEndpointIdentity({
+              endpointUrl: "https://api.example.com/v1",
+              api: "openai-completions",
+              addresses: ["93.184.216.34"],
+            }).providerName,
+          ],
+        },
+      };
+    });
+    try {
+      expect(await createLiveExportSnapshotReader().read("alpha")).toEqual({
+        kind: "read-failed",
+        stage: "provider-metadata",
+      });
+      expect(adapter.getProvider).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("exports native NVIDIA when an unrelated shared route exists (#12558)", async () => {

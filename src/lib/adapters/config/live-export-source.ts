@@ -6,10 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders, type Provider } from "../openshell/providers";
-import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
 import { createSandboxConfig } from "../openshell/sandbox-config";
-import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 import {
@@ -40,9 +38,10 @@ import {
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
-import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
+
+import { nativeCompatibleEvidence, exportInferenceSelection } from "./native-inference-export";
 
 const CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -53,7 +52,10 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
   } as ObservedExportRegistry;
 }
 
-function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
+function resolveGatewayBinding(entry: Readonly<SandboxEntry>): {
+  name: string;
+  port: number;
+} {
   const port = entry.gatewayPort;
   if (!isValidNemoClawPort(port)) {
     throw new Error("The persisted gateway port is incomplete or invalid.");
@@ -100,33 +102,6 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
   };
 }
 
-async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
-  const selected = getSandboxEntryInference(entry);
-  const observer = createSynchronousCliOpenShellInferenceRouteObserver((args, options) =>
-    captureSanitizedResolvedOpenshell(args, {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      maxBuffer: options.maxBuffer,
-      timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
-    }),
-  );
-  const result = observer.observeInferenceRoute({
-    target: namedOpenShellGateway(gatewayName),
-    timeoutMs: CAPTURE_TIMEOUT_MS,
-  });
-  if (!result.ok || result.value.state !== "configured")
-    throw new Error("The live gateway inference route could not be read.");
-  const live = result.value.route;
-  if (
-    selected.kind !== "configured" ||
-    live.provider !== selected.provider ||
-    live.model !== selected.model
-  )
-    throw new Error("The live gateway inference route does not match the registry.");
-  return live;
-}
-
 function providerContract(api: string | null | undefined) {
   if (api?.startsWith("anthropic")) {
     return { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" } as const;
@@ -147,7 +122,10 @@ function providerIdentity(
     id: provider.id,
     resourceVersion: provider.resourceVersion,
     ...(managed
-      ? { profileWorkspace: provider.profileWorkspace, managedProfile: provider.managedProfile }
+      ? {
+          profileWorkspace: provider.profileWorkspace,
+          managedProfile: provider.managedProfile,
+        }
       : {}),
   };
 }
@@ -291,24 +269,16 @@ async function readProviderEvidence(
   };
 }
 
-async function resolveLiveInference(
+function nativeNvidiaReceiptFor(
   entry: Readonly<SandboxEntry>,
-  gatewayName: string,
-  nativeReceipt: NativeNvidiaReceipt | undefined,
-): Promise<Readonly<{ provider: string; model: string; logicalProvider: string }>> {
-  if (!nativeReceipt) {
-    const live = await readInferenceRoute(entry, gatewayName);
-    return { ...live, logicalProvider: live.provider };
+  sandbox: ObservedExportSandboxIdentity,
+) {
+  const nativeReceipt =
+    entry.provider?.trim() === "nvidia-prod" ? entry.nativeNvidiaProviderAttachment : undefined;
+  if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
+    throw new Error("The native NVIDIA provider is not attached to the sandbox.");
   }
-  const selected = getSandboxEntryInference(entry);
-  if (selected.kind !== "configured") {
-    throw new Error("The native NVIDIA inference selection is incomplete.");
-  }
-  return {
-    provider: nativeReceipt.providerName,
-    model: selected.model,
-    logicalProvider: selected.provider,
-  };
+  return nativeReceipt;
 }
 
 async function inferenceFor(
@@ -320,25 +290,37 @@ async function inferenceFor(
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
-  const nativeReceipt =
-    entry.provider?.trim() === "nvidia-prod" ? entry.nativeNvidiaProviderAttachment : undefined;
-  if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
-    throw new Error("The native NVIDIA provider is not attached to the sandbox.");
-  }
-  const live = await resolveLiveInference(entry, gateway.name, nativeReceipt);
-  beforeRead("provider-metadata");
-  const endpointEvidence = await readProviderEvidence(
-    normalized,
-    live.provider,
-    gateway.name,
+  const nativeReceipt = nativeNvidiaReceiptFor(entry, sandbox);
+  if (entry.nativeCompatibleProviderAttachment) beforeRead("provider-metadata");
+  const compatibleEvidence = await nativeCompatibleEvidence(
+    entry,
+    namedOpenShellGateway(gateway.name),
+    sandbox,
     signal,
-    managedServing,
-    nativeReceipt,
   );
+  const live = await exportInferenceSelection(
+    entry,
+    namedOpenShellGateway(gateway.name),
+    compatibleEvidence,
+  );
+  beforeRead("provider-metadata");
+  const endpointEvidence =
+    compatibleEvidence ??
+    (await readProviderEvidence(
+      normalized,
+      live.provider,
+      gateway.name,
+      signal,
+      managedServing,
+      nativeReceipt,
+    ));
   let ollamaServing: ObservedExportInference["ollamaServing"];
   if (entry.provider === "ollama-local") {
     beforeRead("ollama-serving");
-    ollamaServing = observeOllamaProxy({ model: live.model, ...createOllamaExportProbe() });
+    ollamaServing = observeOllamaProxy({
+      model: live.model,
+      ...createOllamaExportProbe(),
+    });
   }
   return {
     topology: inferenceTopology(entry, !!managedServing),

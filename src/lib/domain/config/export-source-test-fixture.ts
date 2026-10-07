@@ -17,6 +17,8 @@ import type {
   QualifiedExportSnapshot,
 } from "./export-evidence";
 
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
+
 export const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 export const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 export const endpoint = "https://api.openai.com/v1";
@@ -457,20 +459,18 @@ export function compatibleSnapshot(
   registryOverrides: Partial<SandboxEntry>,
 ) {
   const base = profileInput({ environment });
-  const route = resolveManagedStartupInferenceRoute(
-    "openclaw",
-    "compatible-endpoint",
-    "gpt-5",
-    "openai-completions",
-  );
+  const native = registryOverrides.nativeCompatibleProviderAttachment;
+  const provider = registryOverrides.provider ?? "compatible-endpoint";
+  const api = native?.api ?? "openai-completions";
+  const route = resolveManagedStartupInferenceRoute("openclaw", provider, "gpt-5", api);
   const input = {
     ...base,
     inference: {
       ...base.inference!,
       routeProvider: route.providerKey,
-      upstreamProvider: "compatible-endpoint",
-      api: "openai-completions" as const,
-      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamProvider: provider,
+      api,
+      routedBaseUrl: native?.endpointUrl ?? route.inferenceBaseUrl,
       primaryModelRef: route.primaryModelRef,
       compatibility: route.inferenceCompat ?? {},
     },
@@ -478,24 +478,72 @@ export function compatibleSnapshot(
   const observed = snapshot();
   return snapshot({
     registry: entry({
-      provider: "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
+      provider,
+      preferredInferenceApi: api,
       workload: managedWorkload(input),
       ...registryOverrides,
     }),
     inference: {
       ...observed.inference!,
-      provider: "compatible-endpoint",
-      api: "openai-completions",
+      provider,
+      api,
       endpointEvidence: {
         ...observed.inference!.endpointEvidence!,
         provider: {
           ...observed.inference!.endpointEvidence!.provider,
-          name: "compatible-endpoint",
+          name: provider,
         },
       },
     },
   });
+}
+
+export function nativeCompatibleSnapshot(
+  api: "openai-completions" | "anthropic-messages" = "openai-completions",
+) {
+  const identity = nativeCompatibleEndpointIdentity({
+    endpointUrl: endpoint,
+    api,
+    addresses: ["93.184.216.34"],
+  });
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: identity.profileId,
+    providerName: identity.providerName,
+    providerId: "native-compatible-id",
+    endpointUrl: identity.endpoint,
+    api: identity.api,
+    addresses: identity.addresses!,
+  };
+  const result = compatibleSnapshot(
+    {},
+    {
+      nativeCompatibleProviderAttachment: receipt,
+      endpointUrl: receipt.endpointUrl,
+      provider:
+        api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint",
+    },
+  );
+  return {
+    ...result,
+    sandbox: { ...result.sandbox!, providerNames: [receipt.providerName] },
+    inference: {
+      ...result.inference!,
+      endpoint: receipt.endpointUrl,
+      endpointEvidence: {
+        endpoint: receipt.endpointUrl,
+        source: {
+          kind: "native-compatible-profile" as const,
+          profileId: receipt.profileId,
+        },
+        provider: {
+          ...result.inference!.endpointEvidence!.provider,
+          name: receipt.providerName,
+          id: receipt.providerId,
+        },
+      },
+    },
+  };
 }
 
 export function proxySnapshot(

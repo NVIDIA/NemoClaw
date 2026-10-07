@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxModule from "typebox" with {
+  "resolution-mode": "import",
+};
 import {
   BoundedTextSchema,
   NemoClawManagedVllmServingSchema,
@@ -74,6 +76,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "model",
   "name",
   "nativeNvidiaProviderAttachment",
+  "nativeCompatibleProviderAttachment",
   "nimContainer",
   "observabilityEnabled",
   "openshellDriver",
@@ -152,6 +155,7 @@ export interface ObservedExportEndpointEvidence {
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
     | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
+    | { readonly kind: "native-compatible-profile"; readonly profileId: string }
     | {
         readonly kind: "managed-profile";
         readonly profileId: "nemoclaw-nvidia-inference-v1";

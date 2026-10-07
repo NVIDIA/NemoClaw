@@ -152,9 +152,10 @@ Do not approve an unexpected client or an unrelated `operator.admin` request.
 Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
 Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
 
-NemoClaw keeps provider credentials in OpenShell.
-NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the sandbox-attached OpenShell provider.
-Other managed inference providers continue to use `inference.local`.
+NemoClaw keeps API-key provider credentials in OpenShell.
+NVIDIA Endpoints and authenticated hosted OpenAI-compatible or Anthropic-compatible endpoints use their configured endpoint through a sandbox-attached OpenShell provider.
+AWS Bedrock uses a sandbox-attached provider connected to its verified host adapter, which discovers AWS credentials on the host.
+Remaining shared-route providers continue to use `inference.local`.
 Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
 
 Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.
