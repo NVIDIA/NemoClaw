@@ -160,58 +160,29 @@ export function observabilityPresetState(output: string): string {
   return parsePolicyPresetState(output, "observability-otlp-local");
 }
 
-function sessionRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("invalid dcode session evidence");
-  }
-  return value as Record<string, unknown>;
-}
-
-/** Recover only the unique exact prompt registered before our invocation. */
-export function observabilityThreadForPrompt(output: string, prompt: string): string {
-  const envelope = sessionRecord(JSON.parse(output));
-  if (
-    envelope.schema_version !== 1 ||
-    envelope.command !== "threads list" ||
-    !Array.isArray(envelope.data)
-  ) {
-    throw new Error("invalid dcode thread listing");
-  }
-  const matches = envelope.data
-    .map(sessionRecord)
-    .filter((thread) => thread.initial_prompt === prompt);
-  const threadId = matches[0]?.thread_id;
-  if (
-    !prompt ||
-    matches.length !== 1 ||
-    typeof threadId !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
-  ) {
-    throw new Error("dcode did not identify exactly one observability conversation");
-  }
-  return threadId;
-}
-
 function nativeDcodeData(output: string, command: string): Record<string, unknown> | unknown[] {
-  let envelope: Record<string, unknown>;
+  let envelope;
   try {
-    envelope = sessionRecord(JSON.parse(output));
+    envelope = JSON.parse(output);
   } catch {
     throw new Error("invalid native DCode result envelope");
   }
   if (
-    envelope.schema_version !== 1 ||
+    envelope?.schema_version !== 1 ||
     envelope.command !== command ||
     typeof envelope.data !== "object" ||
     envelope.data === null
   ) {
     throw new Error("invalid native DCode result envelope");
   }
-  return envelope.data as Record<string, unknown> | unknown[];
+  return envelope.data;
 }
 
 export function observabilityProbeThreadId(output: string, probeCwd?: string): string {
   const data = nativeDcodeData(output, probeCwd ? "threads list" : "non-interactive");
+  // A fresh, privately owned cwd identifies the probe even when cancellation
+  // prevents a completion envelope. The native list filters by exact cwd;
+  // require the returned metadata to agree and reject ambiguous results.
   if (probeCwd && Array.isArray(data) && data.length === 0) return "";
   const listed = (Array.isArray(data) && data.length === 1 ? data[0] : undefined) as
     | { cwd?: unknown; thread_id?: unknown }
@@ -231,23 +202,6 @@ export function observabilityProbeThreadId(output: string, probeCwd?: string): s
     throw new Error("observability probe did not report its native thread ID");
   }
   return threadId;
-}
-
-export function assertObservabilityThreadDeleted(
-  output: string,
-  threadId: string,
-  verifyAbsence = false,
-): void {
-  const envelope = sessionRecord(JSON.parse(output));
-  const data = sessionRecord(envelope.data);
-  if (
-    envelope.schema_version !== 1 ||
-    envelope.command !== "threads delete" ||
-    data.thread_id !== threadId ||
-    (verifyAbsence ? data.dry_run !== true || data.exists !== false : data.deleted !== true)
-  ) {
-    throw new Error("dcode did not confirm deletion of the observability conversation");
-  }
 }
 
 function requiredEnvironment(name: string): string {
@@ -285,6 +239,8 @@ export function validateCaptureDirectory(
         `unexpected captured route ${String(metadata.method)} ${String(metadata.path)} on ${String(metadata.port)}`,
       );
     }
+    // The capture server accepts only application/x-protobuf; rejected
+    // content types fail the accepted check above.
     const body = fs.readFileSync(path.join(captureDir, metadataFile.replace(/\.json$/u, ".body")));
     if (body.equals(Buffer.from(allowedProbeBody))) {
       allowedProbeCount += 1;
@@ -299,28 +255,9 @@ export function validateCaptureDirectory(
   return assertDeepAgentsTraceContract(traceBodies, expectations);
 }
 
-// Bound the native inventory before decoding or parsing it. One extra byte
-// distinguishes an exact-limit complete response from a truncated response.
-function readThreadListing(): string {
-  const maxBytes = 1_048_576;
-  const buffer = Buffer.allocUnsafe(maxBytes + 1);
-  let length = 0;
-  while (length <= maxBytes) {
-    const read = fs.readSync(0, buffer, length, buffer.length - length, null);
-    if (read === 0) return buffer.subarray(0, length).toString("utf8");
-    length += read;
-  }
-  throw new Error("dcode thread listing exceeds the 1048576-byte cleanup limit");
-}
-
 async function main(): Promise<void> {
   const [command, argument] = process.argv.slice(2);
-  const input =
-    command === "validate-captures"
-      ? ""
-      : command === "thread-for-prompt"
-        ? readThreadListing()
-        : fs.readFileSync(0, "utf8");
+  const input = command === "validate-captures" ? "" : fs.readFileSync(0, "utf8");
   if (command === "policy-state") {
     process.stdout.write(`${observabilityPresetState(input)}\n`);
     return;
@@ -329,14 +266,6 @@ async function main(): Promise<void> {
     process.stdout.write(
       `${hasConfirmedOpenShellPolicyDenial(input) ? "policy-denied" : "other-failure"}\n`,
     );
-    return;
-  }
-  if (command === "thread-for-prompt" && argument) {
-    process.stdout.write(`${observabilityThreadForPrompt(input, argument)}\n`);
-    return;
-  }
-  if ((command === "thread-deleted" || command === "thread-absent") && argument) {
-    assertObservabilityThreadDeleted(input, argument, command === "thread-absent");
     return;
   }
   if (command === "probe-thread-id") {
@@ -378,7 +307,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-for-prompt|thread-deleted|thread-absent|probe-thread-id|validate-captures> [argument]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|validate-captures|probe-thread-id> [argument]",
   );
 }
 
