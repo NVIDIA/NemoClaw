@@ -678,7 +678,8 @@ startGateway(null).catch((error) => {
     });
     const commandSequence = commands.map(({ argv }) => argv.join(" "));
 
-    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
+    assert.equal(commandSequence[0], "inference get -g nemoclaw");
+    assert.equal(commandSequence[1], "provider get -g nemoclaw openai-api");
     assert.ok(
       commandSequence.some((command) =>
         /^provider update -g nemoclaw openai-api(?: |$)/.test(command),

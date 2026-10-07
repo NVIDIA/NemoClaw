@@ -45,13 +45,14 @@ Schema failures use fixed messages without rejected values.
 
 Provider reads return credential names and requested non-secret config values.
 For native NVIDIA hosted inference with no overrides, export also reads `raw.getProviderProfile`
-through the same gateway and workspace. It requires the built-in `nvidia` profile, static scope,
+through the same gateway at the provider's empty or current-workspace binding. Either binding must
+resolve to the built-in `nvidia` profile. Export requires static scope,
 revision zero, inference capability, and its single `integrate.api.nvidia.com:443` endpoint.
 The pinned OpenShell native resolver uses `/v1` on that host. Export records the built-in profile
 as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
-cannot use this derivation.
+cannot use this derivation. Missing or foreign-workspace bindings cannot use it either.
 
-Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
+Consumers can request `profileContract: "brave"`, `"openai"`, `"tavily"`, or `"tavily-hermes-v1"` to qualify a managed profile.
 The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
 same gateway. Brave onboarding imports its checked-in profile in the `default` workspace.
 User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
@@ -62,7 +63,9 @@ its global or same-workspace binding returns `managedProfile: null`. Ollama expo
 evidence; managed vLLM still requires a qualified profile. Other read failures remain terminal.
 
 Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
-and inference capability. Brave permits its single header credential and search endpoint;
+and inference capability. Brave permits its single header credential and search endpoint.
+Tavily requires its bearer credential, JSON-body rewriting, and the POST `/search` and `/extract` rules.
+The Hermes Tavily profile requires its managed Python executable instead of the general Tavily binary list.
 OpenAI requires the endpointless inference contract. Credential refresh, token grants, discovery,
 changed rewriting rules, and unknown protobuf fields in the profile's semantic messages fail.
 Provider credential values and handles remain opaque. The reader returns profile identity,

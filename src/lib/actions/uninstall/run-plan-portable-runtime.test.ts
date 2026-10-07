@@ -187,6 +187,19 @@ function admissionFailureScope(prefix: string) {
 function admissionFailureDeps(scope: ReturnType<typeof admissionFailureScope>): UninstallRunDeps {
   return {
     commandExists: () => false,
+    // Direct production callers bypass the authority wrapper above. Keep this
+    // fixture aligned with that wrapper so host package-manager state does not
+    // choose the cleanup path under test.
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
     env: { HOME: scope.homeDir },
     hasPortableRuntimeCleanup,
     isTty: false,
