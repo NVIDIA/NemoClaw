@@ -14,14 +14,15 @@ Reading the active route confirms configuration, but it does not authenticate a 
 
 ## Confirm the Configured Route
 
-Read the selected sandbox configuration first.
+Read the selected sandbox's inference path first.
 
 ```bash
 $$nemoclaw <name> inference get
 ```
 
-Confirm that the provider, model, and endpoint match the route you intended to configure.
-Fixed hosted providers report their native endpoint, such as `https://api.openai.com/v1` for OpenAI.
+For a selected sandbox with a valid native hosted attachment, the command returns that sandbox's recorded provider, model, and native endpoint, such as `https://api.openai.com/v1` for OpenAI or `https://integrate.api.nvidia.com/v1` for NVIDIA Endpoints.
+For providers that still use the shared route, the command reads the live gateway route.
+Confirm that the provider, model, and endpoint match the path you intended to configure.
 
 ## Check Sandbox Inference Health
 
