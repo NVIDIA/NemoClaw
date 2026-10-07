@@ -80,24 +80,17 @@ fn targets(
             "bearer-v1".into(),
         );
     }
-    let placement = service.published_placement()?;
-    let (engine, network_cidr, bind_address) = match placement {
-        Some(explicit) => (
-            &explicit.placement.engine,
-            &explicit.placement.network_cidr,
-            explicit.publication.bind_address.clone(),
-        ),
-        None => {
-            let gateway = document.spec.gateway.managed()?;
-            (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
-        }
-    };
+    let placed = crate::services::placement::ResolvedPlacement::resolve(
+        service.published_placement()?,
+        &document.spec.gateway,
+        service.serving.port,
+    )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
-        engine: engine.clone(),
+        engine: placed.engine.clone(),
         image: service.image.clone(),
-        network_cidr: network_cidr.clone(),
-        create_network: service.placement.is_some(),
+        network_cidr: placed.network_cidr.clone(),
+        create_network: placed.explicit,
         architecture,
         image_labels,
         pull_image: false,
@@ -109,7 +102,7 @@ fn targets(
         entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
         command: Vec::new(),
         mount_target: "/data".into(),
-        bind_address,
+        bind_address: placed.bind_address,
         port: service.serving.port as u16,
         shared_memory_bytes: service
             .container
@@ -130,7 +123,7 @@ fn targets(
         name: format!("{}-inference-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation.clone(),
-        gateway: if service.placement.is_some() {
+        gateway: if placed.explicit {
             Default::default()
         } else {
             document.spec.gateway.managed()?.runtime_settings()
