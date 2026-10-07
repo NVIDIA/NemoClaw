@@ -525,6 +525,16 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
     Ok(kinds.into_iter().collect())
 }
 
+pub(crate) fn supported_generation_kind(kind: &str) -> bool {
+    // Removed services may still own resources under their retained generation.
+    matches!(
+        kind,
+        installers::ollama::SERVICE_KIND
+            | installers::ollama::proxy::PROXY
+            | installers::vllm::SERVICE_KIND
+    )
+}
+
 pub(crate) fn remove_plans(
     document: &Document,
     generations: &Generations,

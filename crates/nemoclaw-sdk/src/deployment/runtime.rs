@@ -196,12 +196,6 @@ impl Deployment {
             }
             return Ok((Vec::new(), false, Vec::new(), DiscoveryReport::default()));
         }
-        let generated = Record::new(document.clone())?;
-        for (kind, generation) in generated.generations {
-            if record.generations.get(&kind).is_none_or(String::is_empty) {
-                record.generations.insert(kind, generation);
-            }
-        }
         let stage = Store::open(&store.directory.join("runtime"))?;
         let (graph, targets) =
             compile::compiled_runtime(document, &record.generations, &bundle.manifest.version)?;
