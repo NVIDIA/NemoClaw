@@ -182,7 +182,7 @@ describe("reviewed npm bootstrap", () => {
   it("installs a matching archive offline (#8253)", () => {
     const fixture = runReviewedNpmBootstrap();
     try {
-      const { npmInvocations, result } = fixture;
+      const { npmInvocations, result, tarInvocations } = fixture;
       expect(result.status).toBe(0);
       expect(npmInvocations).toHaveLength(3);
       expect(npmInvocations[0]).toMatch(
@@ -192,6 +192,8 @@ describe("reviewed npm bootstrap", () => {
         /^install --global .*\/npm-12\.0\.2\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
       );
       expect(npmInvocations[2]).toBe("--version");
+      expect(tarInvocations).toHaveLength(1);
+      expect(tarInvocations[0]).toContain("|-xOf npm-12.0.2.tgz package/package.json");
     } finally {
       fixture.cleanup();
     }
