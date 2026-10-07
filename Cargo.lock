@@ -2251,7 +2251,6 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
  "jsonschema 0.56.0",
- "nemoclaw-discovery",
  "nemoclaw-sdk",
  "serde",
  "serde-saphyr 1.2.0",

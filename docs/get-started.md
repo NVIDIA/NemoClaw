@@ -66,6 +66,7 @@ Edit the copied YAML before executing it:
 | `metadata.uid` | The fresh UUID printed above, or the one onboarding wrote; retain it for every operation on this deployment |
 | `metadata.name` | Your deployment label |
 | `spec.gateway.endpoint` | Your existing gateway's endpoint |
+| `spec.gateway.engine` | The Docker or Podman engine containing the immutable sandbox image; replace the example's illustrative socket with that engine's address |
 | `spec.gateway.credential` and `spec.gateway.tls` | References required by that gateway; omit optional fields when unused |
 | `spec.inferenceProviders[0].endpoint` | Your upstream inference base URL |
 | `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
@@ -76,6 +77,8 @@ Edit the copied YAML before executing it:
 | Other route `overrides` | Limits and reasoning settings supported by that model; remove optional tuning you have not verified |
 
 Keep `gateway.management: external`, sandbox name `assistant`, and loopback dashboard port `18800` to match the access commands.
+The explicit `gateway.engine` is used for image inspection; it does not grant NemoClaw ownership of the external gateway.
+External gateways have no default image engine; use the address of the daemon holding the image, which may be on another host.
 Update the copied schema comment to `../../schemas/nemoclaw-v1alpha1.schema.json` so editor diagnostics use this checkout's schema.
 Use the [field reference](reference/configuration.md) for accepted fields.
 
@@ -103,9 +106,10 @@ nemoclaw plan --state-dir .local/first-deployment/state .local/first-deployment/
 Inspect the planned resource changes before applying.
 Plan observes the existing services without creating runtime resources or invoking inference.
 Authentication, connectivity, or ownership errors must be resolved before proceeding.
+Proceed only when the plan is complete and reports no deferred prerequisites; exit status zero alone does not establish a complete plan.
 
 ```sh
-nemoclaw apply --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml
+nemoclaw apply -o json --progress off --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml
 ```
 
 Apply computes its own checked plan, creates the deployment resources, and checks agent configuration and readiness.

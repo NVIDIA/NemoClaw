@@ -5,7 +5,7 @@ use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, DiscoveryAssessment, JourneyDefinition, PartialDocument,
     assess_target,
 };
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
     discovery::{

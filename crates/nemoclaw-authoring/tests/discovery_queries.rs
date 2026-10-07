@@ -6,7 +6,7 @@
 use nemoclaw_authoring::{discovery_queries, inference_request_for_document};
 use nemoclaw_sdk::{
     config::{Document, InferenceApi, InferenceProviderKind},
-    discovery::{DiscoveryQuery, plan_queries},
+    discovery::{CredentialRequest, DiscoveryQuery, plan_queries},
 };
 
 fn document(path: &str) -> Document {
@@ -21,8 +21,10 @@ fn credentials(document: &Document) -> Vec<DiscoveryQuery> {
     document
         .credential_names()
         .into_iter()
-        .map(|reference| DiscoveryQuery::Credential {
-            reference: reference.into(),
+        .map(|reference| {
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: reference.into(),
+            })
         })
         .collect()
 }
@@ -50,7 +52,7 @@ fn an_external_gateway_reads_only_its_image_store_like_plan() {
     assert_eq!(discovery_queries(&document, None).unwrap(), expected);
     assert!(expected.iter().all(|query| !matches!(
         query,
-        DiscoveryQuery::Hardware { .. } | DiscoveryQuery::Engine(_)
+        DiscoveryQuery::Hardware(_) | DiscoveryQuery::Engine(_)
     )));
 }
 
@@ -79,7 +81,7 @@ fn hardware_of_service_engines_is_the_first_named_exclusion() {
     let hardware = |queries: &[DiscoveryQuery]| {
         queries
             .iter()
-            .filter(|query| matches!(query, DiscoveryQuery::Hardware { .. }))
+            .filter(|query| matches!(query, DiscoveryQuery::Hardware(_)))
             .count()
     };
     assert_eq!(hardware(&plan_queries(&document).unwrap()), 1);
@@ -97,7 +99,7 @@ fn an_unresolved_engine_is_the_second_named_exclusion() {
     let image_reads = |queries: &[DiscoveryQuery]| {
         queries
             .iter()
-            .filter(|query| matches!(query, DiscoveryQuery::Fabric { .. }))
+            .filter(|query| matches!(query, DiscoveryQuery::Fabric(_)))
             .count()
     };
     assert_eq!(image_reads(&plan_queries(&document).unwrap()), 1);

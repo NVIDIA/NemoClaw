@@ -6,9 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
-use nemoclaw_sdk::discovery::{DiscoveryRequest, ObservationStatus};
+use nemoclaw_sdk::discovery::{
+    CredentialRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
+};
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};
@@ -292,7 +293,7 @@ impl JourneyState {
                 .iter()
                 .filter(|request| {
                     observations
-                        .engine(request)
+                        .get(*request)
                         .is_some_and(|engine| engine.status == ObservationStatus::Available)
                 })
                 .cloned()

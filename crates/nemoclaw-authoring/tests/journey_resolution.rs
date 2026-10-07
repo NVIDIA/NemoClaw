@@ -5,7 +5,7 @@ use nemoclaw_authoring::{
     Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
     JourneyScope, PartialDocument,
 };
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
 
@@ -1597,7 +1597,7 @@ impl DelegationFacts {
     }
 
     fn observations(&self) -> DiscoveryObservations {
-        use nemoclaw_sdk::discovery::{DiscoveryObservation, DiscoveryQuery};
+        use nemoclaw_sdk::discovery::{CredentialRequest, DiscoveryObservation, DiscoveryQuery};
         let mut observations = crate::support::target_observations(
             &self.document,
             self.engine.clone(),
@@ -1611,9 +1611,9 @@ impl DelegationFacts {
         }
         for credential in &self.credentials {
             observations.record(
-                DiscoveryQuery::Credential {
+                DiscoveryQuery::Credential(CredentialRequest {
                     reference: credential.reference.clone(),
-                },
+                }),
                 DiscoveryObservation::Credential(credential.clone()),
             );
         }

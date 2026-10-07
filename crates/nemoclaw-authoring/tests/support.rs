@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Helpers shared by the authoring tests.
-use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
     discovery::{
@@ -148,7 +148,7 @@ pub fn image_query(document: &Document) -> DiscoveryQuery {
     plan_queries(document)
         .unwrap()
         .into_iter()
-        .find(|query| matches!(query, DiscoveryQuery::Fabric { .. }))
+        .find(|query| matches!(query, DiscoveryQuery::Fabric(_)))
         .unwrap()
 }
 
