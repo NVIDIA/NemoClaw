@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
@@ -111,25 +110,21 @@ export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): vo
   fs.writeFileSync(path.join(root, runtimePath), prepared);
 }
 
-export function extractPreparedRelease(repoRoot: string, root: string, format = "json") {
-  return spawnSync(
-    "node",
-    [
-      "--no-warnings",
-      path.join(repoRoot, "scripts/checks/extract-installer-pins.mts"),
-      "--blueprint",
-      path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
-      "--installer",
-      path.join(root, "scripts/install-openshell.sh"),
-      "--brev-installer",
-      path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
-      "--supervisor-runtime",
-      path.join(root, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
-      "--format",
-      format,
-    ],
-    { encoding: "utf8" },
-  );
+export function preparedReleaseArgs(repoRoot: string, root: string, format = "json"): string[] {
+  return [
+    "--no-warnings",
+    path.join(repoRoot, "scripts/checks/extract-installer-pins.mts"),
+    "--blueprint",
+    path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+    "--installer",
+    path.join(root, "scripts/install-openshell.sh"),
+    "--brev-installer",
+    path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+    "--supervisor-runtime",
+    path.join(root, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+    "--format",
+    format,
+  ];
 }
 
 export type FixtureMode =

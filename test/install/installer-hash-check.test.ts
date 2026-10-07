@@ -37,7 +37,7 @@ import {
 import {
   type FixtureMode,
   addV00106OperationalTrust,
-  extractPreparedRelease,
+  preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
   removeV00106OperationalTrust,
@@ -1008,7 +1008,7 @@ describe("installer hash verification", () => {
   it("accepts the OpenShell 0.1.2 identities through the production extractor", () => {
     const root = createFixture("0.1.2");
     prepareReleaseFixtureRuntime(REPO_ROOT, root);
-    const result = extractPreparedRelease(REPO_ROOT, root);
+    const result = spawnSync("node", preparedReleaseArgs(REPO_ROOT, root), { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
     const pins: unknown = JSON.parse(result.stdout);
     const expected = [...v012Pins("installer"), ...v012Pins("Brev launchable")].filter(
@@ -1022,7 +1022,9 @@ describe("installer hash verification", () => {
         ),
       })),
     );
-    const release = extractPreparedRelease(REPO_ROOT, root, "release-tsv");
+    const release = spawnSync("node", preparedReleaseArgs(REPO_ROOT, root, "release-tsv"), {
+      encoding: "utf8",
+    });
     expect(release.status, release.stderr).toBe(0);
     const rows = release.stdout.trim().split("\n");
     expect(rows).toEqual([
@@ -1055,12 +1057,14 @@ describe("installer hash verification", () => {
       prepareReleaseFixtureRuntime(REPO_ROOT, root);
       const file = path.join(root, name);
       const before = fs.readFileSync(file, "utf8");
-      expect(before).toContain(value);
+      if (!before.includes(value)) {
+        throw new Error(`Mutation fixture lacks the expected ${_label} input`);
+      }
       const replacement = value.startsWith("https:")
         ? "https://attacker.invalid/"
         : (value.startsWith("sha256:") ? "sha256:" : "") + "0".repeat(64);
       fs.writeFileSync(file, before.replace(value, replacement));
-      const result = extractPreparedRelease(REPO_ROOT, root);
+      const result = spawnSync("node", preparedReleaseArgs(REPO_ROOT, root), { encoding: "utf8" });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(diagnostic);
       expect(result.stdout).toBe("");
