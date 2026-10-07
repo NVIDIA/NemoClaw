@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
     - name: local
@@ -17,8 +19,6 @@ spec:
       endpoint: http://172.20.0.1:11436/v1
   sandboxes:
     - name: assistant
-      runtime:
-        provider: docker
       network:
         policy:
           explicit:
@@ -30,8 +30,8 @@ spec:
             landlock:
               compatibility: best_effort
             process:
-              run_as_user: "1000"
-              run_as_group: "1000"
+              run_as_user: "10001"
+              run_as_group: "10001"
             network_policies:
               documentation:
                 name: documentation

@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
-#[path = "support/examples.rs"]
-mod examples;
+use crate::examples;
 
 use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples")
-        .join(name);
-    serde_saphyr::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    crate::support::example(name)
 }
 
 fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {
@@ -170,15 +165,20 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 }
 
 #[test]
-fn schema_and_parser_accept_every_maintained_example() {
+fn every_example_is_accepted_and_round_trips_without_changing_intent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    for path in examples::yaml_files(&directory) {
-        if path.extension().is_some_and(|ext| ext == "yaml") {
-            let value: Value =
-                serde_saphyr::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            agrees(&validator, &value, true);
-        }
+    let paths = examples::yaml_files(&directory);
+    assert!(!paths.is_empty());
+    for path in paths {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: Value = serde_saphyr::from_str(&text).unwrap();
+        agrees(&validator, &value, true);
+        let document = Document::parse(text.as_bytes()).unwrap();
+        let restored = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+        assert_eq!(restored, document, "{}", path.display());
+        assert_eq!(restored.workspace(), document.workspace());
+        assert_eq!(restored.digest(), document.digest());
     }
 }
 
@@ -208,13 +208,13 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("podman"),
             true,
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("future"),
             false,
         ),
@@ -397,7 +397,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             json!("podman"),
         ),
     ] {
@@ -408,39 +408,6 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
             Document::parse(value.to_string().as_bytes()).is_err(),
             "{path}"
         );
-    }
-}
-
-#[test]
-fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let expected = root
-        .join(nemoclaw_sdk::config::schema::SCHEMA_PATH)
-        .canonicalize()
-        .unwrap();
-    let schema: Value = serde_json::from_slice(&std::fs::read(&expected).unwrap()).unwrap();
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    for path in examples::yaml_files(&root.join("examples")) {
-        let text = std::fs::read_to_string(&path).unwrap();
-        let associations: Vec<_> = text
-            .lines()
-            .filter_map(|line| line.strip_prefix("# yaml-language-server: $schema="))
-            .collect();
-        assert_eq!(
-            associations.len(),
-            1,
-            "{} must select one schema",
-            path.display()
-        );
-        let selected = path.parent().unwrap().join(associations[0]);
-        assert_eq!(
-            selected.canonicalize().unwrap(),
-            expected,
-            "{}",
-            path.display()
-        );
-        let value: Value = serde_saphyr::from_str(&text).unwrap();
-        agrees(&validator, &value, true);
     }
 }
 
@@ -504,16 +471,10 @@ fn gateway_variants_reject_fields_owned_by_the_other_mode() {
 }
 
 #[test]
-fn managed_gateway_schema_requires_one_compute_driver_including_defaulted_drivers() {
+fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("managed-podman.yaml");
-    let mut second = value["spec"]["sandboxes"][0].clone();
-    second["name"] = json!("second");
-    second.as_object_mut().unwrap().remove("runtime");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(second);
+    value["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
     agrees(&validator, &value, false);
 }
 

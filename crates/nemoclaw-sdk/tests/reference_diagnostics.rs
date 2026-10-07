@@ -4,7 +4,7 @@ use nemoclaw_sdk::config::Document;
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap()
+    crate::support::fixture("local.yaml")
 }
 fn error(value: Value) -> String {
     Document::parse(value.to_string().as_bytes())

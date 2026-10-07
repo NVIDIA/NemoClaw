@@ -146,11 +146,8 @@ mod tests {
 
     #[tokio::test]
     async fn native_cache_identity_is_required_before_loading() {
+        use crate::http_fixture::Fixture;
         use std::sync::{Arc, Mutex};
-        use tokio::{
-            io::{AsyncReadExt, AsyncWriteExt},
-            net::TcpListener,
-        };
 
         let service = service();
         for digest in [
@@ -164,41 +161,28 @@ mod tests {
                 .into_iter()
                 .collect::<Vec<_>>();
             let inventory = json!({"models": models}).to_string();
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let endpoint = format!("http://{}", listener.local_addr().unwrap());
             let requests = Arc::new(Mutex::new(Vec::new()));
             let seen = requests.clone();
-            let server = tokio::spawn(async move {
-                loop {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::new();
-                    while !request.ends_with(b"\r\n\r\n") {
-                        request.push(socket.read_u8().await.unwrap());
-                    }
-                    let request = String::from_utf8(request).unwrap();
-                    let is_inventory = request.starts_with("GET /api/tags ");
-                    seen.lock().unwrap().push(request);
-                    let body = if is_inventory {
-                        inventory.as_str()
-                    } else {
-                        r#"{"done":true,"done_reason":"load","response":""}"#
-                    };
-                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
-                }
-            });
+            let server = Fixture::start_tcp(move |request| {
+                let request = format!("{} {}", request.method, request.path);
+                let body = if request == "GET /api/tags" {
+                    inventory.clone()
+                } else {
+                    r#"{"done":true,"done_reason":"load","response":""}"#.to_owned()
+                };
+                seen.lock().unwrap().push(request);
+                Some((200, body.into_bytes()))
+            })
+            .await;
             let client = reqwest::Client::builder().no_proxy().build().unwrap();
-            let result = load(&client, &endpoint, &service).await;
-            server.abort();
+            let result = load(&client, &server.endpoint, &service).await;
+            drop(server);
             assert_eq!(result.is_ok(), matches, "{result:?}");
             let requests = requests.lock().unwrap();
             assert_eq!(requests.len(), if matches { 3 } else { 2 });
-            assert!(
-                requests[..2]
-                    .iter()
-                    .all(|r| r.starts_with("GET /api/tags "))
-            );
+            assert!(requests[..2].iter().all(|r| r == "GET /api/tags"));
             if matches {
-                assert!(requests[2].starts_with("POST /api/generate "));
+                assert_eq!(requests[2], "POST /api/generate");
             }
         }
     }

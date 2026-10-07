@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the build tool and its dependencies once.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
 [dependencies]
 thiserror.workspace = true
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }

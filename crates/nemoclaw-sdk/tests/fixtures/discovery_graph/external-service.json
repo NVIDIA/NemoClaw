@@ -1,0 +1,35 @@
+{
+  "data": {
+    "nemoclaw_fabric_capabilities": {
+      "sandbox_0": {
+        "engine": "",
+        "image": "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
+        "lifecycle": {
+          "postcondition": [
+            {
+              "condition": "${self.compatibility_status != \"unsupported\"}",
+              "error_message": "${join(\"; \", concat([\"sandbox/assistant: adapter/nvidia.fabric.openclaw compatibility rejected\"], [for check in jsondecode(self.observation_json).compatibility.checks : format(\"%s: %s\", check.requirement, check.reason) if check.status == \"unsupported\"]))}"
+            },
+            {
+              "condition": "${self.runtime_json != \"\"}",
+              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained."
+            }
+          ]
+        },
+        "requirements_json": "{\"configuration\":{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"assistant\"},\"models\":{\"default\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}}"
+      }
+    },
+    "nemoclaw_target_hardware": {
+      "target_0": {
+        "engine": "ssh://operator@192.168.1.50"
+      }
+    }
+  },
+  "output": {
+    "value": {
+      "gateway": "${data.nemoclaw_gateway_capabilities.current.observation_json}",
+      "sandbox_0": "${data.nemoclaw_fabric_capabilities.sandbox_0.observation_json}",
+      "target_0": "${data.nemoclaw_target_hardware.target_0.observation_json}"
+    }
+  }
+}

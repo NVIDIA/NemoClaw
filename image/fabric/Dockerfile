@@ -19,11 +19,15 @@ RUN mkdir -p /node/usr/local/bin /node/usr/local/lib \
 
 FROM ${PYTHON_IMAGE} AS base
 USER root
+# Agents run as 10001:10001, the UID OpenShell's Kubernetes driver uses for
+# sandboxes; Docker and Podman use the image's own user, so one image fits all.
+# OpenShift instead runs sandboxes as the namespace's UID, which must be able
+# to read /sandbox: OpenShell copies it to a private workspace volume.
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+    && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
 
@@ -43,7 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
     && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
+# Archive extraction gives every Fabric revision the same paths and timestamps,
+# so a shared Cargo target cache can link a newer binding against an older core.
+# Share downloads only; compiled artifacts stay in this source-specific layer.
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
@@ -87,7 +94,8 @@ COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
 
 FROM interactive AS openclaw
-COPY --from=openclaw-upstream /app /app
+# Upstream owns /app as its own user; the sandbox only reads it.
+COPY --from=openclaw-upstream --chown=0:0 /app /app
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 ADD --chown=node:node --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
 ADD --chown=node:node --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
@@ -100,12 +108,17 @@ RUN --network=none OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tm
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/brave.tgz \
     && OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/tavily.tgz \
-    && mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
-    && rm -rf /tmp/plugin-build /tmp/brave.tgz /tmp/tavily.tgz
+    && rm -f /tmp/brave.tgz /tmp/tavily.tgz
+USER root
+RUN mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
+    && chown -R 0:0 /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && chmod -R u+rwX,go+rX,go-w /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && rm -rf /tmp/plugin-build
 COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
 COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
 COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
+USER node
 
 FROM base AS hermes-assets
 COPY --from=node /node/ /
@@ -185,9 +198,9 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 
 # A small executable specification with no native agent or model dependencies.
 FROM ${PYTHON_IMAGE} AS dummy
-RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent

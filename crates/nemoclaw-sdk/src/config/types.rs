@@ -79,7 +79,7 @@ pub struct Spec {
 /// A reference to a caller-provided environment variable; the configuration contains no credential value.
 pub struct Credential {
     #[serde(rename = "env")]
-    /// Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential.
+    /// Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 
@@ -101,7 +101,7 @@ pub struct TLS {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "management", rename_all = "lowercase")]
-/// Install a local gateway or connect to an existing gateway.
+/// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 pub enum Gateway {
     /// A gateway installed and managed by this deployment.
     /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
@@ -121,20 +121,23 @@ impl Default for Gateway {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
-/// Installation settings for a managed local gateway.
+/// Installation settings for a managed gateway. Without kubernetes, use a local Docker or rootless Linux Podman engine. Kubernetes requires an explicit existing-cluster target and the development authentication profile.
 pub struct ManagedGateway {
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the gateway runs every sandbox with; omission selects Docker.
+    pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local gateway HTTP origin with an unprivileged loopback port.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway Unix engine socket; Podman requires its API service socket.
+    /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
     pub engine: String,
     #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway image pinned by the SDK.
+    /// Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.
     pub image: String,
     #[serde(
         rename = "imagePullPolicy",
@@ -142,12 +145,16 @@ pub struct ManagedGateway {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "super::ImagePullPolicy")]
-    /// Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart.
+    /// Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes.
     pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Canonical private IPv4 /24 for a managed gateway.
+    /// Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.
     pub network_cidr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::ManagedKubernetes")]
+    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    pub kubernetes: Option<super::ManagedKubernetes>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -155,7 +162,11 @@ pub struct ManagedGateway {
 #[serde(default, deny_unknown_fields)]
 /// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
 pub struct ExternalGateway {
-    /// Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown.
+    #[serde(rename = "runtime")]
+    #[schemars(default)]
+    /// Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports.
+    pub runtime: Runtime,
+    /// Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     pub engine: String,
@@ -246,12 +257,9 @@ pub struct Sandbox {
     pub name: String,
     #[serde(rename = "image")]
     #[schemars(default)]
-    /// Sandbox agent image; omission selects the SDK pin for the selected harness.
+    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
+    /// Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
     pub image: Image,
-    #[serde(rename = "runtime")]
-    #[schemars(default)]
-    /// Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver.
-    pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
@@ -268,18 +276,23 @@ pub struct Sandbox {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference. Omitted or empty selects the SDK pin for the selected harness.
+    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
+    /// Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
     pub ref_: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Credential")]
+    /// Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead.
+    pub metadata: Option<Credential>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Sandbox runtime selected through OpenShell.
+/// The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
 pub struct Runtime {
     #[serde(rename = "provider")]
     #[schemars(default)]
-    /// Docker or Podman driver. A managed service with Podman requires explicit service placement.
+    /// Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.
     pub provider: super::ComputeDriver,
 }
 

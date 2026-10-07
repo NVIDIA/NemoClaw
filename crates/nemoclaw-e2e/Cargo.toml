@@ -5,6 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the SDK and provider once. The Brev test
+# stays separate because its workflow copies that one executable to a VM.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "brev"
+path = "tests/brev.rs"
 
 [dependencies]
 rcgen = "0.14.10"
@@ -26,13 +37,20 @@ prost.workspace = true
 tower.workspace = true
 http.workspace = true
 tokio-stream.workspace = true
+tar.workspace = true
 
 [dev-dependencies]
 serde-saphyr.workspace = true
+getrandom.workspace = true
 
 [[bin]]
 name = "terraform-provider-nemoclaw-fixture"
 path = "src/bin/provider.rs"
+
+# Installed as `ssh` on PATH by the remote-service tests.
+[[bin]]
+name = "nemoclaw-e2e-ssh-fixture"
+path = "src/bin/ssh_fixture.rs"
 
 [lints]
 workspace = true

@@ -47,7 +47,7 @@ async fn main() -> ExitCode {
         .template
         .as_deref()
         .map_or(Source::Defaults, Source::Template);
-    let result = author(source, &cli.output, &cancel).await;
+    let result = author(source, &cli.output, false, &cancel).await;
     signals.abort();
     match result {
         Ok(saved) => {

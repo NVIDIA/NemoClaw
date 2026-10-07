@@ -104,7 +104,8 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
                     "gateway runs OpenShell incompatible-version, but this build requires {version}"
                 ),
                 "driver" => {
-                    "gateway compute driver is podman, but runtime.provider is docker".into()
+                    "gateway compute driver is podman, but spec.gateway.runtime.provider is docker"
+                        .into()
                 }
                 _ => "gateway reports 2 compute drivers, but exactly one is required".into(),
             };
@@ -182,7 +183,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
             assert!(
                 normalized.contains(if failure == "driver" {
                     "Gateway is incompatible with this configuration: gateway compute driver is \
-                     podman, but runtime.provider is docker."
+                     podman, but spec.gateway.runtime.provider is docker."
                 } else {
                     "Gateway capability observation failed"
                 }),

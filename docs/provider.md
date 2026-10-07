@@ -35,7 +35,7 @@ The generated graphs manage these objects and observations:
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
-The [standalone HCL fixture](testing/fixtures.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
+The [standalone HCL fixture](contributing/integration-tests.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
 It does not qualify a complete standalone OpenShell deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
@@ -134,8 +134,8 @@ It selects installed-package records using Fabric's provenance, without editing 
 Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
 With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
 The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
-See [source notices and regeneration](../image/NOTICE.md).
-Older images and direct Bake builds without labels remain unverified.
+See the [image metadata contract](design/fabric-management.md#image-metadata) and [catalog regeneration](build.md#regenerate-the-bundled-catalog).
+Direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 
@@ -199,7 +199,7 @@ Each API read is bounded to 30 seconds.
 
 The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zero means one bounded API read.
 A positive timeout retries only transport failures, not authentication failures, incomplete metadata, or incompatibility.
-For a managed gateway, the earlier runtime graph sets this timeout to 90 seconds and orders its capability read after gateway reconciliation.
+For a managed gateway, the runtime stage sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
 For managed Docker gateways, the runtime graph also passes `managed_spec` and `container_id` from the Docker provider's process resource.
@@ -269,9 +269,9 @@ The OpenShell graph uses the same data source for Ollama proxies, with a 30-seco
 A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
 Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
-The SDK no longer runs service readiness loops.
+The SDK runs no readiness loop of its own.
 
-The [standalone readiness fixture](testing/fixtures.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
+The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
 
@@ -299,7 +299,7 @@ SDK-generated graphs defer health until apply; export and teardown omit the obse
 Standalone configurations with known inputs may read during planning unless the trigger defers them.
 Existing sandbox resource refresh still verifies configuration.
 
-The [standalone sandbox fixture](testing/fixtures.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
+The [standalone sandbox fixture](contributing/integration-tests.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
 The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
 ## Combined Service Capacity
@@ -339,12 +339,11 @@ The NemoClaw provider uses a source-derived version to prevent stale reuse.
 The Docker provider has a fixed release version and checksum-pinned native archives, with its upstream license retained in the bundle.
 
 [Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
-[Fixture qualification](testing/fixtures.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
+[Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage
 
-Public provider distribution and installation instructions: **TBD**.
-Supported user-authored HCL examples and their lifecycle/retention contract: **TBD**.
-Import, adoption, remote-state backends, and compatibility across provider releases: **TBD**.
+The provider is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

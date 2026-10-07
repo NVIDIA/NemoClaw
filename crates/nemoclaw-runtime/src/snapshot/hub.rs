@@ -189,39 +189,30 @@ mod tests {
     }
     #[tokio::test]
     async fn selected_commit_resolves_without_weights_then_downloads_and_reuses_exact_snapshot() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = requests.clone();
+        let server = crate::http_fixture::Fixture::start_tcp(move |request| {
+            let body = if request.method == "GET" && request.path.starts_with("/api/") {
+                info().to_string()
+            } else if request.path.ends_with("/config.json") {
+                "{}".into()
+            } else if request.path.ends_with("/model.safetensors") {
+                "abc".into()
+            } else {
+                return None;
+            };
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", request.method, request.path));
+            Some((200, body.into_bytes()))
+        })
+        .await;
         let client = Client {
-            base_url: format!("http://{}", listener.local_addr().unwrap()),
+            base_url: server.endpoint.clone(),
             http: reqwest::Client::new(),
             registry: false,
             resume_attempts: 1,
         };
-        let seen = requests.clone();
-        let server = tokio::spawn(async move {
-            for _ in 0..4 {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut bytes = Vec::new();
-                while !bytes.ends_with(b"\r\n\r\n") {
-                    bytes.push(stream.read_u8().await.unwrap());
-                }
-                let request = String::from_utf8(bytes).unwrap();
-                let body = if request.starts_with("GET /api/") {
-                    info().to_string()
-                } else if request.contains("/config.json ") {
-                    "{}".into()
-                } else {
-                    assert!(request.contains("/model.safetensors "));
-                    "abc".into()
-                };
-                seen.lock().unwrap().push(request);
-                stream
-                    .write_all(response("200 OK", &body).as_bytes())
-                    .await
-                    .unwrap();
-            }
-        });
         let manifest = client
             .resolve("another/model", &"a".repeat(40))
             .await
@@ -246,7 +237,7 @@ mod tests {
                 .unwrap(),
             local
         );
-        server.await.unwrap();
+        drop(server);
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 4);
         assert!(requests.iter().all(|r| r.contains(&"a".repeat(40))));

@@ -88,20 +88,7 @@ impl PartialDocument {
     pub fn assess(&self) -> PartialAssessment {
         let mut issues = INPUT_VALIDATOR
             .iter_errors(&self.supplied)
-            .map(|error| {
-                let mut path = error.instance_path().to_string();
-                if let Kind::Required { property } = error.kind()
-                    && let Some(property) = property.as_str()
-                {
-                    path.push('/');
-                    path.push_str(&property.replace('~', "~0").replace('/', "~1"));
-                }
-                PartialIssue {
-                    path,
-                    kind: classify(error.kind()),
-                    rule: error.kind().keyword().to_owned(),
-                }
-            })
+            .flat_map(|error| tagged_branch(&error).unwrap_or_else(|| vec![issue(&error)]))
             .collect::<Vec<_>>();
         issues.sort_by(|left, right| (&left.path, &left.rule).cmp(&(&right.path, &right.rule)));
         issues.dedup();
@@ -127,6 +114,43 @@ impl PartialDocument {
             },
         }
     }
+}
+
+fn issue(error: &jsonschema::ValidationError<'_>) -> PartialIssue {
+    let mut path = error.instance_path().to_string();
+    if let Kind::Required { property } = error.kind()
+        && let Some(property) = property.as_str()
+    {
+        path.push('/');
+        path.push_str(&property.replace('~', "~0").replace('/', "~1"));
+    }
+    PartialIssue {
+        path,
+        kind: classify(error.kind()),
+        rule: error.kind().keyword().to_owned(),
+    }
+}
+
+/// For a tagged union such as the gateway, whose `management` names its
+/// kind, report the errors inside the branch the input selects, so an
+/// invalid field is attributed to that field rather than to the whole union.
+fn tagged_branch(error: &jsonschema::ValidationError<'_>) -> Option<Vec<PartialIssue>> {
+    let Kind::OneOfNotValid { context } = error.kind() else {
+        return None;
+    };
+    let tag = ["management", "kind"]
+        .into_iter()
+        .find_map(|tag| error.instance().get(tag).and_then(Value::as_str))?;
+    let schema = input_schema();
+    let branches = schema
+        .pointer(&error.schema_path().to_string())?
+        .as_array()?;
+    let selected = branches.iter().zip(context).find(|(branch, _)| {
+        ["management", "kind"]
+            .iter()
+            .any(|key| branch["properties"][key]["const"].as_str() == Some(tag))
+    })?;
+    Some(selected.1.iter().map(issue).collect())
 }
 
 fn classify(kind: &Kind) -> PartialIssueKind {

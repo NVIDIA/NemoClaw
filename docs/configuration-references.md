@@ -178,7 +178,7 @@ The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) co
 All three agents select the same provider and inference settings; only two receive search access.
 It passes the SDK parser and JSON Schema checks, but this combined deployment has not been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
-Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](inference.md#build-an-image-with-the-configuration-interface), and [Brave credential instructions](agents.md#brave-web-search).
+Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](build.md#build-agent-images), and [Brave credential instructions](agents.md#brave-web-search).
 The OTLP collector must already exist and be reachable; follow the [sandbox policy prerequisites](sandbox-network.md).
 Apply provisions the managed resources and checks readiness; verify inference separately.
 

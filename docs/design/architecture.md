@@ -15,6 +15,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
+| Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
 | NemoClaw provider | OpenShell operations, Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
@@ -29,6 +30,35 @@ Pure policy compilation stays in SDK configuration; OpenShell transport and muta
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
+
+## Managed Kubernetes Ownership
+
+For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness.
+The native bundle includes the pinned Helm provider; no Helm CLI is required.
+
+| Owner | Managed Kubernetes responsibility |
+|---|---|
+| SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and coordinate runtime and OpenShell stages |
+| OpenTofu | Execute dependencies and retain each provider's resource state |
+| NemoClaw provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
+| Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
+| Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
+
+The NemoClaw provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
+Before Helm can change the release, NemoClaw verifies retained Kubernetes identities; after installation, it records the StatefulSet identity and observes readiness.
+For OpenShift, authentication preparation reads the owned namespace's UID and group ranges and supplies non-secret chart overrides through a computed resource output.
+Helm waits for that output, and subsequent refresh rejects a changed namespace identity.
+Teardown reverses that order, removes the release before the issuer, and retains the namespace, encryption key, and persistent volumes.
+Before teardown accepts a missing release, the authentication resource must independently confirm that its Helm release records are absent.
+The SDK also checkpoints an established release binding before removal because the pinned Helm provider can forget it after a failed lookup.
+Recovery validates the original bundle, intent, generations, state lineage and serial, and resource identities, then uses OpenTofu's state operations to restore only a missing Helm binding.
+It preserves the latest state of other resources; a fresh checked plan must authorize subsequent deletion.
+Confirmed authentication cleanup prevents restoration after successful release removal.
+The [Helm removal recovery procedure](../usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
+Issuer private material stays outside Helm values and OpenTofu state.
+The provider receives the explicit kubeconfig and context; ambient Helm and Kubernetes provider settings are excluded.
+OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else.
+The [migration policy](../migration.md#move-from-the-combined-kubernetes-gateway-resource) keeps deployments using the earlier combined gateway resource with their original bundle and state; the new graph starts a separate deployment.
 
 ## OpenShell SDK Boundary
 
@@ -60,7 +90,7 @@ At the pinned OpenShell revision `6648bd0c290efbc41ba131ee9831ee45cd431f94`, the
 These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-sdk/src/auth.rs).
 The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
 NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
-An [artifact test](../../crates/nemoclaw-sdk/tests/artifact_pins.rs) checks revision alignment and proves telemetry remains disabled even when the process environment requests it.
+A [telemetry test](../../crates/nemoclaw-sdk/tests/telemetry.rs) proves telemetry remains disabled even when the process environment requests it.
 Deletion and exec are name-addressed in the pinned protocol without an atomic ID/version precondition.
 NemoClaw verifies identity immediately before either call and never retries an ambiguous mutation automatically; this cannot prevent replacement between verification and the call.
 Ownership checks, retained bindings, and desired-state comparison remain NemoClaw responsibilities even when the SDK gains broader coverage.
@@ -77,7 +107,7 @@ See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
 
 ## Configuration
 
-Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
+Desired-state YAML passes through the SDK's [configuration validation](../contributing/configuration-schema.md).
 Configuration retains credential references, not values.
 
 The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) retains sparse authored values while a frontend answers questions.
@@ -103,18 +133,22 @@ A pin update must preserve the currently qualified native configuration, model r
 
 The [authoring domain model](authoring-domain.md) defines the journey's configuration, run state, question resolution, and validation gates.
 It separates authored intent from decision status, interview position, and target observations.
-The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
+The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and open design questions.
 
-With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
-An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
-It does not create deployment state.
-Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
-Onboarding reads target observations for the current document and ignores observations whose engine, compute driver, image, or inference endpoint request no longer match it.
-Changing only the harness re-evaluates the existing image catalog against the new requirement.
-Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
+Onboarding reads the target directly through the [`nemoclaw-discovery`](../../crates/nemoclaw-discovery/src/lib.rs) crate, whose read functions the provider's data sources also call during a plan.
+It needs no bundle and creates no deployment state.
+Discovery observations are keyed by the query that produced them: an engine and compute driver, a hardware engine, an image with its sandbox's Fabric requirements and platform engine, an inference endpoint request, a gateway, or a credential reference.
+Onboarding looks up the current document's queries, so an observation made for a different engine, compute driver, image, requirement, or inference endpoint request is never found.
+A read that could not be made is an unknown observation with its reason, never absence, so it is not asked again until the caller refreshes it.
+Changing the harness or a route changes the image read's requirements, so the image is unobserved until it is read again.
+Independent reads run concurrently.
+
+A read whose inputs need no deployment resource is a `DiscoveryObservation`, which onboarding's `observe` and a plan's data sources both produce from the same `DiscoveryQuery` and the same read function.
+An image read for a managed gateway takes its platform from the engine read, and `judge_image` computes its compatibility verdict for plan and onboarding alike.
+A read that references a resource in the same plan, or whose result a resource consumes, is a `PlanObservation` and appears only in a plan's report: runtime-image acquisition, service readiness after install, and values OpenTofu cannot compute until apply.
 Known engine incompatibility or conflicting image/adapter requirements block review and saving.
 Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies harness choices whether or not target inspection is available, and target inspection only assesses compatibility.
-Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same OpenTofu data sources.
+Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same functions.
 Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
@@ -231,6 +265,5 @@ Export preserves desired settings and credential references, not agent files, hi
 
 ## Validation
 
-[Integration fixtures](../testing/fixtures.md) exercise the production provider and SDK through the pinned OpenTofu binary, including interrupted operations and failed observations.
-[Recorded results](../validation/README.md) identify tested revisions, platforms, and remaining limits.
+[Integration fixtures](../contributing/integration-tests.md) exercise the production provider and SDK through the pinned OpenTofu binary, including interrupted operations and failed observations.
 Successful resource creation or readiness does not establish working inference; that requires a separate model or agent response test.

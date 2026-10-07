@@ -6,6 +6,11 @@ use super::*;
 use nemoclaw_build::ci::{self, Step};
 use std::{ffi::OsString, time::Instant};
 
+#[path = "run_ci/live_docker.rs"]
+mod live_docker;
+#[path = "run_ci/live_kind.rs"]
+mod live_kind;
+
 const TOOLS: &str = ".tools";
 
 /// The host's bundle platform, matching the SDK's detection without needing it.
@@ -161,6 +166,10 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
     };
     match step {
         Step::Tools => unreachable!("tools install in-process"),
+        Step::LiveDocker => {
+            return live_docker::run_live_docker(tools.pins, platform, &configure);
+        }
+        Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
             let mut command = Command::new(tool("nemoclaw-build"));
             configure(&mut command);
@@ -230,6 +239,13 @@ pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()>
         eprintln!("==> {} ({platform})", step.name());
         let result = if step == Step::Tools {
             install_tools(&tools, &platform).await
+        } else if step == Step::LiveKind {
+            let protoc = protoc_command(tools.protobuf);
+            let path = tool_path(&tools)?;
+            let configure = |command: &mut Command| {
+                command.env("PROTOC", &protoc).env("PATH", &path);
+            };
+            live_kind::run_live_kind(tools.pins, &platform, &configure).await
         } else {
             run_step(&tools, &platform, step)
         };

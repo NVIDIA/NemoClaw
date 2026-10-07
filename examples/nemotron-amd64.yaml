@@ -9,6 +9,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: podman
     endpoint: http://127.0.0.1:17697
   services:
     nemotron:
@@ -55,8 +57,6 @@ spec:
       image:
         # Build the Fabric OpenClaw image and replace this placeholder.
         ref: nc-prototype-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: podman
       network:
         tier: isolated
       harness:

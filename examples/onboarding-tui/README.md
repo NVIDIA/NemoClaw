@@ -56,31 +56,6 @@ The standalone example uses the same questionnaire:
 cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-### Watch and replay the built-in guided scenario
-
-This local scenario needs Python 3 and tmux.
-It creates a tmux session, a temporary YAML file, and a screen transcript; it does not contact a deployment target or apply resources.
-From the repository root, build the example and start the replay:
-
-```sh
-cargo build -p nemoclaw-onboarding
-python3 examples/onboarding-tui/scripts/replay_guided.py --wait-for-viewer --keep-session --delay 2
-```
-
-The driver prints a `tmux attach-session -r` command.
-Run it in another terminal to watch; replay waits for that viewer before answering.
-It checks each expected screen, saves YAML to a new temporary path, checks selected fields, and writes a JSONL screen transcript beside the YAML.
-Omit `--wait-for-viewer` and use `--delay 0` for a fast unattended replay.
-The default scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
-To replay the more sparse inline template through the same TUI, run:
-
-```sh
-python3 examples/onboarding-tui/scripts/replay_guided.py --template crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml --wait-for-viewer --keep-session --delay 2
-```
-
-This template supplies the inline forms and one route, then asks for missing names, gateway management, harness, provider preset, and model. The replay selects OpenClaw and checks the saved desired state. It does not probe or apply a target.
-If a question changes, replay stops and prints the unexpected screen; inspect the transcript and rerun with new output paths after updating the expected steps.
-
 Both entrypoints treat input YAML only as defaults for a new deployment.
 There is no mode for editing an existing deployment or retaining the template's UID.
 Both entrypoints accept the single-sandbox deployment examples as templates, including existing managed inference services and multiple model routes.
@@ -94,13 +69,13 @@ When a verified bundle supplies target observations, a confirmed compatibility c
 An external gateway runs on its own host, and the questionnaire preserves its selected runtime.
 The preset does not configure Podman Machine or a remote Linux host.
 
-The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
+The CLI reads the target while you answer:
 
 ```sh
-nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
+nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
+Onboarding reads the selected Fabric image and the inference model catalog through the same functions the provider's plan data sources use; it needs no bundle and starts no OpenTofu process.
 For a managed gateway, it also checks engine prerequisites and reads hardware advertisements.
 Hardware observations do not affect questions or readiness yet.
 For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
@@ -108,17 +83,15 @@ Onboarding uses that engine only to inspect the image; the image store's compute
 Observations for a different engine or image are ignored.
 Omitting `spec.gateway.engine` leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
 Image compatibility does not verify the external gateway's execution platform or readiness.
-Independent requests share a plan, and duplicate requests are read once.
+Independent reads run concurrently, and duplicate requests are read once.
 It reads the model catalog when a model question opens for a new endpoint request.
 It reads target observations again each time you delegate with **Ctrl+D** or enter review.
 Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
-Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
+Each engine, image, hardware, and catalog read has a five-second timeout; a gateway capability call has thirty seconds.
 Discovery supports cancellation and does not pull images or start containers.
-An ordinary discovery plan has a 30-second overall bound; the separate gateway query has a 35-second bound.
 The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
-Without a usable bundle, onboarding cannot inspect the target and marks it unverified.
-The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
+The standalone example does not read the target, so target compatibility remains unverified.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.

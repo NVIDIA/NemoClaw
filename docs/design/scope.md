@@ -1,9 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Accepted Scope and Invariants
+# Scope and Invariants
 
-Accepted by maintainer cvillela on 2026-09-14.
 This page defines implementation requirements; the [architecture guide](architecture.md) explains them.
 
 ## Responsibilities
@@ -16,7 +15,8 @@ NemoClaw provides a public desired-state SDK, CLI, and OpenTofu provider.
 | CLI | Arguments, terminal output, and exit codes |
 | OpenTofu | Graph execution and resource state |
 | Docker provider | Docker gateway, inference, and proxy containers; images, model-cache volumes, and service-owned networks |
-| NemoClaw provider | OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence |
+| Helm provider | Installation, upgrade, and removal of the pinned OpenShell chart release |
+| NemoClaw provider | OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, Kubernetes storage and development authentication, readiness observations, and application-specific persistence |
 | Hosted runtime | Startup capacity checks, model preparation, and application health |
 | Fabric | Agent runtime health semantics and adapter checks |
 
@@ -59,5 +59,5 @@ Verify certificate trust in both directions independently of plaintext protocol 
 Use behavioral tests for ownership, observation failures, drift, replacement, partial creation, recovery, unchanged apply, export/reapply, and destroy.
 Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the same state.
 Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
-Separate deterministic tests from opt-in live qualification; record revision, platform, and environment in [validation records](../validation/README.md).
+Separate deterministic tests from opt-in live qualification; record a live run's revision, platform, and environment in its CI results or the commit that relies on it.
 Compilation alone does not qualify migration or platforms.

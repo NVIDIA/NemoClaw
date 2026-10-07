@@ -26,38 +26,6 @@ fn no_capabilities(native: &Value, id: &str) -> Result<(), Error> {
 }
 
 impl Engine {
-    #[cfg(unix)]
-    pub(crate) async fn podman_json(&self, path: &str) -> Result<Value, Error> {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .unix_socket(
-                self.endpoint()
-                    .strip_prefix("unix://")
-                    .ok_or(ObservationError::Incomplete)?,
-            )
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|_| ObservationError::Incomplete)?;
-        let mut response = client
-            .get(format!("http://localhost/v4.0.0/libpod/{path}"))
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|_| ObservationError::Incomplete)?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| ObservationError::Incomplete)?
-        {
-            if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-                return Err(ObservationError::Incomplete.into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| ObservationError::Incomplete.into())
-    }
-
     pub(crate) async fn managed_container(
         &self,
         spec: &Spec,

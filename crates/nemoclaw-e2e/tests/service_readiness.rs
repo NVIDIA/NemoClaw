@@ -5,7 +5,7 @@
 use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
@@ -26,12 +26,11 @@ async fn standalone_readiness(proxy: bool) {
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
-    fs::write(
+    std::os::unix::fs::symlink(
+        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
         root.join("bin/ssh"),
-        include_bytes!("fixtures/remote_ssh.py"),
     )
     .unwrap();
-    fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
     let document = Document::parse(
         include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
@@ -52,40 +51,31 @@ async fn standalone_readiness(proxy: bool) {
         .find(|target| target.kind == "inference_service")
         .unwrap();
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     };
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let model_changed = Arc::new(AtomicBool::new(false));
     let changed = model_changed.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let upstream = format!("http://{}/v1", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move {
-        loop {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(socket.read_u8().await.unwrap());
-            }
-            assert!(
-                request.starts_with(b"GET /api/tags HTTP/1.1\r\n"),
-                "readiness must not request generation or mutate models"
-            );
-            let digest = if changed.load(Ordering::SeqCst) {
-                "b"
-            } else {
-                "a"
-            }
-            .repeat(64);
-            let body =
-                json!({"models":[{"name":"qwen3:0.6b","digest":digest,"size":42}]}).to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
+    let mutations = Arc::new(Mutex::new(Vec::new()));
+    let seen = mutations.clone();
+    let server = nemoclaw_e2e::http_fixture::Fixture::start_tcp(move |request| {
+        if request.method != "GET" || request.path != "/api/tags" {
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", request.method, request.path));
+            return Some((400, Vec::new()));
         }
-    });
+        let digest = if changed.load(Ordering::SeqCst) {
+            "b"
+        } else {
+            "a"
+        }
+        .repeat(64);
+        let body = json!({"models":[{"name":"qwen3:0.6b","digest":digest,"size":42}]});
+        Some((200, body.to_string().into_bytes()))
+    })
+    .await;
+    let upstream = format!("{}/v1", server.endpoint);
     let encoded = if proxy {
         json!({"kind":"ollama_proxy", "engine":"ssh://operator@gpu-box", "proxy":{
             "Name":"nc-0123456789abcdef-ollama-proxy-local", "Owner":document.metadata.uid,
@@ -132,7 +122,12 @@ async fn standalone_readiness(proxy: bool) {
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
     status("ready");
     control(json!({"transport_failure":true}));
-    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":1,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
+    // Each check makes several SSH fixture round trips, so a 1-second wait
+    // timed out on a slow macOS runner. A managed service that is still loading
+    // fails only when the wait expires, so its wait stays short; every expected
+    // proxy failure is immediate, so the proxy wait can be generous.
+    let wait = if proxy { 30 } else { 3 };
+    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
         let output = directory
@@ -195,7 +190,12 @@ async fn standalone_readiness(proxy: bool) {
         assert_eq!(consumer_id(&state()), id);
     }
     control(json!({"transport_failure":true}));
-    server.abort();
+    drop(server);
+    assert_eq!(
+        *mutations.lock().unwrap(),
+        Vec::<String>::new(),
+        "readiness must not request generation or mutate models"
+    );
     run(&["destroy", "-input=false", "-auto-approve"], true);
     assert_eq!(
         serde_json::from_slice::<Value>(&fs::read(root.join("engine.json")).unwrap()).unwrap(),

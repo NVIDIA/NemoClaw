@@ -104,7 +104,7 @@ pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value,
                 let mut field = node["oneOf"][0]["properties"][&discriminator].clone();
                 field.as_object_mut()?.remove("const");
                 field["enum"] = json!(choices);
-                field["$defs"] = root.get("$defs")?.clone();
+                attach_definitions(root, &mut field);
                 return Some((field, true));
             }
             node = sdk_selected_branch(node, values.pointer(&current_path)?)?;
@@ -141,10 +141,53 @@ pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value,
         current_path.push_str(part);
     }
     let mut field = follow_ref(root, node)?.clone();
-    if let Some(object) = field.as_object_mut() {
-        object.insert("$defs".into(), root.get("$defs")?.clone());
-    }
+    attach_definitions(root, &mut field);
     Some((field, required))
+}
+
+/// Give a standalone field schema the SDK definitions it references, directly
+/// or through other definitions. Copying only those keeps field schemas small,
+/// so each validation compiles just the definitions it can reach.
+fn attach_definitions(root: &Value, field: &mut Value) {
+    fn references(value: &Value, found: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(name) = object
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix("#/$defs/"))
+                    && !found.iter().any(|known| known == name)
+                {
+                    found.push(name.to_owned());
+                }
+                object.values().for_each(|child| references(child, found));
+            }
+            Value::Array(items) => items.iter().for_each(|child| references(child, found)),
+            _ => {}
+        }
+    }
+    let Some(definitions) = root.get("$defs").and_then(Value::as_object) else {
+        return;
+    };
+    // Scan the whole field: the field itself may be a reference.
+    let mut names = Vec::new();
+    references(field, &mut names);
+    let Some(object) = field.as_object_mut() else {
+        return;
+    };
+    let mut attached = serde_json::Map::new();
+    while let Some(name) = names.pop() {
+        if attached.contains_key(&name) {
+            continue;
+        }
+        if let Some(definition) = definitions.get(&name) {
+            references(definition, &mut names);
+            attached.insert(name, definition.clone());
+        }
+    }
+    if !attached.is_empty() {
+        object.insert("$defs".into(), Value::Object(attached));
+    }
 }
 
 /// A complete supplied object can identify a single valid schema alternative.
@@ -156,9 +199,7 @@ fn selected_alternative<'a>(root: &'a Value, node: &'a Value, value: &Value) -> 
         };
         let mut valid = branches.iter().filter(|branch| {
             let mut candidate = (*branch).clone();
-            if let Some(object) = candidate.as_object_mut() {
-                object.insert("$defs".into(), root["$defs"].clone());
-            }
+            attach_definitions(root, &mut candidate);
             schema_accepts(&candidate, value) == Some(true)
         });
         let branch = valid.next()?;

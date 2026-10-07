@@ -7,7 +7,6 @@ NemoClaw deploys agents in OpenShell sandboxes from desired-state YAML.
 Use the CLI or Rust SDK to plan, apply, export, and destroy deployments.
 
 This branch documents v1 development using source-built bundles.
-See [tested configurations and limits](docs/validation/README.md) before choosing a deployment.
 
 [![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
 
@@ -27,7 +26,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 ## Contribute
 
 Read the [accepted scope](docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
-Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
+Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/contributing/documentation.md) for documentation changes.
 Report potential vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
 
 ## Licenses

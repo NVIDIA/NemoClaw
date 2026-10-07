@@ -9,6 +9,8 @@ metadata:
 spec:
   gateway:
     management: external
+    runtime:
+      provider: podman
     endpoint: http://127.0.0.1:17697
   services:
     qwen:
@@ -48,8 +50,6 @@ spec:
       serviceRef: qwen
   sandboxes:
     - name: assistant
-      runtime:
-        provider: podman
       network:
         tier: isolated
       harness:

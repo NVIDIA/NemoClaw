@@ -7,15 +7,12 @@ Choose who operates the inference service, then select the API and model used by
 A deployment can select up to 32 inference providers across its sandboxes.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
-The [earlier native-inference attempt](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) records a blocker at its tested OpenShell revision.
-Use the current images and verify your chosen harness and model; historical results do not qualify every supported configuration.
+Use current images and verify your chosen harness and model; passing tests for one combination do not qualify another.
 
-OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
 For uncredentialed endpoints, a dummy client key satisfies SDKs that require a nonempty key; no provider credential is stored.
 The model ID is client configuration, not a proxy-enforced model restriction; the attached provider authorizes its configured API path.
-The YAML `routes` field currently names model configuration; it no longer creates an OpenShell route resource.
-See [state migration](state.md#native-inference-migration) before changing an existing deployment.
+The YAML `routes` field names model configuration; it creates no OpenShell route resource.
 
 ## Give an Agent Multiple Model Choices
 
@@ -78,7 +75,7 @@ Plan does not reserve shared GPU capacity or sum live startup demand; choose ser
 An existing GPU process alone does not reject startup when measured capacity is sufficient.
 The installer performs one bounded readiness check after installation. It does not add service start, stop, restart, recovery, or continuous-monitoring operations.
 Multiple sandboxes can share any selected provider.
-Managed vLLM resource identities include the service name; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
+Managed vLLM resource identities include the service name.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
@@ -96,7 +93,7 @@ Service ownership does not depend on the harness; the service must support the [
 The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
 Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
-An accepted example is a configuration contract; [validation records](validation/README.md) identify which combinations completed live inference and at which revision.
+An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
 ## Choose the Request API
 
@@ -135,37 +132,14 @@ For a local external Ollama daemon, use the [managed proxy](#use-external-ollama
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
-Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until their endpoint/API/model combinations are qualified.
+Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
 
-## Build an Image with the Configuration Interface
+## Use an Image Built from This Revision
 
-Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
-
-Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
-
-```sh
-# On Linux ARM64:
-cargo images build --platform linux/arm64 openclaw
-# For Hermes:
-cargo images build --platform linux/arm64 hermes
-# On Linux AMD64:
-cargo images build --platform linux/amd64 deepagents
-```
-
-These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally and attach catalog metadata obtained through the installed Fabric discovery API.
-Direct Docker Bake builds do not attach that metadata.
-Linux AMD64 also supports the OpenClaw target through the same `--platform` selector.
-Follow [image digest selection](build.md#build-agent-images) and use the matching immutable reference in `sandboxes[].image.ref`.
-The sandbox compute daemon must have access to the built image under that digest; a build on another Docker daemon does not make it available to the gateway.
+Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes[].image.ref`.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
-
-Changing an existing sandbox's image, provider attachments, or security policy can require replacement.
-Ordinary apply rejects sandbox replacement rather than destroying it automatically.
-Model and native settings updates use the owned agent-configuration resource and restart the runtime without replacing its sandbox.
-Use a separate deployment when moving from an older image; changing YAML does not migrate native agent state.
-For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
-See [deployment recovery](usage.md) for the operation workflow.
+Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](usage.md#choose-the-change-path).
 
 ## Run Managed Ollama
 
@@ -257,7 +231,7 @@ Verified cached snapshots can be reused without querying a subsequently changed 
 There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by deterministic fixtures.
-Live image builds, GPU inference, tools, and agent responses with this new adapter remain **TBD**; earlier CPU Ollama results do not qualify it.
+Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Authenticate a Managed vLLM Service
 
@@ -292,7 +266,7 @@ The proxy exposes `openai-completions`; its service contract does not restrict t
 The selected adapter must accept that protocol and model configuration.
 For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
-Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
+Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](build.md#build-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
 
 ```sh
@@ -325,9 +299,6 @@ The route's model must match `upstream.model.name`, including its tag, such as `
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
 Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
 The service declaration manages only the proxy; its upstream daemon and model remain external.
-
-The former per-service `runtime` wrapper remains unsupported.
-Use [fresh state for the provider transition](state.md#provider-managed-service-compute); editing input YAML does not migrate an established deployment.
 
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.
@@ -370,9 +341,6 @@ The SDK does not infer native support from an adapter name or from accepting the
 
 Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
 Nested null values remain intact in opaque native settings.
-Fields formerly named `piModel`, `contextWindow`, `reasoning`, and `reasoningEffort` at the route override level are no longer accepted.
-Move their native intent into the schema accepted by the selected Fabric adapter before creating a new deployment.
-
 ## Authenticate Hermes through the Provider
 
 Declare an external HTTPS provider with a credential reference, then select it from the route and enable Hermes authentication:
@@ -408,10 +376,6 @@ Authentication derives its provider from the primary route, including when that 
 The selected provider must carry a credential.
 That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
-
-Omit the former `auth.providerRef` field; it is rejected.
-Retained Hermes intent containing that field is not migrated automatically; editing only the input YAML does not update saved intent.
-Use the matching previous bundle for export or teardown of that deployment.
 
 The gateway retains the provider credential until the owned provider is removed or updated.
 Destroy removes the owned provider registration; it does not revoke the upstream key.
@@ -454,7 +418,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-provider/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/nemoclaw-provider/src/openshell/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/openshell/agent_configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/openshell/agent.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result
@@ -474,30 +438,20 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
 An empty `changes` list on apply does not skip configuration or readiness checks.
-Operation results no longer contain `agentResponse`.
-After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
+After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](contributing/live-tests.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 
 The deterministic lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
-The [offline harness fixture](testing/fixtures.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
+The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
 ## Additional Inference Workflows
 
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-| Workflow or claim | Documentation status |
-|---|---|
-| Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
-| Managed model router and model-pool lifecycle | **TBD** — requires an implementation and lifecycle test results |
-| Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
-| Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
-| Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
-| End-to-end hosted-provider guides for NVIDIA, OpenAI, Anthropic, Gemini, OpenRouter, and Nous | **TBD** — qualify the specific endpoint, API, harness, and model before promising compatibility |
-| Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | **TBD** — outside the current [managed-model contract](models.md) |
-
-These gaps do not prevent use of a separately verified external endpoint with an accepted API.
-They do prevent treating an old provider or platform guide as verification of the current implementation.
+Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
+None of these limits prevents using a separately verified external endpoint with an accepted API.

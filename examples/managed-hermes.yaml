@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: managed
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17671
     engine: unix:///var/run/docker.sock
     image:
@@ -35,8 +37,6 @@ spec:
     - name: assistant
       image:
         ref: nc-prototype-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

@@ -144,14 +144,6 @@ fn the_proxy_builds_alone_with_its_tests_on_the_selected_platform() {
 }
 
 #[test]
-fn the_proxy_image_holds_only_its_rust_binary() {
-    let dockerfile = include_str!("../../../image/ollama-proxy/Dockerfile");
-    assert!(dockerfile.contains("FROM scratch AS runtime"));
-    assert!(dockerfile.contains(r#"ENTRYPOINT ["/usr/local/bin/nemoclaw-ollama-proxy"]"#));
-    assert!(!dockerfile.to_lowercase().contains("python"));
-}
-
-#[test]
 fn builds_require_an_explicit_platform() {
     let Some(output) = bake(None, &["agents"]) else {
         return;

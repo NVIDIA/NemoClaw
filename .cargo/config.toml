@@ -3,9 +3,21 @@
 
 [alias]
 coverage = ["llvm-cov", "--workspace", "--locked", "--html", "--exclude-from-report", "nemoclaw-e2e"]
-# Run this platform's CI / Native steps; see docs/testing.md. The runner builds
+# Run this platform's CI / Native steps; see docs/contributing/testing.md. The runner builds
 # without the SDK, in its own target directory, so it can install protoc first
 # and is never overwritten by the workspace build it runs.
 ci = ["run", "--locked", "--quiet", "--target-dir", "target/ci-runner", "-p", "nemoclaw-build", "--no-default-features", "--", "ci"]
 # Build or qualify agent images; see docs/build.md. Needs Docker, not the SDK.
 images = ["run", "--locked", "--quiet", "--target-dir", "target/ci-runner", "-p", "nemoclaw-build", "--no-default-features", "--", "images"]
+
+# Profiles live here rather than in the root Cargo.toml: the CI dependency
+# cache hashes this file, so changing a profile selects a fresh cache while
+# ordinary workspace changes still restore the previous one.
+
+# Keep line-number backtraces without generating full local-variable debug data.
+[profile.dev]
+debug = 1
+
+# Deployment tests verify native bundle digests on every operation.
+[profile.dev.package.sha2]
+opt-level = 3
