@@ -13,7 +13,7 @@ import { readTelemetryTestLabel } from "../../domain/telemetry/event";
 import { PUBLIC_VERSION_PATTERN } from "../../domain/telemetry/schema";
 import { operationEnvelope } from "../../adapters/telemetry/gxt";
 import {
-  allowedTelemetryEndpoint,
+  allowedTelemetryCollection,
   postOperationRecord,
   shouldSuppressTelemetry,
   telemetryRuntime,
@@ -177,22 +177,22 @@ export async function sendOperationTelemetry(
   if (
     !config ||
     shouldSuppressTelemetry(process.env) ||
-    readTelemetryTestLabel(process.env) === null
+    !allowedTelemetryCollection(config, readTelemetryTestLabel(process.env))
   )
     return "disabled";
-  if (
-    !allowedTelemetryEndpoint(config) ||
-    !Number.isFinite(budgetMs) ||
-    budgetMs <= 0 ||
-    budgetMs > 5_000
-  )
-    return "failed";
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0 || budgetMs > 5_000) return "failed";
   const controller = new AbortController();
   const deadlineAt = Date.now() + budgetMs;
   const timer = setTimeout(() => controller.abort(), budgetMs);
   try {
     const event = await collectOperationEvent(context, { signal: controller.signal, deadlineAt });
-    const envelope = operationEnvelope(event);
+    if (
+      telemetryRuntime.config !== config ||
+      shouldSuppressTelemetry(process.env) ||
+      !allowedTelemetryCollection(config, readTelemetryTestLabel(process.env))
+    )
+      return "disabled";
+    const envelope = operationEnvelope(event, config.localReceiver !== true);
     if (!envelope || controller.signal.aborted) return "failed";
     const body = JSON.stringify(envelope);
     // This is a client safeguard, not a verified service limit. Never truncate or split.

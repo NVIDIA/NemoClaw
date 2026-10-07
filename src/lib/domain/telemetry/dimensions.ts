@@ -497,12 +497,23 @@ export function projectRuntimeAgents(
           : "reported";
       return {
         agent: { ...runtime, modelsStatus, models },
-        primary: row.isDefault === true || configured?.default === true,
+        primary:
+          row.isDefault === true ||
+          (native.ownership !== "explicit" && configured?.default === true),
+        invalidDefault:
+          mismatch ||
+          (roster.length > 1 && (!configured || typeof row.isDefault !== "boolean")) ||
+          (row.isDefault !== undefined && typeof row.isDefault !== "boolean") ||
+          (native.ownership !== "explicit" &&
+            configured?.default !== undefined &&
+            typeof configured.default !== "boolean"),
       };
     });
     const primary = projected.flatMap((row, index) => (row.primary ? [index] : []));
+    const validDefaultEvidence = projected.every((row) => !row.invalidDefault);
     // A single observed logical agent is unambiguously the default runtime agent.
-    const index = primary.length === 1 ? primary[0] : projected.length === 1 ? 0 : -1;
+    const index =
+      projected.length === 1 ? 0 : validDefaultEvidence && primary.length === 1 ? primary[0] : -1;
     return {
       agents: projected.map((row) => row.agent),
       agentsStatus: "reported",
@@ -512,7 +523,9 @@ export function projectRuntimeAgents(
         status:
           index >= 0 && projected[index].agent.models[0]?.modelStatus !== "collection_error"
             ? "reported"
-            : "collection_error",
+            : validDefaultEvidence && primary.length === 0 && projected.length > 1
+              ? "not_configured"
+              : "collection_error",
       },
     };
   }

@@ -5,6 +5,7 @@ import { dataRecord } from "../../../domain/telemetry/values";
 import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding/identity";
 import {
   readModelAssignmentSelection,
+  readModelSelectionProvenance,
   type ModelAssignmentSelection,
 } from "../../../domain/telemetry/provenance";
 import {
@@ -103,15 +104,20 @@ export function restoredAgentModelSelections(
   if (
     previous.pendingCreateIdentity !== undefined ||
     previous.pendingRouteReservation !== undefined ||
+    current.pendingCreateIdentity !== undefined ||
+    current.pendingRouteReservation !== undefined ||
     previous.name !== current.name ||
     (previous.agent ?? "openclaw") !== (current.agent ?? "openclaw") ||
-    resolveSandboxGatewayName(previous) !== resolveSandboxGatewayName(current)
+    resolveSandboxGatewayName(previous) !== resolveSandboxGatewayName(current) ||
+    (previous.gatewayName && previous.gatewayName !== resolveSandboxGatewayName(previous)) ||
+    (current.gatewayName && current.gatewayName !== resolveSandboxGatewayName(current))
   )
-    return [];
-  if (!hasNativeAgentRoster(config) || !Array.isArray(previous.modelAssignmentSelections))
     return null;
+  if (!hasNativeAgentRoster(config)) return null;
+  const selections = previous.modelAssignmentSelections ?? [];
+  if (!Array.isArray(selections)) return null;
   const retained: ModelAssignmentSelection[] = [];
-  for (const value of previous.modelAssignmentSelections) {
+  for (const value of selections) {
     const selection = readModelAssignmentSelection(value);
     if (!selection) return null;
     const agent = nativeAgent(config, selection.agentId);
@@ -123,6 +129,36 @@ export function restoredAgentModelSelections(
         ? Array.isArray(fallbacks) && fallbacks.includes(selection.reference)
         : selectedReference(config, selection) === selection.reference;
     if (matched) retained.push(selection);
+  }
+  if (previous.modelSelectionProvenance !== undefined) {
+    const receipt = readModelSelectionProvenance(previous.modelSelectionProvenance);
+    if (!receipt || receipt.model !== previous.model || receipt.provider !== previous.provider)
+      return null;
+    const agents = dataRecord(dataRecord(config)?.agents);
+    const entries = dataRecord(agents?.entries);
+    const ids = entries
+      ? Object.keys(entries)
+      : (agents?.list as Record<string, unknown>[]).map((agent) => agent.id as string);
+    for (const agentId of ids) {
+      const selection = readModelAssignmentSelection({
+        schemaVersion: 1,
+        agentId,
+        assignment: "primary",
+        reference: `inference/${receipt.model}`,
+        modelSource: receipt.modelSource,
+      });
+      if (!selection || selectedReference(config, selection) !== selection.reference) continue;
+      const provider = dataRecord(dataRecord(dataRecord(config)?.models)?.providers);
+      const inference = dataRecord(provider?.inference);
+      if (
+        typeof inference?.baseUrl !== "string" ||
+        !/^https:\/\/inference\.local(?:\/v1)?\/?$/.test(inference.baseUrl) ||
+        inference.api !== receipt.apiFamily
+      )
+        return null;
+      if (!retained.some((slot) => slot.agentId === agentId && slot.assignment === "primary"))
+        retained.push(selection);
+    }
   }
   return retained;
 }

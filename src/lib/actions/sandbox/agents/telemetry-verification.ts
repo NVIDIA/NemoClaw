@@ -130,17 +130,19 @@ export async function verifySelectedAgentsManifest(
   sandboxName: string,
   target: OpenShellGatewayTarget = selectedOpenShellGateway(),
   previous?: SandboxEntry | null,
+  restoreOnly = false,
 ): Promise<{
   verified: boolean;
   status: "reported" | "collection_error";
   metadataErrors?: TelemetryMetadataError[];
 }> {
-  const manifest = takeSelectedAgentsManifest();
+  const manifest = restoreOnly ? null : takeSelectedAgentsManifest();
   if (
     !isTelemetryOperationActive() ||
     (!manifest &&
       previous?.modelAssignmentSelections === undefined &&
-      previous?.nativeModelSelectionProvenance === undefined)
+      previous?.nativeModelSelectionProvenance === undefined &&
+      previous?.modelSelectionProvenance === undefined)
   )
     return { verified: true, status: "reported" };
   let expected: SandboxEntry | null;
@@ -169,7 +171,11 @@ export async function verifySelectedAgentsManifest(
       ? restoreNativeModelSelection(sandboxName, previous, expected)
       : { verified: true, status: "reported" };
   }
-  if (!manifest && previous?.modelAssignmentSelections === undefined)
+  if (
+    !manifest &&
+    previous?.modelAssignmentSelections === undefined &&
+    previous?.modelSelectionProvenance === undefined
+  )
     return { verified: expected !== null, status: expected ? "reported" : "collection_error" };
   const config = await readTelemetryAgentConfiguration(sandboxName, scopedTarget);
   if (!config) return { verified: false, status: "collection_error" };
@@ -177,13 +183,21 @@ export async function verifySelectedAgentsManifest(
   if (!fresh) return { verified: false, status: "reported" };
   if (!expected)
     return { verified: true, status: "collection_error", metadataErrors: sourceErrors(fresh) };
-  const retained =
-    previous?.modelAssignmentSelections === undefined
-      ? []
-      : restoredAgentModelSelections(config, previous, expected);
+  const retained = previous ? restoredAgentModelSelections(config, previous, expected) : [];
   if (!retained) return { verified: false, status: "collection_error" };
-  const selections = [
+  const current = restoredAgentModelSelections(config, expected, expected);
+  if (!current) return { verified: true, status: "collection_error" };
+  const preserved = [
     ...retained.filter(
+      (selection) =>
+        !current.some(
+          (slot) => slot.agentId === selection.agentId && slot.assignment === selection.assignment,
+        ),
+    ),
+    ...current,
+  ];
+  const selections = [
+    ...preserved.filter(
       (selection) =>
         !fresh.some(
           (replacement) =>
@@ -194,7 +208,7 @@ export async function verifySelectedAgentsManifest(
     ...fresh,
   ];
   try {
-    if (persistVerifiedAgentModelSelections(expected, config, fresh, [], retained))
+    if (persistVerifiedAgentModelSelections(expected, config, fresh, [], preserved))
       return { verified: true, status: "reported" };
   } catch {
     /* Verified application remains successful when telemetry metadata cannot be saved. */

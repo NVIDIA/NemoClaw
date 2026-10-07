@@ -8,8 +8,15 @@ import {
 } from "../../domain/telemetry/schema";
 
 /** Match OpenShell's transport convention while retaining NemoClaw's own schema. */
-export function operationEnvelope(event: unknown): Record<string, unknown> | null {
-  if (!isOperationEvent(event)) return null;
+export function operationEnvelope(
+  event: unknown,
+  temporaryFunctionalConsent = false,
+): Record<string, unknown> | null {
+  if (
+    !isOperationEvent(event) ||
+    (temporaryFunctionalConsent && event.parameters.testLabel.length === 0)
+  )
+    return null;
   const installedVersion =
     event.parameters.versions.installedStatus === "reported"
       ? event.parameters.versions.installed
@@ -22,7 +29,7 @@ export function operationEnvelope(event: unknown): Record<string, unknown> | nul
     clientVer: installedVersion,
     cpuArchitecture: event.parameters.platform.hostArch,
     deviceGdprBehOptIn: "None",
-    deviceGdprFuncOptIn: "None",
+    deviceGdprFuncOptIn: temporaryFunctionalConsent ? "Temp" : "None",
     deviceGdprTechOptIn: "None",
     deviceId: "undefined",
     deviceMake: "undefined",

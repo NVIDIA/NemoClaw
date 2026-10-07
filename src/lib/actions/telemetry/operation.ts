@@ -16,7 +16,11 @@ import type {
   TelemetryTargetReceipt,
 } from "../../domain/telemetry/event";
 import { readTelemetryTestLabel, TELEMETRY_OPERATIONS } from "../../domain/telemetry/event";
-import { shouldSuppressTelemetry, telemetryRuntime } from "../../adapters/telemetry/http";
+import {
+  allowedTelemetryCollection,
+  shouldSuppressTelemetry,
+  telemetryRuntime,
+} from "../../adapters/telemetry/http";
 
 export const TELEMETRY_DEADLINE_MS = 5_000;
 export const TELEMETRY_CONTEXT_ENV = "NEMOCLAW_TELEMETRY_CONTEXT_DIR";
@@ -93,7 +97,15 @@ function inheritedContext(): Context | null {
 }
 
 function context(): Context | null {
-  return active.getStore() ?? inheritedContext();
+  const label = readTelemetryTestLabel(process.env);
+  if (
+    shouldSuppressTelemetry(process.env) ||
+    label === null ||
+    (telemetryRuntime.config && !allowedTelemetryCollection(telemetryRuntime.config, label))
+  )
+    return null;
+  const current = active.getStore() ?? inheritedContext();
+  return !telemetryRuntime.config && current?.owner ? null : current;
 }
 export function isTelemetryOperationActive(): boolean {
   return context() !== null;
@@ -353,7 +365,13 @@ export async function finishTelemetryOperation(
 
 function finishOnExit(current: Context, exitCode: number): void {
   const config = telemetryRuntime.config;
-  if (!config || shouldSuppressTelemetry(process.env) || current.consumed || !claim(current))
+  if (
+    !config ||
+    shouldSuppressTelemetry(process.env) ||
+    !allowedTelemetryCollection(config, readTelemetryTestLabel(process.env)) ||
+    current.consumed ||
+    !claim(current)
+  )
     return;
   current.consumed = true;
   const preparationStarted = performance.now();
@@ -402,8 +420,7 @@ export async function withTelemetryOperation<T>(
   if (
     !operation ||
     shouldSuppressTelemetry(process.env) ||
-    !telemetryRuntime.config ||
-    readTelemetryTestLabel(process.env) === null
+    !allowedTelemetryCollection(telemetryRuntime.config, readTelemetryTestLabel(process.env))
   )
     return run();
   const nested = context();
@@ -478,12 +495,11 @@ function createContextDirectory(
 
 /** The shell owns its terminal boundary; only transient receipts are shared with children. */
 export function beginInstallerTelemetry(operation: "install" | "update"): string | null {
-  const parent = inheritedContext();
+  const parent = context();
   if (parent) return parent.directory;
   if (
     shouldSuppressTelemetry(process.env) ||
-    !telemetryRuntime.config ||
-    readTelemetryTestLabel(process.env) === null
+    !allowedTelemetryCollection(telemetryRuntime.config, readTelemetryTestLabel(process.env))
   )
     return null;
   const started = process.env.NEMOCLAW_TELEMETRY_INSTALLER_STARTED_AT;

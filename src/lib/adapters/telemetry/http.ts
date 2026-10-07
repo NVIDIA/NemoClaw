@@ -30,6 +30,18 @@ export function allowedTelemetryEndpoint(config: TelemetryDeliveryConfig): boole
   return url.href === TEST_TELEMETRY_ENDPOINT;
 }
 
+export function allowedTelemetryCollection(
+  config: TelemetryDeliveryConfig | null,
+  testLabel: string | null,
+): boolean {
+  return (
+    config !== null &&
+    allowedTelemetryEndpoint(config) &&
+    testLabel !== null &&
+    (config.localReceiver === true || testLabel.length > 0)
+  );
+}
+
 export async function postOperationRecord(
   config: TelemetryDeliveryConfig,
   body: string,

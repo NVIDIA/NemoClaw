@@ -211,6 +211,41 @@ export function shouldPreserveIncompleteOnboardSession(error: unknown): boolean 
   return isOnboardDeferredExitError(error) && error.preserveIncompleteSession;
 }
 
+/** Preserve completed archive restoration metadata before a later onboarding phase can fail. */
+export async function preserveRestoredModelSelections(
+  sandboxName: string,
+  gatewayName: string,
+  previous: SandboxEntry,
+): Promise<void> {
+  if (!isTelemetryOperationActive()) return;
+  let metadataErrors: NonNullable<Parameters<typeof recordTelemetryTarget>[0]["metadataErrors"]> = [
+    { category: "model_source" },
+  ];
+  try {
+    const { verifySelectedAgentsManifest } =
+      await import("../actions/sandbox/agents/telemetry-verification");
+    const selection = await verifySelectedAgentsManifest(
+      sandboxName,
+      { kind: "named", gatewayName },
+      previous,
+      true,
+    );
+    if (selection.status === "reported") return;
+    metadataErrors = selection.metadataErrors ?? metadataErrors;
+  } catch {
+    // A metadata failure never changes successful native archive restoration.
+  }
+  recordTelemetryTarget({
+    scope: "sandbox",
+    sandboxName,
+    gatewayName,
+    outcome: "completed",
+    state: "applied",
+    verificationStatus: "collection_error",
+    metadataErrors,
+  });
+}
+
 /** Record onboarding only after its native finalization and outer cleanup complete. */
 export function createOnboardOperationCompletion(options: {
   sandboxName?: string;
