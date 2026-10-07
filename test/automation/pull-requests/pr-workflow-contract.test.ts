@@ -85,6 +85,78 @@ function runWorkflowShellStep(
   };
 }
 
+function runPinnedAptFixture(
+  mode: string,
+  step?: WorkflowStep,
+  packages = ["fd-find=9.0.0-1", "ripgrep=14.1.0-1"],
+) {
+  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-pinned-apt-"));
+  const fakeBin = join(temp, "bin");
+  const runnerTemp = join(temp, "runner-temp");
+  const aptCalls = join(temp, "apt-calls");
+  const timeoutCalls = join(temp, "timeout-calls");
+  mkdirSync(fakeBin);
+  mkdirSync(runnerTemp);
+  writeFileSync(aptCalls, "");
+  writeFileSync(timeoutCalls, "");
+  writeFileSync(
+    join(fakeBin, "sudo"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$APT_CALLS"
+if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
+if [[ "$1" == apt-get && "$FAKE_APT_MODE" == update-error ]]; then
+  for ((line=1; line<=100; line++)); do printf 'apt diagnostic %s\\n' "$line" >&2; done
+  exit 86
+fi
+if [[ "$1" == apt-get && "$FAKE_APT_MODE" == install-error && "$*" == *' install '* ]]; then exit 100; fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(fakeBin, "timeout"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TIMEOUT_CALLS"
+shift 3
+if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$*" == *' install '* ) ]]; then exit 124; fi
+"$@"
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(fakeBin, "stat"), "#!/usr/bin/env bash\nprintf '700\\n'\n", {
+    mode: 0o755,
+  });
+  const env = {
+    ...process.env,
+    ADVISOR_DIR: process.cwd(),
+    APT_CALLS: aptCalls,
+    FAKE_APT_MODE: mode,
+    FD_FIND_VERSION: "9.0.0-1",
+    GITHUB_ACTION_PATH: join(process.cwd(), ".github/actions/ci-cli-coverage-shard"),
+    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    RIPGREP_VERSION: "14.1.0-1",
+    RUNNER_TEMP: runnerTemp,
+    TIMEOUT_CALLS: timeoutCalls,
+  };
+  try {
+    const result = step
+      ? runWorkflowShellStep(step, env)
+      : spawnSync(
+          "bash",
+          [join(env.GITHUB_ACTION_PATH, "install-pinned-ubuntu-packages.sh"), ...packages],
+          { encoding: "utf8", env, timeout: 5_000 },
+        );
+    return {
+      status: result.status,
+      stderr: String(result.stderr),
+      calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
+      timeoutCalls: readFileSync(timeoutCalls, "utf8").trim().split("\n"),
+    };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
 const reviewedSdk = {
   artifactName: "reviewed-sdk.tgz",
   integrity: "sha512-reviewed",
@@ -518,35 +590,76 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       "Advisor runtime",
       requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
-    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
-    const fakeBin = join(temp, "bin");
-    const aptArgs = join(temp, "apt-args");
-    mkdirSync(fakeBin);
-    writeFileSync(
-      join(fakeBin, "sudo"),
-      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
-      { mode: 0o755 },
-    );
-
-    try {
-      const result = runWorkflowShellStep(installStep, {
-        APT_ARGS: aptArgs,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      });
+  ])(
+    "reports an Ubuntu APT update failure before installing packages in %s (#11320)",
+    (_name, installStep) => {
+      const result = runPinnedAptFixture("update-error", installStep);
       expect(result.status).toBe(86);
-      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
-        "apt-get",
-        "update",
-        "-qq",
-        "-o",
-        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
-        "-o",
-        "Dir::Etc::sourceparts=-",
-      ]);
-    } finally {
-      rmSync(temp, { force: true, recursive: true });
-    }
+      expect(result.stderr).toContain("APT update failed");
+      expect(result.stderr).toContain("apt diagnostic 100");
+      expect(result.stderr).not.toContain("apt diagnostic 1\n");
+      expect(result.stderr.split("\n")).toHaveLength(62);
+      expect(result.calls.some((call) => /^chmod 700 .*\/runner-temp$/u.test(call))).toBe(true);
+      const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+      expect(aptCalls).toHaveLength(1);
+      expect(aptCalls[0]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
+      expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
+      expect(aptCalls[0]).toMatch(/Dir::State::lists=\S+\/nemoclaw-apt-lists\.\S+/u);
+      expect(aptCalls[0]).toMatch(/ update$/u);
+    },
+  );
+
+  it("uses one isolated Ubuntu package list for APT update and install (#11320)", () => {
+    const result = runPinnedAptFixture("success");
+    expect(result.status).toBe(0);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
+    const lists = aptCalls.map((call) => call.match(/Dir::State::lists=(\S+)/u)?.[1]);
+    expect(lists[0]).toMatch(/\/nemoclaw-apt-lists\.\S+$/u);
+    expect(lists[1]).toBe(lists[0]);
+    expect(aptCalls[1]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
+    expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
+  });
+
+  it("stops a stalled APT update within the command budget (#11320)", () => {
+    const result = runPinnedAptFixture("timeout");
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT update timed out");
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 300s sudo apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("stops a stalled APT install after a successful update (#11320)", () => {
+    const result = runPinnedAptFixture("install-timeout");
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT install timed out");
+    expect(result.timeoutCalls).toHaveLength(2);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 300s sudo apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
+  });
+
+  it("fails when the pinned package install fails (#11320)", () => {
+    const result = runPinnedAptFixture("install-error");
+    expect(result.status).toBe(100);
+    expect(result.stderr).toContain("APT install failed");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
+  });
+
+  it("rejects a missing Ubuntu source before APT runs (#11320)", () => {
+    const result = runPinnedAptFixture("missing-source");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Missing Ubuntu APT source");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("rejects an unpinned package before using sudo (#11320)", () => {
+    const result = runPinnedAptFixture("success", undefined, ["fd-find"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Unpinned APT package");
+    expect(result.calls).toEqual([""]);
   });
 
   // source-shape-contract: security -- PR dependency jobs receive only the base-approved SDK archive after credential-free integrity verification
