@@ -294,6 +294,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 ),
                 (
                     "engine",
+                    // Docker's socket is the default for a Docker runtime only;
+                    // the Podman rule below requires an explicit socket.
                     json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
@@ -329,6 +331,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                         "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
                     } else if field == "networkCIDR" {
                         "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
+                    } else if field == "engine" {
+                        "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
                     } else {
                         "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
                     }}),
@@ -342,6 +346,15 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
             });
             gateway["else"] = local;
+            // Podman's socket depends on the host user, so it has no default.
+            gateway["allOf"] = json!([{
+                "if": at("runtime/provider", json!({"const":"podman"}), true),
+                "then": {
+                    "required": ["engine"],
+                    "properties": {"engine": {"minLength": 1}},
+                    "x-nemoclaw-error": "Podman requires spec.gateway.engine to name its local API service socket."
+                }
+            }]);
         } else {
             property(gateway, "endpoint", json!({"pattern": "^https?://"}));
             gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);

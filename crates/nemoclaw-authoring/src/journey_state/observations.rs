@@ -48,14 +48,20 @@ impl JourneyState {
             {
                 question.suggestion = None;
             }
-            if let Some(assessment) = resolution.target_assessment.as_mut() {
-                assessment.reasons.insert(
-                    0,
-                    format!(
-                        "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
-                    ),
-                );
-            }
+            let reason = format!(
+                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+            );
+            // Podman has no default engine, so its document stays incomplete
+            // and no target was assessed; the cause is still the first thing
+            // to report.
+            resolution
+                .target_assessment
+                .get_or_insert_with(|| crate::DiscoveryAssessment {
+                    status: crate::CompatibilityStatus::Unverified,
+                    reasons: Vec::new(),
+                })
+                .reasons
+                .insert(0, reason);
         }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
