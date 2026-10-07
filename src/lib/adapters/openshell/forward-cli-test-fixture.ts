@@ -223,6 +223,7 @@ export function createHarness(overrides: HarnessOverrides = {}) {
   const child = {
     exitCode: null,
     off: vi.fn(),
+    on: vi.fn(),
     once: vi.fn(),
     pid: 4_321,
     signalCode: null,

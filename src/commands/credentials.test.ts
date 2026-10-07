@@ -343,7 +343,7 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(mocks.prompt).not.toHaveBeenCalled();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
+      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],

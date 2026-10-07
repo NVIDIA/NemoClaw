@@ -3,8 +3,10 @@
 
 import {
   type CaptureOpenshellOptions,
+  type CaptureOpenshellAsyncOptions,
   type CaptureOpenshellResult,
   captureOpenshellCommand,
+  captureOpenshellCommandAsync,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
@@ -25,6 +27,14 @@ import {
 export const SANDBOX_RECREATE_PROBE_TIMEOUT_MS = OPENSHELL_PROBE_TIMEOUT_MS;
 
 export type { CaptureOpenshellOptions, CaptureOpenshellResult };
+
+export function captureSandboxRecreateOpenshellCommandAsync(
+  binary: string,
+  args: string[],
+  options: CaptureOpenshellAsyncOptions,
+): Promise<CaptureOpenshellResult> {
+  return captureOpenshellCommandAsync(binary, args, options);
+}
 
 export function captureSandboxRecreateOpenshellCommand(
   binary: string,
@@ -113,17 +123,25 @@ export function observeSandboxOnGateway(
   target: SandboxRecreateTarget,
   capture: SandboxRecreateCapture = captureOpenshell,
   runtimeSelection?: OpenShellRuntimeSelection,
+  timeoutMs?: number,
 ): SandboxRecreateObservation {
   if (runtimeSelection && runtimeSelection.gatewayName !== target.gatewayName) {
     throw new Error(
       `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
     );
   }
+  const boundedTimeoutMs =
+    timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs)))
+      : OPENSHELL_PROBE_TIMEOUT_MS;
+  const probeDeadlineMs = performance.now() + boundedTimeoutMs;
+  const remainingProbeTimeoutMs = (): number =>
+    Math.max(1, Math.min(boundedTimeoutMs, Math.floor(probeDeadlineMs - performance.now())));
   const captureOptions = {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    timeout: boundedTimeoutMs,
     ...(runtimeSelection
       ? {
           env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
@@ -139,7 +157,10 @@ export function observeSandboxOnGateway(
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
     !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
-  const legacy = observeLegacySandboxOnGateway(target, probe, capture, captureOptions);
+  const legacy = observeLegacySandboxOnGateway(target, probe, capture, {
+    ...captureOptions,
+    timeout: timeoutMs === undefined ? boundedTimeoutMs : remainingProbeTimeoutMs(),
+  });
   if (legacy) return legacy;
   if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
     return { state: "missing", liveIdentityFingerprint: null };

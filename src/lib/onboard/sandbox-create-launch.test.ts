@@ -32,6 +32,7 @@ function createTrustedBuildContext(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const buildCtx of temporaryBuildContexts.splice(0)) {
     fs.rmSync(buildCtx, { recursive: true, force: true });
   }
@@ -263,6 +264,21 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it("uses the selected environment when no build environment override exists", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "example.invalid/image", "--name", "demo"],
+      env: { HOME: "/selected/home" },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => `openshell ${args.join(" ")}`,
+    });
+
+    expect(result.sandboxEnv).toEqual({ HOME: "/selected/home" });
+  });
+
   it("removes an inherited sandbox policy when create omits caller policy (#9833)", () => {
     const result = prepareSandboxCreateLaunch({
       agent: null,
@@ -774,6 +790,8 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
   });
 
   it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const buildImage = vi.fn().mockResolvedValue(1);
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
@@ -797,7 +815,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
           NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         },
-        buildImage: async () => 1,
+        buildImage,
         log: vi.fn(),
         origin: "generated",
       },
@@ -808,5 +826,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       imageRef: null,
       imageId: null,
     });
+    expect(buildImage).toHaveBeenCalledOnce();
   });
 });

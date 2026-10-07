@@ -30,9 +30,11 @@ describe("uninstall CLI flags", () => {
   function writeFakeTools(fakeBin: string) {
     fs.mkdirSync(fakeBin);
     const sandboxConfigDir = path.join(path.dirname(fakeBin), "sandbox", ".openclaw");
+    const remoteSandboxState = path.join(path.dirname(fakeBin), "remote-sandbox-inventory");
     const eventLog = path.join(path.dirname(fakeBin), "uninstall-events");
     fs.mkdirSync(path.join(sandboxConfigDir, "workspace"), { recursive: true });
     fs.writeFileSync(path.join(sandboxConfigDir, "workspace", "USER.md"), "preserve me\n");
+    fs.writeFileSync(remoteSandboxState, "ordinary-authority\n");
     for (const cmd of ["npm", "docker", "ollama", "pgrep"]) {
       fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,
@@ -44,10 +46,18 @@ describe("uninstall CLI flags", () => {
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
-  "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
-  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "sandbox list"|"sandbox list -g nemoclaw")
+    if [ -f ${JSON.stringify(remoteSandboxState)} ]; then
+      printf 'ordinary-authority Ready\\n'
+    fi
+    ;;
+  "sandbox ssh-config "*) printf 'Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' "$3" ;;
   "sandbox delete "*)
     printf 'delete\\n' >> ${JSON.stringify(eventLog)}
+    if grep -qx 'delete-fails' ${JSON.stringify(remoteSandboxState)}; then
+      exit 1
+    fi
+    rm -f ${JSON.stringify(remoteSandboxState)}
     rm -rf ${JSON.stringify(path.dirname(sandboxConfigDir))}
     ;;
   "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
@@ -61,9 +71,9 @@ exit 0
       `#!/usr/bin/env bash
 remote="\${!#}"
 case "$remote" in
-  *"-printf"*) exit 0 ;;
-  *"tar --hard-dereference"*)
-    /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace
+  *'work=$(pwd -P)'*) printf '/sandbox\\0/sandbox\\0' ;;
+  *"tar -C"*)
+    /usr/bin/tar -cf - -C ${JSON.stringify(path.dirname(sandboxConfigDir))} -- .
     status=$?
     case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac
     exit "$status"
@@ -74,6 +84,7 @@ esac
 `,
       { mode: 0o755 },
     );
+    return remoteSandboxState;
   }
 
   function seedPreservedState(tmp: string): string {
@@ -387,13 +398,18 @@ esac
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
       const backupRoot = path.join(stateDir, "rebuild-backups", "ordinary-authority");
       const snapshot = fs.readdirSync(backupRoot).at(0);
-      const backupFile = path.join(backupRoot, String(snapshot), "workspace", "USER.md");
+      const archive = path.join(backupRoot, String(snapshot), "native-home.tar");
+      const archivedWorkspace = spawnSync(
+        "/usr/bin/tar",
+        ["-xOf", archive, "./.openclaw/workspace/USER.md"],
+        { encoding: null },
+      );
       const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
 
-      expect(result.status, output).toBe(0);
-      expect(createHash("sha256").update(fs.readFileSync(backupFile)).digest("hex")).toBe(
+      expect(createHash("sha256").update(archivedWorkspace.stdout).digest("hex")).toBe(
         workspaceDigest,
       );
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
@@ -440,6 +456,25 @@ esac
         /--destroy-user-data set; skipping fresh sandbox backups and purging user data under ~\/\.nemoclaw\//,
       );
       expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("preserves uninstall state when bulk sandbox cleanup cannot remove remote inventory (#11831)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-remote-delete-fails-"));
+    const remoteSandboxState = writeFakeTools(path.join(tmp, "bin"));
+    const stateDir = seedCompletedDefaultAuthority(tmp);
+    fs.writeFileSync(remoteSandboxState, "delete-fails\n");
+    try {
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("OpenShell sandbox cleanup was not accepted");
+      expect(output).not.toContain("Deleted all OpenShell sandboxes");
+      expect(fs.existsSync(remoteSandboxState)).toBe(true);
+      expect(fs.existsSync(stateDir)).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -636,11 +671,11 @@ exit 0
       expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
       expect(output).toMatch(/NemoHermes Uninstaller/);
-      expect(output).toMatch(/\[3\/6\] NemoHermes CLI/);
+      expect(output).toMatch(/\[4\/6\] NemoHermes CLI/);
       expect(output).toMatch(/Removed global NemoHermes CLI package/);
       expect(output).toMatch(/Hermes has left the tidepool/);
       expect(output).not.toMatch(/NemoClaw Uninstaller/);
-      expect(output).not.toMatch(/\[3\/6\] NemoClaw CLI/);
+      expect(output).not.toMatch(/\[4\/6\] NemoClaw CLI/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

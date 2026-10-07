@@ -822,6 +822,9 @@ restore_onboard_forward_after_post_checks() {
   chmod 700 "$state_dir" \
     || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
+  # Fresh onboarding already created and verified these service forwards. This
+  # installer path only retires an exact legacy watcher before normal recovery.
+  [[ -f "$pid_file" ]] || return 0
   if [[ -f "$pid_file" ]]; then
     local old_pid expected_watcher_script current_uid old_uid old_args node_bin openshell_bin expected_args
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -1082,9 +1085,10 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --express-install    Select Station Express for CI qualification (requires software acceptance)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
-  printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
-  printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
+  printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
@@ -1097,7 +1101,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
-  printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                                  Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
@@ -1555,7 +1559,7 @@ case "${NEMOCLAW_AGENT:-openclaw}" in
 esac
 
 RUNTIME_REQUIREMENT_MSG="${_CLI_DISPLAY} requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
-NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
+NEMOCLAW_SHIM_DIR="${HOME%/}/.local/bin"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
@@ -1775,7 +1779,7 @@ observed_macos_openshell_install_method() {
 }
 
 prefer_user_local_openshell() {
-  local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local local_bin="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
   local gateway_bin="${local_bin}/openshell-gateway"
   if [[ "${1:-}" == "verified-install" ]]; then
@@ -1833,7 +1837,7 @@ resolve_openshell_gateway_bin_for_user_service() {
       | sed 's/^path=//'
   )
   [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
-  gateway_bin="${gateway_bins[0]}"
+  gateway_bin="$(collapse_duplicate_slashes "${gateway_bins[0]}")"
   [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
   printf '%s\n' "$gateway_bin"
 }
@@ -2029,24 +2033,37 @@ macos_openshell_homebrew_gateway_service_installed() {
     | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
 }
 
+# Collapse redundant slashes in a POSIX path. Kernel path lookup treats
+# /home/user//.local/bin the same as /home/user/.local/bin, but bash string
+# equality and case patterns do not (#10541).
+collapse_duplicate_slashes() {
+  local value="${1:-}"
+  while [[ "$value" == *//* ]]; do
+    value="${value//\/\///}"
+  done
+  printf '%s\n' "$value"
+}
+
 resolve_openshell_gateway_bin_for_service() {
   local gateway_bin="${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
   if [[ -n "$gateway_bin" && -x "$gateway_bin" ]]; then
-    printf "%s\n" "$gateway_bin"
+    collapse_duplicate_slashes "$gateway_bin"
     return 0
   fi
 
   gateway_bin="$(command -v openshell-gateway 2>/dev/null || true)"
   [[ -n "$gateway_bin" && -x "$gateway_bin" ]] || return 1
-  printf "%s\n" "$gateway_bin"
+  collapse_duplicate_slashes "$gateway_bin"
 }
 
 trusted_openshell_gateway_bin_for_service() {
-  local gateway_bin="${1:-}"
-  local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local gateway_bin user_bin_home
+  gateway_bin="$(collapse_duplicate_slashes "${1:-}")"
+  user_bin_home="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
   if [[ "$user_bin_home" != /* ]]; then
-    user_bin_home="${HOME}/.local/bin"
+    user_bin_home="${HOME%/}/.local/bin"
   fi
+  user_bin_home="$(collapse_duplicate_slashes "$user_bin_home")"
   user_bin_home="${user_bin_home%/}"
   case "$gateway_bin" in
     "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
@@ -2065,11 +2082,15 @@ is_nemoclaw_openshell_gateway_user_service() {
 }
 
 openshell_user_config_home() {
+  local config_home
   if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
-    printf '%s\n' "$XDG_CONFIG_HOME"
+    config_home="$XDG_CONFIG_HOME"
   else
-    printf '%s\n' "${HOME}/.config"
+    config_home="${HOME%/}/.config"
   fi
+  config_home="$(collapse_duplicate_slashes "$config_home")"
+  [[ "$config_home" == "/" ]] || config_home="${config_home%/}"
+  printf '%s\n' "$config_home"
 }
 
 enabled_openshell_gateway_user_service_activation_path() {
@@ -2085,11 +2106,12 @@ enabled_openshell_gateway_user_service_activation_path() {
     return 2
   fi
   user_config_home="$(openshell_user_config_home)"
-  user_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+  user_data_home="${XDG_DATA_HOME:-${HOME%/}/.local/share}"
   if [[ "$user_data_home" != /* ]]; then
     printf '%s\n' "$user_data_home"
     return 2
   fi
+  user_data_home="$(collapse_duplicate_slashes "$user_data_home")"
   config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
   data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
   local IFS=:
@@ -2255,6 +2277,7 @@ install_nemoclaw_openshell_gateway_user_service() {
     warn "OpenShell gateway binary was not found; the default managed user service was not staged."
     return 0
   fi
+  gateway_bin="$(collapse_duplicate_slashes "$gateway_bin")"
 
   case "$gateway_bin" in
     *[[:space:]]*)
@@ -2986,14 +3009,6 @@ install_nodejs() {
 # nemotron model regardless of NEMOCLAW_MODEL. Removed in favour of letting
 # onboard own the policy.
 # ---------------------------------------------------------------------------
-detect_gpu() {
-  # Returns 0 if a GPU is detected. Used by the vLLM bootstrap below.
-  if command_exists nvidia-smi; then
-    nvidia-smi &>/dev/null && return 0
-  fi
-  return 1
-}
-
 # ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
 # If the npm global prefix points to a system directory (e.g. /usr or
@@ -4169,7 +4184,7 @@ trusted_macos_openshell_gateway_process() {
   local gateway_name gateway_command gateway_exe gateway_lsof_output
   local process_generation_before process_generation_after
   local observation_diagnostics_file observation_status observation_valid
-  local user_bin_home brew_prefix trusted_brew_gateway
+  local brew_prefix trusted_brew_gateway
   command_exists ps || return 1
   command_exists lsof || return 1
 
@@ -4229,16 +4244,11 @@ trusted_macos_openshell_gateway_process() {
     return 1
   fi
 
-  user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
-  if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
-    user_bin_home="${HOME}/.local/bin"
+  gateway_exe="$(collapse_duplicate_slashes "$gateway_exe")"
+  if trusted_openshell_gateway_bin_for_service "$gateway_exe"; then
+    printf '%s\n' "$process_generation_before"
+    return 0
   fi
-  case "$gateway_exe" in
-    "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
-      printf '%s\n' "$process_generation_before"
-      return 0
-      ;;
-  esac
 
   command_exists brew || return 1
   brew_prefix="$(brew --prefix 2>/dev/null || true)"
@@ -4265,10 +4275,11 @@ stop_legacy_openshell_gateway_process() {
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
   elif [ "$gateway_port" -eq 8080 ]; then
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+    runtime_dir="${HOME%/}/.local/state/nemoclaw/openshell-docker-gateway"
   else
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+    runtime_dir="${HOME%/}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
   fi
+  runtime_dir="$(collapse_duplicate_slashes "$runtime_dir")"
   pid_file="${runtime_dir}/openshell-gateway.pid"
   [ -f "$pid_file" ] || return 1
   if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
@@ -4473,8 +4484,9 @@ inspect_nemoclaw_openshell_gateway_user_service() {
       "$service_name" "${fragment_path:-systemctl exited with status ${inspect_status}}" >&2
     return 2
   fi
-  [ "$fragment_path" = "$service_path" ] \
-    || error "Refusing to control the OpenShell gateway because the user service does not match ${service_path}."
+  if [ -z "$fragment_path" ] || ! [ "$fragment_path" -ef "$service_path" ]; then
+    error "Refusing to control the OpenShell gateway because the user service does not match ${service_path}."
+  fi
   if gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")"; then
     :
   else
@@ -4987,18 +4999,19 @@ run_installer_host_preflight() {
           hasExplicitDeferredN1xOnboardingIntent,
         } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
-        const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
+        const { configuredRuntimeProviderReadinessAuthority } = require(gatewayRuntimePath);
         const host = assessHost();
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
-        const selectedRuntimeOwnsHostReadiness =
-          configuredRuntimeProviderOwnsHostReadiness({
+        const selectedRuntimeAuthority =
+          configuredRuntimeProviderReadinessAuthority({
             environment: process.env,
             platform: process.platform,
           });
+        const selectedRuntimeOwnsHostReadiness = selectedRuntimeAuthority?.ownsHostReadiness === true;
         const actions = planHostAdvisories(host, {
           providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
         });
@@ -5010,6 +5023,7 @@ run_installer_host_preflight() {
             detectHostGpuPlatform: () => host.hostGpuPlatform,
             detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
             collectPlatformIdentity: () => ({}),
+            runtimeProvider: selectedRuntimeAuthority ?? undefined,
           }
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
@@ -5226,11 +5240,21 @@ recover_preexisting_sandboxes_before_onboard() {
   return 1
 }
 
-validate_deferred_hermes_onboarding_request() {
+agent_supports_deferred_onboarding() {
+  local agent_name="${NEMOCLAW_AGENT:-openclaw}"
+  case "$agent_name" in
+    "" | *[!a-z0-9-]*) return 1 ;;
+  esac
+  local manifest_path="${NEMOCLAW_SOURCE_ROOT}/agents/${agent_name}/manifest.yaml"
+  [[ -f "$manifest_path" ]] || return 1
+  grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
+}
+
+validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
-  if [[ "${NEMOCLAW_AGENT:-openclaw}" != "hermes" ]]; then
-    error "--defer-onboarding currently requires NEMOCLAW_AGENT=hermes."
+  if ! agent_supports_deferred_onboarding; then
+    error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
   fi
   if [[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]; then
     error "--defer-onboarding does not support a local model profile."
@@ -5243,24 +5267,41 @@ validate_deferred_hermes_onboarding_request() {
   esac
 }
 
-should_defer_hermes_onboarding() {
-  local registered_sandbox_count="${1:-0}"
-  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
-  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
-  [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
-  [[ "$registered_sandbox_count" == "0" ]] || return 1
-  [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
-  [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
+resolve_deferred_onboarding_decision() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  if ! decision="$(
+    "$cli_runner" internal installer plan \
+      --defer-onboarding \
+      --deferred-onboarding-supported \
+      --registered-sandbox-count "$registered_sandbox_count" \
+      --deferred-onboarding-decision
+  )"; then
+    error "Could not resolve the deferred-onboarding installer decision."
+  fi
+  printf '%s' "$decision"
+}
 
-  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
-  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
-  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
-  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
-  # src/lib/onboard/providers.ts. These values select a route; they are not
-  # inference credentials.
-  case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
-    *) return 1 ;;
+should_defer_onboarding() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
+  decision="$(resolve_deferred_onboarding_decision "$cli_runner" "$registered_sandbox_count")"
+  case "$decision" in
+    defer) return 0 ;;
+    credential-present | existing-sandbox | not-requested) return 1 ;;
+    unsupported-agent)
+      error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
+      ;;
+    unsupported-local-model)
+      error "--defer-onboarding does not support a local model profile."
+      ;;
+    unsupported-provider)
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      ;;
+    *) error "Unexpected deferred-onboarding installer decision: ${decision:-empty}." ;;
   esac
 }
 
@@ -6005,6 +6046,26 @@ fail_force_station_terminal_required() {
   error "--force-station-install selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --force-station-install."
 }
 
+validate_noninteractive_express_install() {
+  [ "${EXPRESS_INSTALL:-}" = "1" ] || return 0
+  [ "$1" = "DGX Station" ] \
+    || error "--express-install requires a supported DGX Station (detected: ${1:-unsupported platform})."
+  [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}" = "1" ] \
+    || error "--express-install requires --yes-i-accept-third-party-software or NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1."
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    error "--express-install cannot be combined with the interactive --station-deepseek or --force-station-install flags."
+  fi
+  [ "${DEFER_ONBOARDING:-}" != "1" ] \
+    || error "--express-install cannot be combined with --defer-onboarding."
+  [ "${NEMOCLAW_NO_EXPRESS:-}" != "1" ] \
+    || error "--express-install cannot be combined with NEMOCLAW_NO_EXPRESS=1 or a local model profile."
+  [ -z "${NEMOCLAW_PROVIDER:-}" ] \
+    || error "--express-install selects its provider; remove NEMOCLAW_PROVIDER."
+  [ -z "${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" ] \
+    || error "--express-install cannot enable sudo prompts; unset NEMOCLAW_NON_INTERACTIVE_SUDO_MODE."
+  _STATION_INSTALL_MODE="express"
+}
+
 validate_force_station_install_override() {
   local platform="$1" release_state
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
@@ -6094,6 +6155,7 @@ preflight_explicit_express_flags() {
   _PREFLIGHT_EXPRESS_PLATFORM="$(detect_express_platform)" \
     || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_noninteractive_express_install "$_PREFLIGHT_EXPRESS_PLATFORM"
   validate_force_station_install_override "$_PREFLIGHT_EXPRESS_PLATFORM"
   validate_station_deepseek_override "$_PREFLIGHT_EXPRESS_PLATFORM"
 }
@@ -6674,7 +6736,9 @@ activate_express_install() {
   fi
   NON_INTERACTIVE=1
   export NEMOCLAW_NON_INTERACTIVE=1
-  export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
+  if [ "${EXPRESS_INSTALL:-}" != "1" ]; then
+    export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
+  fi
   export NEMOCLAW_YES=1
   export NEMOCLAW_POLICY_MODE=suggested
   unset NEMOCLAW_STATION_EXPRESS
@@ -6743,7 +6807,13 @@ run_station_host_preparation() {
   if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
     helper_args+=(--force-station-install)
   fi
-  bash "$helper" "${helper_args[@]}" 2>&1 | filter_station_host_preparation_output
+  if [ "${EXPRESS_INSTALL:-}" = "1" ]; then
+    sudo -n true >/dev/null 2>&1 \
+      || error "--express-install requires non-interactive sudo for Station host preparation. Ask the host operator to prepare the required access."
+    NEMOCLAW_STATION_PREP_SUDO_NONINTERACTIVE=1 bash "$helper" "${helper_args[@]}" 2>&1 | filter_station_host_preparation_output
+  else
+    bash "$helper" "${helper_args[@]}" 2>&1 | filter_station_host_preparation_output
+  fi
 }
 
 filter_station_host_preparation_output() {
@@ -7050,12 +7120,16 @@ ensure_station_express_pair() {
         || error "Dual DGX Station preparation returned an inconsistent reboot result; refusing to continue."
       [ "${_STATION_EXPRESS_DEFERRED_MANAGED_PAIR:-0}" != "1" ] \
         || error "The running managed dual-Station head could not be matched to its trusted reciprocal peer; refusing single-Station fallback."
-      [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" != "1" ] \
-        || error "The running legacy single-Station head could not be matched to a trusted reciprocal peer; refusing migration and single-Station fallback."
       [ -z "${NEMOCLAW_DGX_STATION_PEER:-}" ] \
         || error "The explicit DGX Station peer could not be qualified; refusing single-Station fallback."
       station_dual_pair_resume_pending \
         && error "Dual DGX Station preparation returned a single-Station result while exact pair resume state is pending; refusing to discard it."
+      if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
+        # An implicit peer miss keeps the existing single-Station workload.
+        # Recheck its ownership before continuing without host preparation.
+        station_migratable_legacy_single_head_running \
+          || error "The nemoclaw-vllm container no longer matches the legacy image ($STATION_ULTRA_LEGACY_VLLM_IMAGE) and ownership contract after peer discovery. Inspect it with 'docker inspect nemoclaw-vllm'; restore the original single-Station workload before retrying, or stop this upgrade if the change was intentional."
+      fi
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
@@ -7111,6 +7185,7 @@ clear_station_dual_pair_resume() {
 # Station and portable preparation own their target; ordinary installs use early admission.
 prepare_installer_host() {
   maybe_offer_express_install
+  validate_deferred_onboarding_request
   # Reject conflicting explicit Station selections and pending-pair bypasses
   # before the local host-preparation helper can mutate packages or Docker.
   validate_station_pair_selection
@@ -7135,10 +7210,6 @@ prepare_installer_host() {
   ensure_openshell_build_deps
 }
 
-# Prompt the user to opt into express install on qualified platforms or the
-# Deferred N1x preview. Sets non-interactive + provider/model env vars when accepted. Skipped when
-# the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
-# no TTY.
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
@@ -7286,6 +7357,7 @@ maybe_offer_express_install() {
   platform="$(detect_express_platform)" \
     || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
+  validate_noninteractive_express_install "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
 
@@ -7355,6 +7427,11 @@ maybe_offer_express_install() {
   if [ "$platform" = "DGX Station" ] && [[ -e "$resume_file" || -L "$resume_file" ]]; then
     load_station_express_resume
     resume_loaded_station_install "$platform"
+    return 0
+  fi
+  if [ "${EXPRESS_INSTALL:-}" = "1" ]; then
+    activate_express_install "$platform"
+    info "Using express install for ${platform}."
     return 0
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -7496,6 +7573,7 @@ main() {
   FORCE_FRESH_INSTALL=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
+  EXPRESS_INSTALL=""
   LOCAL_MODEL_RUNTIME=""
   EXPERIMENTAL_PROFILE="${NEMOCLAW_EXPERIMENTAL_PROFILE:-}"
   local expect_experimental_profile=""
@@ -7506,6 +7584,11 @@ main() {
       continue
     fi
     case "$arg" in
+      --express-install)
+        EXPRESS_INSTALL=1
+        NON_INTERACTIVE=1
+        NON_INTERACTIVE_SOURCE="the --express-install flag"
+        ;;
       --non-interactive)
         NON_INTERACTIVE=1
         NON_INTERACTIVE_SOURCE="the --non-interactive flag"
@@ -7581,7 +7664,7 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  validate_deferred_hermes_onboarding_request
+  validate_deferred_onboarding_request
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -7650,10 +7733,6 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
-  # Express selection can change the provider after the initial argument
-  # validation. Recheck the deferred-onboarding scope before installation.
-  validate_deferred_hermes_onboarding_request
-
   install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
@@ -7680,8 +7759,8 @@ main() {
       warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
-    if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
-      info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
+    if should_defer_onboarding "$_cli_runner" "$_registered_sandbox_count"; then
+      info "NVIDIA inference credentials are absent. $(agent_display_name "${NEMOCLAW_AGENT:-openclaw}") onboarding did not run."
     else
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install

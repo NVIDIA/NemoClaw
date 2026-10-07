@@ -27,6 +27,10 @@ describe("inference set sandbox configuration read failures", () => {
       [
         "#!/usr/bin/env bash",
         `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: nvidia/llama-3.3-nemotron-super-49b-v1'",
+        "  exit 0",
+        "fi",
         "printf '%s\\n' 'exec session setup failed: container not ready' >&2",
         "exit 1",
       ].join("\n"),

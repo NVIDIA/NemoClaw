@@ -21,6 +21,7 @@ cache_to=""
 cache_from=""
 audit_evidence_from=""
 runtime_user="sandbox"
+prepared_stages=(npm12 openclaw-system hermes-system langchain-deepagents-code-system)
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)
@@ -94,6 +95,7 @@ done
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
 [[ "$runtime_user" == "root" || "$runtime_user" == "sandbox" ]] || usage
+[[ -z "$cache_to" || -z "$cache_from" ]] || usage
 case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
@@ -104,6 +106,7 @@ npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
 controller_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -147,7 +150,7 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
-  for agent in openclaw hermes langchain-deepagents-code; do
+  for agent in hermes langchain-deepagents-code "${prepared_stages[@]}"; do
     cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
       echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
@@ -176,6 +179,10 @@ if [[ -n "$cache_from" ]]; then
   }
   [[ -f "$cache_from/messaging-npm-cache-seed/manifest.json" && ! -L "$cache_from/messaging-npm-cache-seed/manifest.json" ]] || {
     echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/prepared-inputs" && "$(cat "$cache_from/prepared-inputs")" == "$prepared_identity" ]] || {
+    echo "ERROR: prepared inputs do not match the revision, platform, and bases" >&2
     exit 1
   }
 fi
@@ -427,8 +434,12 @@ build_agent() {
   local metadata="$work_dir/${agent}-build-metadata.json"
   local exact_image_raw="$work_dir/${agent}-image-exact.raw"
   local -a cache_args=()
+  local -a agent_stages=("${agent}-system")
+  if [[ "$agent" == "openclaw" ]]; then
+    agent_stages=(npm12 "${agent_stages[@]}")
+  fi
 
-  if [[ -n "$cache_to" ]]; then
+  if [[ -n "$cache_to" && "$agent" != "openclaw" ]]; then
     local cache_destination="$cache_to/$agent"
     cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
   fi
@@ -436,13 +447,22 @@ build_agent() {
     local cache_source="$cache_from/$agent"
     cache_args+=(--network none)
     if [[ "$agent" == "openclaw" ]]; then
-      # The exported cache is produced before the locked npm seeds are overlaid.
-      # Do not import its layer graph: some BuildKit versions still reuse
+      # Rebuild from the overlaid locked npm seeds. Some BuildKit versions reuse
       # empty-seed COPY results when --no-cache and --cache-from are combined.
       cache_args+=(--no-cache)
     else
       cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
+    # Consume prepared system files by digest, outside the imported layer graph.
+    local stage stage_digest
+    for stage in "${agent_stages[@]}"; do
+      stage_digest="$(jq -er '.manifests | if length == 1 then .[0].digest else error("expected one prepared image") end' "$cache_from/$stage/index.json")"
+      [[ "$stage_digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+        echo "ERROR: protected managed-image prepared stage has no immutable digest: ${stage}" >&2
+        exit 1
+      }
+      cache_args+=(--build-context "$stage=oci-layout://${cache_from}/${stage}@${stage_digest}")
+    done
   fi
 
   if [[ "$agent" == "openclaw" && -n "$audit_receipt" ]]; then
@@ -563,6 +583,17 @@ build_agent() {
       localContentId: $localContentId,
       baseReference: $baseReference
     }' >>"$contracts"
+
+  if [[ -n "$cache_to" ]]; then
+    # OCI inputs remain available when the offline build misses a cached layer.
+    local stage
+    for stage in "${agent_stages[@]}"; do
+      docker buildx build --file "$dockerfile_path" --platform "$platform" \
+        --target "$stage" --provenance=false --sbom=false \
+        --build-arg "BASE_IMAGE=${base_reference}" --build-arg "TARGETARCH=${target_arch}" \
+        --output "type=oci,dest=${cache_to}/${stage},tar=false" "$source_root"
+    done
+  fi
 }
 
 build_agent \
@@ -579,6 +610,7 @@ build_agent \
   "$dcode_base"
 
 if [[ -n "$cache_to" ]]; then
+  printf '%s\n' "$prepared_identity" >"$cache_to/prepared-inputs"
   node --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \

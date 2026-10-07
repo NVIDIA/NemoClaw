@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   inspectExactMcpDestroyProvider: vi.fn(),
   inspectMcpProvider: vi.fn(),
   assertMcpProviderRecoverable: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
   preflightMcpEntryTargets: vi.fn(),
   detachProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
@@ -28,7 +29,10 @@ const mocks = vi.hoisted(() => ({
   unregisterAgentAdapter: vi.fn(),
 }));
 
-vi.mock("../../state/registry", () => ({ getSandbox: vi.fn(), updateSandbox: vi.fn() }));
+vi.mock("../../state/registry", () => ({
+  getSandbox: vi.fn(),
+  updateSandbox: vi.fn(),
+}));
 vi.mock("./mcp-bridge-adapters", () => ({
   registerAgentAdapterAtCurrentCredentialRevision:
     mocks.registerAgentAdapterAtCurrentCredentialRevision,
@@ -67,7 +71,7 @@ vi.mock("./mcp-bridge-restart", () => ({
   restoreExistingMcpBridgeRuntime: mocks.restoreExistingMcpBridgeRuntime,
 }));
 vi.mock("./mcp-bridge-runtime-capabilities", () => ({
-  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: mocks.assertMcpAdapterTeardownRuntimeCapabilities,
 }));
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
@@ -84,11 +88,16 @@ vi.mock("./mcp-bridge-validation", () => ({
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForStoppedSandboxRebuild,
   prepareMcpBridgesForRebuild,
+  restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
-const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
+const runtimeSelection = {
+  gatewayName: "nemoclaw-8091",
+  workspace: "default",
+} as const;
 const entry: McpSourceEntry = {
   server: "github",
   agent: "hermes",
@@ -119,6 +128,7 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
+    mocks.assertMcpAdapterTeardownRuntimeCapabilities.mockReset().mockResolvedValue(undefined);
     mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(async () => {
       throw new Error("forced lifecycle failure after adapter scrub");
@@ -155,6 +165,48 @@ describe("MCP adapter teardown rollback", () => {
       expect(mocks.detachProvider).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves captured OpenClaw MCP intent without executing in or detaching the stopped source", async () => {
+    mocks.getSandboxOrThrow.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+    });
+    const source = {
+      sandboxName: "alpha",
+      agentName: "openclaw" as const,
+      nativeDirectory: "/private/native",
+      directory: "/private/captured",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const nativeEntry = {
+      ...entry,
+      agent: "openclaw",
+      adapter: "openclaw-config" as const,
+    };
+    const result = await prepareMcpBridgesForStoppedSandboxRebuild(
+      "alpha",
+      [nativeEntry],
+      source,
+      runtimeSelection,
+    );
+    expect(result.entries).toEqual([nativeEntry]);
+    expect(result.detachedProviderEntries).toEqual([]);
+    expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(source.assertCurrent).toHaveBeenCalledTimes(2);
+    await expect(result.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+    mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
+      "version: 1\nnetwork_policies:\n  changed: {}\n",
+    );
+    await expect(result.revalidateBeforeDelete?.()).rejects.toThrow("policy changed");
+    await expect(
+      prepareMcpBridgesForStoppedSandboxRebuild("beta", [nativeEntry], source, runtimeSelection),
+    ).rejects.toThrow("does not match");
+  });
 
   it("preserves distinct credential endpoints in an absent-sandbox rebuild handoff", async () => {
     const distinct = {
@@ -200,6 +252,42 @@ describe("MCP adapter teardown rollback", () => {
       { replaceExisting: true, teardownRollback: true },
     );
     expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
+  });
+
+  it("preserves an existing Hermes entry through legacy teardown and replacement restore", async () => {
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockResolvedValueOnce("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n")
+      .mockResolvedValueOnce("version: 1\nnetwork_policies: {}\n");
+    mocks.removeGeneratedPolicy.mockReset().mockResolvedValue(undefined);
+    mocks.detachProvider.mockReset().mockResolvedValue("detached");
+    mocks.restoreExistingMcpBridgeRuntime.mockReset().mockResolvedValue(undefined);
+
+    const preparation = await prepareMcpBridgesForRebuild("alpha", [entry]);
+
+    expect(mocks.assertMcpAdapterTeardownRuntimeCapabilities).toHaveBeenCalledWith(
+      "alpha",
+      sandbox,
+      [entry],
+      runtimeSelection,
+    );
+    expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalledOnce();
+    expect(mocks.detachProvider).toHaveBeenCalledOnce();
+    expect(preparation).toMatchObject({
+      entries: [entry],
+      detachedProviderEntries: [entry],
+      scrubbedAdapterEntries: [expect.objectContaining(entry)],
+      policyHandoff: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+      runtimeSelection,
+    });
+
+    await restoreMcpBridgesAfterRebuild("alpha", preparation.entries, runtimeSelection);
+
+    expect(mocks.restoreExistingMcpBridgeRuntime).toHaveBeenCalledWith("alpha", [entry], {
+      applyPolicy: false,
+      runtimeSelection,
+    });
   });
 
   it("does not derive a Hermes credential revision from an exact provider resource version", async () => {

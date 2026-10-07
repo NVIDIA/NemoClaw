@@ -336,6 +336,43 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(discovery?.args).toEqual(["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]);
   });
 
+  it("falls back to scoped PID and container cleanup when no user manager is available", async () => {
+    const runner = new FakeRunner();
+    const environment = { ...process.env, HOME: "/private/export-home" };
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(75)); // no user manager
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "")); // no gateway container
+
+    await fixture(runner, new FakeCleanup()).stopGatewayRuntime({
+      env: environment,
+      userServiceMode: "permanent",
+    });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+      "lifecycle-gateway-pid-stop",
+      "lifecycle-gateway-runtime-discover",
+    ]);
+    expect(runner.calls.every((call) => call.options?.env?.HOME === environment.HOME)).toBe(true);
+  });
+
+  it("permanently stops a supported user service without scheduling restart", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+
+    await fixture(runner, cleanup).stopGatewayRuntime({ userServiceMode: "permanent" });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+    ]);
+    expect(cleanup.calls).toEqual([]);
+  });
+
   it("stops a supported user service without invoking legacy runtime controls (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop
@@ -539,12 +576,19 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     runner.enqueue(shellResult(0, `${sandboxName}\n`));
     runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
     runner.enqueue(shellResult(0)); // marker write
+    runner.enqueue(shellResult(0)); // representative native-state write
     runner.enqueue(shellResult(0, "container-a\ncontainer-b\n"));
     runner.enqueue(shellResult(0, "200"));
   }
 
   it.each([
-    ["Docker", { NEMOCLAW_GATEWAY_RUNTIME: "docker" }, "docker", ["ps"]],
+    [
+      "Docker",
+      { NEMOCLAW_GATEWAY_RUNTIME: "docker" },
+      "docker",
+      ["ps"],
+      "label=openshell.ai/managed-by=openshell",
+    ],
     [
       "Podman",
       {
@@ -556,10 +600,11 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       },
       "podman",
       ["--url", "unix:///run/user/1001/podman/podman.sock", "ps"],
+      "label=openshell.managed=true",
     ],
   ] as const)(
-    "proves 2xx→401→rejected rebuild without mutation through %s, then restores 2xx",
-    async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix) => {
+    "proves rejected and successful state-preserving rebuilds through %s",
+    async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix, managedLabel) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
       const previousHome = process.env.HOME;
       process.env.HOME = home;
@@ -578,10 +623,35 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           ),
         );
         runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
-        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER"));
+        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
         runner.enqueue(shellResult(0)); // restore valid provider credential
         runner.enqueue(shellResult(0, "200"));
+        runner.enqueue(shellResult(0, "rebuild complete"));
+        runner.enqueue(shellResult(0, "container-c\n"));
+        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
+        runner.enqueue(
+          shellResult(
+            0,
+            "unknown-home\nworkspace\npackage\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
+          ),
+        );
+        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+        runner.enqueue(
+          shellResult(
+            0,
+            JSON.stringify({
+              schema_version: 1,
+              command: "non-interactive",
+              data: {
+                status: "success",
+                exit_code: 0,
+                response: "PONG",
+                completion: { thread_id: "thread-1", duration_ms: 1, response_bytes: 4 },
+              },
+            }),
+          ),
+        );
         const cleanup = new FakeCleanup();
 
         const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
@@ -600,6 +670,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             "marker-read:after",
             "sandbox-ready:after",
             "inference-route:restored",
+            "nemoclaw-rebuild:valid-credential",
+            "container-ids:rebuilt",
+            "marker-read:rebuilt",
+            "native-state-read:rebuilt",
+            "sandbox-ready:rebuilt",
+            "dcode-action:rebuilt",
           ]),
         );
         const providerUpdates = runner.calls.filter(
@@ -613,14 +689,92 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         expect(providerUpdates[0].options?.redactionValues).toContain(invalidCredential);
         expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(validCredential);
         const rebuild = runner.calls.find(
-          (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
+          (call) =>
+            call.command === "nemoclaw" &&
+            call.options?.artifactName === "lifecycle-dcode-rebuild-invalid-credential",
         );
         expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const successfulRebuild = runner.calls.find(
+          (call) =>
+            call.command === "nemoclaw" &&
+            call.options?.artifactName === "lifecycle-dcode-rebuild-valid-credential",
+        );
+        expect(successfulRebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const nativeStateWrite = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-native-state-write",
+        );
+        const nativeStateRead = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-native-state-read-rebuilt",
+        );
+        expect(nativeStateWrite?.args).toContain("/sandbox/.nemoclaw-dcode-unknown.txt");
+        expect(nativeStateWrite?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/nemoclaw-dcode-config/config.json",
+        );
+        expect(nativeStateRead?.args).toContain("/sandbox/.nemoclaw-dcode-unknown.txt");
+        expect(nativeStateRead?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/nemoclaw-dcode-config/config.json",
+        );
+        const dcodeAction = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-action-rebuilt",
+        );
+        expect(dcodeAction?.args).toEqual([
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "dcode",
+          "-n",
+          "Reply with exactly one word: PONG",
+          "--json",
+        ]);
         const containerIds = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
         );
         expect(containerIds?.command).toBe(runtimeCommand);
-        expect(containerIds?.args.slice(0, runtimeArgsPrefix.length)).toEqual(runtimeArgsPrefix);
+        expect(containerIds?.args).toEqual([
+          ...runtimeArgsPrefix,
+          "-a",
+          "--no-trunc",
+          "--filter",
+          managedLabel,
+          "--filter",
+          `label=openshell.ai/sandbox-name=${sandboxName}`,
+          "--format",
+          "{{.ID}}",
+        ]);
         expect(cleanup.calls).toHaveLength(1);
 
         const callCount = runner.calls.length;

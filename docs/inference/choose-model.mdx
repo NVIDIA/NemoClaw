@@ -16,13 +16,15 @@ Runtime route validation determines current availability because catalog entries
 ## Catalog Selection
 
 During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public featured model catalog once per onboarding session and reports progress before displaying the model picker.
-OpenRouter uses the same catalog-backed picker flow and featured model list with its own provider route and credential check.
+OpenRouter uses the same catalog-backed picker flow and source catalog, with its own provider route and credential check. It does not apply NVIDIA Endpoints retirement filters and uses its own bundled fallback list, so the available choices can differ.
 NVIDIA Endpoints excludes NVIDIA-retired or unsafe choices and corrects known catalog lag before displaying the result.
 
 If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses its bundled fallback list.
 Nemotron 3 Super remains the shared default for OpenClaw and Hermes when it is present.
 LangChain Deep Agents Code uses Nemotron 3 Ultra as its NVIDIA Endpoints default.
 If an agent's default is unavailable, the first live featured model becomes the interactive default.
+
+When a saved NVIDIA Endpoints route uses a retired model, interactive onboarding asks you to choose a replacement. Non-interactive onboarding uses `NEMOCLAW_MODEL` when configured with a non-retired model, otherwise it uses the agent's default model. This retirement recovery applies only to NVIDIA Endpoints. OpenRouter recovery does not apply NVIDIA Endpoints retirement filters.
 
 If `NEMOCLAW_MODEL` contains a safe custom model ID that is absent from the live catalog, it does not replace the live menu default.
 Choose **Other** to use that value as the pre-filled manual entry.
@@ -37,7 +39,6 @@ The relative labels compare models within the curated onboarding choices rather 
 |---|---|---|---|---|---|
 | `nvidia/nemotron-3-ultra-550b-a55b` | Quality-sensitive reasoning, careful synthesis, and complex reviews | Higher | Strong for complex tool plans | Large agent context | Higher |
 | `nvidia/nemotron-3-super-120b-a12b` | Hosted agent work, multi-step planning, and tool-heavy shell workflows | Medium | Strong default for OpenClaw tool loops | Large agent context | Medium |
-| `minimaxai/minimax-m3` | Long-form writing, multi-turn assistant work, and broad instruction following | Medium | Good for structured assistant turns | Large agent context | Medium |
 | `gpt-5.4` | General OpenAI-backed agent work and high-quality reasoning | Medium | Strong | Large agent context | Medium to high |
 | `gpt-5.4-mini` | Latency-sensitive routine automation and repeated helper calls | Low | Good | Medium to large context | Low |
 | `gpt-5.4-nano` | Classification, routing, extraction, and small helper tasks | Very low | Basic to good for simple tool loops | Medium context | Very low |

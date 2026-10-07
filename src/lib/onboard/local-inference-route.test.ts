@@ -16,12 +16,13 @@ class ExitError extends Error {
 
 function createDeps(overrides: Partial<LocalInferenceRouteDeps> = {}): LocalInferenceRouteDeps {
   return {
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    inferenceRouteMutator: {
+      setInferenceRoute: vi.fn(async () => ({ ok: true as const })),
+    },
+    gatewayName: "nemoclaw",
     isNonInteractive: vi.fn(() => false),
     promptValidationRecovery: vi.fn(async () => "selection" as const),
     classifyApplyFailure: vi.fn(() => ({ kind: "unknown" }) as never),
-    compactText: vi.fn((value: string) => value.trim()),
-    redact: vi.fn((value: string) => value),
     localInferenceTimeoutSecs: 30,
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
@@ -32,20 +33,23 @@ function createDeps(overrides: Partial<LocalInferenceRouteDeps> = {}): LocalInfe
 }
 
 describe("local inference route recovery", () => {
-  it("redacts a failed non-interactive route and preserves its exit status", async () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 17,
-      stderr: "route failed with secret-token",
-      stdout: "secret-token detail",
+  it("preserves a definite non-interactive route failure exit status", async () => {
+    const setInferenceRoute = vi.fn(async () => ({
+      ok: false as const,
+      ambiguous: false,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        exitCode: 17,
+        message: "route failed",
+      },
     }));
-    const redact = vi.fn((value: string) => value.replaceAll("secret-token", "[redacted]"));
     const exitProcess = vi.fn((code: number): never => {
       throw new ExitError(code);
     });
     const deps = createDeps({
-      runOpenshell,
+      inferenceRouteMutator: { setInferenceRoute },
       isNonInteractive: () => true,
-      redact,
       exitProcess,
     });
 
@@ -53,43 +57,39 @@ describe("local inference route recovery", () => {
       createLocalInferenceRouteApplier(deps)("ollama-local", "qwen3.5:9b"),
     ).rejects.toEqual(new ExitError(17));
 
-    expect(runOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "--no-verify",
-        "--provider",
-        "ollama-local",
-        "--model",
-        "qwen3.5:9b",
-        "--timeout",
-        "30",
-      ],
-      { ignoreError: true },
-    );
-    expect(redact).toHaveBeenCalledWith("route failed with secret-token secret-token detail");
-    expect(deps.error).toHaveBeenNthCalledWith(
-      1,
-      "  route failed with [redacted] [redacted] detail",
-    );
+    expect(setInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      route: { provider: "ollama-local", model: "qwen3.5:9b" },
+      verification: "skip",
+      verificationTimeoutSeconds: 30,
+    });
+    expect(deps.error).toHaveBeenNthCalledWith(1, "  route failed");
     expect(deps.error).toHaveBeenNthCalledWith(
       2,
       "  No sandbox was created. Fix the inference route and re-run `nemoclaw onboard --resume` to continue, or choose a different provider/model.",
     );
-    expect(vi.mocked(deps.error).mock.calls.flat().join("\n")).not.toContain("secret-token");
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(17);
     expect(deps.promptValidationRecovery).not.toHaveBeenCalled();
   });
 
   it("retries an interactive route failure and returns success", async () => {
-    const runOpenshell = vi
+    const setInferenceRoute = vi
       .fn()
-      .mockReturnValueOnce({ status: 9, stdout: "", stderr: "temporary route failure" })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          exitCode: 9,
+          message: "temporary route failure",
+        },
+      })
+      .mockResolvedValueOnce({ ok: true });
     const recovery = { kind: "transport" } as never;
     const deps = createDeps({
-      runOpenshell,
+      inferenceRouteMutator: { setInferenceRoute },
       promptValidationRecovery: vi.fn(async () => "retry" as const),
       classifyApplyFailure: vi.fn(() => recovery),
     });
@@ -98,7 +98,7 @@ describe("local inference route recovery", () => {
       createLocalInferenceRouteApplier(deps)("vllm-local", "meta-llama/Llama-3"),
     ).resolves.toBe(false);
 
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(setInferenceRoute).toHaveBeenCalledTimes(2);
     expect(deps.error).toHaveBeenCalledOnce();
     expect(deps.error).toHaveBeenCalledWith("  temporary route failure");
     expect(deps.promptValidationRecovery).toHaveBeenCalledOnce();
@@ -107,9 +107,18 @@ describe("local inference route recovery", () => {
   });
 
   it("returns to provider selection after an interactive route failure", async () => {
-    const runOpenshell = vi.fn(() => ({ status: 6, stdout: "", stderr: "select another" }));
+    const setInferenceRoute = vi.fn(async () => ({
+      ok: false as const,
+      ambiguous: false,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        exitCode: 6,
+        message: "select another",
+      },
+    }));
     const deps = createDeps({
-      runOpenshell,
+      inferenceRouteMutator: { setInferenceRoute },
       promptValidationRecovery: vi.fn(async () => "selection" as const),
     });
 
@@ -117,8 +126,30 @@ describe("local inference route recovery", () => {
       createLocalInferenceRouteApplier(deps)("ollama-local", "qwen3.5:9b"),
     ).resolves.toBe(true);
 
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(setInferenceRoute).toHaveBeenCalledOnce();
     expect(deps.promptValidationRecovery).toHaveBeenCalledOnce();
     expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("stops without retrying when the route result is unknown", async () => {
+    const setInferenceRoute = vi.fn(async () => ({
+      ok: false as const,
+      ambiguous: true,
+      error: {
+        kind: "timeout" as const,
+        message: "route result unknown",
+      },
+    }));
+    const deps = createDeps({ inferenceRouteMutator: { setInferenceRoute } });
+
+    await expect(
+      createLocalInferenceRouteApplier(deps)("ollama-local", "qwen3.5:9b"),
+    ).rejects.toEqual(new ExitError(1));
+
+    expect(setInferenceRoute).toHaveBeenCalledOnce();
+    expect(deps.promptValidationRecovery).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenLastCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
+    );
   });
 });

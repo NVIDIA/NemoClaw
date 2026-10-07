@@ -18,15 +18,9 @@ const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
-const CONFIG_HASH_RE =
-  /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
 const MESSAGING_BUILD_APPLIER_RE =
   /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
-const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
-  CONFIG_MODE_RE,
-  CONFIG_HASH_RE,
-  MESSAGING_BUILD_APPLIER_RE,
-] as const;
+const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [CONFIG_MODE_RE, MESSAGING_BUILD_APPLIER_RE] as const;
 
 // Complex RUN instructions and reviewed payload copies in the shipped
 // Dockerfile are accepted only as exact normalized instructions. Prefix
@@ -70,12 +64,16 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e69b86c132e44c502b3dce8b9359c8798079e93489bd2d27f75d514b45502d4e",
-  "d4b6c80ecc6f243f2141a439e2690aa563c55e19e7d6f3965d3d8685507866c1",
+  "a2f5db30933d1ce0c62e9f5a582bc5e0652e4b500e5f2df8e87bf3f196059224",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
-  "6364b77bae0a2a4449737beefac36c439333a5e37993ac404c02e375aa170515",
+  // Security inventory verification with matching Debian OpenSSL u3 pins.
+  "8d0214ab5fec6f6c255e5177ba91c579b36be81ae98c4c5301c483effd750d30",
+  // Sandbox-user native OpenClaw state modes with root-mode shared access;
+  // this exact instruction changes filesystem metadata, not dashboard config.
+  "402ffef36760a20e70316a145fa37908c99774496d3dcd0da5f8547b9ac80071",
   // Reviewed late messaging inputs, metadata setup, npm 12 helper, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
@@ -91,6 +89,10 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The same reviewed install with npm forced offline for every optional
   // plugin command; it still preserves the generated dashboard config.
   "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
+  // The same offline optional-plugin install with reviewed 2026.9.2 pins.
+  "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
+  // Reviewed Tavily preinstall with archive verification before native installation.
+  "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
@@ -120,6 +122,12 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Exact non-root startup hold copy and image-mode normalization.
   "d54adeffc53c42612daf871fc0d46e2e782976ce8629bebe27758a63065476f0",
   "5966651fd0de01944c8c30587ff99b3f45f69659a7a4b62ed1369a8236d098b7",
+  // Main-image chmod for NemoClaw startup helpers, source, preloads, policy,
+  // and plugin payloads; it does not write OpenClaw configuration.
+  "4baee14013357ee190f418985d6b58457ab7a0c414f7ae3d8d308704da1696cf",
+  // NEMOCLAW_DARWIN_VM_COMPAT chmod for the OpenClaw and NemoClaw state trees;
+  // it changes modes only and preserves the generated dashboard binding.
+  "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",
 ]);
 
 function instructionSha256(text: string): string {

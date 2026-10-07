@@ -16,7 +16,10 @@ import {
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
-import { gatewayReachableCompatibleEndpointUrl } from "../onboard/inference-providers/compatible-endpoint-gateway-route";
+import {
+  isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl,
+  isLoopbackNoAuthCompatibleEndpointUrl,
+} from "../onboard/inference-providers/compatible-endpoint-gateway-route";
 import { isAllowedOpenShellSandboxBridgeUrl } from "../private-networks";
 import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
@@ -120,8 +123,8 @@ export function usesLoopbackNoAuthProxyRoute(
     isCustomCompatibleProvider(provider) &&
     entry.provider === provider &&
     entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV &&
-    Boolean(entry.endpointUrl) &&
-    gatewayReachableCompatibleEndpointUrl(provider, entry.endpointUrl) !== entry.endpointUrl
+    (isLoopbackNoAuthCompatibleEndpointUrl(provider, entry.endpointUrl) ||
+      isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(provider, entry.endpointUrl))
   );
 }
 
