@@ -180,7 +180,8 @@ If NemoClaw cannot inspect that PID's process identity, it preserves the record 
 If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
 On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
 It reports an unrecorded `cloudflared` executable as a conflict.
-On Windows, or when process listing fails, this scan reports no conflict.
+Windows skips this scan.
+If process listing fails on another platform, tunnel start fails closed without starting a tunnel, and status cannot report unmanaged conflicts until process inspection is restored.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
 a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
@@ -209,7 +210,8 @@ If NemoClaw cannot inspect that PID's process identity, it preserves the record 
 If multiple live PID records exist, the command reports the conflict and requires you to stop the unintended process through its process manager before starting a tunnel.
 On non-Windows hosts, NemoClaw scans the current user's process list when no live managed tunnel record exists.
 It reports an unrecorded `cloudflared` executable as a conflict.
-On Windows, or when process listing fails, this scan reports no conflict.
+Windows skips this scan.
+If process listing fails on another platform, tunnel start fails closed without starting a tunnel, and status cannot report unmanaged conflicts until process inspection is restored.
 If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 </AgentOnly>
 
