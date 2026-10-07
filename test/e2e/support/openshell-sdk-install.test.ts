@@ -51,7 +51,7 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
     );
   });
 
-  it("executes the action through the credential-free artifact installer boundary", () => {
+  it("installs the lock-selected SDK from two reviewed archives without credentials or scripts", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-action-execution-"));
     const trustedRoot = path.join(directory, "trusted");
     const targetRoot = path.join(directory, "target");
@@ -123,6 +123,25 @@ export class OpenShellClient { static connect() { return transport; } }
       );
       const archive = fs.readFileSync(path.join(artifactDirectory, artifactFilename));
       const integrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+      const replacementFilename = "nvidia-openshell-sdk-0.0.116.tgz";
+      const stagedPackage = path.join(archiveStaging, "package", "package.json");
+      const replacementPackage = JSON.parse(fs.readFileSync(stagedPackage, "utf8"));
+      replacementPackage.version = "0.0.116";
+      fs.writeFileSync(stagedPackage, JSON.stringify(replacementPackage));
+      execFileSync(
+        "tar",
+        [
+          "-czf",
+          path.join(artifactDirectory, replacementFilename),
+          "-C",
+          archiveStaging,
+          "package",
+        ],
+        { stdio: "pipe" },
+      );
+      const replacementIntegrity = `sha512-${createHash("sha512")
+        .update(fs.readFileSync(path.join(artifactDirectory, replacementFilename)))
+        .digest("base64")}`;
       const tarballUrl =
         "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/action-fixture";
       fs.writeFileSync(
@@ -149,6 +168,14 @@ export class OpenShellClient { static connect() { return transport; } }
             label: "OpenShell TypeScript SDK 0.0.106",
             packageSpec: "@nvidia/openshell-sdk@0.0.106",
             tarballUrl,
+          },
+          sourceRegistryPackageReplacement: {
+            artifactName: replacementFilename,
+            integrity: replacementIntegrity,
+            label: "OpenShell TypeScript SDK 0.0.116",
+            packageSpec: "@nvidia/openshell-sdk@0.0.116",
+            tarballUrl:
+              "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/action-fixture",
           },
           sourceRegistryPackagesWithoutIntegrity: [],
         }),
@@ -217,6 +244,14 @@ export class OpenShellClient { static connect() { return transport; } }
       });
 
       expect(fs.existsSync(lifecycleMarker)).toBe(false);
+      expect(
+        JSON.parse(
+          fs.readFileSync(
+            path.join(targetRoot, "node_modules/@nvidia/openshell-sdk/package.json"),
+            "utf8",
+          ),
+        ).version,
+      ).toBe("0.0.106");
       expect(
         fs.existsSync(
           path.join(

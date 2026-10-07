@@ -286,19 +286,89 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage).toHaveBeenCalledOnce();
   });
 
-  it("selects and stages one base-approved replacement SDK identity", async () => {
+  it.each([
+    ["root", reviewed],
+    ["root", replacement],
+    ["nemoclaw", reviewed],
+    ["nemoclaw", replacement],
+  ] as const)(
+    "stages only the SDK selected by the %s lock from a dual archive",
+    async (location, selected) => {
+      const source = installFixture(location, selected);
+      const stage = cacheStageMock();
+      writeFileSync(join(source.artifactDirectory, reviewed.artifactName), archiveBytes);
+      writeFileSync(join(source.artifactDirectory, replacement.artifactName), archiveBytes);
+      await prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "artifact"),
+        reviewedConfigSource(reviewed, replacement),
+        stage,
+      );
+      expect(stage).toHaveBeenCalledExactlyOnceWith({
+        archive: archiveBytes,
+        artifactName: selected.artifactName,
+        cacheDirectory: source.cacheDirectory,
+      });
+    },
+  );
+
+  it("accepts a single reviewed replacement archive", async () => {
     const source = installFixture("root", replacement);
     const stage = cacheStageMock();
-
     await prepareCiNpmInstallWithReviewedConfig(
       installRequest(source, "artifact"),
       reviewedConfigSource(reviewed, replacement),
       stage,
     );
-
-    expect(stage).toHaveBeenCalledOnce();
-    expect(stage.mock.calls[0]?.[0]).toMatchObject({ artifactName: replacement.artifactName });
+    expect(stage).toHaveBeenCalledExactlyOnceWith({
+      archive: archiveBytes,
+      artifactName: replacement.artifactName,
+      cacheDirectory: source.cacheDirectory,
+    });
   });
+
+  it.each([
+    ["corrupt", (other: string) => writeFileSync(other, "changed archive"), "integrity mismatch"],
+    [
+      "symlink",
+      (other: string, selected: string) => {
+        rmSync(other);
+        symlinkSync(selected, other);
+      },
+      "non-symlink regular file",
+    ],
+    [
+      "oversized",
+      (other: string) => truncateSync(other, 32 * 1024 * 1024 + 1),
+      "bounded regular file",
+    ],
+    [
+      "unreviewed",
+      (other: string) => writeFileSync(`${other}.unexpected`, archiveBytes),
+      "unexpected contents",
+    ],
+    [
+      "missing-selected",
+      (_other: string, selected: string) => rmSync(selected),
+      "unexpected contents",
+    ],
+  ] as const)(
+    "rejects %s content in a dual SDK artifact before staging",
+    async (_name, mutate, message) => {
+      const source = installFixture("root");
+      const stage = cacheStageMock();
+      const other = join(source.artifactDirectory, replacement.artifactName);
+      writeFileSync(other, archiveBytes);
+      mutate(other, join(source.artifactDirectory, artifactName));
+      await expect(
+        prepareCiNpmInstallWithReviewedConfig(
+          installRequest(source, "artifact"),
+          reviewedConfigSource(reviewed, replacement),
+          stage,
+        ),
+      ).rejects.toThrow(message);
+      expect(stage).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a candidate that mixes active and replacement SDK identities", async () => {
     const source = installFixture("root", reviewed);
