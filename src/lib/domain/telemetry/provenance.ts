@@ -24,7 +24,6 @@ export interface ModelSelectionProvenance {
   readonly providerProfile: (typeof TELEMETRY_PROVIDER_PROFILES)[number];
   readonly modelSource: (typeof MODEL_SELECTION_SOURCES)[number];
   readonly apiFamily: (typeof TELEMETRY_API_FAMILIES)[number];
-  readonly binding?: "gateway_route" | "native_configuration";
 }
 
 /** Private native-slot binding; only the source category is projected into an event. */
@@ -73,7 +72,6 @@ export function readAppliedPolicySelection(value: unknown): AppliedPolicySelecti
     : null;
 }
 export function readModelSelectionProvenance(value: unknown): ModelSelectionProvenance | null {
-  const hasBinding = Object.hasOwn(dataRecord(value) ?? {}, "binding");
   const record = closed(value, [
     "schemaVersion",
     "model",
@@ -81,9 +79,7 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
     "providerProfile",
     "modelSource",
     "apiFamily",
-    ...(hasBinding ? ["binding"] : []),
   ]);
-  const binding = hasBinding ? record?.binding : "gateway_route";
   const providerProfile = TELEMETRY_PROVIDER_PROFILES.find(
     (item) => item === record?.providerProfile,
   );
@@ -98,8 +94,7 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
     record.provider.length <= 1024 &&
     providerProfile &&
     modelSource &&
-    apiFamily &&
-    (binding === "gateway_route" || binding === "native_configuration")
+    apiFamily
     ? {
         schemaVersion: 1,
         model: record.model,
@@ -107,8 +102,52 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
         providerProfile,
         modelSource,
         apiFamily,
-        binding,
       }
+    : null;
+}
+
+/** Missing or malformed native state cannot prove that a previous selection was replaced. */
+export function readHermesModelSelectionTuple(
+  config: unknown,
+): Pick<ModelSelectionProvenance, "model" | "provider" | "apiFamily"> | null {
+  const root = dataRecord(config);
+  const model = dataRecord(root?.model);
+  const provider =
+    model?.provider === "custom" ? dataRecord(root?._nemoclaw_upstream)?.provider : model?.provider;
+  const mode = model?.api_mode;
+  const api =
+    mode === undefined || mode === ""
+      ? "openai-completions"
+      : mode === "anthropic_messages"
+        ? "anthropic-messages"
+        : mode === "codex_responses"
+          ? "openai-responses"
+          : mode;
+  const apiFamily = TELEMETRY_API_FAMILIES.find((item) => item !== "unknown" && item === api);
+  return typeof model?.default === "string" &&
+    model.default.length > 0 &&
+    model.default.length <= 1024 &&
+    typeof provider === "string" &&
+    provider.length > 0 &&
+    provider.length <= 1024 &&
+    apiFamily
+    ? { model: model.default, provider, apiFamily }
+    : null;
+}
+
+/** A native receipt remains valid only while its exact Hermes configuration is observed. */
+export function readMatchingNativeModelSelection(
+  config: unknown,
+  receipt: unknown,
+): ModelSelectionProvenance | null {
+  const tuple = readHermesModelSelectionTuple(config);
+  const selection = readModelSelectionProvenance(receipt);
+  return selection &&
+    tuple &&
+    selection.model === tuple.model &&
+    selection.provider === tuple.provider &&
+    selection.apiFamily === tuple.apiFamily
+    ? selection
     : null;
 }
 
@@ -119,7 +158,6 @@ export function selectedModelProvenance(input: {
   endpointUrl?: string | null;
   preferredInferenceApi?: string | null;
   modelSource?: ModelSelectionProvenance["modelSource"];
-  binding?: ModelSelectionProvenance["binding"];
 }): ModelSelectionProvenance | undefined {
   if (!input.model || !input.provider) return undefined;
   let providerProfile = classifyTelemetryProvider(
@@ -150,6 +188,5 @@ export function selectedModelProvenance(input: {
     modelSource: input.modelSource ?? "unknown",
     apiFamily:
       TELEMETRY_API_FAMILIES.find((item) => item === input.preferredInferenceApi) ?? "unknown",
-    ...(input.binding ? { binding: input.binding } : {}),
   };
 }

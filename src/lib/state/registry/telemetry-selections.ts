@@ -10,6 +10,7 @@ type SelectionUpdates = Partial<
   Pick<
     SandboxEntry,
     | "modelSelectionProvenance"
+    | "nativeModelSelectionProvenance"
     | "modelAssignmentSelections"
     | "configurationApplyPending"
     | "appliedPolicySelection"
@@ -42,6 +43,7 @@ export function updateSandboxTelemetrySelections(
           (key) =>
             ![
               "modelSelectionProvenance",
+              "nativeModelSelectionProvenance",
               "modelAssignmentSelections",
               "configurationApplyPending",
               "appliedPolicySelection",

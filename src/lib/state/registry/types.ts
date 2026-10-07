@@ -6,6 +6,7 @@ import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvid
 import type {
   AppliedPolicySelection,
   ModelAssignmentSelection,
+  ModelSelectionProvenance,
 } from "../../domain/telemetry/provenance";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
@@ -87,6 +88,8 @@ export interface SandboxHostLocalInferenceProvenance {
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   appliedPolicySelection?: AppliedPolicySelection;
+  /** Private selection origin matched to the current native model/provider/API. */
+  nativeModelSelectionProvenance?: ModelSelectionProvenance;
   /** Private source receipts bound to verified native agent/model assignments. */
   modelAssignmentSelections?: ModelAssignmentSelection[];
   /** Agent configuration was persisted but has not crossed verified activation. */

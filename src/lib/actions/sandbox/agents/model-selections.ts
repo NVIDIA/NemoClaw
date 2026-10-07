@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dataRecord } from "../../../domain/telemetry/values";
+import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding/identity";
 import {
   readModelAssignmentSelection,
   type ModelAssignmentSelection,
@@ -11,6 +12,8 @@ import {
   updateSandboxTelemetrySelections,
 } from "../../../state/registry/telemetry-selections";
 import type { SandboxEntry } from "../../../state/registry/types";
+
+export { readSandboxTelemetryEntry, updateSandboxTelemetrySelections };
 
 export function readAgentSelectionEntry(sandboxName: string): SandboxEntry | null {
   try {
@@ -100,8 +103,7 @@ export function restoredAgentModelSelections(
   if (
     previous.name !== current.name ||
     (previous.agent ?? "openclaw") !== (current.agent ?? "openclaw") ||
-    (previous.gatewayName ?? null) !== (current.gatewayName ?? null) ||
-    (previous.gatewayPort ?? null) !== (current.gatewayPort ?? null)
+    resolveSandboxGatewayName(previous) !== resolveSandboxGatewayName(current)
   )
     return [];
   if (!hasNativeAgentRoster(config) || !Array.isArray(previous.modelAssignmentSelections))

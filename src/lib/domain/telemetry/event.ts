@@ -73,7 +73,7 @@ export type TelemetryMetadataError =
       category: "model_source";
       slot?: { agentId: string; assignment: TelemetryModelAssignment; reference: string };
     }
-  | { category: "policy_tier" | "configuration_apply_state" };
+  | { category: "native_model_source" | "policy_tier" | "configuration_apply_state" };
 
 export interface TelemetryModel {
   assignment: TelemetryModelAssignment;
@@ -122,7 +122,9 @@ export interface TelemetryConfiguration {
   managedAgentVersionStatus: ValueStatus;
   sandboxOS: string;
   sandboxOSStatus: ValueStatus;
-  primaryRoute: { agentPosition: number; modelPosition: number; status: ValueStatus };
+  defaultAgentModel: { agentPosition: number; modelPosition: number; status: ValueStatus };
+  currentInferenceRoute: TelemetryModel;
+  currentInferenceRouteStatus: ValueStatus;
   settings: TelemetrySettings;
   messaging: { configuredMessagingChannels: string[]; messagingStatus: ValueStatus };
   agentsStatus: ValueStatus;

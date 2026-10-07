@@ -10,6 +10,7 @@ import type {
 } from "./event";
 import {
   readModelSelectionProvenance,
+  readMatchingNativeModelSelection,
   readModelAssignmentSelection,
   type ModelAssignmentSelection,
   type ModelSelectionProvenance,
@@ -92,6 +93,7 @@ export interface RuntimeRouteAuthority {
   model?: string | null;
   provider?: string | null;
   modelSelectionProvenance?: unknown;
+  nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
   metadataErrors?: readonly TelemetryMetadataError[];
 }
@@ -101,7 +103,7 @@ type ModelReference = {
   providerKey: string;
   api?: unknown;
   managed: boolean;
-  nativeProvider?: unknown;
+  nativeConfiguration?: unknown;
 };
 
 type AssignmentSources = {
@@ -156,13 +158,20 @@ function projectAssignmentSource(
 ): { value: string; status: ValueStatus } {
   const failedWrite = authority.metadataErrors?.some(
     (error) =>
-      error.category === "model_source" &&
-      (error.slot
-        ? error.slot.agentId === slot?.agentId &&
-          error.slot.assignment === assignment &&
-          error.slot.reference === slot?.reference
-        : (reference.managed || reference.nativeProvider !== undefined) &&
-          (slot?.inherited ?? assignment === "primary")),
+      (error.category === "native_model_source" &&
+        reference.nativeConfiguration !== undefined &&
+        assignment === "primary") ||
+      (error.category === "model_source" &&
+        (error.slot
+          ? error.slot.agentId === slot?.agentId &&
+            error.slot.assignment === assignment &&
+            error.slot.reference === slot?.reference
+          : reference.managed &&
+            !(
+              reference.nativeConfiguration !== undefined &&
+              authority.nativeModelSelectionProvenance !== undefined
+            ) &&
+            (slot?.inherited ?? assignment === "primary"))),
   );
   if (failedWrite) return { value: "unknown", status: "collection_error" };
   if (slot) {
@@ -177,7 +186,9 @@ function projectAssignmentSource(
   }
   if (
     (slot?.inherited ?? assignment === "primary") &&
-    (reference.managed || bound?.binding === "native_configuration") &&
+    (reference.managed ||
+      (reference.nativeConfiguration !== undefined &&
+        authority.nativeModelSelectionProvenance !== undefined)) &&
     reference.model === bound?.model &&
     bound &&
     bound.modelSource !== "unknown"
@@ -186,7 +197,12 @@ function projectAssignmentSource(
   return {
     value: "unknown",
     status:
-      authority.modelSelectionProvenance !== undefined && !bound
+      (reference.nativeConfiguration !== undefined &&
+      authority.nativeModelSelectionProvenance !== undefined
+        ? authority.nativeModelSelectionProvenance
+        : reference.managed
+          ? authority.modelSelectionProvenance
+          : undefined) !== undefined && !bound
         ? "collection_error"
         : "not_persisted",
   };
@@ -199,21 +215,34 @@ function projectModel(
   slot?: { agentId: string; reference: string; inherited: boolean; sources: AssignmentSources },
 ): TelemetryModel {
   const model = approvedCategory(reference.model, TELEMETRY_MODEL_IDS);
-  // Gateway and native choices have different private authorities, never sent.
-  const parsed = readModelSelectionProvenance(authority.modelSelectionProvenance);
+  const nativeChoice =
+    reference.nativeConfiguration !== undefined &&
+    authority.nativeModelSelectionProvenance !== undefined;
+  const parsed = readModelSelectionProvenance(
+    nativeChoice ? authority.nativeModelSelectionProvenance : authority.modelSelectionProvenance,
+  );
   const bound =
     parsed &&
-    (parsed.binding === "native_configuration"
-      ? parsed.model === reference.model &&
-        parsed.provider === reference.nativeProvider &&
-        parsed.apiFamily !== "unknown" &&
-        parsed.apiFamily === classifyTelemetryApi(reference.api)
-      : parsed.model === authority.model && parsed.provider === authority.provider)
+    (nativeChoice
+      ? readMatchingNativeModelSelection(
+          reference.nativeConfiguration,
+          authority.nativeModelSelectionProvenance,
+        ) !== null
+      : reference.managed &&
+        parsed.model === authority.model &&
+        parsed.provider === authority.provider)
       ? parsed
       : null;
   const source = projectAssignmentSource(reference, assignment, authority, bound, slot);
+  const gatewayReceipt = readModelSelectionProvenance(authority.modelSelectionProvenance);
+  const gatewayProvider =
+    gatewayReceipt &&
+    gatewayReceipt.model === authority.model &&
+    gatewayReceipt.provider === authority.provider
+      ? gatewayReceipt.providerProfile
+      : undefined;
   const provider = reference.managed
-    ? (bound?.providerProfile ?? classifyTelemetryProvider(authority.provider))
+    ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
     : reference.providerKey
       ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
       : "unknown";
@@ -239,20 +268,66 @@ function projectModel(
   };
 }
 
-function unknownModel(assignment: TelemetryModel["assignment"]): TelemetryModel {
+export function unknownModel(
+  assignment: TelemetryModel["assignment"],
+  status: ValueStatus = "collection_error",
+): TelemetryModel {
   return {
     assignment,
     modelId: "unknown",
-    modelStatus: "collection_error",
+    modelStatus: status,
     knownModelKey: "unknown",
-    knownModelKeyStatus: "collection_error",
+    knownModelKeyStatus: status,
     modelSource: "unknown",
-    modelSourceStatus: "collection_error",
+    modelSourceStatus: status,
     providerProfile: "unknown",
-    providerStatus: "collection_error",
+    providerStatus: status,
     apiFamily: "unknown",
-    apiStatus: "collection_error",
+    apiStatus: status,
   };
+}
+
+/** Current gateway routing is observed independently of configured native agent defaults. */
+export function projectCurrentInferenceRoute(
+  observation:
+    | { ok: false }
+    | {
+        ok: true;
+        value:
+          | { state: "unconfigured" }
+          | { state: "configured"; route: { model: string; provider: string } };
+      },
+  authority: RuntimeRouteAuthority,
+): Pick<TelemetryConfiguration, "currentInferenceRoute" | "currentInferenceRouteStatus"> {
+  if (!observation.ok || observation.value.state === "unconfigured") {
+    const status = observation.ok ? "not_configured" : "collection_error";
+    return {
+      currentInferenceRoute: unknownModel("primary", status),
+      currentInferenceRouteStatus: status,
+    };
+  }
+  const route = observation.value.route;
+  const receipt = readModelSelectionProvenance(authority.modelSelectionProvenance);
+  const matching = receipt?.model === route.model && receipt.provider === route.provider;
+  const currentInferenceRoute = projectModel(
+    {
+      model: route.model,
+      providerKey: "",
+      managed: true,
+      api: matching ? receipt.apiFamily : undefined,
+    },
+    "primary",
+    {
+      ...authority,
+      model: route.model,
+      provider: route.provider,
+      nativeModelSelectionProvenance: undefined,
+    },
+  );
+  if (!matching)
+    currentInferenceRoute.apiStatus =
+      authority.modelSelectionProvenance === undefined ? "not_persisted" : "collection_error";
+  return { currentInferenceRoute, currentInferenceRouteStatus: "reported" };
 }
 
 function modelSelection(value: unknown): {
@@ -326,7 +401,7 @@ export function parseRuntimeRoster(raw: string): Record<string, unknown>[] {
 
 type RuntimeAgentProjection = Pick<
   TelemetryConfiguration,
-  "agents" | "agentsStatus" | "primaryRoute"
+  "agents" | "agentsStatus" | "defaultAgentModel"
 >;
 
 export function projectRuntimeAgents(
@@ -339,7 +414,7 @@ export function projectRuntimeAgents(
     return {
       agents: [],
       agentsStatus: "reported",
-      primaryRoute: { agentPosition: -1, modelPosition: -1, status: "not_configured" },
+      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "not_configured" },
     };
   const root = dataRecord(config);
   if (!root) {
@@ -351,7 +426,7 @@ export function projectRuntimeAgents(
         models: [unknownModel("primary")],
       })),
       agentsStatus: "reported",
-      primaryRoute: { agentPosition: -1, modelPosition: -1, status: "collection_error" },
+      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "collection_error" },
     };
   }
   if (runtime.agentHarnessId === "openclaw") {
@@ -431,7 +506,7 @@ export function projectRuntimeAgents(
     return {
       agents: projected.map((row) => row.agent),
       agentsStatus: "reported",
-      primaryRoute: {
+      defaultAgentModel: {
         agentPosition: index,
         modelPosition: index >= 0 && projected[index].agent.models.length > 0 ? 0 : -1,
         status:
@@ -453,10 +528,7 @@ export function projectRuntimeAgents(
     reference = {
       model: model.default,
       providerKey: typeof model.provider === "string" ? model.provider : "",
-      nativeProvider:
-        model.provider === "custom"
-          ? dataRecord(root._nemoclaw_upstream)?.provider
-          : model.provider,
+      nativeConfiguration: root,
       api:
         model.api_mode === undefined || model.api_mode === ""
           ? "openai-completions"
@@ -495,7 +567,7 @@ export function projectRuntimeAgents(
     return {
       agents: [],
       agentsStatus: "unapproved",
-      primaryRoute: { agentPosition: -1, modelPosition: -1, status: "unapproved" },
+      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "unapproved" },
     };
   const model = projectModel(reference, "primary", authority);
   return {
@@ -509,6 +581,6 @@ export function projectRuntimeAgents(
       },
     ],
     agentsStatus: "reported",
-    primaryRoute: { agentPosition: 0, modelPosition: 0, status: "reported" },
+    defaultAgentModel: { agentPosition: 0, modelPosition: 0, status: "reported" },
   };
 }

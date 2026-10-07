@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isTelemetryOperationActive, recordTelemetryTarget } from "../actions/telemetry/operation";
+import {
+  getTelemetryTarget,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+} from "../actions/telemetry/operation";
 import { isTelemetryConfigurationKey } from "../domain/telemetry/event";
 import {
   readModelSelectionProvenance,
@@ -40,21 +44,23 @@ export function persistConfigurationTelemetry(
       const provider = nativeProvider === "custom" ? upstream : nativeProvider;
       const apiMode = modelConfig.api_mode;
       const api =
-        apiMode === "anthropic_messages"
-          ? "anthropic-messages"
-          : apiMode === "codex_responses"
-            ? "openai-responses"
-            : nativeProvider === "custom" && apiMode === undefined
-              ? "openai-completions"
-              : null;
-      const previous = readModelSelectionProvenance(entry.modelSelectionProvenance);
+        apiMode === undefined || apiMode === ""
+          ? "openai-completions"
+          : apiMode === "anthropic_messages"
+            ? "anthropic-messages"
+            : apiMode === "codex_responses"
+              ? "openai-responses"
+              : typeof apiMode === "string"
+                ? apiMode
+                : null;
+      const previous = readModelSelectionProvenance(entry.nativeModelSelectionProvenance);
       const source =
         key === "model.default" && newModelSelection
           ? "custom"
           : previous && previous.model === model && previous.provider === provider
             ? previous.modelSource
             : undefined;
-      updates.modelSelectionProvenance =
+      updates.nativeModelSelectionProvenance =
         typeof model === "string" && typeof provider === "string" && source
           ? selectedModelProvenance({
               model,
@@ -65,7 +71,6 @@ export function persistConfigurationTelemetry(
                   : undefined,
               preferredInferenceApi: api,
               modelSource: source,
-              binding: "native_configuration",
             })
           : undefined;
     }
@@ -73,6 +78,29 @@ export function persistConfigurationTelemetry(
   } catch {
     return false;
   }
+}
+
+/** Retire native selection evidence only after the command proved its native route sync. */
+export function retireNativeConfigurationTelemetry(sandboxName: string): void {
+  if (!isTelemetryOperationActive()) return;
+  const target = getTelemetryTarget(sandboxName);
+  if (!target) return;
+  try {
+    const entry = readSandboxTelemetryEntry(sandboxName);
+    if (entry && entry.nativeModelSelectionProvenance === undefined) return;
+    if (
+      entry &&
+      updateSandboxTelemetrySelections(entry, { nativeModelSelectionProvenance: undefined })
+    )
+      return;
+  } catch {
+    // Metadata failure does not undo a proved native application.
+  }
+  recordTelemetryTarget({
+    ...target,
+    verificationStatus: "collection_error",
+    metadataErrors: [{ category: "native_model_source" }],
+  });
 }
 
 /** Enforce the existing host config-mutation surface before any write or receipt. */

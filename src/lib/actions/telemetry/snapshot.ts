@@ -6,7 +6,7 @@ import {
   buildSandboxCommandEnvironment,
   createSupervisedSandboxCommandReader,
 } from "../../adapters/sandbox/command-transport";
-import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 import {
   approvedCategory,
   classifyTelemetryAgent,
@@ -17,6 +17,8 @@ import {
   MESSAGING_CHANNELS,
   parseRuntimeRoster,
   projectRuntimeAgents,
+  projectCurrentInferenceRoute,
+  unknownModel,
 } from "../../domain/telemetry/dimensions";
 import type {
   TelemetryAgent,
@@ -219,7 +221,9 @@ function projectConfiguration(
     messaging: { configuredMessagingChannels, messagingStatus },
     agentsStatus: "collection_error",
     agents: [],
-    primaryRoute: { agentPosition: -1, modelPosition: -1, status: "collection_error" },
+    defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "collection_error" },
+    currentInferenceRoute: unknownModel("primary"),
+    currentInferenceRouteStatus: "collection_error",
   };
 }
 
@@ -230,25 +234,53 @@ async function collectRuntime(
     signal: AbortSignal;
     deadlineAt: number;
     metadataErrors: readonly TelemetryMetadataError[];
+    routes: Map<string, Promise<OpenShellInferenceRouteResult>>;
   },
-  executor: OpenShellSandboxBufferedCommandExecutor,
+  reader: ReturnType<typeof createSupervisedSandboxCommandReader>,
 ): Promise<void> {
   if (entry.workload?.kind === "native-artifact") {
     row.state = "unavailable";
-    row.status = row.agentsStatus = row.primaryRoute.status = "not_observed";
+    row.status = row.agentsStatus = row.defaultAgentModel.status = "not_observed";
+    row.currentInferenceRoute = unknownModel("primary", "not_observed");
+    row.currentInferenceRouteStatus = "not_observed";
     return;
   }
   let osObservation: Promise<void> | undefined;
+  let routeObservation: Promise<void> | undefined;
   try {
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(entry);
     const environment = buildSandboxCommandEnvironment(runtimeSelection);
+    const gatewayName = resolveSandboxGatewayName(entry);
+    const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
+    let route = options.routes.get(routeKey);
+    if (!route) {
+      const remaining = options.deadlineAt - Date.now();
+      if (options.signal.aborted || remaining <= 0)
+        throw new Error("Telemetry observation deadline reached");
+      route = reader.observeInferenceRoute(
+        { target: { kind: "named", gatewayName }, timeoutMs: remaining },
+        environment,
+      );
+      options.routes.set(routeKey, route);
+    }
+    routeObservation = route
+      .then((observation) => {
+        Object.assign(
+          row,
+          projectCurrentInferenceRoute(observation, {
+            ...entry,
+            metadataErrors: options.metadataErrors,
+          }),
+        );
+      })
+      .catch(() => {});
     const read = async (command: readonly string[]) => {
       const remaining = options.deadlineAt - Date.now();
       if (options.signal.aborted || remaining <= 0)
         throw new Error("Telemetry observation deadline reached");
-      const result = await executor.runBuffered({
+      const result = await reader.executor.runBuffered({
         sandboxName: entry.name,
-        target: { kind: "named", gatewayName: resolveSandboxGatewayName(entry) },
+        target: { kind: "named", gatewayName },
         command,
         environment,
         timeoutMilliseconds: remaining,
@@ -275,7 +307,7 @@ async function collectRuntime(
         });
     }
     if (row.agentHarnessId === "other" || row.agentHarnessId === "unknown") {
-      row.agentsStatus = row.primaryRoute.status = row.agentHarnessStatus;
+      row.agentsStatus = row.defaultAgentModel.status = row.agentHarnessStatus;
       return;
     }
     const config = resolveAgentConfig(entry.name, {
@@ -309,12 +341,12 @@ async function collectRuntime(
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";
   } catch {
-    row.agentsStatus = row.primaryRoute.status = "collection_error";
+    row.agentsStatus = row.defaultAgentModel.status = "collection_error";
     row.status = "collection_error";
     if (row.sandboxOSStatus !== "reported" && !osObservation)
       row.sandboxOSStatus = "collection_error";
   } finally {
-    await osObservation;
+    await Promise.all([osObservation, routeObservation]);
   }
 }
 
@@ -421,14 +453,15 @@ export async function collectOperationSnapshot(options: {
     projectConfiguration(entry, metadataErrors[index]),
   );
   const reader = createSupervisedSandboxCommandReader(options.signal);
+  const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
   try {
     await Promise.all(
       entries.map((entry, index) =>
         collectRuntime(
           entry,
           snapshot.configurations[index],
-          { ...options, metadataErrors: metadataErrors[index] },
-          reader.executor,
+          { ...options, metadataErrors: metadataErrors[index], routes },
+          reader,
         ),
       ),
     );

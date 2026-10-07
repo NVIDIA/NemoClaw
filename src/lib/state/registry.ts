@@ -502,6 +502,9 @@ export function registerSandbox(
       modelAssignmentSelections: Array.isArray(entry.modelAssignmentSelections)
         ? entry.modelAssignmentSelections.map((selection) => ({ ...selection }))
         : undefined,
+      nativeModelSelectionProvenance: entry.nativeModelSelectionProvenance
+        ? { ...entry.nativeModelSelectionProvenance }
+        : undefined,
       configurationApplyPending: entry.configurationApplyPending === true ? true : undefined,
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,

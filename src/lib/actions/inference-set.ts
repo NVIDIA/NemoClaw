@@ -51,6 +51,7 @@ import {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
+  retireNativeConfigurationTelemetry,
   SandboxConfigError,
   type OpenClawConfigUpdate,
   setOpenClawConfigValues,
@@ -2019,6 +2020,7 @@ async function runInferenceSetWithoutHostLock(
       previousInferenceApi !== preferredInferenceApi,
       (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
     ]);
+    retireNativeConfigurationTelemetry(sandboxName);
     return {
       ...mutation,
       openClawConfigSyncPending: inSandboxConfigSynced && openClawConfigSyncPending,

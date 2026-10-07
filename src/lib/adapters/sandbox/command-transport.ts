@@ -11,6 +11,12 @@ import type {
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 
 import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
+import { createCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
+import type {
+  ObserveOpenShellInferenceRouteRequest,
+  OpenShellInferenceRouteResult,
+} from "../openshell/inference-route";
+import { resolveOpenshellBinaryOrNull } from "../openshell/resolve-shared";
 import {
   buildOpenShellRuntimeSelectionEnv,
   type OpenShellRuntimeSelection,
@@ -156,6 +162,10 @@ export async function executeSandboxExecCommand(
 /** Keep bounded readers and their descendants inside the foreground supervisor's process group. */
 export function createSupervisedSandboxCommandReader(signal: AbortSignal): {
   executor: OpenShellSandboxBufferedCommandExecutor;
+  observeInferenceRoute: (
+    request: ObserveOpenShellInferenceRouteRequest,
+    environment: NodeJS.ProcessEnv,
+  ) => Promise<OpenShellInferenceRouteResult>;
   dispose: () => void;
 } {
   const listeners = { SIGTERM: new Set<() => void>(), SIGINT: new Set<() => void>() };
@@ -168,26 +178,53 @@ export function createSupervisedSandboxCommandReader(signal: AbortSignal): {
   signal.addEventListener("abort", forwardTerm, { once: true });
   process.on("SIGTERM", forwardTerm);
   process.on("SIGINT", forwardInt);
-  const executor = createCliOpenShellSandboxCommandExecutor({
-    signalSource: {
-      add: (signalName, listener) => {
-        listeners[signalName].add(listener);
-        if (signal.aborted) queueMicrotask(listener);
-      },
-      remove: (signalName, listener) => listeners[signalName].delete(listener),
+  const signalSource = {
+    add: (signalName: "SIGTERM" | "SIGINT", listener: () => void) => {
+      listeners[signalName].add(listener);
+      if (signal.aborted) queueMicrotask(listener);
     },
+    remove: (signalName: "SIGTERM" | "SIGINT", listener: () => void) => {
+      listeners[signalName].delete(listener);
+    },
+  };
+  const capture = (
+    binary: string,
+    args: readonly string[],
+    request: Parameters<typeof captureOpenshellCommandAsyncResult>[2],
+  ) =>
+    captureOpenshellCommandAsyncResult(binary, args, {
+      ...request,
+      killGraceMs: 0,
+      signalSource,
+      spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) =>
+        spawn(binary, [...args], { ...options, detached: false })) as typeof spawn,
+    });
+  const executor = createCliOpenShellSandboxCommandExecutor({
+    signalSource,
     runBuffered: (binary, args, request) =>
-      captureOpenshellCommandAsyncResult(binary, args, {
+      capture(binary, args, {
         ...request,
         cwd: request.hostCwd,
-        killGraceMs: 0,
-        // The capture owner always invokes the three-argument spawn signature.
-        spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) =>
-          spawn(binary, [...args], { ...options, detached: false })) as typeof spawn,
       }),
   });
   return {
     executor,
+    observeInferenceRoute: async (request, environment) =>
+      await createCliOpenShellInferenceRouteObserver(
+        async (args, options) => {
+          const binary = resolveOpenshellBinaryOrNull(environment);
+          if (!binary) throw new Error("OpenShell is unavailable");
+          const result = await capture(binary, args, {
+            environment,
+            cwd: REPOSITORY_ROOT,
+            timeoutMilliseconds: options.timeout,
+            timeoutKillSignal: "SIGKILL",
+            outputLimitBytes: options.outputLimitBytes,
+          });
+          return { ...result, output: result.stdout };
+        },
+        { environment },
+      ).observeInferenceRoute(request),
     dispose: () => {
       signal.removeEventListener("abort", forwardTerm);
       process.removeListener("SIGTERM", forwardTerm);

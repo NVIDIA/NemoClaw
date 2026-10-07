@@ -20,7 +20,10 @@ import {
   persistConfigurationTelemetry,
   configSetUnsupportedAgentMessage,
 } from "./config-telemetry";
-export { isTelemetryConfigurationKey } from "./config-telemetry";
+export {
+  isTelemetryConfigurationKey,
+  retireNativeConfigurationTelemetry,
+} from "./config-telemetry";
 
 export type { AgentConfigTarget } from "./agent-config";
 
@@ -1289,7 +1292,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       !Object.is(oldValue, safeValue),
     );
     if (!telemetryPersistenceVerified) {
-      telemetryMetadataErrors.push({ category: "model_source" });
+      telemetryMetadataErrors.push({ category: "native_model_source" });
       if (!Object.is(oldValue, safeValue) || opts.restart)
         telemetryMetadataErrors.push({ category: "configuration_apply_state" });
     }

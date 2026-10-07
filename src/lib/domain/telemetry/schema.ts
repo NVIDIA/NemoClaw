@@ -92,7 +92,9 @@ const configuration = object({
   ...harnessFields,
   sandboxOS: string(SANDBOX_OPERATING_SYSTEMS),
   sandboxOSStatus: status,
-  primaryRoute: object({ agentPosition: position, modelPosition: position, status }),
+  defaultAgentModel: object({ agentPosition: position, modelPosition: position, status }),
+  currentInferenceRoute: model,
+  currentInferenceRouteStatus: status,
   settings: object({
     computeDriver: string(COMPUTE_DRIVERS),
     computeDriverStatus: status,
@@ -205,11 +207,12 @@ export function isOperationEvent(value: unknown): value is TelemetryOperationEve
     Date.parse(parameters.completedAt) >= Date.parse(parameters.startedAt) &&
     parameters.configurations.every(
       (row) =>
-        row.primaryRoute.status !== "reported" ||
-        (row.primaryRoute.agentPosition >= 0 &&
-          row.primaryRoute.modelPosition >= 0 &&
-          row.agents[row.primaryRoute.agentPosition]?.models[row.primaryRoute.modelPosition] !==
-            undefined),
+        row.defaultAgentModel.status !== "reported" ||
+        (row.defaultAgentModel.agentPosition >= 0 &&
+          row.defaultAgentModel.modelPosition >= 0 &&
+          row.agents[row.defaultAgentModel.agentPosition]?.models[
+            row.defaultAgentModel.modelPosition
+          ] !== undefined),
     ) &&
     parameters.targetResults.every(
       (target) =>
