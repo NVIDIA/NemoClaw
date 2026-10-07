@@ -12,6 +12,7 @@ import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as pairingSettlement from "../../onboard/machine/finalization-deps";
 import * as launchReadiness from "./launch-readiness";
 import * as portableReceipts from "../../onboard/experimental/portable-runtime-receipt-readiness";
@@ -37,6 +38,12 @@ describe("rebuild post-restore phase", () => {
   beforeEach(() => {
     agentName = "openclaw";
     order = [];
+    vi.spyOn(
+      rebuildOnboardDependencies,
+      "verifyRebuiltOpenClawCompatibleEndpoint",
+    ).mockImplementation(async () => {
+      order.push("inference-smoke");
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(() =>
@@ -190,6 +197,99 @@ describe("rebuild post-restore phase", () => {
     expect(launchReadiness.settlePortableOpenClawPairing).toHaveBeenCalledExactlyOnceWith("alpha", {
       portableRequired: false,
     });
+  });
+
+  it("verifies the restored compatible route after native startup and pairing", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: null,
+      provider: "compatible-endpoint",
+      model: "baseline",
+      endpointUrl: "http://host.openshell.internal:1234/v1",
+      credentialEnv: "TEST_API_KEY",
+    } as never);
+    const args = input();
+    await runRebuildPostRestorePhase(args);
+    expect(
+      rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint,
+    ).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "baseline",
+      }),
+    );
+    expect(order.indexOf("native-start")).toBeLessThan(order.indexOf("inference-smoke"));
+    expect(
+      vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint).mock
+        .invocationCallOrder[0],
+    );
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("pins restored inference proof commands to the captured rebuild runtime", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: null,
+      provider: "compatible-endpoint",
+      model: "baseline",
+    } as never);
+    const args = {
+      ...input(),
+      mcpRuntimeSelection: {
+        gatewayName: "captured-gateway",
+        workspace: "/tmp/captured-workspace",
+      },
+    };
+    await runRebuildPostRestorePhase(args);
+    expect(
+      rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint,
+    ).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environment: sandboxTransport.buildSandboxCommandEnvironment(args.mcpRuntimeSelection),
+        gatewayName: "captured-gateway",
+      }),
+    );
+  });
+
+  it.each([null, { backupPath: "/tmp/rebuild-backup" }])(
+    "reports recovery when the restored compatible route fails with backup %j",
+    async (backupManifest) => {
+      vi.mocked(registry.getSandbox).mockReturnValue({
+        agent: null,
+        provider: "compatible-endpoint",
+        model: "baseline",
+      } as never);
+      const failure = new Error("restored route failed");
+      vi.mocked(
+        rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint,
+      ).mockRejectedValue(failure);
+      const args = { ...input(), backupManifest: backupManifest as never };
+      await runRebuildPostRestorePhase(args);
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        "OpenClaw inference verification failed after rebuild.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).toContain("nemoclaw alpha rebuild --yes");
+      expect(errors.includes("Backup is preserved at: /tmp/rebuild-backup")).toBe(
+        backupManifest !== null,
+      );
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+        "rebuild completed",
+      );
+    },
+  );
+
+  it("does not probe compatible inference after an incomplete restore", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: null,
+      provider: "compatible-endpoint",
+      model: "baseline",
+    } as never);
+    await runRebuildPostRestorePhase({ ...input(), restoreSucceeded: false });
+    expect(
+      rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint,
+    ).not.toHaveBeenCalled();
   });
 
   it("settles baseline write pairing before completing prepared OpenClaw recovery", async () => {
