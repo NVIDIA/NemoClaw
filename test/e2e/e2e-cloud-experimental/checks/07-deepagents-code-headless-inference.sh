@@ -605,7 +605,7 @@ main() {
   route_contract="$(printf '%s' "$config_output" | configured_inference_route_contract || true)"
   if [ "$route_contract" = "native-nvidia" ]; then
     pass "config.toml routes through the native NVIDIA endpoint"
-    pass "config.toml uses the managed Deep Agents Code placeholder API key"
+    pass "config.toml uses the attached-provider NVIDIA_INFERENCE_API_KEY placeholder"
   elif [ "$route_contract" = "managed" ]; then
     pass "config.toml routes through the managed inference.local endpoint"
     pass "config.toml uses the managed Deep Agents Code placeholder API key"

@@ -71,7 +71,8 @@ To validate a new model before replacing the current sandbox, onboard it under a
 For managed-route selections, one gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
 Native NVIDIA uses a sandbox-attached provider; selecting it does not re-point the shared route.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
-Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
+When another sandbox records a different provider or model, runtime `inference set` warns and re-points the shared route.
+The command refuses incompatible provider identity or incomplete route metadata.
 
 ## Verify the Change
 

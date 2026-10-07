@@ -43,6 +43,13 @@ async function runSelection(
   const setupNim = createSetupNim(
     makeDeps({
       getNonInteractiveProvider: () => "install-vllm",
+      discoverManagedLlamaCppSelections: () => ({
+        choices: [],
+        resolution: {
+          kind: "rejected",
+          reason: "the vLLM readiness test does not select llama.cpp",
+        },
+      }),
       detectInferenceProviderHostState: () =>
         makeHostState({
           vllmProfile: profile,

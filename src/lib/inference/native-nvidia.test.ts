@@ -202,9 +202,57 @@ describe("native NVIDIA OpenShell provider", () => {
           throw new Error("state directory is read-only");
         },
       }),
-    ).rejects.toThrow(/credentials reset nvidia-prod.*identity changed/su);
+    ).rejects.toThrow(
+      /reconcile OpenShell provider.*matching ownership receipt.*identity changed/su,
+    );
     expect(deleteProvider).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { state: "missing", readAuthority: () => undefined },
+    {
+      state: "mismatched",
+      readAuthority: () => ({
+        schemaVersion: 1 as const,
+        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        providerId: "another-provider-id",
+      }),
+    },
+    {
+      state: "unreadable",
+      readAuthority: () => {
+        throw new Error("registry read failed");
+      },
+    },
+  ])(
+    "requires administrator reconciliation when retained authority is $state",
+    async ({ readAuthority }) => {
+      const receipt = {
+        schemaVersion: 1,
+        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        providerId: "provider-id",
+      } as const;
+      const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
+      await expect(
+        persistNativeNvidiaProviderAuthority({
+          adapter: adapter({ deleteProvider }),
+          target,
+          gatewayName: "nemoclaw",
+          receipt,
+          existing: receipt,
+          readAuthority,
+          writeAuthority: () => {
+            throw new Error("registry write failed");
+          },
+        }),
+      ).rejects.toThrow(
+        /provider was retained.*administrator.*identity and sandbox attachments.*matching ownership receipt/su,
+      );
+      expect(deleteProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("observes an ambiguous create result without issuing a second mutation (#12558)", async () => {
     const getProvider = vi

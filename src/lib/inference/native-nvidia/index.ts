@@ -138,7 +138,7 @@ function mutationOutcomeMayBeAmbiguous(error: OpenShellProviderError): boolean {
 }
 
 function authorityPersistenceRecovery(gatewayName: string): string {
-  return `Run 'nemoclaw credentials reset ${NVIDIA_HOSTED_LOGICAL_PROVIDER} --yes' against gateway '${gatewayName}', then retry.`;
+  return `Ask the administrator of gateway '${gatewayName}' to reconcile OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' with its NemoClaw ownership receipt before retrying. Verify its identity and sandbox attachments before any manual cleanup. NemoClaw reset requires a matching ownership receipt.`;
 }
 
 async function removeNewNativeNvidiaProvider(input: {

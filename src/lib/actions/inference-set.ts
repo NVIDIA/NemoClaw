@@ -1161,9 +1161,9 @@ function providerBackedRouteLacksRollbackTarget(input: {
     !input.nativeNvidia &&
     (input.directProviderBinding ||
       input.httpsPinProviderBinding ||
-      input.probeDirectSandboxBridge) &&
-    !input.rollbackRoute &&
-    !input.previousNativeNvidiaAttachment
+      input.probeDirectSandboxBridge ||
+      input.previousNativeNvidiaAttachment) &&
+    !input.rollbackRoute
   );
 }
 
@@ -1295,6 +1295,34 @@ function resolveMatchingAgentConfigTarget(
     );
   }
   return target;
+}
+
+async function restoreFailedNativeDepartureRoute(input: {
+  previousNativeNvidiaAttachment: NativeNvidiaProviderAttachment | undefined;
+  selectingNativeNvidia: boolean;
+  appliedInferenceSelection: boolean;
+  previousNativeNvidiaDetachCommitted: boolean;
+  attemptedInferenceSelectionRestore: boolean;
+  restorePreviousInferenceSelection: () => Promise<string | null>;
+  error: unknown;
+}): Promise<unknown> {
+  // A native departure changes the route used by peers before detaching access.
+  // Restore that route if departure fails before the registry commits it.
+  if (
+    !input.previousNativeNvidiaAttachment ||
+    input.selectingNativeNvidia ||
+    !input.appliedInferenceSelection ||
+    input.previousNativeNvidiaDetachCommitted ||
+    input.attemptedInferenceSelectionRestore
+  )
+    return input.error;
+  const restoreFailure = await input.restorePreviousInferenceSelection();
+  if (!restoreFailure) return input.error;
+  const detail = input.error instanceof Error ? input.error.message : String(input.error);
+  return new InferenceSetError(
+    `${detail}\n  Failed to restore the previous shared inference selection: ${restoreFailure}. Reconcile the gateway route before retrying.`,
+    input.error instanceof InferenceSetError ? input.error.exitCode : 1,
+  );
 }
 
 async function runInferenceSetWithoutHostLock(
@@ -1614,8 +1642,10 @@ async function runInferenceSetWithoutHostLock(
   let nativeNvidiaRegistryCommitted = false;
   let previousNativeNvidiaDetached = false;
   let previousNativeNvidiaDetachCommitted = false;
+  let attemptedInferenceSelectionRestore = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
+    attemptedInferenceSelectionRestore = true;
+    if (selectingNativeNvidia) {
       appliedInferenceSelection = false;
       return null;
     }
@@ -2036,13 +2066,22 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    const recoveryError = await restoreFailedNativeDepartureRoute({
+      previousNativeNvidiaAttachment,
+      selectingNativeNvidia,
+      appliedInferenceSelection,
+      previousNativeNvidiaDetachCommitted,
+      attemptedInferenceSelectionRestore,
+      restorePreviousInferenceSelection,
+      error,
+    });
     await restorePreviousNativeNvidiaAfterFailedPublish({
       detached: previousNativeNvidiaDetached,
       committed: previousNativeNvidiaDetachCommitted,
       previousAttachment: previousNativeNvidiaAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: recoveryError,
       deps,
     });
     await rollbackNativeNvidiaSelection({
@@ -2051,14 +2090,14 @@ async function runInferenceSetWithoutHostLock(
       attachment: nativeNvidiaProviderAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: recoveryError,
       deps,
     });
-    if (!providerMutation) throw error;
-    if (ambiguousInferenceSelection) throw error;
-    if (restoredSelectionAfterProviderFailure) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
+    if (!providerMutation) throw recoveryError;
+    if (ambiguousInferenceSelection) throw recoveryError;
+    if (restoredSelectionAfterProviderFailure) throw recoveryError;
+    const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+    const exitCode = recoveryError instanceof InferenceSetError ? recoveryError.exitCode : 1;
     if (!appliedInferenceSelection) {
       if (providerMutation.action === "create") {
         try {
