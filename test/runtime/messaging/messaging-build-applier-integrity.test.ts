@@ -241,7 +241,35 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     fs.mkdirSync(dependencyDirectory, { recursive: true });
     fs.writeFileSync(
       path.join(packageDirectory, "package.json"),
-      JSON.stringify({ name: "@openclaw/slack", version: "2026.9.2" }),
+      JSON.stringify({
+        name: "@openclaw/slack",
+        version: "2026.9.2",
+        dependencies: { "@slack/bolt": "5.0.0" },
+        bundledDependencies: ["@slack/bolt"],
+      }),
+    );
+    const boltDirectory = path.join(packageDirectory, "node_modules/@slack/bolt");
+    const expressDirectory = path.join(boltDirectory, "node_modules/express");
+    fs.mkdirSync(expressDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(boltDirectory, "package.json"),
+      JSON.stringify({
+        name: "@slack/bolt",
+        version: "5.0.0",
+        dependencies: { express: "^5.0.0" },
+        license: "MIT",
+        engines: { node: ">=20" },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(expressDirectory, "package.json"),
+      JSON.stringify({
+        name: "express",
+        version: "5.2.1",
+        dependencies: { "proxy-addr": "^2.0.7" },
+        license: "MIT",
+        engines: { node: ">= 18" },
+      }),
     );
     fs.writeFileSync(
       path.join(dependencyDirectory, "package.json"),
@@ -249,6 +277,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         name: "proxy-addr",
         version: "2.0.7",
         dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+        license: "MIT",
+        engines: { node: ">= 0.10" },
       }),
     );
     fs.writeFileSync(path.join(dependencyDirectory, "index.js"), "vulnerable-canary");

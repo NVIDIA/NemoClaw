@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { rollbackNativeBedrockSelection, retireUnusedBedrockProvider } from "./switch";
+import { nativeBedrockIdentity } from "./contract";
 import { nativeBedrockSwitchFixture } from "./switch.test-support";
 
 function fixture() {
@@ -37,6 +38,20 @@ describe("Bedrock switch recovery", () => {
 
   it("restores the previous attachment after an ambiguous detach and retains ownership", async () => {
     const f = fixture();
+    const nextBinding = { ...f.receipt, adapterGeneration: "b".repeat(32) };
+    const nextReceipt = { ...nextBinding, ...nativeBedrockIdentity(nextBinding) };
+    f.attachments.clear();
+    f.attachments.add(nextReceipt.providerName);
+    f.adapter.getProvider.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: nextReceipt.providerName,
+        type: nextReceipt.profileId,
+        revision: { id: nextReceipt.providerId, resourceVersion: 1 },
+        configKeys: [],
+        credentialKeys: ["NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"],
+      },
+    });
     f.adapter.detachProvider.mockImplementationOnce(async () => {
       f.attachments.clear();
       throw new Error("detach transport failed");
@@ -45,14 +60,14 @@ describe("Bedrock switch recovery", () => {
       rollbackNativeBedrockSelection({
         committed: false,
         changed: true,
-        attachment: f.receipt,
+        attachment: nextReceipt,
         previousDetached: true,
         previousAttachment: f.receipt,
         sandboxName: "alpha",
         deps: f.deps,
       }),
     ).rejects.toThrow("detach transport failed");
-    expect(f.attachments.has(f.receipt.providerName)).toBe(true);
+    expect([...f.attachments]).toEqual([f.receipt.providerName]);
     expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
     expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
