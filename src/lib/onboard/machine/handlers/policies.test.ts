@@ -70,11 +70,35 @@ describe("policy state handler", () => {
       preserveRebuildLivePolicy: true,
     });
 
-    expect(calls.smoke).toHaveBeenCalledOnce();
+    expect(calls.smoke).not.toHaveBeenCalled();
     expect(calls.prepareResume).not.toHaveBeenCalled();
     expect(calls.setupPolicies).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("policies", "live OpenShell rebuild policy");
     expect(result.appliedPolicyPresets).toEqual([]);
+  });
+
+  it("retains the pre-restore provider-neutral proof for host-local rebuilds", async () => {
+    const { deps, calls } = createPolicyHandlerDeps();
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      preserveRebuildLivePolicy: true,
+      hostLocalInferenceRouteOnly: true,
+    });
+    expect(calls.smoke).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ forceCanonicalRoute: true }),
+    );
+  });
+
+  it("retains compatible endpoint verification during ordinary onboarding", async () => {
+    const failure = new Error("compatible endpoint smoke failed");
+    const { deps, calls } = createPolicyHandlerDeps({
+      verifyCompatibleEndpointSandboxSmoke: vi.fn(() => {
+        throw failure;
+      }),
+    });
+    await expect(handlePoliciesState(basePolicyHandlerOptions(deps))).rejects.toBe(failure);
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("keeps a channel in policy requirements when every credential binding matches its gateway provider (#10667)", async () => {

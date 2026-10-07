@@ -132,7 +132,9 @@ describe("final onboard flow phases", () => {
             revalidateSandboxIdentity: vi.fn(),
           }),
         ),
-      ).rejects.toThrow(/startup did not settle before configuration/u);
+      ).rejects.toThrow(
+        /^OpenClaw startup did not settle before configuration for sandbox 'my-sandbox'\.$/u,
+      );
       expect(setupOpenclaw).not.toHaveBeenCalled();
     },
   );

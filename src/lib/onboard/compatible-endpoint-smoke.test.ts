@@ -20,6 +20,7 @@ vi.mock("../inference/config", () => ({
 }));
 
 import {
+  createCompatibleEndpointSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   buildProviderNeutralInferenceSandboxSmokeScript,
@@ -299,6 +300,32 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       "Credential keys: COMPATIBLE_API_KEY",
       "Config keys: OPENAI_BASE_URL",
     ].join("\n");
+
+  it("keeps the gateway-scoped runner for ordinary onboarding smoke", async () => {
+    const defaultRun = vi.fn();
+    const scopedRun = vi.fn((args: string[]) => ({
+      status: 0,
+      stdout: providerMetadata(args.at(-1) ?? ""),
+    }));
+    const executor = {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "OPENCLAW_CONFIG_OK\nINFERENCE_SMOKE_OK PONG",
+        stderr: "",
+      })),
+    };
+    const smoke = createCompatibleEndpointSmoke(defaultRun, executor, (value) => value);
+    await smoke.verify(
+      { sandboxName: "smoke-sandbox", provider: "compatible-endpoint", model: "baseline" },
+      scopedRun,
+    );
+    expect(defaultRun).not.toHaveBeenCalled();
+    expect(scopedRun).toHaveBeenCalledExactlyOnceWith(
+      ["provider", "get", "compatible-endpoint"],
+      expect.any(Object),
+    );
+    expect(executor.runBuffered).toHaveBeenCalledOnce();
+  });
 
   it.each([
     { agent: { name: "hermes" as const }, provider: "compatible-endpoint" },

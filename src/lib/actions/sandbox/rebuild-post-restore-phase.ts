@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
@@ -580,6 +582,21 @@ export async function runRebuildPostRestorePhase(
       bail("OpenClaw pairing remained incomplete after rebuild.");
       return;
     }
+  }
+  if (
+    postRestoreComplete &&
+    targetAgentName === "openclaw" &&
+    recreatedEntry.provider === "compatible-endpoint"
+  ) {
+    await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
+      sandboxName,
+      provider: recreatedEntry.provider,
+      model: recreatedEntry.model ?? "",
+      endpointUrl: recreatedEntry.endpointUrl,
+      credentialEnv: recreatedEntry.credentialEnv,
+      environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
+      gatewayName: mcpRuntimeSelection?.gatewayName,
+    });
   }
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);

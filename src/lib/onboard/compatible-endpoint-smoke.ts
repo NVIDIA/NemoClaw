@@ -213,6 +213,55 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   );
 }
 
+/** Bind the ordinary and post-restore checks to the same runtime adapters. */
+export function createCompatibleEndpointSmoke(
+  runOpenshell: (
+    args: string[],
+    options?: NonNullable<Parameters<CompatibleEndpointSmokeRun>[1]> & { env?: NodeJS.ProcessEnv },
+  ) => ReturnType<CompatibleEndpointSmokeRun>,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  redact: (value: string) => string,
+) {
+  type SmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
+  return {
+    verify(
+      options: Omit<SmokeOptions, "runOpenshell" | "sandboxCommandExecutor" | "redact">,
+      run = runOpenshell,
+    ): Promise<void> {
+      return verifyCompatibleEndpointSandboxSmoke({
+        ...options,
+        runOpenshell: run,
+        sandboxCommandExecutor,
+        redact,
+      });
+    },
+    verifyRebuilt(
+      options: Pick<
+        SmokeOptions,
+        "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+      > & {
+        environment: NodeJS.ProcessEnv;
+        gatewayName?: string;
+      },
+    ): Promise<void> {
+      const { environment, gatewayName, ...selection } = options;
+      return verifyCompatibleEndpointSandboxSmoke({
+        ...selection,
+        runOpenshell: (args, runOptions) => runOpenshell(args, { ...runOptions, env: environment }),
+        sandboxCommandExecutor: {
+          runBuffered: (request) =>
+            sandboxCommandExecutor.runBuffered({
+              ...request,
+              environment,
+              ...(gatewayName ? { target: { kind: "named", gatewayName } as const } : {}),
+            }),
+        },
+        redact,
+      });
+    },
+  };
+}
+
 /**
  * Builds the shell script that runs inside the sandbox to confirm OpenClaw is
  * routed through NemoClaw's managed inference provider and can receive assistant
