@@ -104,6 +104,7 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
+  unreachableSandboxContainerEngineName: () => null,
   startedSandboxBackupTransactionDeadline: mocks.startedSandboxBackupTransactionDeadline,
   startedSandboxBackupWorkDeadline: (transactionDeadlineMs: number) =>
     transactionDeadlineMs - 30_000,

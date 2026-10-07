@@ -63,10 +63,16 @@ import {
   returnSandboxContainerToStopped,
   startedSandboxBackupTransactionDeadline,
   startStoppedSandboxContainerForBackup,
+  unreachableSandboxContainerEngineName,
 } from "./stopped-sandbox-backup";
 
 function lifecycleEngine(runtimeProviderId = "docker") {
-  return { runtimeProviderId, mutationTimeoutMs: 30_000, capture: vi.fn() };
+  return {
+    runtimeProviderId,
+    displayName: runtimeProviderId === "docker" ? "Docker" : runtimeProviderId,
+    mutationTimeoutMs: 30_000,
+    capture: vi.fn(),
+  };
 }
 
 describe("startStoppedSandboxContainerForBackup", () => {
@@ -826,5 +832,52 @@ describe("backupStartedSandboxState", () => {
         timeoutMs: 30_000,
       }),
     );
+  });
+});
+
+describe("unreachableSandboxContainerEngineName (#12749)", () => {
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    vi.mocked(registry.getSandbox).mockReset();
+  });
+
+  const deps = (over: Record<string, unknown> = {}) => ({
+    getSandboxDriver: vi.fn().mockReturnValue("docker"),
+    resolveLifecycleEngine: vi.fn().mockReturnValue(lifecycleEngine()),
+    probeEngine: vi.fn().mockReturnValue(true),
+    ...over,
+  });
+
+  it("names the engine when its probe does not respond", () => {
+    const d = deps({ probeEngine: vi.fn().mockReturnValue(false) });
+    expect(unreachableSandboxContainerEngineName("my-sb", d)).toBe("Docker");
+  });
+
+  it("returns null when the engine responds", () => {
+    expect(unreachableSandboxContainerEngineName("my-sb", deps())).toBeNull();
+  });
+
+  it("returns null for providers without a container lifecycle engine", () => {
+    const d = deps({ resolveLifecycleEngine: vi.fn().mockReturnValue(null) });
+    expect(unreachableSandboxContainerEngineName("my-sb", d)).toBeNull();
+    expect(d.probeEngine).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the probe itself throws, so callers keep their existing diagnostic", () => {
+    const d = deps({
+      probeEngine: vi.fn(() => {
+        throw new Error("provider does not register the operation");
+      }),
+    });
+    expect(unreachableSandboxContainerEngineName("my-sb", d)).toBeNull();
+  });
+
+  it("probes with a plain info call through the default wiring", () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      openshellDriver: "docker",
+    } as unknown as ReturnType<typeof registry.getSandbox>);
+    adapterMocks.providerCapture.mockReturnValue({ status: 1, stdout: "", stderr: "down" });
+    expect(unreachableSandboxContainerEngineName("my-sb")).toBe("docker");
+    expect(adapterMocks.providerCapture).toHaveBeenCalledWith("sandbox-lifecycle", ["info"], 5_000);
   });
 });

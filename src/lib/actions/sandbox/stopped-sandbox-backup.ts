@@ -24,6 +24,7 @@ function readSandboxDriver(name: string): string | null | undefined {
 
 interface SandboxLifecycleEngine {
   readonly runtimeProviderId: string;
+  readonly displayName: string;
   readonly mutationTimeoutMs: number;
   capture(args: readonly string[], timeoutMs?: number): RuntimeProviderCommandCapture;
 }
@@ -42,11 +43,13 @@ function resolveSandboxLifecycleEngine(
     return null;
   }
   const containerEngine = provider.containerEngine;
-  if (!containerEngine.identities.some((identity) => identity.operation === "sandbox-lifecycle")) {
-    return null;
-  }
+  const lifecycleIdentity = containerEngine.identities.find(
+    (identity) => identity.operation === "sandbox-lifecycle",
+  );
+  if (!lifecycleIdentity) return null;
   return {
     runtimeProviderId: provider.identity.id,
+    displayName: lifecycleIdentity.displayName,
     mutationTimeoutMs:
       provider.lifecycle.supported === true && provider.lifecycle.containerMutationTimeoutMs
         ? provider.lifecycle.containerMutationTimeoutMs
@@ -266,6 +269,43 @@ export function isSandboxContainerDefinitivelyAbsent(
   if (!engine) return false;
   const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
   return labeledContainerNames !== null && labeledContainerNames.length === 0;
+}
+
+interface EngineReachabilityDeps {
+  getSandboxDriver: (name: string) => string | null | undefined;
+  resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
+  probeEngine: (engine: SandboxLifecycleEngine) => boolean;
+}
+
+const defaultEngineReachabilityDeps: EngineReachabilityDeps = {
+  getSandboxDriver: readSandboxDriver,
+  resolveLifecycleEngine: resolveSandboxLifecycleEngine,
+  // Plain `info` works for both Docker and Podman; a format template does not.
+  probeEngine: (engine) =>
+    captureSucceeded(engine.capture(["info"], CONTAINER_ENGINE_PROBE_TIMEOUT_MS)),
+};
+
+/**
+ * Display name of the registered sandbox's container engine (for example
+ * "Docker") when that engine does not respond, so callers can say why a
+ * stopped container could not be started (#12749).
+ *
+ * Returns null when the engine responds, when the sandbox has no container
+ * lifecycle engine, or when the probe itself fails, so callers fall back to
+ * their existing diagnostic.
+ */
+export function unreachableSandboxContainerEngineName(
+  sandboxName: string,
+  depsOverride: Partial<EngineReachabilityDeps> = {},
+): string | null {
+  const deps: EngineReachabilityDeps = { ...defaultEngineReachabilityDeps, ...depsOverride };
+  try {
+    const engine = deps.resolveLifecycleEngine(deps.getSandboxDriver(sandboxName));
+    if (!engine) return null;
+    return deps.probeEngine(engine) ? null : engine.displayName;
+  } catch {
+    return null;
+  }
 }
 
 interface StopDeps {

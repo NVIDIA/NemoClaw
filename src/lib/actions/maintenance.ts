@@ -40,6 +40,7 @@ import {
   startedSandboxBackupWorkDeadline,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
+  unreachableSandboxContainerEngineName,
 } from "./sandbox/stopped-sandbox-backup";
 import { retainStrictPreUpgradeRecoveryState } from "./sandbox/snapshot/strict-pre-upgrade-recovery";
 
@@ -77,6 +78,10 @@ async function withHermesPortableMaintenanceAdmission<T>(
     assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), commandId);
     return operation();
   });
+}
+
+function engineUnavailableBackupSkipMessage(name: string, engineName: string): string {
+  return `Skipping '${name}' (${engineName} is not responding, so its stopped container cannot be started; start ${engineName} and rerun '${CLI_NAME} backup-all')`;
 }
 
 function notRunningBackupSkipMessage(name: string): string {
@@ -319,6 +324,8 @@ export async function backupAllUnderPortableHostFence(
   let skipped = 0;
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
+  const unavailableEngineNames = new Set<string>();
+  let unavailableEngineSkipped = 0;
   const strandedOrphans: string[] = [];
   const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
     // Lock acquisition can reject entry before the stopped container path
@@ -386,6 +393,19 @@ export async function backupAllUnderPortableHostFence(
         // Tracked separately from `skipped` so the strict gate stays
         // untripped: there is nothing to back up and nothing to start.
         strandedOrphans.push(sb.name);
+        return;
+      }
+      // Distinguish "the container is stopped" from "the engine that owns the
+      // container does not respond": only the first is fixed by starting the
+      // sandbox, so the not-running remediation must not be offered (#12749).
+      const unavailableEngineName = unreachableSandboxContainerEngineName(sb.name);
+      if (unavailableEngineName) {
+        console.log(
+          `  ${D}${engineUnavailableBackupSkipMessage(sb.name, unavailableEngineName)}${R}`,
+        );
+        unavailableEngineNames.add(unavailableEngineName);
+        skipped++;
+        unavailableEngineSkipped++;
         return;
       }
       console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
@@ -507,6 +527,15 @@ export async function backupAllUnderPortableHostFence(
     console.error(
       `  Strict ${purpose} backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
+    if (unavailableEngineSkipped > 0) {
+      const engineLabel = [...unavailableEngineNames].sort().join(" and ");
+      const cleanupConsequence =
+        purpose === "pre-uninstall" ? " and their containers cannot be cleaned up" : "";
+      console.error(
+        `  ${unavailableEngineSkipped} skipped sandbox(es) could not be started for backup because ${engineLabel} did not respond${cleanupConsequence}.`,
+      );
+      console.error(`  Start ${engineLabel}, then ${strictRetry}.`);
+    }
     if (notRunningSkipped > 0) {
       console.error(
         `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${
