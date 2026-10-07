@@ -182,6 +182,47 @@ class ProtocolLifecycle(unittest.IsolatedAsyncioTestCase):
             invoking.cancel()
             await asyncio.gather(invoking, return_exceptions=True)
 
+    async def configure_hermes(self, mode):
+        config = copy.deepcopy(CONFIG)
+        config["harness"] = {"adapter_id": "nvidia.fabric.hermes", "settings": {"mode": mode}}
+        return await self.call("configure", config=config)
+
+    def native(self, **kwargs):
+        return SimpleNamespace(to_mapping=lambda: {"status": "succeeded", "output": "ok"})
+
+    async def test_text_reaches_hermes_service_mode_as_a_string(self):
+        await self.configure_hermes("service")
+        self.runtime.invoke.side_effect = self.native
+        response = await self.call("invoke", input={"text": "Say hello."})
+        self.assertEqual(response["status"], "succeeded", response)
+        self.runtime.invoke.assert_awaited_once_with(input="Say hello.")
+
+    async def test_other_adapters_receive_the_text_object_unchanged(self):
+        for configure in (lambda: self.call("configure"), lambda: self.configure_hermes("sdk")):
+            self.host = fabric.RuntimeHost("main")
+            self.runtime.invoke.reset_mock()
+            self.runtime.invoke.side_effect = self.native
+            await configure()
+            response = await self.call("invoke", input={"text": "Say hello."})
+            self.assertEqual(response["status"], "succeeded", response)
+            self.runtime.invoke.assert_awaited_once_with(input={"text": "Say hello."})
+
+    async def test_hermes_service_mode_refuses_input_that_is_not_text(self):
+        await self.configure_hermes("service")
+        for value in ({"prompt": "Say hello."}, {"text": "hi", "model": "x"}, {"text": 1}):
+            response = await self.call("invoke", input=value)
+            self.assertEqual(response["status"], "failed", value)
+            self.assertEqual(response["error"]["code"], "text_input_required", value)
+            self.assertEqual(response["error"]["effects"], "none", value)
+        self.runtime.invoke.assert_not_awaited()
+
+    async def test_invoke_input_stays_an_object(self):
+        await self.configure_hermes("service")
+        response = await self.call("invoke", input="Say hello.")
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["code"], "invalid_request")
+        self.runtime.invoke.assert_not_awaited()
+
     async def test_operational_and_streaming_never_invoke(self):
         await self.call("configure")
         response = await self.call("check", level="operational")
