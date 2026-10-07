@@ -129,8 +129,9 @@ hpa_common_format_hpa() {
   local headers="${2:-1}"
   local style="${3:-script}"
   python3 - "${ns}" "${headers}" "${style}" <<'PY'
-import json, subprocess, sys
+import json, subprocess, sys, time
 from datetime import datetime, timezone
+from pathlib import Path
 
 ns, headers = sys.argv[1], sys.argv[2] == "1"
 style = sys.argv[3] if len(sys.argv) > 3 else "script"
@@ -244,17 +245,34 @@ def pod_gpu_values():
     return vals
 
 def gpu_display_current(cur_raw, replicas):
-    """Do not print 0% when live per-pod DCGM still has busy GPUs."""
-    cur = qty(cur_raw)
+    """Print the per-pod mean. One idle GPU at 0% only dilutes; it is not avg 0%.
+
+    HPA currentMetrics=0 on an empty scrape is not that average. Keep the last
+    non-zero mean for 45s so a miss cannot look like every replica is idle.
+    """
+    state = Path(f"/tmp/nemoclaw-hpa-gpu-mean-{ns}")
     pods = pod_gpu_values()
-    if pods:
-        mean = sum(pods) / len(pods)
-        if cur is None or (cur == 0 and mean > 0):
-            return mean
-        return cur
-    if cur == 0 and replicas is not None and int(replicas) > 1:
+    mean = (sum(pods) / len(pods)) if pods else qty(cur_raw)
+    if mean is not None and mean > 0:
+        try:
+            state.write_text(f"{mean}\n{time.time()}\n", encoding="utf-8")
+        except OSError:
+            pass
+        return mean
+    last_mean = None
+    try:
+        raw = state.read_text(encoding="utf-8").splitlines()
+        last_mean = float(raw[0])
+        age = time.time() - float(raw[1])
+        if last_mean <= 0 or age > 45:
+            last_mean = None
+    except (OSError, IndexError, ValueError):
+        last_mean = None
+    if last_mean is not None:
+        return last_mean
+    if (mean == 0 or mean is None) and replicas is not None and int(replicas) > 1:
         return None
-    return cur
+    return mean
 
 def targets(h):
     spec_metrics = h.get("spec", {}).get("metrics") or []
@@ -1739,6 +1757,13 @@ hpa_common_gpu_helm_upgrade() {
         --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"
         --set "autoscaling.targetLatencyMilliseconds=${HPA_TARGET_LATENCY_MS:-5000}"
       )
+      # GPU util: a new 0% GPU must not scale back 3→2→1 during the climb.
+      # Latency keeps the chart 60s window so 8→1 stays short.
+      case "${HPA_METRIC:-gpu_utilization}" in
+        gpu | gpu_utilization)
+          helm_args+=(--set autoscaling.behavior.scaleDown.stabilizationWindowSeconds=120)
+          ;;
+      esac
       ;;
     0)
       helm_args+=(

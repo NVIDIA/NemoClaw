@@ -290,7 +290,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
     try:
-        env_max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+        env_max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
     except ValueError:
         env_max_tokens = 1024
     pause_raw = os.environ.get("E2E_CHAT_PAUSE_SEC")

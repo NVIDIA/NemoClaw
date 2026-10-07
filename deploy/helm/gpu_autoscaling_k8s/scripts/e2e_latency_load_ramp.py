@@ -54,14 +54,14 @@ def token_bands(start: int | None = None) -> tuple[int, int]:
 
 
 def gpuutil_token_cap() -> int:
-    """GPU-util MAX_TOKENS. Ignore leftover latency 32/64 flags."""
+    """GPU-util MAX_TOKENS. Ignore leftover 32/64/1024 flags; start at 2048."""
     raw = os.environ.get("MAX_TOKENS")
     if raw not in (None, ""):
         try:
             value = int(raw)
         except ValueError:
             value = 0
-        if value > 128:
+        if value > 1024:
             return max(8, value)
     return max(8, env_int("E2E_GPUUTIL_TOKEN_START", DEFAULT_GPUUTIL_TOKENS))
 

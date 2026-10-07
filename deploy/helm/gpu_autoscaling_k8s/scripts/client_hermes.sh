@@ -15,8 +15,9 @@
 #
 # Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
 #   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
-# Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA ramps 2048 tokens until 6 GPUs, then 32, then stops at 8.
+# Workload: inflight stays 1. Both metrics start at 2048 tokens.
+# Latency HPA ramps 2048 until 6 GPUs, then 32, then stops at 8.
+# GPU util keeps 2048 until 8, then stops.
 
 set -euo pipefail
 

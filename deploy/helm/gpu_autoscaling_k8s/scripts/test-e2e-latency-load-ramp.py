@@ -37,6 +37,8 @@ os.environ["MAX_TOKENS"] = "32"
 assert gpuutil_load_for_replicas(1)[0] == 2048
 os.environ["MAX_TOKENS"] = "64"
 assert gpuutil_load_for_replicas(4) == (2048, 2)
+os.environ["MAX_TOKENS"] = "1024"
+assert gpuutil_load_for_replicas(1)[0] == 2048
 os.environ.pop("MAX_TOKENS", None)
 
 latency_at_8 = scale_load("nemoclaw_llm_latency_avg_milliseconds", 8)

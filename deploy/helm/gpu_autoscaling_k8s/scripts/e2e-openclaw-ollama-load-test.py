@@ -133,7 +133,7 @@ def load_prompt() -> str:
     if os.environ.get("E2E_LATENCY_RAMP") == "1":
         return latency_ramp.prompt_for_tokens(latency_ramp.token_bands()[0], "openclaw")[0]
     try:
-        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
     except ValueError:
         max_tokens = 1024
     if max_tokens <= 128:
@@ -271,27 +271,57 @@ def read_hpa_http(host: str, port: int) -> tuple[int, int]:
     return current, desired
 
 
-# Kill leftover OpenClaw exec children (sleep 10000 / stuck cat). Do not
+# Kill OpenClaw exec children (gateway-spawned bash/cat/sleep). Do not
 # pkill -f shell-snapshots: kubectl exec uses that same bash wrapper.
 KILL_LEFTOVER_OPENCLAW_EXEC = r"""
 python3 -c '
 # KILL_OPENCLAW_EXEC
 import os, signal, pathlib
-self, ppid = os.getpid(), os.getppid()
-needle = "shell" + "-snapshots"
+
+def ppid_of(pid):
+    try:
+        stat = (pathlib.Path("/proc") / str(pid) / "stat").read_text()
+        return int(stat[stat.rfind(")") + 2 :].split()[1])
+    except (OSError, IndexError, ValueError):
+        return 0
+
+self = os.getpid()
+gateways = set()
+for proc in pathlib.Path("/proc").iterdir():
+    if not proc.name.isdigit():
+        continue
+    try:
+        comm = (proc / "comm").read_text().strip()
+        cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        continue
+    if "openclaw-gateway" in comm or "openclaw-gateway" in cmd:
+        gateways.add(int(proc.name))
+
+def spawned_by_gateway(pid):
+    seen = set()
+    cur = pid
+    while cur > 1 and cur not in seen:
+        if cur in gateways:
+            return True
+        seen.add(cur)
+        cur = ppid_of(cur)
+    return False
+
 for proc in pathlib.Path("/proc").iterdir():
     if not proc.name.isdigit():
         continue
     pid = int(proc.name)
-    if pid in (0, 1, self, ppid):
+    if pid in (0, 1, self) or pid in gateways:
         continue
     try:
+        comm = (proc / "comm").read_text().strip()
         cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
     except OSError:
         continue
-    if "KILL_OPENCLAW_EXEC" in cmd or "openclaw-gateway" in cmd or "nemoclaw-start" in cmd:
+    if "KILL_OPENCLAW_EXEC" in cmd or "nemoclaw-start" in cmd:
         continue
-    leftover = needle in cmd or cmd.strip().startswith("sleep 10000")
+    leftover = spawned_by_gateway(pid) or cmd.strip().startswith("sleep 10000") or cmd.strip().startswith("sleep 1000")
     if leftover:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -513,7 +543,7 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
 async def stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
     """Do not start all 5 users at t=0; that queues ~14s chats on 1 GPU."""
     try:
-        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
     except ValueError:
         max_tokens = 1024
     raw = os.environ.get("E2E_USER_STAGGER_SEC")
@@ -569,7 +599,7 @@ async def simulate_user_http(
     env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
     env["E2E_ESCALATE_FACTOR"] = "0.35"
     env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
-    env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
+    env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "2048")
     env["E2E_LATENCY_RAMP"] = os.environ.get("E2E_LATENCY_RAMP") or "0"
     if env["E2E_LATENCY_RAMP"] == "1" and os.environ.get("E2E_LATENCY_RAMP_FILE"):
         env["E2E_LATENCY_RAMP_FILE"] = os.environ["E2E_LATENCY_RAMP_FILE"]
@@ -692,7 +722,7 @@ async def simulate_user(
         str(inflight),
         str(timeout_sec),
         f"agent:main:{sandbox}",
-        str(os.environ.get("MAX_TOKENS") or "1024"),
+        str(os.environ.get("MAX_TOKENS") or "2048"),
         str(os.environ.get("E2E_DRAIN_SEC") or "8"),
         str(os.environ.get("E2E_LATENCY_RAMP") or "0"),
         stdout=asyncio.subprocess.PIPE,

@@ -153,7 +153,7 @@ Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end user
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- `MAX_TOKENS` default **1024** (GPU util). Latency HPA uses **2048** tokens from 1–5 GPUs, **32** at 6–7 GPUs, then stops new chats at 8. Do not pass `MAX_TOKENS=32` or `MAX_TOKENS=64` on the latency client.
+- Both metrics start at **2048** tokens. Latency then uses **32** at 6–7 GPUs and stops new chats at 8. GPU util keeps **2048** until 8, then stops. Do not pass `MAX_TOKENS=32` or `MAX_TOKENS=64`.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
@@ -260,7 +260,7 @@ export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **1024** (GPU util). Latency HPA uses **2048** tokens from 1–5 GPUs, **32** at 6–7 GPUs, then stops new chats at 8. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. Both metrics start at **2048** tokens. Latency then uses **32** at 6–7 GPUs and stops new chats at 8. GPU util keeps **2048** until 8, then stops. 
 
 ```text
 E2E test: Hermes + vLLM

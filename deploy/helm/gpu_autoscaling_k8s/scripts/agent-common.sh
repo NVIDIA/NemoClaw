@@ -24,11 +24,10 @@ agent_common_print_laptop_client_usage() {
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
-# Inflight stays 1. Default MAX_TOKENS is the GPU-util workload
-# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA pins 2048 so
-# 1→2 can move, then the client drops tokens at 6 GPUs and stops at 8.
-# E2E_LATENCY_TOKEN_START overrides the latency pin. MAX_TOKENS still
-# forces GPU-util.
+# Inflight stays 1. Both HPA metrics start at 2048 tokens. Latency then
+# drops at 6 GPUs and stops at 8. GPU util stays 2048 until 8, then stops.
+# Ignore leftover MAX_TOKENS=32/64/1024 on GPU util. A higher MAX_TOKENS
+# still raises GPU-util. E2E_LATENCY_TOKEN_START overrides the latency pin.
 agent_common_resolve_max_tokens() {
   local agent="${1:-openclaw}"
   local raw metric
@@ -44,11 +43,8 @@ agent_common_resolve_max_tokens() {
       raw="${E2E_LATENCY_TOKEN_START:-2048}"
       ;;
     *)
-      if [[ -z "${raw}" ]]; then
-        case "${agent}" in
-          deepagents) raw="2048" ;;
-          *) raw="1024" ;;
-        esac
+      if [[ -z "${raw}" ]] || ! [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || ((raw <= 1024)); then
+        raw="${E2E_GPUUTIL_TOKEN_START:-2048}"
       fi
       ;;
   esac
@@ -386,7 +382,7 @@ agent_common_pin_hermes_model() {
 
 agent_common_pin_hermes_max_tokens() {
   local sandbox_name="${1:?sandbox}"
-  local max_tokens="${2:-${MAX_TOKENS:-1024}}"
+  local max_tokens="${2:-${MAX_TOKENS:-2048}}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     hermes config set model.max_tokens "${max_tokens}" >/dev/null
 }
@@ -441,12 +437,11 @@ print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
 }
 
 # Client path: keep the provisioned OpenClaw model; only raise max_tokens.
-# Same idea as agent_common_pin_deepagents_max_tokens. Default 1024 so one
-# chat.send per sandbox still climbs GPU-util HPA, without holding
-# latency_avg ~7s at 8 replicas (3000 ms target).
+# Same idea as agent_common_pin_deepagents_max_tokens. Default 2048, same
+# start as latency. GPU util keeps 2048 until 8 GPUs; latency drops at 6.
 agent_common_pin_openclaw_max_tokens() {
   local sandbox_name="${1:?sandbox}"
-  local max_tokens="${2:-${MAX_TOKENS:-1024}}"
+  local max_tokens="${2:-${MAX_TOKENS:-2048}}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     env PIN_MAX_TOKENS="${max_tokens}" python3 -c '
 import json, os, pathlib

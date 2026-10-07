@@ -53,7 +53,7 @@ FALLBACK_RE = re.compile(
 # GPU util keeps longer answers. Latency (MAX_TOKENS<=128) uses one-sentence
 # prompts, a 3s pause, and staggered starts so 5 users do not queue to ~14s.
 try:
-    _MAX_TOKENS = int(os.environ.get("MAX_TOKENS") or "1024")
+    _MAX_TOKENS = int(os.environ.get("MAX_TOKENS") or "2048")
 except ValueError:
     _MAX_TOKENS = 1024
 if _MAX_TOKENS <= 128:
