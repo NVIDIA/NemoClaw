@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,6 +35,7 @@ const (
 )
 
 type guardConfig struct {
+	apiKey                string
 	listenHost            string
 	listenPort            int
 	upstreamHost          string
@@ -288,6 +290,10 @@ func parseConfig(args []string) (guardConfig, []string, error) {
 }
 
 func writeGuardError(writer http.ResponseWriter, failure *guardError) {
+	errorType := "invalid_request_error"
+	if failure.status == http.StatusUnauthorized {
+		errorType = "authentication_error"
+	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -296,7 +302,7 @@ func writeGuardError(writer http.ResponseWriter, failure *guardError) {
 		"error": map[string]string{
 			"code":    failure.code,
 			"message": failure.message,
-			"type":    "invalid_request_error",
+			"type":    errorType,
 		},
 	})
 }
@@ -465,6 +471,9 @@ func routeAllowed(request *http.Request) bool {
 }
 
 func newGuardHandler(config guardConfig) (http.Handler, error) {
+	if config.apiKey == "" {
+		return nil, errors.New("request guard credential is unavailable")
+	}
 	upstream, err := url.Parse(
 		fmt.Sprintf("http://%s:%d", config.upstreamHost, config.upstreamPort),
 	)
@@ -491,6 +500,17 @@ func newGuardHandler(config guardConfig) (http.Handler, error) {
 	}
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		healthProbe := request.Method == http.MethodGet && request.RequestURI == "/health"
+		if !healthProbe && !authorizedBearer(request, config.apiKey) {
+			writer.Header().Set("WWW-Authenticate", "Bearer")
+			writeGuardError(writer, &guardError{
+				status: http.StatusUnauthorized, code: "unauthorized", message: "Authentication is required.",
+			})
+			return
+		}
+		if !healthProbe {
+			request.Header.Set("Authorization", "Bearer "+config.apiKey)
+		}
 		if !routeAllowed(request) {
 			writeGuardError(writer, &guardError{
 				status:  http.StatusNotFound,
@@ -526,6 +546,14 @@ func newGuardHandler(config guardConfig) (http.Handler, error) {
 		request.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		proxy.ServeHTTP(writer, request)
 	}), nil
+}
+
+func authorizedBearer(request *http.Request, apiKey string) bool {
+	values := request.Header.Values("Authorization")
+	if len(values) != 1 || len(values[0]) != 7+len(apiKey) || !strings.EqualFold(values[0][:7], "Bearer ") {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(values[0][7:]), []byte(apiKey)) == 1
 }
 
 func childExitCode(state *os.ProcessState) int {
@@ -596,6 +624,18 @@ func validateAPIKeyFile(path string) error {
 func run(config guardConfig, command []string) int {
 	if err := validateAPIKeyFile(llamaServerAPIKeyPath); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	credential, err := os.Open(llamaServerAPIKeyPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "request guard credential is unavailable")
+		return 1
+	}
+	keyBytes, keyError := io.ReadAll(io.LimitReader(credential, 66))
+	_ = credential.Close()
+	config.apiKey = strings.TrimSpace(string(keyBytes))
+	if keyError != nil || len(config.apiKey) != 64 || len(keyBytes) > 65 {
+		fmt.Fprintln(os.Stderr, "request guard credential is invalid")
 		return 1
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(config.listenHost, strconv.Itoa(config.listenPort)))
