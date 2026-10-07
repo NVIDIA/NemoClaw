@@ -24,6 +24,7 @@ export interface ModelSelectionProvenance {
   readonly providerProfile: (typeof TELEMETRY_PROVIDER_PROFILES)[number];
   readonly modelSource: (typeof MODEL_SELECTION_SOURCES)[number];
   readonly apiFamily: (typeof TELEMETRY_API_FAMILIES)[number];
+  readonly binding?: "gateway_route" | "native_configuration";
 }
 
 /** Private native-slot binding; only the source category is projected into an event. */
@@ -72,6 +73,7 @@ export function readAppliedPolicySelection(value: unknown): AppliedPolicySelecti
     : null;
 }
 export function readModelSelectionProvenance(value: unknown): ModelSelectionProvenance | null {
+  const hasBinding = Object.hasOwn(dataRecord(value) ?? {}, "binding");
   const record = closed(value, [
     "schemaVersion",
     "model",
@@ -79,7 +81,9 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
     "providerProfile",
     "modelSource",
     "apiFamily",
+    ...(hasBinding ? ["binding"] : []),
   ]);
+  const binding = hasBinding ? record?.binding : "gateway_route";
   const providerProfile = TELEMETRY_PROVIDER_PROFILES.find(
     (item) => item === record?.providerProfile,
   );
@@ -94,7 +98,8 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
     record.provider.length <= 1024 &&
     providerProfile &&
     modelSource &&
-    apiFamily
+    apiFamily &&
+    (binding === "gateway_route" || binding === "native_configuration")
     ? {
         schemaVersion: 1,
         model: record.model,
@@ -102,17 +107,19 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
         providerProfile,
         modelSource,
         apiFamily,
+        binding,
       }
     : null;
 }
 
-/** Called only at a selected route's durable commit; endpoint data stays private. */
+/** Called only at a proved selection's durable commit; endpoint data stays private. */
 export function selectedModelProvenance(input: {
   model?: string | null;
   provider?: string | null;
   endpointUrl?: string | null;
   preferredInferenceApi?: string | null;
   modelSource?: ModelSelectionProvenance["modelSource"];
+  binding?: ModelSelectionProvenance["binding"];
 }): ModelSelectionProvenance | undefined {
   if (!input.model || !input.provider) return undefined;
   let providerProfile = classifyTelemetryProvider(
@@ -143,5 +150,6 @@ export function selectedModelProvenance(input: {
     modelSource: input.modelSource ?? "unknown",
     apiFamily:
       TELEMETRY_API_FAMILIES.find((item) => item === input.preferredInferenceApi) ?? "unknown",
+    ...(input.binding ? { binding: input.binding } : {}),
   };
 }

@@ -96,7 +96,13 @@ export interface RuntimeRouteAuthority {
   metadataErrors?: readonly TelemetryMetadataError[];
 }
 
-type ModelReference = { model: string; providerKey: string; api?: unknown; managed: boolean };
+type ModelReference = {
+  model: string;
+  providerKey: string;
+  api?: unknown;
+  managed: boolean;
+  nativeProvider?: unknown;
+};
 
 type AssignmentSources = {
   selections: Map<string, ModelAssignmentSelection>;
@@ -155,7 +161,8 @@ function projectAssignmentSource(
         ? error.slot.agentId === slot?.agentId &&
           error.slot.assignment === assignment &&
           error.slot.reference === slot?.reference
-        : reference.managed && (slot?.inherited ?? assignment === "primary")),
+        : (reference.managed || reference.nativeProvider !== undefined) &&
+          (slot?.inherited ?? assignment === "primary")),
   );
   if (failedWrite) return { value: "unknown", status: "collection_error" };
   if (slot) {
@@ -170,8 +177,8 @@ function projectAssignmentSource(
   }
   if (
     (slot?.inherited ?? assignment === "primary") &&
-    reference.managed &&
-    reference.model === authority.model &&
+    (reference.managed || bound?.binding === "native_configuration") &&
+    reference.model === bound?.model &&
     bound &&
     bound.modelSource !== "unknown"
   )
@@ -192,10 +199,16 @@ function projectModel(
   slot?: { agentId: string; reference: string; inherited: boolean; sources: AssignmentSources },
 ): TelemetryModel {
   const model = approvedCategory(reference.model, TELEMETRY_MODEL_IDS);
-  // Selection provenance is bound to the current private model/provider, never sent.
+  // Gateway and native choices have different private authorities, never sent.
   const parsed = readModelSelectionProvenance(authority.modelSelectionProvenance);
   const bound =
-    parsed && parsed.model === authority.model && parsed.provider === authority.provider
+    parsed &&
+    (parsed.binding === "native_configuration"
+      ? parsed.model === reference.model &&
+        parsed.provider === reference.nativeProvider &&
+        parsed.apiFamily !== "unknown" &&
+        parsed.apiFamily === classifyTelemetryApi(reference.api)
+      : parsed.model === authority.model && parsed.provider === authority.provider)
       ? parsed
       : null;
   const source = projectAssignmentSource(reference, assignment, authority, bound, slot);
@@ -440,6 +453,10 @@ export function projectRuntimeAgents(
     reference = {
       model: model.default,
       providerKey: typeof model.provider === "string" ? model.provider : "",
+      nativeProvider:
+        model.provider === "custom"
+          ? dataRecord(root._nemoclaw_upstream)?.provider
+          : model.provider,
       api:
         model.api_mode === undefined || model.api_mode === ""
           ? "openai-completions"

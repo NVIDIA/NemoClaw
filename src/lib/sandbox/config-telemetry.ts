@@ -65,6 +65,7 @@ export function persistConfigurationTelemetry(
                   : undefined,
               preferredInferenceApi: api,
               modelSource: source,
+              binding: "native_configuration",
             })
           : undefined;
     }
