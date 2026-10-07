@@ -34,5 +34,7 @@ missing_host = subprocess.run(
 )
 assert missing_host.returncode == 2, missing_host.stderr
 assert "in-sandbox load helpers" in missing_host.stderr
+assert "KILL_OPENCLAW_EXEC" in mod.KILL_SANDBOX_HELPERS
 print("OK: HPA helper reports the 8 GPU target without treating a failed poll as 8")
 print("OK: OpenClaw client requires --host and does not start in-sandbox helpers")
+print("OK: client stop also kills leftover OpenClaw exec children")

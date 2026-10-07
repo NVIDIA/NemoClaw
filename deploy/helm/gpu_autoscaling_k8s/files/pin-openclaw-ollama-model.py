@@ -214,7 +214,7 @@ def main() -> int:
     deny = tools.get("deny")
     if not isinstance(deny, list):
         deny = []
-    for name in ("message", "cron", "gateway", "nodes", "sessions_send"):
+    for name in ("message", "cron", "gateway", "nodes", "sessions_send", "exec", "process", "bash"):
         if name not in deny:
             deny.append(name)
     tools["deny"] = deny

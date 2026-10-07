@@ -465,6 +465,14 @@ if not isinstance(params, dict):
     models[0]["params"] = params
 params["max_tokens"] = max_tokens
 models[0]["maxTokens"] = max_tokens
+tools = cfg.setdefault("tools", {})
+deny = tools.get("deny")
+if not isinstance(deny, list):
+    deny = []
+for name in ("message", "cron", "gateway", "nodes", "sessions_send", "exec", "process", "bash"):
+    if name not in deny:
+        deny.append(name)
+tools["deny"] = deny
 text = json.dumps(cfg, indent=2) + "\n"
 path.write_text(text)
 for name in (
