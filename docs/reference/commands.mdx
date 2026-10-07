@@ -1009,7 +1009,8 @@ If a `--resume` is attempted with a different `--from` path than the original se
 
 #### `--from-image <repository>@<digest>`
 
-Onboard a published OpenClaw or Hermes image with the Docker runtime without building a Dockerfile.
+Onboard a published OpenClaw or Hermes image with the default Docker runtime or the qualified
+rootless Podman runtime without building a Dockerfile.
 Supply an immutable SHA-256 digest with `--from-image`.
 In non-interactive mode, you can instead set `NEMOCLAW_FROM_IMAGE`.
 In non-interactive mode, supply a sandbox name with `--name` or `NEMOCLAW_SANDBOX_NAME`.
@@ -1022,7 +1023,10 @@ $$nemoclaw onboard --name my-agent --from-image <repository>@sha256:<digest>
 The image must match the runtime platform and declare a non-root user, `/sandbox` working directory, and usable entrypoint or command.
 It must contain `NEMOCLAW_TOOL_DISCLOSURE=progressive` or `NEMOCLAW_TOOL_DISCLOSURE=direct`.
 Onboarding adopts that mode when you have not selected one; an explicit conflicting mode fails before creation.
-Configure registry credentials through Docker before onboarding a private image.
+Configure registry credentials through the selected runtime before onboarding a private image.
+Docker uses its normal credential configuration. Podman uses its normal rootless credential
+sources, including `REGISTRY_AUTH_FILE` when set. NemoClaw does not prompt for, accept, or store a
+registry token.
 
 Do not combine `--from-image` with `--from` or the Portable profile.
 Resume retains the recorded digest and requires the same `--from-image` value, or the same `NEMOCLAW_FROM_IMAGE` value in non-interactive mode, on the recovery command. To use another digest, start fresh. If a ready same-name sandbox has a different workload, explicitly authorize its replacement with `--recreate-sandbox`.
@@ -1091,8 +1095,11 @@ Sandboxes with an active SSH session are marked with a `●` indicator so you ca
   Otherwise, a recorded dashboard port produces the loopback URL `http://127.0.0.1:<port>/`.
 </AgentOnly>
 The default sandbox in text and JSON output honors the same environment override order as host-level
-status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`,
-then the registry default.
+status: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry
+default. An explicitly set `NEMOCLAW_GATEWAY_PORT` selects gateway-scoped tunnel state. Otherwise,
+tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default
+gateway when no sandbox resolves. If the sandbox name belongs to more than one gateway registry,
+tunnel-state selection fails closed.
 
 ```bash
 $$nemoclaw list [--json]
@@ -3389,6 +3396,7 @@ Stop host auxiliary services that `$$nemoclaw tunnel start` started (for example
 
 If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains the process, PID file, and dashboard-port record. Do not stop the recorded PID while its identity is uncertain. Before stopping it manually, use the host process manager to verify that the recorded process is `cloudflared` (`cloudflared.exe` on Windows), then stop it and retry `$$nemoclaw tunnel stop`.
 When stop confirmation fails, NemoClaw also skips dependent gateway, channel, model, and managed gateway-port cleanup. After safely stopping the verified `cloudflared` process, rerun the command to retry that cleanup.
+If NemoClaw finds an unmanaged `cloudflared` process or cannot inspect tunnel ownership, it preserves that process and continues sandbox channel, Ollama, and requested gateway cleanup before returning an error.
 
 Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one messaging bridge.
 
@@ -3404,7 +3412,9 @@ If command-line inspection is unavailable for a live cloudflared PID, Windows ca
 
 ### `$$nemoclaw tunnel status`
 
-Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be verified safely. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel. Windows may verify and stop `cloudflared.exe` through an identity-bound process handle even when command-line inspection is unavailable; other platforms require process inspection before signaling. If safe identity verification or signaling is unavailable, restore inspection access or independently verify and stop the process before retrying. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+Show the current cloudflared public-URL tunnel status and the selected or default sandbox dashboard. Selection honors an explicitly set `NEMOCLAW_GATEWAY_PORT`; otherwise the command uses the selected or default sandbox's owning gateway and falls back to the process-default gateway when no sandbox resolves. If the sandbox name belongs to more than one gateway registry, selection fails closed. Sandbox selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default. Before reporting status, when no live gateway-scoped PID record exists, the command can move exactly one live legacy PID record that matches a sandbox in the selected gateway registry into gateway-scoped state. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be verified safely. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel. Windows may verify and stop `cloudflared.exe` through an identity-bound process handle even when command-line inspection is unavailable; other platforms require process inspection before signaling. If safe identity verification or signaling is unavailable, restore inspection access or independently verify and stop the process before retrying. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`.
+
+When no live managed tunnel record exists, non-Windows hosts scan the current user's process list and report an unrecorded `cloudflared` executable as a conflict. Windows skips this scan. If process listing fails on another platform, `tunnel start` fails closed instead of starting another tunnel; status cannot report unmanaged conflicts until process inspection is restored.
 
 ```bash
 $$nemoclaw tunnel status
@@ -3432,7 +3442,7 @@ This command stops tunnel services and, for a manifest-resolved non-OpenClaw age
 
 ### `$$nemoclaw status`
 
-Show the sandbox inventory for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and the host-scoped status of auxiliary services such as cloudflared.
+Show the sandbox inventory for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and the gateway-scoped host-side status of auxiliary services such as cloudflared.
 It reads the selected port's registry, live inference route, and gateway health; it does not scan registries for other gateway ports.
 
 <AgentOnly variant="openclaw,hermes">
@@ -3455,7 +3465,8 @@ When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text 
 The port suffix beside the sandbox name remains the recorded local forwarding port.
 For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
 Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
-Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+Cloudflared PID and log lookup use the gateway-scoped state selected by an explicit `NEMOCLAW_GATEWAY_PORT`, or otherwise by the selected or default sandbox's owning gateway. If no sandbox resolves, lookup falls back to the process-default gateway; ambiguous cross-gateway sandbox ownership fails closed.
+Before reporting auxiliary services in text or JSON, root status can perform the same bounded legacy tunnel-state migration as `$$nemoclaw tunnel status`.
 
 ```bash
 $$nemoclaw status

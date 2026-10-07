@@ -2977,7 +2977,8 @@ It accepts Podman's standard rootless layout: a `0660` current-user socket in a 
 It rejects a world-writable socket, a group-writable socket without a private current-user directory in its path, and a path component writable by another user or group.
 If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
-Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
+Native Podman supports stock managed-image onboarding and digest-pinned OpenClaw or Hermes images through `--from-image`.
+Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 
 <AgentOnly variant="hermes">
 
