@@ -347,6 +347,8 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
       'node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"' ||
     coordinator.env?.EXPECTED_HEAD_SHA !== "${{ needs.require-green-checks.outputs.head_sha }}" ||
     coordinator.env?.EXPECTED_BASE_SHA !== "${{ needs.require-green-checks.outputs.base_sha }}" ||
+    coordinator.env?.COORDINATOR_REQUIRED_CHECKS !==
+      "${{ github.event_name == 'workflow_run' && 'pass' || 'pending' }}" ||
     coordinator.env?.PR_NUMBER !== "${{ needs.require-green-checks.outputs.pr_number }}"
   ) {
     errors.push("Unified advisor coordinator shadow must consume exact-attempt trusted evidence");

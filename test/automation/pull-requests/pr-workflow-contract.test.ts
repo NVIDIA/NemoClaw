@@ -131,6 +131,7 @@ exit 0
 printf '%s\\n' "$*" >> "$TIMEOUT_CALLS"
 shift 3
 if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$*" == *' install '* ) ]]; then exit 124; fi
+if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TIMEOUT_CALLS") -lt 3 ]]; then exit 124; fi
 "$@"
 `,
     { mode: 0o755 },
@@ -627,6 +628,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       expect(result.runnerTempMode).toBe(0o700);
       const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
       expect(aptCalls).toHaveLength(1);
+      expect(result.timeoutCalls).toHaveLength(1);
       expect(aptCalls[0]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
       expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
       expect(aptCalls[0]).toMatch(/Dir::State::lists=\S+\/nemoclaw-apt-lists\.\S+/u);
@@ -674,12 +676,65 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
   });
 
+  it("retries only CLI update timeouts and then installs pinned packages (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("recover-update", installStep);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.timeoutCalls).toHaveLength(4);
+    expect(result.timeoutCalls.slice(0, 3)).toEqual(
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s sudo apt-get /u)),
+    );
+    expect(result.timeoutCalls[3]).toMatch(/^-k 10s 180s sudo apt-get /u);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
+    expect(aptCalls[0]).toContain("Acquire::Retries=2");
+    expect(aptCalls[0]).toContain("Acquire::http::Timeout=20");
+    expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
+  });
+
+  it("stops CLI updates after three bounded timeouts without installing (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("timeout", installStep);
+    expect(result.status).toBe(124);
+    expect(result.timeoutCalls).toHaveLength(3);
+    expect(result.timeoutCalls).toEqual(
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s sudo apt-get /u)),
+    );
+    expect(result.stderr).toContain("APT update timed out");
+    expect(result.stderr).toContain("attempt 3/3");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
   it("stops a stalled APT install after a successful update (#11320)", () => {
     const result = runPinnedAptFixture("install-timeout");
     expect(result.status).toBe(124);
     expect(result.stderr).toContain("APT install timed out");
     expect(result.timeoutCalls).toHaveLength(2);
     expect(result.timeoutCalls[1]).toMatch(/^-k 10s 300s sudo apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
+  });
+
+  it("stops a stalled CLI install within the preserved limit (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("install-timeout", installStep);
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT install timed out");
+    expect(result.timeoutCalls).toHaveLength(2);
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 120s sudo apt-get /u);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 180s sudo apt-get /u);
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
   });
 
@@ -694,7 +749,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const result = runPinnedAptFixture("force-killed");
     expect(result.status).toBe(137);
     expect(result.stderr).toContain("APT update was force-killed");
-    expect(result.stderr).toContain("may have exceeded 300 seconds");
+    expect(result.stderr).toContain("may have exceeded 300s");
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
   });
 

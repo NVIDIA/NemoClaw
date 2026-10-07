@@ -5932,6 +5932,24 @@ is_n1x_host() {
   n1x_fastos_release_is_trusted && n1x_has_pci_gpu
 }
 
+# Concept ISO 1.0.2 reports an NVIDIA BOS kernel but has no FastOS marker.
+# This signal only explains why the Deferred preview was not offered; it does
+# not qualify the host for N1x or waive any readiness finding.
+is_nvidia_bos_arm64_host_without_n1x_marker() {
+  [ "$(uname -s 2>/dev/null)" = "Linux" ] || return 1
+  case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -r 2>/dev/null)" in
+    *-nvidia-bos) ;;
+    *) return 1 ;;
+  esac
+  local marker=""
+  marker="$(n1x_fastos_release_path)"
+  [ ! -e "$marker" ] && [ ! -L "$marker" ]
+}
+
 detect_express_platform() {
   local firmware_state="" release_state=""
   if is_wsl_host; then
@@ -7384,8 +7402,12 @@ maybe_offer_express_install() {
     resume_loaded_station_install "$platform"
     return 0
   fi
-  # Not on a platform we have an express recipe for — say nothing.
+  # A Concept ISO-style host is outside the N1x preview identity boundary.
   if [ -z "$platform" ]; then
+    if is_nvidia_bos_arm64_host_without_n1x_marker; then
+      warn "NVIDIA BOS ARM64 host has no /etc/fastos-release, as reported for Concept ISO 1.0.2."
+      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker. Continuing with ordinary onboarding."
+    fi
     return 0
   fi
   # On a detected Express platform but a skip condition applies — explain why so
