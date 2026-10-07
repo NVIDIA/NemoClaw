@@ -211,7 +211,9 @@ info "Running Deep Agents Code secret-boundary checks in sandbox: $SANDBOX_NAME"
 enable_openshell_audit_logs
 
 runtime_log_marker="$(make_log_marker runtime-env)"
-runtime_audit_start="$(($(date +%s) - 1))"
+# OpenShell audit records have millisecond precision. Backdating this boundary
+# can include successful inference from the preceding headless check.
+runtime_audit_start="$(date +%s.%3N)"
 mark_sandbox_logs "$runtime_log_marker"
 runtime_output="$(dcode_secret_probe_runtime_env || true)"
 runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
@@ -229,7 +231,7 @@ trap restore_env_file EXIT
 sandbox_exec "printf '%s\n' OPENAI_API_KEY=${FAKE_SECRET@Q} >> ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null
 env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 env_log_marker="$(make_log_marker env-file)"
-env_audit_start="$(($(date +%s) - 1))"
+env_audit_start="$(date +%s.%3N)"
 mark_sandbox_logs "$env_log_marker"
 env_output="$(dcode_secret_probe_env_file || true)"
 env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"
