@@ -64,7 +64,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           registeredSandboxNames: () => ["legacy"],
           readState: (pidDir): CloudflaredState =>
             pidDir === legacyPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "stopped" },
         },
       ),
@@ -87,7 +87,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           registeredSandboxNames: () => ["legacy"],
           readState: (pidDir): CloudflaredState =>
             pidDir === targetPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "running", pid: 4343 },
         },
       ),
@@ -109,7 +109,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           legacyPidDirs: () => [legacyPidDir],
           readState: (pidDir): CloudflaredState =>
             pidDir === legacyPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "stopped" },
         },
       ),
@@ -137,7 +137,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           legacyPidDirs: () => [legacyPidDir],
           readState: (pidDir): CloudflaredState =>
             pidDir === legacyPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "stopped" },
         },
       ),
@@ -175,7 +175,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           recoverySandboxName: "legacy",
           readState: (pidDir): CloudflaredState =>
             pidDir === legacyPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "stopped" },
         },
       ),
@@ -197,7 +197,7 @@ describe("legacy tunnel state migration (#11628)", () => {
           recoverySandboxName: "legacy",
           readState: (pidDir): CloudflaredState =>
             pidDir === legacyPidDir
-              ? { kind: "unverified-pid-process", pid: 4242 }
+              ? { kind: "unverified-pid-process", pid: 4242, reason: "inspection-unavailable" }
               : { kind: "stopped" },
         },
       ),

@@ -164,6 +164,7 @@ describe("doctor system checks", () => {
       cloudflaredDoctorCheck("my-sandbox", 18_789, () => ({
         kind: "unverified-pid-process",
         pid: 4242,
+        reason: "inspection-unavailable",
       })),
     ).toEqual({
       group: "Local services",
