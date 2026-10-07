@@ -107,6 +107,24 @@ Keep state, diagnose the failure, and explicitly reapply after recovery.
 
 ## Configuration and Credentials
 
+### Connect a Local Development Container to the Managed Gateway
+
+For an isolated local test, explicitly select `authentication.mode: none`, `refreshMode: none`, and `tls.trust: none` under the container's `agentConnections` entry.
+Omit `secretRef` and `gatewayEndpoint`; the compiler derives the managed gateway container's private IPv4 address and listen port.
+An explicit endpoint must equal that derived origin exactly.
+The gateway must be managed local Docker, and the application must use its engine and owned network; external gateways, Podman, and different placement are rejected for this profile.
+
+This is plaintext without client authentication or per-application authorization.
+Any process able to reach the gateway can use its API; use a trusted private development network, keep host gateway publication on loopback, and do not use this profile for production or shared untrusted workloads.
+HTTPS/OIDC connections still require a protected service credential and verified system TLS trust.
+Neither an omitted authentication mode nor an authentication failure selects anonymous mode.
+
+The [complete local parser fixture](../crates/nemoclaw-sdk/tests/fixtures/config/container-managed-local.yaml) shows the declaration and protected speech inputs.
+Its UID, image digests, inference endpoint, and model are test values, not a deployable recipe or live qualification.
+See the [accepted boundary](design/scope.md#local-container-connection-decision) and [credential ownership](security.md#credentials-and-authentication).
+
+### Supply Credential References
+
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [field reference](reference/configuration.md) for names, defaults, and validation rules.
 

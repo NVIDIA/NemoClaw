@@ -235,6 +235,75 @@ fn image() -> serde_json::Value {
     json!({"Id":format!("sha256:{}","c".repeat(64)),"Os":"linux","Architecture":"arm64","Config":{"Entrypoint":[nemoclaw_container_inputs::ENTRYPOINT],"Env":[],"Labels":{nemoclaw_container_inputs::CONTRACT_LABEL:nemoclaw_container_inputs::CONTRACT_VERSION}}})
 }
 
+#[tokio::test]
+async fn local_connection_payload_delivers_speech_and_descriptor_without_an_openshell_credential() {
+    struct SpeechOnly;
+    impl nemoclaw_sdk::Secrets for SpeechOnly {
+        fn resolve(&self, name: &str) -> Result<String, ObservationError> {
+            if name == "NVIDIA_API_KEY" {
+                Ok(SENTINEL.into())
+            } else {
+                Err(ObservationError::Authentication)
+            }
+        }
+    }
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/container-managed-local.yaml")
+            .as_slice(),
+    )
+    .unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "container_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let mut desired = nemoclaw_sdk::compile::targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.kind == "container_inputs")
+        .unwrap()
+        .values;
+    desired.insert(
+        "sandbox_id".into(),
+        "11111111-2222-3333-4444-555555555555".into(),
+    );
+    let fixture =
+        Fixture::start(|_| panic!("payload assembly must not contact Docker or the gateway")).await;
+    let backend = InputsBackend::new(fixture.engine_for("unix:///var/run/docker.sock"))
+        .with_secrets(Arc::new(SpeechOnly));
+    let spec = backend.spec(&desired).unwrap();
+    let request: Request =
+        serde_json::from_slice(&backend.payload(&spec, &desired).unwrap()).unwrap();
+    request.validate().unwrap();
+    assert_eq!(request.files.len(), 2);
+    let speech = request
+        .files
+        .iter()
+        .find(|file| file.role == Role::Credential)
+        .unwrap();
+    assert_eq!(speech.path, "credentials/speech");
+    assert_eq!(speech.content, SENTINEL);
+    let descriptor = request
+        .files
+        .iter()
+        .find(|file| file.role == Role::Descriptor)
+        .unwrap();
+    let descriptor: serde_json::Value = serde_json::from_str(&descriptor.content).unwrap();
+    assert_eq!(
+        descriptor["gateway"]["endpoint"],
+        "http://172.29.230.2:17681"
+    );
+    assert_eq!(
+        descriptor["authentication"],
+        json!({"mode":"none","credentialFile":null,"refreshMode":"none"})
+    );
+    assert!(!descriptor.to_string().contains(SENTINEL));
+}
+
 #[test]
 fn setup_image_contract_rejects_wrong_platform_entrypoint_label_environment_and_volumes() {
     let spec: InputsSpec = serde_json::from_str(&row()["spec"]).unwrap();

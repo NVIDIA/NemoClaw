@@ -90,6 +90,49 @@
     },
     "AgentConnection": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "tls": {
+                "properties": {
+                  "trust": {
+                    "const": "none"
+                  }
+                }
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "authentication": {
+                "properties": {
+                  "mode": {
+                    "const": "oidcBearer"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "gatewayEndpoint": {
+                "minLength": 1
+              },
+              "tls": {
+                "properties": {
+                  "trust": {
+                    "const": "system"
+                  }
+                }
+              }
+            },
+            "required": [
+              "gatewayEndpoint"
+            ]
+          }
+        }
+      ],
       "description": "One explicitly selected sandbox agent and application-reachable OpenShell endpoint.",
       "properties": {
         "agent": {
@@ -102,7 +145,7 @@
           "description": "Declared application identity reference; issuance and authority remain external."
         },
         "gatewayEndpoint": {
-          "description": "Explicit application-reachable HTTPS OpenShell origin; reachability requires live qualification.",
+          "description": "HTTPS origin for oidcBearer. For development-only none, omission derives the managed Docker gateway's private origin; an explicit value must match it exactly.",
           "type": "string"
         },
         "sandboxRef": {
@@ -120,14 +163,13 @@
         },
         "tls": {
           "$ref": "#/$defs/ApplicationTrust",
-          "description": "Required peer-verifying TLS trust profile."
+          "description": "system for HTTPS/OIDC, or explicit none for the managed local development connection."
         }
       },
       "required": [
         "sandboxRef",
         "agent",
         "targetPath",
-        "gatewayEndpoint",
         "authentication",
         "tls",
         "timeouts"
@@ -174,11 +216,43 @@
     },
     "ApplicationAuthentication": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "secretRef": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "oidcBearer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "secretRef": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "secretRef"
+            ]
+          }
+        }
+      ],
       "description": "Static bearer delivery does not issue, refresh, or narrow an identity's authority.",
       "properties": {
         "mode": {
-          "const": "oidcBearer",
-          "description": "Static bearer profile: oidcBearer. This does not establish a supported issuer flow.",
+          "description": "oidcBearer requires an external service identity. Explicit none selects development-only, unauthenticated HTTP to this deployment's managed Docker gateway; no automatic fallback.",
+          "enum": [
+            "oidcBearer",
+            "none"
+          ],
           "type": "string"
         },
         "refreshMode": {
@@ -187,25 +261,30 @@
           "type": "string"
         },
         "secretRef": {
-          "description": "Name of this service's explicitly declared protected credential.",
+          "description": "Required protected credential name for oidcBearer; absent or null for none. Speech credentials remain independent.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "mode",
-        "secretRef",
         "refreshMode"
       ],
       "type": "object"
     },
     "ApplicationTrust": {
       "additionalProperties": false,
-      "description": "The first delivery profile supports verified system trust only.",
+      "description": "Trust must match the explicitly selected authentication and transport profile.",
       "properties": {
         "trust": {
-          "const": "system",
-          "description": "system: use the image's trusted CA roots. Private CA delivery and insecure modes are unsupported.",
+          "description": "system uses image CA roots with HTTPS/OIDC. none explicitly selects plaintext for the bound local development gateway. Private CA delivery and skipped certificate verification are unsupported.",
+          "enum": [
+            "system",
+            "none"
+          ],
           "type": "string"
         }
       },

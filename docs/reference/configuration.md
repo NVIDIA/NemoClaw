@@ -95,11 +95,11 @@ Paths:
 |---|---|---|---|---|
 | `agent` | string | Yes | — | Agent name declared by the selected sandbox. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `authentication` | [ApplicationAuthentication](#applicationauthentication) | Yes | — | Declared application identity reference; issuance and authority remain external. |
-| `gatewayEndpoint` | string | Yes | — | Explicit application-reachable HTTPS OpenShell origin; reachability requires live qualification. |
+| `gatewayEndpoint` | string | No | — | HTTPS origin for oidcBearer. For development-only none, omission derives the managed Docker gateway's private origin; an explicit value must match it exactly. |
 | `sandboxRef` | string | Yes | — | Declared sandbox whose ownership and physical identity bind the connection. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `targetPath` | string | Yes | — | Canonical descriptor file path below the application data root. |
 | `timeouts` | [ConnectionTimeouts](#connectiontimeouts) | Yes | — | Bounded application client deadlines. |
-| `tls` | [ApplicationTrust](#applicationtrust) | Yes | — | Required peer-verifying TLS trust profile. |
+| `tls` | [ApplicationTrust](#applicationtrust) | Yes | — | system for HTTPS/OIDC, or explicit none for the managed local development connection. |
 
 ## AgentExecution
 
@@ -143,13 +143,13 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `mode` | string | Yes | — | Static bearer profile: oidcBearer. This does not establish a supported issuer flow. Constraints: `"oidcBearer"`. |
+| `mode` | string | Yes | — | oidcBearer requires an external service identity. Explicit none selects development-only, unauthenticated HTTP to this deployment's managed Docker gateway; no automatic fallback. Constraints: `"oidcBearer"` or `"none"`. |
 | `refreshMode` | string | Yes | — | none: the application fails closed on expiry; no installer-owned refresh. Constraints: `"none"`. |
-| `secretRef` | string | Yes | — | Name of this service's explicitly declared protected credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `secretRef` | string or null | No | — | Required protected credential name for oidcBearer; absent or null for none. Speech credentials remain independent. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## ApplicationTrust
 
-The first delivery profile supports verified system trust only.
+Trust must match the explicitly selected authentication and transport profile.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -159,7 +159,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `trust` | string | Yes | — | system: use the image's trusted CA roots. Private CA delivery and insecure modes are unsupported. Constraints: `"system"`. |
+| `trust` | string | Yes | — | system uses image CA roots with HTTPS/OIDC. none explicitly selects plaintext for the bound local development gateway. Private CA delivery and skipped certificate verification are unsupported. Constraints: `"system"` or `"none"`. |
 
 ## AuthMethod
 

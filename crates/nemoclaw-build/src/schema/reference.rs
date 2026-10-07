@@ -262,6 +262,17 @@ fn input_type(schema: &Value) -> String {
     {
         return format!("[{name}](#{})", name.to_lowercase());
     }
+    if let Some(kinds) = schema["type"].as_array() {
+        return kinds
+            .iter()
+            .map(|kind| {
+                let mut variant = schema.clone();
+                variant["type"] = kind.clone();
+                input_type(&variant)
+            })
+            .collect::<Vec<_>>()
+            .join(" or ");
+    }
     if schema["type"] == "array" {
         return format!("array of {}", input_type(&schema["items"]));
     }
@@ -445,6 +456,18 @@ mod tests {
             "string"
         );
         assert!(constraints(&json!({"oneOf":[{"type":"object"},{"type":"array"}]})).is_empty());
+    }
+
+    #[test]
+    fn nullable_type_arrays_preserve_the_declared_input_types() {
+        assert_eq!(
+            input_type(&json!({"type":["string","null"]})),
+            "string or null"
+        );
+        assert_eq!(
+            input_type(&json!({"type":["array","null"],"items":{"type":"string"}})),
+            "array of string or null"
+        );
     }
 
     #[test]

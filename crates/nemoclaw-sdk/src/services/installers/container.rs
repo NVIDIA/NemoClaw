@@ -246,6 +246,11 @@ impl Installer for Service {
                 && gateway.network_cidr == network_cidr
                 && gateway.runtime.provider == crate::config::ComputeDriver::Docker
         });
+        let mut connections = self.agent_connections.clone();
+        for connection in connections.values_mut() {
+            connection.validate_binding(document, self)?;
+            connection.gateway_endpoint = connection.resolved_endpoint(document)?;
+        }
         let process = Process {
             engine: engine.clone(),
             image: self.image.clone(),
@@ -264,7 +269,7 @@ impl Installer for Service {
                 &self.user,
                 &self.data.mount_path,
                 &self.secrets,
-                &self.agent_connections,
+                &connections,
             ),
             mount_target: self.data.mount_path.clone(),
             bind_address: self
@@ -332,7 +337,7 @@ impl Installer for Service {
         ];
         let mut edges = BTreeMap::new();
         for connection in self.agent_connections.values() {
-            connection.validate_binding(document)?;
+            connection.validate_binding(document, self)?;
             dependencies.push(format!(
                 "data.nemoclaw_sandbox_readiness.{}",
                 connection.sandbox_ref
@@ -349,7 +354,7 @@ impl Installer for Service {
                 service: name.into(),
                 workspace: document.workspace(),
                 secrets: self.secrets.clone(),
-                connections: self.agent_connections.clone(),
+                connections,
             };
             inputs.validate()?;
             targets.push(Target {

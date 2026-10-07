@@ -164,7 +164,7 @@ impl ServiceDefinition {
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         if let Self::Container(service) = self {
             for connection in service.agent_connections.values() {
-                connection.validate_binding(document)?;
+                connection.validate_binding(document, service)?;
             }
             return service.location(document).map(|_| ());
         }

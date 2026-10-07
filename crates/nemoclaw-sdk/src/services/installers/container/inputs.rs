@@ -66,11 +66,12 @@ pub struct AgentConnection {
     pub agent: String,
     /// Canonical descriptor file path below the application data root.
     pub target_path: String,
-    /// Explicit application-reachable HTTPS OpenShell origin; reachability requires live qualification.
+    /// HTTPS origin for oidcBearer. For development-only none, omission derives the managed Docker gateway's private origin; an explicit value must match it exactly.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub gateway_endpoint: String,
     /// Declared application identity reference; issuance and authority remain external.
     pub authentication: ApplicationAuthentication,
-    /// Required peer-verifying TLS trust profile.
+    /// system for HTTPS/OIDC, or explicit none for the managed local development connection.
     pub tls: ApplicationTrust,
     /// Bounded application client deadlines.
     pub timeouts: ConnectionTimeouts,
@@ -79,18 +80,19 @@ pub struct AgentConnection {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Static bearer delivery does not issue, refresh, or narrow an identity's authority.
 pub struct ApplicationAuthentication {
-    /// Static bearer profile: oidcBearer. This does not establish a supported issuer flow.
+    /// oidcBearer requires an external service identity. Explicit none selects development-only, unauthenticated HTTP to this deployment's managed Docker gateway; no automatic fallback.
     pub mode: String,
-    /// Name of this service's explicitly declared protected credential.
-    pub secret_ref: String,
+    /// Required protected credential name for oidcBearer; absent or null for none. Speech credentials remain independent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<String>,
     /// none: the application fails closed on expiry; no installer-owned refresh.
     pub refresh_mode: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// The first delivery profile supports verified system trust only.
+/// Trust must match the explicitly selected authentication and transport profile.
 pub struct ApplicationTrust {
-    /// system: use the image's trusted CA roots. Private CA delivery and insecure modes are unsupported.
+    /// system uses image CA roots with HTTPS/OIDC. none explicitly selects plaintext for the bound local development gateway. Private CA delivery and skipped certificate verification are unsupported.
     pub trust: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -159,26 +161,36 @@ pub fn validate_inputs(
                 && targets.insert(connection.target_path.as_str()),
             "container input paths must be distinct files below the data root",
         )?;
+        let bearer = connection.authentication.mode == "oidcBearer";
         require(
-            connection.authentication.mode == "oidcBearer"
-                && connection.authentication.refresh_mode == "none"
-                && secrets.contains_key(&connection.authentication.secret_ref),
-            "container connection requires a declared static bearer reference",
+            connection.authentication.refresh_mode == "none"
+                && (bearer
+                    && connection
+                        .authentication
+                        .secret_ref
+                        .as_ref()
+                        .is_some_and(|name| secrets.contains_key(name))
+                    || connection.authentication.mode == "none"
+                        && connection.authentication.secret_ref.is_none()),
+            "container connection requires an explicit static bearer or credential-free local development profile",
         )?;
         require(
-            connection.tls.trust == "system",
-            "container connection supports system TLS trust only",
+            connection.tls.trust == if bearer { "system" } else { "none" },
+            "container connection TLS trust must match its authentication profile",
         )?;
         require(
             (1..=12).contains(&connection.timeouts.health_seconds)
                 && (1..=120).contains(&connection.timeouts.invoke_seconds),
             "container connection deadlines exceed the supported bounds",
         )?;
+        if !bearer && connection.gateway_endpoint.is_empty() {
+            continue;
+        }
         let endpoint = url::Url::parse(&connection.gateway_endpoint)
             .map_err(|_| ConfigError::new("invalid container gateway endpoint"))?;
         require(
             connection.gateway_endpoint.len() <= 2048
-                && endpoint.scheme() == "https"
+                && endpoint.scheme() == if bearer { "https" } else { "http" }
                 && endpoint.username().is_empty()
                 && endpoint.password().is_none()
                 && endpoint.query().is_none()
@@ -202,8 +214,18 @@ pub fn validate_inputs(
                             && !ip.is_unicast_link_local()
                     }
                 }),
-            "container gateway requires application-reachable verified HTTPS",
+            "container gateway requires a valid origin for its explicit transport profile",
         )?;
+        if !bearer {
+            require(
+                endpoint
+                    .host()
+                    .is_some_and(|host| matches!(host, url::Host::Ipv4(ip) if ip.is_private()))
+                    && endpoint.port().is_some()
+                    && connection.gateway_endpoint == endpoint.origin().ascii_serialization(),
+                "local development gateway requires a canonical private IPv4 origin",
+            )?;
+        }
     }
     for path in &targets {
         require(
@@ -222,14 +244,56 @@ pub fn validate_inputs(
     Ok(())
 }
 impl AgentConnection {
-    pub fn validate_binding(&self, document: &Document) -> Result<(), ConfigError> {
+    pub fn validate_binding(
+        &self,
+        document: &Document,
+        service: &super::Service,
+    ) -> Result<(), ConfigError> {
         let sandbox = document.sandbox(&self.sandbox_ref)?;
         require(
             sandbox.agent.name == self.agent,
             "container agent does not match its selected sandbox",
         )?;
+        if self.authentication.mode == "none" {
+            let gateway = document.spec.gateway.managed()?;
+            let expected = local_gateway_endpoint(gateway)?;
+            let (engine, network) = service.location(document)?;
+            require(
+                engine == gateway.engine && network == gateway.network_cidr,
+                "local development connection requires the managed gateway's engine and network",
+            )?;
+            require(
+                self.gateway_endpoint.is_empty() || self.gateway_endpoint == expected,
+                "local development endpoint must match this deployment's managed gateway",
+            )?;
+        }
         Ok(())
     }
+    pub(super) fn resolved_endpoint(&self, document: &Document) -> Result<String, ConfigError> {
+        if self.authentication.mode == "none" {
+            local_gateway_endpoint(document.spec.gateway.managed()?)
+        } else {
+            Ok(self.gateway_endpoint.clone())
+        }
+    }
+}
+
+fn local_gateway_endpoint(gateway: &crate::config::ManagedGateway) -> Result<String, ConfigError> {
+    gateway.validate_managed()?;
+    require(
+        gateway.runtime.provider == crate::config::ComputeDriver::Docker
+            && gateway.engine.starts_with("unix:///"),
+        "local development connection requires a managed local Docker gateway",
+    )?;
+    let origin = url::Url::parse(&gateway.endpoint)
+        .map_err(|_| ConfigError::new("invalid managed gateway origin"))?;
+    let port = origin
+        .port()
+        .ok_or_else(|| ConfigError::new("missing managed gateway port"))?;
+    Ok(format!(
+        "http://{}:{port}",
+        crate::config::gateway_address(&gateway.network_cidr)?
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -261,6 +325,22 @@ impl InputsSpec {
             &self.connections,
         )?;
         let process = self.process.process.as_ref().unwrap();
+        for connection in self
+            .connections
+            .values()
+            .filter(|c| c.authentication.mode == "none")
+        {
+            let expected = local_gateway_endpoint(&self.process.gateway)?;
+            if process.create_network
+                || process.engine != self.process.gateway.engine
+                || process.network_cidr != self.process.gateway.network_cidr
+                || connection.gateway_endpoint != expected
+            {
+                return Err(Error::State(
+                    "local development connection differs from its managed gateway binding",
+                ));
+            }
+        }
         if process.input_revision
             != input_revision(
                 &process.user,
@@ -283,11 +363,16 @@ impl InputsSpec {
         if !matches(crate::config::constraints::UUID, sandbox_id) {
             return Err(Error::State("application sandbox identity is unresolved"));
         }
+        let credential_file = connection
+            .authentication
+            .secret_ref
+            .as_ref()
+            .map(|name| self.secrets[name].target_path.as_str());
         let descriptor = json!({
             "schemaVersion":"nemoclaw.agent-connection.v1",
             "deploymentUid":self.process.owner, "service":self.service,
-            "gateway":{"endpoint":connection.gateway_endpoint,"tls":{"trust":"system","caFile":null}},
-            "authentication":{"mode":"oidcBearer","credentialFile":self.secrets[&connection.authentication.secret_ref].target_path,"refreshMode":"none"},
+            "gateway":{"endpoint":connection.gateway_endpoint,"tls":{"trust":connection.tls.trust,"caFile":null}},
+            "authentication":{"mode":connection.authentication.mode,"credentialFile":credential_file,"refreshMode":"none"},
             "target":{"workspace":self.workspace,"sandbox":connection.sandbox_ref,"sandboxId":sandbox_id,"agent":connection.agent},
             "bridge":{"interfaceVersion":1,"command":"fabric-agent"},
             "timeouts":connection.timeouts
@@ -352,7 +437,7 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, Value>) {
     property(
         &mut defs["ApplicationAuthentication"],
         "mode",
-        json!({"const":"oidcBearer"}),
+        json!({"enum":["oidcBearer", "none"]}),
     );
     property(
         &mut defs["ApplicationAuthentication"],
@@ -364,10 +449,20 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, Value>) {
         "secretRef",
         json!({"pattern":c::SLUG}),
     );
+    defs["ApplicationAuthentication"]["allOf"] = json!([{
+        "if":{"properties":{"mode":{"const":"oidcBearer"}}},
+        "then":{"required":["secretRef"],"properties":{"secretRef":{"type":"string","minLength":1}}},
+        "else":{"properties":{"secretRef":{"type":"null"}}}
+    }]);
+    defs["AgentConnection"]["allOf"] = json!([{
+        "if":{"properties":{"authentication":{"properties":{"mode":{"const":"oidcBearer"}}}}},
+        "then":{"required":["gatewayEndpoint"],"properties":{"gatewayEndpoint":{"minLength":1},"tls":{"properties":{"trust":{"const":"system"}}}}},
+        "else":{"properties":{"tls":{"properties":{"trust":{"const":"none"}}}}}
+    }]);
     property(
         &mut defs["ApplicationTrust"],
         "trust",
-        json!({"const":"system"}),
+        json!({"enum":["system", "none"]}),
     );
     property(
         &mut defs["ConnectionTimeouts"],

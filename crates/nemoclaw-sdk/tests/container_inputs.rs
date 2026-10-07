@@ -50,6 +50,240 @@ fn generations() -> Generations {
     .into()
 }
 
+fn local_development() -> Value {
+    let mut value = authored();
+    value["spec"]["services"]["voice"]["secrets"]
+        .as_object_mut()
+        .unwrap()
+        .remove("openshell");
+    let connection = &mut value["spec"]["services"]["voice"]["agentConnections"]["primary"];
+    connection
+        .as_object_mut()
+        .unwrap()
+        .remove("gatewayEndpoint");
+    connection["authentication"] = json!({"mode":"none", "refreshMode":"none"});
+    connection["tls"] = json!({"trust":"none"});
+    value
+}
+
+#[test]
+fn local_container_connection_derives_the_owned_gateway_without_a_service_token() {
+    let value = local_development();
+    assert!(
+        jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert!(!document.credential_names().contains(&"SERVICE_TOKEN"));
+    assert!(document.credential_names().contains(&"SPEECH_KEY"));
+    let targets = nemoclaw_sdk::compile::targets(&document, &generations()).unwrap();
+    let input = targets
+        .iter()
+        .find(|target| target.kind == "container_inputs")
+        .unwrap();
+    let spec: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+        serde_json::from_str(&input.values["spec"]).unwrap();
+    let (_, descriptor) = spec
+        .descriptor("11111111-2222-3333-4444-555555555555")
+        .unwrap()
+        .unwrap();
+    let nemoclaw_sdk::config::Gateway::Managed(gateway) = &document.spec.gateway else {
+        panic!("expected managed gateway")
+    };
+    let port = url::Url::parse(&gateway.endpoint).unwrap().port().unwrap();
+    let expected = format!("http://{}:{port}", spec.process.gateway_address().unwrap());
+    assert_eq!(
+        descriptor["gateway"],
+        json!({"endpoint":expected, "tls":{"trust":"none","caFile":null}})
+    );
+    assert_eq!(
+        descriptor["authentication"],
+        json!({"mode":"none","credentialFile":null,"refreshMode":"none"})
+    );
+    assert_eq!(descriptor["target"]["workspace"], document.workspace());
+    assert_eq!(spec.secrets.len(), 1);
+    let exported = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+    assert_eq!(document, exported);
+    assert_eq!(
+        compile(&document, &generations(), "0.1.0").unwrap(),
+        compile(&exported, &generations(), "0.1.0").unwrap()
+    );
+
+    let mut explicit = value.clone();
+    explicit["spec"]["services"]["voice"]["agentConnections"]["primary"]["gatewayEndpoint"] =
+        json!(expected);
+    Document::parse(explicit.to_string().as_bytes()).unwrap();
+
+    // Provider specifications are untrusted too; a substituted private endpoint,
+    // engine or network must not bypass the compiler's managed-gateway binding.
+    for path in [
+        "/connections/primary/gatewayEndpoint",
+        "/process/process/engine",
+        "/process/process/network_cidr",
+    ] {
+        let mut forged = serde_json::to_value(&spec).unwrap();
+        *forged.pointer_mut(path).unwrap() = match path {
+            "/connections/primary/gatewayEndpoint" => json!("http://192.168.77.2:8443"),
+            "/process/process/engine" => json!("unix:///other/docker.sock"),
+            _ => json!("192.168.77.0/24"),
+        };
+        let mut forged: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+            serde_json::from_value(forged).unwrap();
+        let process = forged.process.process.as_mut().unwrap();
+        process.input_revision =
+            nemoclaw_sdk::services::installers::container::inputs::input_revision(
+                &process.user,
+                &process.mount_target,
+                &forged.secrets,
+                &forged.connections,
+            );
+        assert!(forged.validate().is_err(), "accepted {path}");
+    }
+}
+
+#[test]
+fn local_container_connection_rejects_authentication_transport_and_placement_mismatches() {
+    for (path, bad) in [
+        (
+            "/spec/services/voice/agentConnections/primary/authentication/secretRef",
+            json!("speech"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/authentication/refreshMode",
+            json!("automatic"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/tls/trust",
+            json!("system"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://8.8.8.8:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://127.0.0.1:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://gateway.example.test:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://192.168.77.2:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("https://192.168.77.2:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://token@192.168.77.2:8443"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://192.168.77.2:8443/path"),
+        ),
+        (
+            "/spec/services/voice/agentConnections/primary/gatewayEndpoint",
+            json!("http://[::ffff:127.0.0.1]:8443"),
+        ),
+        (
+            "/spec/services/voice/placement",
+            json!({"engine":"unix:///other/docker.sock", "networkCIDR":"192.168.77.0/24"}),
+        ),
+        (
+            "/spec/gateway",
+            json!({"management":"external", "runtime":{"provider":"docker"}, "engine":"unix:///var/run/docker.sock", "endpoint":"http://127.0.0.1:17681"}),
+        ),
+    ] {
+        let mut value = local_development();
+        // Insert optional fields as well as replacing existing ones.
+        let (parent, field) = path.rsplit_once('/').unwrap();
+        value.pointer_mut(parent).unwrap()[field] = bad;
+        assert!(
+            Document::parse(value.to_string().as_bytes()).is_err(),
+            "accepted {path}"
+        );
+    }
+    let mut bearer = authored();
+    bearer["spec"]["services"]["voice"]["agentConnections"]["primary"]["authentication"]
+        .as_object_mut()
+        .unwrap()
+        .remove("secretRef");
+    assert!(Document::parse(bearer.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn container_authentication_schema_rejects_implicit_or_mixed_profiles() {
+    let validator =
+        jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
+    for mut value in [authored(), local_development()] {
+        assert!(validator.is_valid(&value));
+        let auth = &mut value["spec"]["services"]["voice"]["agentConnections"]["primary"]["authentication"];
+        auth.as_object_mut().unwrap().remove("mode");
+        assert!(!validator.is_valid(&value));
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    }
+    let mut local = local_development();
+    local["spec"]["services"]["voice"]["agentConnections"]["primary"]["authentication"]["secretRef"] =
+        json!(null);
+    assert!(validator.is_valid(&local));
+    Document::parse(local.to_string().as_bytes()).unwrap();
+    local["spec"]["services"]["voice"]["agentConnections"]["primary"]["authentication"]["secretRef"] =
+        json!("speech");
+    assert!(!validator.is_valid(&local));
+    let mut bearer = authored();
+    bearer["spec"]["services"]["voice"]["agentConnections"]["primary"]["authentication"]["secretRef"] =
+        json!(null);
+    assert!(!validator.is_valid(&bearer));
+}
+
+#[test]
+fn complete_local_container_fixture_binds_the_managed_gateway_and_protects_speech_inputs() {
+    let document =
+        Document::parse(include_str!("fixtures/config/container-managed-local.yaml").as_bytes())
+            .unwrap();
+    assert_eq!(
+        document.credential_names(),
+        ["AGENT_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
+    );
+    let graph = compile(&document, &generations(), "0.1.0").unwrap();
+    let app = &graph["resource"]["docker_container"]["container_service_voice"];
+    assert!(
+        graph["resource"]["docker_network"].is_null(),
+        "application must not own a second gateway network"
+    );
+    assert!(
+        app["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("nemoclaw_container_inputs.voice"))
+    );
+    let spec: nemoclaw_sdk::services::installers::container::inputs::InputsSpec =
+        serde_json::from_str(
+            graph["resource"]["nemoclaw_container_inputs"]["voice"]["spec"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+    let (_, descriptor) = spec
+        .descriptor("11111111-2222-3333-4444-555555555555")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        descriptor["gateway"]["endpoint"],
+        "http://172.29.230.2:17681"
+    );
+    assert!(!graph.to_string().contains("OPENSHELL_OPERATOR_TOKEN"));
+    assert!(
+        !graph
+            .to_string()
+            .contains("VOICECLAW_OPENSHELL_SERVICE_TOKEN")
+    );
+}
+
 #[test]
 fn complete_container_connection_document_keeps_operator_identity_out_of_application_inputs() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
