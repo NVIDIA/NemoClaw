@@ -318,6 +318,40 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
+  it("completes ordinary uninstall after destroy clears the last sandbox identity (#11541)", async () => {
+    const host = scope("nemoclaw-uninstall-destroyed-ordinary-sandbox-");
+    completedOpenClawAuthority(host, "default");
+    mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), (session) => {
+      session.sandboxName = null;
+    });
+    mutateJsonFile(path.join(host.stateDir, "sandboxes.json"), (registry) => {
+      registry.defaultSandbox = null;
+      registry.sandboxes = {};
+    });
+
+    expect(hasPortableRuntimeCleanup(host.stateDir)).toBe(false);
+    await expectOrdinaryUninstall(host);
+  });
+
+  it("refuses a cleared session identity while any registry row remains", async () => {
+    const host = scope("nemoclaw-uninstall-cleared-session-with-registry-");
+    completedOpenClawAuthority(host, "default");
+    mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), (session) => {
+      session.sandboxName = null;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
   it("preserves abandoned Portable configuration after completed ordinary onboarding (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-config-");
     completedOpenClawAuthority(host, "default");

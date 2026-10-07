@@ -321,15 +321,16 @@ function assertOrdinaryOnboardAuthority(
   deps: PortableAuthorityAdmissionDeps,
 ): void {
   const { sandboxIdentity, gatewayAuthority } = checkpoint.checkpoint;
+  const sandboxNameCleared = rawSession.sandboxName === null;
   if (
     rawSession.version !== 1 ||
     typeof rawSession.sessionId !== "string" ||
     checkpoint.checkpoint.sessionId !== rawSession.sessionId ||
-    typeof rawSession.sandboxName !== "string" ||
-    !rawSession.sandboxName ||
+    (!sandboxNameCleared &&
+      (typeof rawSession.sandboxName !== "string" || !rawSession.sandboxName)) ||
     (rawSession.agent !== null && typeof rawSession.agent !== "string") ||
     sandboxIdentity.kind !== "selected" ||
-    sandboxIdentity.value.name !== rawSession.sandboxName ||
+    (!sandboxNameCleared && sandboxIdentity.value.name !== rawSession.sandboxName) ||
     sandboxIdentity.value.agent !== (rawSession.agent ?? "openclaw") ||
     gatewayAuthority.kind !== "selected"
   ) {
@@ -339,21 +340,33 @@ function assertOrdinaryOnboardAuthority(
   if (!bytes) throw new Error("Completed onboarding registry is missing");
   const rawRegistry = strictJson(bytes, "Completed onboarding registry");
   const rawSandboxes = rawRegistry.sandboxes;
-  const rawRow =
-    rawSandboxes && typeof rawSandboxes === "object" && !Array.isArray(rawSandboxes)
-      ? (rawSandboxes as Record<string, unknown>)[sandboxIdentity.value.name]
-      : null;
+  if (!rawSandboxes || typeof rawSandboxes !== "object" || Array.isArray(rawSandboxes))
+    throw new Error("Completed onboarding registry authority is incomplete");
+  const rawRow = (rawSandboxes as Record<string, unknown>)[sandboxIdentity.value.name];
   const rawEntry =
     rawRow && typeof rawRow === "object" && !Array.isArray(rawRow)
       ? (rawRow as Record<string, unknown>)
       : null;
-  if (!rawEntry || rawRegistry.defaultSandbox !== sandboxIdentity.value.name)
-    throw new Error("Completed onboarding registry authority is incomplete");
   if (!fs.readFileSync(boundary.registryFile).equals(bytes))
     throw new Error("Completed onboarding registry bytes changed before normalization");
   const registry = deps.loadRegistry();
   if (!fs.readFileSync(boundary.registryFile).equals(bytes))
     throw new Error("Completed onboarding registry changed while normalizing");
+  if (sandboxNameCleared) {
+    // `destroy` clears the completed session's sandboxName after it removes
+    // the last registry row. Accept that state only when no sandbox remains.
+    if (
+      rawRegistry.defaultSandbox !== null ||
+      Object.keys(rawSandboxes).length !== 0 ||
+      registry.defaultSandbox !== null ||
+      Object.keys(registry.sandboxes).length !== 0
+    ) {
+      throw new Error("Completed ordinary onboarding registry authority is incomplete");
+    }
+    return;
+  }
+  if (!rawEntry || rawRegistry.defaultSandbox !== sandboxIdentity.value.name)
+    throw new Error("Completed onboarding registry authority is incomplete");
   const row = registry.sandboxes[sandboxIdentity.value.name];
   if (!row || registry.defaultSandbox !== sandboxIdentity.value.name)
     throw new Error("Completed onboarding registry authority is incomplete");
