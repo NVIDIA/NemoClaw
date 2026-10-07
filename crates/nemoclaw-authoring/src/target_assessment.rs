@@ -65,8 +65,8 @@ pub fn assess_target(
         plan_queries(document).map_err(|error| diagnostic("discovery", &error.to_string()))?
     {
         match &query {
-            DiscoveryQuery::Engine(request) => engine = observations.get(request),
-            DiscoveryQuery::Fabric(request) => fabric = observations.get(request),
+            DiscoveryQuery::Engine(request) => engine = observations.get(request).or(engine),
+            DiscoveryQuery::Fabric(request) => fabric = observations.get(request).or(fabric),
             _ => {}
         }
     }

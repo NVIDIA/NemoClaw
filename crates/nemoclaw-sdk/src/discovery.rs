@@ -251,8 +251,11 @@ impl DiscoveryObservations {
         self.entries.is_empty()
     }
 
+    /// Whether `query` was asked, whatever kind its recorded answer is.
     pub fn contains<Q: Query>(&self, query: &Q) -> bool {
-        self.get(query).is_some()
+        self.entries
+            .iter()
+            .any(|entry| Q::from_query(&entry.query) == Some(query))
     }
 
     /// The answer to `query`; a query of a kind the answer does not match is unanswered.

@@ -63,6 +63,16 @@ fn observations_are_found_by_the_inputs_that_produced_them() {
 }
 
 #[test]
+fn a_query_is_asked_even_when_its_recorded_answer_is_of_another_kind() {
+    let observations = DiscoveryObservations::new().with(
+        DiscoveryQuery::Engine(docker()),
+        DiscoveryObservation::Hardware(HardwareObservation::unknown()),
+    );
+    assert!(observations.contains(&docker()));
+    assert!(observations.get(&docker()).is_none());
+}
+
+#[test]
 fn a_read_that_could_not_be_made_is_recorded_and_not_asked_again() {
     let failed = DiscoveryQuery::Hardware(HardwareRequest {
         engine: "ssh://gpu-box".into(),
