@@ -397,6 +397,116 @@ describe("native NVIDIA OpenShell provider", () => {
     ).rejects.toThrow(/does not have its native NVIDIA inference provider attached/u);
   });
 
+  it("rejects a matching attachment when the live provider profile exceeds the checked-in boundary (#12562)", async () => {
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: true,
+      value: metadata(),
+    }));
+    const listProviderAttachments = vi.fn<OpenShellProviderAdapter["listProviderAttachments"]>(
+      async () => ({
+        ok: true,
+        value: { names: [NVIDIA_HOSTED_NATIVE_PROVIDER] },
+      }),
+    );
+    const providerAdapter = adapter({
+      importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "live endpoint rules are wider than the checked-in profile",
+        },
+      })),
+      getProvider,
+      listProviderAttachments,
+    });
+
+    await expect(
+      verifyNativeNvidiaProviderAttachment({
+        adapter: providerAdapter,
+        target,
+        sandboxName: "alpha",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow(/conflicts with NemoClaw's checked-in security boundary/u);
+    expect(getProvider).not.toHaveBeenCalled();
+    expect(listProviderAttachments).not.toHaveBeenCalled();
+  });
+
+  it("refuses to attach through a live provider profile that exceeds the checked-in boundary (#12562)", async () => {
+    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
+    const providerAdapter = adapter({
+      importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "live endpoint rules are wider than the checked-in profile",
+        },
+      })),
+      attachProvider,
+    });
+
+    await expect(
+      ensureNativeNvidiaProviderAttached({
+        adapter: providerAdapter,
+        target,
+        sandboxName: "alpha",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow(/conflicts with NemoClaw's checked-in security boundary/u);
+    expect(attachProvider).not.toHaveBeenCalled();
+  });
+
+  it("rolls back attachment when its profile boundary changes during attachment", async () => {
+    const importProviderProfile = vi
+      .fn<OpenShellProviderAdapter["importProviderProfile"]>()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "profile widened after attach",
+        },
+      });
+    const providerAdapter = adapter({
+      importProviderProfile,
+      listProviderAttachments: vi
+        .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
+        .mockResolvedValue({ ok: true, value: { names: [] } }),
+    });
+    await expect(
+      ensureNativeNvidiaProviderAttached({
+        adapter: providerAdapter,
+        target,
+        sandboxName: "alpha",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow("conflicts with NemoClaw's checked-in security boundary");
+    expect(providerAdapter.attachProvider).toHaveBeenCalledOnce();
+    expect(providerAdapter.detachProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      sandboxName: "alpha",
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    });
+  });
+
   it("removes a newly attached provider when attachment verification fails (#12558)", async () => {
     const listProviderAttachments = vi
       .fn<OpenShellProviderAdapter["listProviderAttachments"]>()

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { adminApprovalConnectScript } from "../e2e/fixtures/admin-approval-connect.ts";
 import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selector.ts";
+import { exactRequestAdminApprovalConnectScript } from "../e2e/live/openclaw-admin-scope.ts";
 import {
   ADMIN_APPROVAL_TEST_CLI_SH,
   ADMIN_APPROVAL_TEST_PTY_PY,
@@ -141,6 +142,8 @@ function runAdminApprovalScript(
     tamperScript?: boolean;
     requireNonInteractiveBody?: boolean;
     omitPreparedWrapper?: boolean;
+    pendingRequestIds?: readonly string[];
+    selectExpectedRequest?: boolean;
   } = {},
 ): {
   commands: string[];
@@ -228,7 +231,13 @@ esac
 `,
     { mode: 0o755 },
   );
-  fs.writeFileSync(devicesPath, JSON.stringify(adminState("array", requestId)));
+  const devicesState = adminState("array", requestId);
+  const pending = (devicesState.pending as Array<Record<string, unknown>>)[0];
+  devicesState.pending = (options.pendingRequestIds ?? [requestId]).map((pendingRequestId) => ({
+    ...pending,
+    requestId: pendingRequestId,
+  }));
+  fs.writeFileSync(devicesPath, JSON.stringify(devicesState));
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${root}:${process.env.PATH ?? ""}`,
@@ -255,13 +264,21 @@ esac
     const result = spawnSync("bash", [], {
       encoding: "utf-8",
       env: childEnv,
-      input: adminApprovalConnectScript(
-        cliPath,
-        "e2e-issue-4462",
-        "admin-cron",
-        options.expectedRequestId,
-        options.verifyCronConsumer,
-      ),
+      input: options.selectExpectedRequest
+        ? exactRequestAdminApprovalConnectScript(
+            cliPath,
+            "e2e-issue-4462",
+            "admin-cron",
+            options.expectedRequestId ?? requestId,
+            options.verifyCronConsumer,
+          )
+        : adminApprovalConnectScript(
+            cliPath,
+            "e2e-issue-4462",
+            "admin-cron",
+            options.expectedRequestId,
+            options.verifyCronConsumer,
+          ),
     });
     const commands = fs.existsSync(commandLogPath)
       ? fs.readFileSync(commandLogPath, "utf8").trim().split("\n")
@@ -367,6 +384,21 @@ describe("prepared connect-shell administrative approval", () => {
       expect(stagedScriptRetained).toBe(false);
     },
   );
+
+  it("approves the captured request when another request remains pending", () => {
+    const staleRequestId = "87654321-4321-4321-8321-cba987654321";
+    const { commands, result } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+      expectedRequestId: EXPECTED_REQUEST_ID,
+      pendingRequestIds: [staleRequestId, EXPECTED_REQUEST_ID],
+      selectExpectedRequest: true,
+      verifyCronConsumer: false,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(commands).toEqual(["devices list --json", `devices approve ${EXPECTED_REQUEST_ID}`]);
+    expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(staleRequestId);
+  });
   it.each([
     [
       "approval boundary",

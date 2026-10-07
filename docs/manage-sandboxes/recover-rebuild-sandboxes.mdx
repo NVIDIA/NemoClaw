@@ -184,11 +184,11 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 <AgentOnly variant="openclaw,hermes">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
-NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`.
+Their models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+NVIDIA Endpoints verifies its sandbox-attached provider at `integrate.api.nvidia.com` and runs the bounded model request without the shared-route models probe.
 Authenticated hosted compatible endpoints other than AWS Bedrock use their endpoint-restricted sandbox attachments.
 AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
-The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
-A failed model request rejects launch readiness.
+A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -254,10 +254,11 @@ Generated-image rebuilds use the base image selected during preflight, even when
 Custom Dockerfile rebuilds use the recorded Dockerfile source.
 
 <AgentOnly variant="openclaw,hermes">
-  A sandbox created with `--from-image` rebuilds from its recorded digest instead. Before backup or
-  deletion, NemoClaw makes that digest available in Docker and validates its platform, runtime
-  metadata, tool disclosure mode, and immutable local content identity. If a pull or validation
-  fails, rebuild keeps the existing sandbox and stops before replacement.
+A sandbox created with `--from-image` rebuilds from its recorded digest instead.
+Before backup or deletion, NemoClaw makes that digest available in its selected Docker or rootless
+Podman runtime and validates its platform, runtime metadata, tool disclosure mode, and immutable
+local content identity.
+If a pull or validation fails, rebuild keeps the existing sandbox and stops before replacement.
 </AgentOnly>
 
 If replacement onboarding returns a nonzero status, rebuild stops before post-create state restoration and preserves the backup and registry recovery state.

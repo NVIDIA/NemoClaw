@@ -1003,7 +1003,11 @@ describe("credential actions use typed OpenShell provider results", () => {
 
       const result = await runCredentialsResetAction(
         { provider, confirmed: true },
-        { providerAdapter: adapter },
+        {
+          providerAdapter: adapter,
+          listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+          withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+        },
       );
 
       expect(result.exitCode).toBe(1);
@@ -1093,7 +1097,12 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     const result = await runCredentialsResetAction(
       { provider: "nvidia-prod", confirmed: true },
-      { providerAdapter: adapter, clearNativeNvidiaProviderAuthority },
+      {
+        providerAdapter: adapter,
+        clearNativeNvidiaProviderAuthority,
+        listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
     );
 
     expect(result.exitCode).toBe(0);
@@ -1115,7 +1124,12 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     const result = await runCredentialsResetAction(
       { provider: "nvidia-prod", confirmed: true },
-      { providerAdapter: adapter, clearNativeNvidiaProviderAuthority },
+      {
+        providerAdapter: adapter,
+        clearNativeNvidiaProviderAuthority,
+        listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
     );
 
     expect(result.exitCode).toBe(0);

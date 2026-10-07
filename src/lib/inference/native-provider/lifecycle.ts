@@ -190,6 +190,27 @@ export async function persistNativeProviderAuthority(input: {
   }
 }
 
+async function requireNativeProviderProfileBoundary(
+  adapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+  profile: NativeProviderProfile,
+  profilePath = profile.profilePath,
+): Promise<void> {
+  const imported = await adapter.importProviderProfile({
+    target,
+    profilePath: profilePath,
+  });
+  if (!imported.ok) {
+    const collision =
+      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
+    throw new NativeProviderError(
+      collision
+        ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
+        : `Could not prepare OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
+    );
+  }
+}
+
 /** Ensure the least-privilege hosted profile and provider without retrying an ambiguous mutation. */
 export async function ensureNativeProvider(input: {
   profile: NativeProviderProfile;
@@ -202,19 +223,7 @@ export async function ensureNativeProvider(input: {
 }): Promise<NativeProviderAttachment> {
   const { adapter, target, profile } = input;
   assertExpectedProfile(profile, input.expected);
-  const imported = await adapter.importProviderProfile({
-    target,
-    profilePath: input.profilePath ?? profile.profilePath,
-  });
-  if (!imported.ok) {
-    const collision =
-      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
-    throw new NativeProviderError(
-      collision
-        ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
-        : `Could not prepare OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
-    );
-  }
+  await requireNativeProviderProfileBoundary(adapter, target, profile, input.profilePath);
 
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
@@ -308,6 +317,10 @@ export async function verifyNativeProviderAttachment(input: {
   if (!profile)
     throw new NativeProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
+  // Dynamic endpoint owners inspect their pinned profile before calling with no file path.
+  if (profile.profilePath) {
+    await requireNativeProviderProfileBoundary(input.adapter, input.target, profile);
+  }
   const provider = await inspectNativeProvider(input.adapter, input.target, profile);
   if (!provider) {
     throw new NativeProviderError(
@@ -349,6 +362,10 @@ export async function ensureNativeProviderAttached(input: {
   if (!profile)
     throw new NativeProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
+  // Dynamic endpoint owners inspect their pinned profile before calling with no file path.
+  if (profile.profilePath) {
+    await requireNativeProviderProfileBoundary(input.adapter, input.target, profile);
+  }
   const before = await input.adapter.listProviderAttachments({
     target: input.target,
     sandboxName: input.sandboxName,

@@ -12,6 +12,7 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
   return {
     attachProvider: vi.fn(),
     detachProvider: vi.fn(),
+    importProviderProfile: vi.fn(() => ({ ok: true })),
     getProvider: vi.fn(async () => ({
       ok: true,
       value: {
