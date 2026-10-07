@@ -16,7 +16,7 @@ const DEFAULT_ENV: NodeJS.ProcessEnv = {};
 const agent = (name: string) => ({ name }) as AgentDefinition;
 
 describe("resolveDockerStartupCommandPatch", () => {
-  it.each(["openclaw", "hermes"])(
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
     "relies on the OpenShell canonical process for %s on a default-profile docker-driver gateway",
     (name) => {
       expect(resolveDockerStartupCommandPatch(agent(name), true, DEFAULT_ENV)).toMatchObject({
@@ -25,11 +25,11 @@ describe("resolveDockerStartupCommandPatch", () => {
     },
   );
 
-  it("keeps the DCode recreation required for exact Docker ulimits", () => {
+  it("retains DCode limits for GPU compatibility without forcing CPU recreation", () => {
     expect(
       resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), true, DEFAULT_ENV),
     ).toEqual({
-      persistStartupCommand: true,
+      persistStartupCommand: false,
       requiredUlimits: DCODE_DOCKER_ULIMITS,
     });
   });
