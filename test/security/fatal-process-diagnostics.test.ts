@@ -54,13 +54,17 @@ function encodedMessagingPlan(renderTarget: string | null): string {
 describe("fatal process diagnostics", () => {
   it("reports remediation timeouts without exposing child details", () => {
     const timeout = Object.assign(new Error(CREDENTIAL_CANARY), { code: "ETIMEDOUT" });
-    const remediationError = new OpenClawNpmRemediationCommandError(timeout, 15 * 60_000);
+    const remediationError = new OpenClawNpmRemediationCommandError(
+      timeout,
+      15 * 60_000,
+      "fetch replacement",
+    );
     const diagnostic = fatalMessagingBuildDiagnostic(
       new OfficialPluginRemediationError("slack", remediationError),
     );
 
     expect(diagnostic).toBe(
-      "Official OpenClaw plugin 'slack' remediation command timed out after 15 minutes.",
+      "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' timed out after 15 minutes.",
     );
     expect(diagnostic).not.toContain(CREDENTIAL_CANARY);
   });
@@ -70,27 +74,28 @@ describe("fatal process diagnostics", () => {
       failure: "tar failure",
       executable: "tar",
       npmExecutable: undefined,
-      diagnostic: "Official OpenClaw plugin 'slack' remediation command failed.",
+      diagnostic: "Official OpenClaw plugin 'slack' remediation operation 'list archive' failed.",
     },
     {
       failure: "unavailable tar",
       executable: "unused-tar",
       npmExecutable: undefined,
       diagnostic:
-        "Official OpenClaw plugin 'slack' remediation could not start a required command.",
+        "Official OpenClaw plugin 'slack' remediation operation 'list archive' could not start a required command.",
     },
     {
       failure: "npm failure",
       executable: "replacement-npm",
       npmExecutable: "replacement-npm",
-      diagnostic: "Official OpenClaw plugin 'slack' remediation command failed.",
+      diagnostic:
+        "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' failed.",
     },
     {
       failure: "unavailable npm",
       executable: "unused-npm",
       npmExecutable: "missing-npm",
       diagnostic:
-        "Official OpenClaw plugin 'slack' remediation could not start a required command.",
+        "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' could not start a required command.",
     },
   ])(
     "identifies Slack remediation $failure without exposing child output",
@@ -148,11 +153,56 @@ describe("fatal process diagnostics", () => {
     },
   );
 
+  it("identifies Slack archive extraction failures without exposing child output", async () => {
+    const fixture = await createSlackRemediationFixture();
+    try {
+      fs.writeFileSync(
+        path.join(fixture.bin, "tar"),
+        [
+          "#!/bin/sh",
+          'case "${1:-}" in',
+          '  -tzf) printf "%s\\n" "package/package.json" ;;',
+          '  -tvzf) printf "%s\\n" "-rw-r--r-- 0/0 1 2026-01-01 00:00 package/package.json" ;;',
+          `  -xzf) printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY" >&2; exit 1 ;;`,
+          "  *) exit 1 ;;",
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const result = spawnSync(
+        process.execPath,
+        [MESSAGING_BUILD_APPLIER, "--agent", "openclaw", "--phase", "agent-install"],
+        {
+          cwd: REPOSITORY_ROOT,
+          encoding: "utf8",
+          env: {
+            ...fixture.env,
+            NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: CREDENTIAL_CANARY,
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(
+        "Official OpenClaw plugin 'slack' remediation operation 'extract archive' failed.",
+      );
+      expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
+      expect(result.stderr).not.toContain(fixture.root);
+      expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     {
       failure: "unavailable tar",
       directory: "work",
-      diagnostic: "OpenClaw npm remediation could not start a required command.",
+      diagnostic:
+        "OpenClaw npm remediation operation 'list archive' could not start a required command.",
     },
     {
       failure: "inaccessible working directory",
@@ -323,7 +373,7 @@ describe("fatal process diagnostics", () => {
 
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("OpenClaw npm remediation command failed.");
+      expect(result.stderr).toContain("OpenClaw npm remediation operation 'list archive' failed.");
       expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });

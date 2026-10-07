@@ -217,10 +217,15 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
 
 export class OpenClawNpmRemediationCommandError extends Error {
   readonly couldNotStart: boolean;
+  readonly operation: OpenClawNpmRemediationOperation;
   readonly timedOut: boolean;
   readonly timeoutMs: number;
 
-  constructor(error: NodeJS.ErrnoException | undefined, timeoutMs: number) {
+  constructor(
+    error: NodeJS.ErrnoException | undefined,
+    timeoutMs: number,
+    operation: OpenClawNpmRemediationOperation,
+  ) {
     const couldNotStart = ["ENOENT", "EACCES", "EPERM"].includes(error?.code ?? "");
     const timedOut = error?.code === "ETIMEDOUT";
     let message = "Remediation command failed.";
@@ -230,10 +235,17 @@ export class OpenClawNpmRemediationCommandError extends Error {
     }
     super(message);
     this.couldNotStart = couldNotStart;
+    this.operation = operation;
     this.timedOut = timedOut;
     this.timeoutMs = timeoutMs;
   }
 }
+
+export type OpenClawNpmRemediationOperation =
+  | "extract archive"
+  | "fetch replacement"
+  | "list archive"
+  | "pack archive";
 
 export function describeOpenClawNpmRemediationTimeout(timeoutMs: number): string {
   if (timeoutMs % 60_000 === 0) {
@@ -252,6 +264,7 @@ export function runOpenClawNpmRemediationCommand(
   args: readonly string[],
   cwd: string | undefined,
   env: NodeJS.ProcessEnv,
+  operation: OpenClawNpmRemediationOperation,
   maxBuffer = 64 * 1024 * 1024,
   timeoutMs = REMEDIATION_COMMAND_TIMEOUT_MS,
 ) {
@@ -265,7 +278,7 @@ export function runOpenClawNpmRemediationCommand(
     timeout: timeoutMs,
   });
   if (result.error || result.status !== 0) {
-    throw new OpenClawNpmRemediationCommandError(result.error, timeoutMs);
+    throw new OpenClawNpmRemediationCommandError(result.error, timeoutMs, operation);
   }
   return result.stdout;
 }
@@ -275,16 +288,17 @@ function run(
   args: readonly string[],
   cwd: string | undefined,
   env: NodeJS.ProcessEnv,
+  operation: OpenClawNpmRemediationOperation,
   maxBuffer = 64 * 1024 * 1024,
 ) {
-  return runOpenClawNpmRemediationCommand(command, args, cwd, env, maxBuffer);
+  return runOpenClawNpmRemediationCommand(command, args, cwd, env, operation, maxBuffer);
 }
 
 function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.ProcessEnv): void {
-  const names = run("tar", ["-tzf", archivePath], cwd, env)
+  const names = run("tar", ["-tzf", archivePath], cwd, env, "list archive")
     .split("\n")
     .filter((entry) => entry.length > 0);
-  const verbose = run("tar", ["-tvzf", archivePath], cwd, env)
+  const verbose = run("tar", ["-tvzf", archivePath], cwd, env, "list archive")
     .split("\n")
     .filter((entry) => entry.length > 0);
   if (names.length === 0 || verbose.length !== names.length) {
@@ -319,7 +333,7 @@ function extractArchive(
 ): string {
   validateArchiveMembers(archivePath, cwd, env);
   mkdirSync(destination, { recursive: true, mode: 0o700 });
-  run("tar", ["-xzf", archivePath, "-C", destination], cwd, env);
+  run("tar", ["-xzf", archivePath, "-C", destination], cwd, env, "extract archive");
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
     throw new Error(`npm archive ${archivePath} did not extract a package directory`);
@@ -1194,7 +1208,15 @@ function packReplacement(
       tarballUrl,
       tempDirectory: workingDirectory,
     },
-    (args, request) => run(request.npmExecutable ?? "npm", args, undefined, env, 16 * 1024 * 1024),
+    (args, request) =>
+      run(
+        request.npmExecutable ?? "npm",
+        args,
+        undefined,
+        env,
+        "fetch replacement",
+        16 * 1024 * 1024,
+      ),
   );
 }
 
@@ -1682,6 +1704,7 @@ export function buildRemediatedOpenClawPluginArchive(
     ["pack", ".", "--pack-destination", outputDirectory, "--ignore-scripts", "--json"],
     sourcePackage,
     env,
+    "pack archive",
   );
   const packed = JSON.parse(packedJson);
   const packedResult = singleNpmPackResult(packed);
@@ -1818,11 +1841,13 @@ function isMainModule(): boolean {
 
 export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (error instanceof OpenClawNpmRemediationCommandError) {
-    if (error.couldNotStart) return "OpenClaw npm remediation could not start a required command.";
-    if (error.timedOut) {
-      return `OpenClaw npm remediation command timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    if (error.couldNotStart) {
+      return `OpenClaw npm remediation operation '${error.operation}' could not start a required command.`;
     }
-    return "OpenClaw npm remediation command failed.";
+    if (error.timedOut) {
+      return `OpenClaw npm remediation operation '${error.operation}' timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    }
+    return `OpenClaw npm remediation operation '${error.operation}' failed.`;
   }
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("Missing --")) {

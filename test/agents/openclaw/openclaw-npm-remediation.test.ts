@@ -479,6 +479,7 @@ describe("OpenClaw npm remediation", () => {
         ["-e", 'process.stdout.write("private command output"); setInterval(() => {}, 1000);'],
         undefined,
         process.env,
+        "fetch replacement",
         64 * 1024 * 1024,
         750,
       );
@@ -489,12 +490,13 @@ describe("OpenClaw npm remediation", () => {
     expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
     expect(failure).toMatchObject({
       couldNotStart: false,
+      operation: "fetch replacement",
       timedOut: true,
       timeoutMs: 750,
       message: "Remediation command timed out after 750 ms.",
     });
     expect(fatalOpenClawNpmRemediationDiagnostic(failure)).toBe(
-      "OpenClaw npm remediation command timed out after 750 ms.",
+      "OpenClaw npm remediation operation 'fetch replacement' timed out after 750 ms.",
     );
     expect(String(failure)).not.toContain("private command output");
     expect(Date.now() - startedAt).toBeLessThan(5_000);

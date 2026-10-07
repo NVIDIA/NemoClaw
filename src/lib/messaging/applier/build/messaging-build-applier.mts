@@ -192,6 +192,7 @@ class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
 export class OfficialPluginRemediationError extends MessagingBuildApplierError {
   readonly pluginId: string;
   readonly couldNotStart: boolean;
+  readonly operation: OpenClawNpmRemediationCommandError["operation"];
   readonly timedOut: boolean;
   readonly timeoutMs: number;
 
@@ -199,6 +200,7 @@ export class OfficialPluginRemediationError extends MessagingBuildApplierError {
     super("Official OpenClaw plugin remediation command failed.");
     this.pluginId = pluginId;
     this.couldNotStart = error.couldNotStart;
+    this.operation = error.operation;
     this.timedOut = error.timedOut;
     this.timeoutMs = error.timeoutMs;
   }
@@ -2252,12 +2254,12 @@ function isMainModule(): boolean {
 export function fatalMessagingBuildDiagnostic(error: unknown): string {
   if (error instanceof OfficialPluginRemediationError) {
     if (error.couldNotStart) {
-      return `Official OpenClaw plugin '${error.pluginId}' remediation could not start a required command.`;
+      return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' could not start a required command.`;
     }
     if (error.timedOut) {
-      return `Official OpenClaw plugin '${error.pluginId}' remediation command timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+      return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
     }
-    return `Official OpenClaw plugin '${error.pluginId}' remediation command failed.`;
+    return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' failed.`;
   }
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;

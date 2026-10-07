@@ -126,6 +126,60 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     },
   );
 
+  it(
+    "preserves remediation timeouts through official plugin installation and the CLI exit path",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const timeoutHook = path.join(fixture.root, "timeout-hook.mjs");
+      fs.writeFileSync(
+        timeoutHook,
+        [
+          'import { createRequire, syncBuiltinESMExports } from "node:module";',
+          'const childProcess = createRequire(import.meta.url)("node:child_process");',
+          "const originalSpawnSync = childProcess.spawnSync;",
+          "childProcess.spawnSync = (command, args, options) => {",
+          '  if (command === "npm" && Array.isArray(args) && args[0] === "view" && args[1] === "proxy-addr@2.0.8") {',
+          '    return { error: Object.assign(new Error(process.env.NEMOCLAW_FATAL_DIAGNOSTIC_CANARY), { code: "ETIMEDOUT" }) };',
+          "  }",
+          "  return originalSpawnSync(command, args, options);",
+          "};",
+          "syncBuiltinESMExports();",
+          "",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+
+      try {
+        const result = spawnSync(
+          process.execPath,
+          ["--import", timeoutHook, SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+              NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: "OPENAI_API_KEY=process-boundary-canary-0123456789",
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(2);
+        expect(result.stderr).toContain(
+          "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' timed out after 15 minutes.",
+        );
+        expect(result.stderr).not.toContain("OPENAI_API_KEY=process-boundary-canary-0123456789");
+        expect(result.stderr).not.toContain(fixture.root);
+        expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(20_000),
+  );
+
   it("loads the real build applier from the Hermes image module boundary", () => {
     const dockerfile = fs.readFileSync(
       path.join(REPO_ROOT, "agents", "hermes", "Dockerfile"),
