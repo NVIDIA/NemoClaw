@@ -79,11 +79,12 @@ function portableProviderIdentity(options: {
   return portableNativeIdentity(options.gatewayName, options.sandboxName, transactionId);
 }
 function portableProviderCredential(
-  options: { directory: string; gatewayName: string; sandboxName: string; credentialEnv: string },
+  identity: ReturnType<typeof portableProviderIdentity>,
+  credentialEnv: string,
   transactionId: string,
 ) {
-  return portableProviderIdentity(options).profileId === "openai"
-    ? `${options.credentialEnv}_${transactionId.toUpperCase()}`
+  return identity.profileId === "openai"
+    ? `${credentialEnv}_${transactionId.toUpperCase()}`
     : NATIVE_LOCAL_CREDENTIAL_ENV;
 }
 
@@ -1028,13 +1029,14 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
       "Hermes Portable Ollama published transaction authority is inconsistent.",
     );
   }
+  const providerIdentity = portableProviderIdentity(options);
   const recoveryScope: GatewayProviderJournalRecoveryScope = Object.freeze({
     targetSha256: options.targetSha256,
     gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
-    provider: portableProviderIdentity(options).providerName,
+    provider: providerIdentity.providerName,
     model: options.model,
-    type: portableProviderIdentity(options).profileId,
+    type: providerIdentity.profileId,
     credentialEnv: options.credentialEnv,
     baseUrl: "http://host.openshell.internal:11434/v1",
   });
@@ -1046,7 +1048,11 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     recoveredReceipt?.publication?.transactionId ??
     recoveredJournalTransactionId ??
     options.transactionId;
-  const providerCredentialEnv = portableProviderCredential(options, transactionId);
+  const providerCredentialEnv = portableProviderCredential(
+    providerIdentity,
+    options.credentialEnv,
+    transactionId,
+  );
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1057,9 +1063,9 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
       targetSha256: options.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: portableProviderIdentity(options).providerName,
+      provider: providerIdentity.providerName,
       model: options.model,
-      type: portableProviderIdentity(options).profileId,
+      type: providerIdentity.profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1",
@@ -1144,8 +1150,13 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
   ) {
     throw new Error("Hermes Portable Ollama published receipt authority is inconsistent.");
   }
+  const providerIdentity = portableProviderIdentity(options);
   const transactionId = receipt.publication.transactionId;
-  const providerCredentialEnv = portableProviderCredential(options, transactionId);
+  const providerCredentialEnv = portableProviderCredential(
+    providerIdentity,
+    options.credentialEnv,
+    transactionId,
+  );
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1156,9 +1167,9 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
       targetSha256: receipt.publication.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: portableProviderIdentity(options).providerName,
+      provider: providerIdentity.providerName,
       model: receipt.inference.model,
-      type: portableProviderIdentity(options).profileId,
+      type: providerIdentity.profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1" as const,
@@ -1210,9 +1221,14 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   ) {
     throw new Error("Hermes Portable Ollama published receipt authority is inconsistent.");
   }
+  const providerIdentity = portableProviderIdentity(options);
   const transactionId = receipt.publication.transactionId;
   const targetSha256 = receipt.publication.targetSha256;
-  const providerCredentialEnv = portableProviderCredential(options, transactionId);
+  const providerCredentialEnv = portableProviderCredential(
+    providerIdentity,
+    options.credentialEnv,
+    transactionId,
+  );
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1221,9 +1237,9 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     targetSha256,
     gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
-    provider: portableProviderIdentity(options).providerName,
+    provider: providerIdentity.providerName,
     model: receipt.inference.model,
-    type: portableProviderIdentity(options).profileId,
+    type: providerIdentity.profileId,
     credentialEnv: options.credentialEnv,
     providerCredentialEnv,
     baseUrl: "http://host.openshell.internal:11434/v1" as const,
@@ -1239,7 +1255,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   }
   const provider = observeExactGatewayProvider(
     options.runGatewayOpenshell,
-    portableProviderIdentity(options).providerName,
+    providerIdentity.providerName,
     providerCredentialEnv,
   );
   if (
@@ -1262,7 +1278,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     assertTransactionCurrent();
     const currentProvider = observeExactGatewayProvider(
       options.runGatewayOpenshell,
-      portableProviderIdentity(options).providerName,
+      providerIdentity.providerName,
       providerCredentialEnv,
     );
     if (!isDeepStrictEqual(currentProvider, provider)) {
@@ -1312,7 +1328,12 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly allowAbsent?: boolean;
 }): PreparedHermesPortableOllamaProviderRetirement {
-  const providerCredentialEnv = portableProviderCredential(options, options.transactionId);
+  const providerIdentity = portableProviderIdentity(options);
+  const providerCredentialEnv = portableProviderCredential(
+    providerIdentity,
+    options.credentialEnv,
+    options.transactionId,
+  );
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
@@ -1323,9 +1344,9 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
       targetSha256: options.targetSha256,
       gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
-      provider: portableProviderIdentity(options).providerName,
+      provider: providerIdentity.providerName,
       model: options.model,
-      type: portableProviderIdentity(options).profileId,
+      type: providerIdentity.profileId,
       credentialEnv: options.credentialEnv,
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1",
@@ -1341,7 +1362,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   const observe = () =>
     observeExactGatewayProvider(
       options.runGatewayOpenshell,
-      portableProviderIdentity(options).providerName,
+      providerIdentity.providerName,
       providerCredentialEnv,
     );
   const matches = (
@@ -1398,7 +1419,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
         }),
       ).deleteProvider({
         target: { kind: "selected" },
-        providerName: portableProviderIdentity(options).providerName,
+        providerName: providerIdentity.providerName,
         timeoutMs: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
       });
       const after = observe();

@@ -88,13 +88,13 @@ export async function prepareNativeLocalSwitch(input: {
   const previousDetached = Boolean(
     input.previous && input.previous.providerName !== receipt.providerName,
   );
-  if (previousDetached)
-    await detachNativeLocalProvider({
-      adapter: input.adapter,
-      sandboxName: input.sandboxName,
-      expected: input.previous!,
-    });
   try {
+    if (previousDetached)
+      await detachNativeLocalProvider({
+        adapter: input.adapter,
+        sandboxName: input.sandboxName,
+        expected: input.previous!,
+      });
     const attached = await ensureNativeLocalProviderAttached({
       adapter: input.adapter,
       expected: receipt,
@@ -197,11 +197,20 @@ export async function detachPreviousNativeLocalBeforePublish(input: {
 }): Promise<boolean> {
   if (input.detached || !input.previous || input.previous.providerName === input.next?.providerName)
     return input.detached;
-  await detachNativeLocalProvider({
-    adapter: input.adapter,
-    sandboxName: input.sandboxName,
-    expected: input.previous,
-  });
+  try {
+    await detachNativeLocalProvider({
+      adapter: input.adapter,
+      sandboxName: input.sandboxName,
+      expected: input.previous,
+    });
+  } catch (error) {
+    await ensureNativeLocalProviderAttached({
+      adapter: input.adapter,
+      sandboxName: input.sandboxName,
+      expected: input.previous,
+    });
+    throw error;
+  }
   return true;
 }
 

@@ -9,7 +9,11 @@ import {
   ensureNativeLocalProviderAttached,
   detachNativeLocalProvider,
 } from "../inference/native-local/profile";
-import { prepareNativeLocalSwitch, rollbackNativeLocalSelection } from "./inference/native-local";
+import {
+  prepareNativeLocalSwitch,
+  rollbackNativeLocalSelection,
+  detachPreviousNativeLocalBeforePublish,
+} from "./inference/native-local";
 
 vi.mock("../inference/native-local/selection", () => ({ prepareNativeLocalSelection: vi.fn() }));
 vi.mock("../inference/native-local/profile", () => ({
@@ -182,5 +186,45 @@ describe("native local selection compensation", () => {
     await expect(rollbackNativeLocalSelection(input)).rejects.toThrow("registry unavailable");
     expect(detachNativeLocalProvider).not.toHaveBeenCalled();
     expect(ensureNativeLocalProviderAttached).not.toHaveBeenCalled();
+  });
+});
+
+describe.each([
+  {
+    operation: "native replacement",
+    execute: (input: ReturnType<typeof fixture>) => prepareNativeLocalSwitch(input),
+  },
+  {
+    operation: "shared publication",
+    execute: (input: ReturnType<typeof fixture>) =>
+      detachPreviousNativeLocalBeforePublish({
+        adapter: input.adapter,
+        sandboxName: input.sandboxName,
+        previous: input.previous,
+        detached: false,
+      }),
+  },
+])("native local detach compensation during $operation", ({ execute }) => {
+  it("restores previous access after an inconclusive detach (#12558)", async () => {
+    const input = fixture();
+    vi.mocked(detachNativeLocalProvider).mockRejectedValueOnce(
+      new Error("detach readback unavailable"),
+    );
+    await expect(execute(input)).rejects.toThrow("detach readback unavailable");
+    expect(ensureNativeLocalProviderAttached).toHaveBeenCalledExactlyOnceWith({
+      adapter: input.adapter,
+      sandboxName: "alice",
+      expected: previous,
+    });
+  });
+  it("reports failed restoration without claiming access was restored (#12558)", async () => {
+    const input = fixture();
+    vi.mocked(detachNativeLocalProvider).mockRejectedValueOnce(
+      new Error("detach readback unavailable"),
+    );
+    vi.mocked(ensureNativeLocalProviderAttached).mockRejectedValueOnce(
+      new Error("restore unavailable"),
+    );
+    await expect(execute(input)).rejects.toThrow("restore unavailable");
   });
 });

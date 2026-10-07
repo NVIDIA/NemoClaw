@@ -1643,9 +1643,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     const detail = await restoreSharedInferenceSelection({
-      nativeSelection: Boolean(
-        selectingNative || previousNativeNvidiaAttachment || previousNativeLocalAttachment,
-      ),
+      nativeSelection: selectingNative,
       rollbackRoute,
       provider,
       model,

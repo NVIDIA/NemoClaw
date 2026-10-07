@@ -7,6 +7,7 @@
  */
 
 import { nativeLocalCredentialReference } from "./native-local/agent-config";
+import { usesNativeLocalInference } from "./native-local/contract";
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import {
   isSafeLlamaCppServedModelAlias,
@@ -421,7 +422,11 @@ export function getSandboxInferenceConfig(
       break;
   }
 
-  if (nativeEndpointUrl && nativeLocalCredentialReference(provider, nativeEndpointUrl)) {
+  if (
+    nativeEndpointUrl &&
+    usesNativeLocalInference(provider, nativeEndpointUrl) &&
+    nativeLocalCredentialReference(provider, nativeEndpointUrl)
+  ) {
     inferenceBaseUrl = nativeEndpointUrl;
     inferenceApi = "openai-completions";
   }

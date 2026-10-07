@@ -242,8 +242,14 @@ export function createPortableGatewayProviderHarness(
           stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } }),
           stderr: "",
         };
+      if (args.join(" ") === "policy list --global --limit 1")
+        return { status: 0, stdout: "", stderr: "No global policy history found\n" };
       if (args[0] === "policy" && args[1] === "get")
-        return { status: 0, stdout: "", stderr: "No global policy history found" };
+        return {
+          status: 1,
+          stdout: "",
+          stderr: 'status: NotFound, message: "no global policy revision found"',
+        };
       if (args[0] === "provider" && args[1] === "profile" && args[2] === "export") {
         if (profileState === "missing" || profileState === "import-failed") {
           return { status: 1, stdout: "", stderr: "provider profile not found" };

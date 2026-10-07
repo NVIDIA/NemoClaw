@@ -368,6 +368,21 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
+  it.each([
+    ["compatible-endpoint", "http://host.openshell.internal:42103/v1", INFERENCE_ROUTE_URL],
+    [
+      "compatible-endpoint",
+      "http://host.openshell.internal:8000/v1",
+      "http://host.openshell.internal:8000/v1",
+    ],
+    ["ollama-local", "http://192.168.65.2:11435/v1", "http://192.168.65.2:11435/v1"],
+  ])("selects %s transport for %s (#12558)", (provider, endpoint, expected) => {
+    expect(
+      getSandboxInferenceConfig("model-a", provider, "openai-completions", endpoint)
+        .inferenceBaseUrl,
+    ).toBe(expected);
+  });
+
   it("enables streaming usage for ollama-local behind the managed inference route", () => {
     expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
