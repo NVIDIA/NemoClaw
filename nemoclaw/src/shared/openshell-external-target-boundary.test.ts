@@ -29,7 +29,7 @@ const CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
 const AUTHENTICATION_CONTENTS = "private-authentication-material";
 const CA_PEM = rootCertificates[0];
-const COMPATIBILITY = { minVersion: "0.0.116", maxVersion: "0.0.116" };
+const COMPATIBILITY = { minVersion: "0.1.2", maxVersion: "0.1.2" };
 const REGULAR_FILE_METADATA = {
   isFile: () => true,
   isSymbolicLink: () => false,
@@ -74,7 +74,7 @@ function externalTarget() {
   return {
     endpoint: "https://openshell.example.test:8443",
     workspace: "default",
-    expected_release: "0.0.116",
+    expected_release: "0.1.2",
     lifecycle: "external",
     trust: { ca_file: CA_FILE },
     authentication: { credential_file: AUTHENTICATION_FILE },
@@ -135,7 +135,7 @@ describe("external OpenShell target boundary", () => {
     expect(plan).toEqual({
       endpoint: "https://openshell.example.test:8443",
       workspace: "default",
-      expected_release: "0.0.116",
+      expected_release: "0.1.2",
       lifecycle: "external",
       authentication_source: "file",
       ca_fingerprint: `sha256:${createHash("sha256")
@@ -273,18 +273,18 @@ describe("external OpenShell target boundary", () => {
 
   it("rejects a range-compatible release that public health does not support (#9872)", () => {
     const target = { ...externalTarget(), expected_release: "0.0.105" };
-    const compatibility = { minVersion: "0.0.105", maxVersion: "0.0.116" };
+    const compatibility = { minVersion: "0.0.105", maxVersion: "0.1.2" };
 
     expect(() => buildSanitizedExternalOpenShellTargetPlan(target, compatibility)).toThrow(
-      "external OpenShell target expected_release must be 0.0.116",
+      "external OpenShell target expected_release must be 0.1.2",
     );
     expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["non-semantic", { minVersion: "current", maxVersion: "0.0.116" }],
-    ["unsafe", { minVersion: "0.0.116", maxVersion: "9007199254740992.0.0" }],
-    ["reversed", { minVersion: "0.0.117", maxVersion: "0.0.116" }],
+    ["non-semantic", { minVersion: "current", maxVersion: "0.1.2" }],
+    ["unsafe", { minVersion: "0.1.2", maxVersion: "9007199254740992.0.0" }],
+    ["reversed", { minVersion: "0.1.3", maxVersion: "0.1.2" }],
   ])("rejects a %s compatibility range before reading files", (_name, compatibility) => {
     expect(() =>
       buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility),

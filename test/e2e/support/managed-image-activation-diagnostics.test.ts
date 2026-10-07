@@ -22,6 +22,7 @@ import {
   externalImageActivationAgents,
   externalImageActivationMatches,
   externalImageActivationOnboardArgs,
+  inspectRuntimeSandboxContainerId,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
@@ -183,6 +184,28 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it.each(["docker", "podman"] as const)("selects full sandbox IDs through %s", async (engine) => {
+    const result = { exitCode: 0, stdout: `${"a".repeat(64)}\n`, stderr: "" };
+    const command = vi.fn(async () => result);
+    const env = { NEMOCLAW_GATEWAY_RUNTIME: engine };
+    await expect(
+      inspectRuntimeSandboxContainerId({ command } as never, engine, "candidate", "lookup", env),
+    ).resolves.toBe(result);
+    expect(command).toHaveBeenCalledExactlyOnceWith(
+      engine,
+      [
+        "ps",
+        "-aq",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.ai/sandbox-name=candidate",
+        "--filter",
+        "label=openshell.ai/isolation-role=sandbox",
+      ],
+      { artifactName: "lookup", env, timeoutMs: 30_000 },
+    );
+  });
+
   it("adopts public OpenClaw and Hermes digests through Docker and Podman", () => {
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
     expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);

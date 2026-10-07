@@ -41,13 +41,26 @@ describe("released OpenShell SDK export reads", () => {
           "utf8",
         ),
       );
+      expect(checkedIn.endpoints).toEqual([
+        {
+          host: "api.search.brave.com",
+          port: 443,
+          protocol: "rest",
+          access: "read-write",
+          enforcement: "enforce",
+        },
+      ]);
       const profile = fromJson(raw.ProviderProfileSchema, {
         id: checkedIn.id,
         source: "user",
         scope: "workspace",
         resourceVersion: "4",
         credentials: checkedIn.credentials,
-        endpoints: checkedIn.endpoints,
+        endpoints: checkedIn.endpoints.map((endpoint: Record<string, unknown>) => ({
+          ...endpoint,
+          access: raw.NetworkAccessPreset.READ_WRITE,
+          enforcement: raw.NetworkEnforcementMode.ENFORCE,
+        })),
         binaries: checkedIn.binaries.map((path: string) => ({ path })),
         inference_capable: checkedIn.inference_capable,
       });

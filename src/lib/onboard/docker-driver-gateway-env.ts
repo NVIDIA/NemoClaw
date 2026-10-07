@@ -167,6 +167,7 @@ function preparePortableGatewayHostRuntime(
       sandboxNamespace: "omitted",
       hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor",
       processOwnership: "scoped-namespace",
     },
     network: {

@@ -335,7 +335,7 @@ async function inspectRuntimeImageId(
   };
 }
 
-async function inspectRuntimeSandboxContainerId(
+export async function inspectRuntimeSandboxContainerId(
   host: HostCliClient,
   containerEngine: ContainerEngine,
   sandboxName: string,

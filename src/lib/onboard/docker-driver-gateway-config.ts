@@ -121,6 +121,9 @@ function alternateGatewayRuntimeProjection(
       sandboxNamespace: isNonEmptyString(namespace) ? "scoped" : "omitted",
       hostGatewayIp: isNonEmptyString(hostGatewayIp) ? hostGatewayIp : null,
       includeSupervisorBin: isNonEmptyString(driverConfig.supervisor_bin),
+      driverConfigLayout: isNonEmptyString(driverConfig.network_name)
+        ? "inline-supervisor"
+        : "split-supervisor",
     },
   };
 }
@@ -689,7 +692,8 @@ function existingGatewayIdentityFromConfig(
     if (schemaVersion !== 1 && schemaVersion !== 2) {
       throw ambiguousGatewayConfig(configPath, "unsupported gateway schema version");
     }
-    const legacyDriver = schemaVersion === 1 || driver === "podman";
+    const legacyDriver =
+      schemaVersion === 1 || runtime.gatewayConfig.driverConfigLayout === "inline-supervisor";
     const requiredDriverFields = [
       "grpc_endpoint",
       ...(!legacyDriver || runtime.gatewayConfig.hostGatewayIp === null ? [] : ["host_gateway_ip"]),
@@ -862,7 +866,8 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
   const driver = runtime.openShellDriver;
-  const legacyDriver = schemaVersion === 1 || driver === "podman";
+  const legacyDriver =
+    schemaVersion === 1 || runtime.gatewayConfig.driverConfigLayout === "inline-supervisor";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const guestTlsConfig = localTlsDir
     ? [

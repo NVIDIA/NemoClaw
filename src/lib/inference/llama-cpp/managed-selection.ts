@@ -49,13 +49,13 @@ type ManagedLlamaCppSelectionOptions = {
   readonly runtimeProviderId?: string;
 };
 
-function n1xWslDockerLocalityFailure(
+function wslDockerLocalityFailure(
   env: NodeJS.ProcessEnv,
   options: ManagedLlamaCppSelectionOptions,
 ): string | null {
   return (options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild)(env)
     ? null
-    : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
+    : "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
 }
 
 function dockerQualifiedPresetRuntimeFailure(
@@ -191,7 +191,7 @@ function managedLlamaCppSelectionEligibilityFailure(
   if (runtimeFailure) return runtimeFailure;
   return (
     (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-      n1xWslDockerLocalityFailure(env, options)) ||
+      wslDockerLocalityFailure(env, options)) ||
     null
   );
 }
@@ -242,7 +242,7 @@ function resolveManagedLlamaCppSelectionFromChoices(
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
   const presetId = requestedPresetId(env, catalog);
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
-    const localityFailure = n1xWslDockerLocalityFailure(env, options);
+    const localityFailure = wslDockerLocalityFailure(env, options);
     if (localityFailure) return { kind: "rejected", reason: localityFailure };
   }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {

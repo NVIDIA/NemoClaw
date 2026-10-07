@@ -196,7 +196,7 @@ void (async () => {
             target: {
               gatewayIdentity: digest("1"),
               workspace: "hermes-workspace",
-              openshellVersion: "0.0.116",
+              openshellVersion: "0.1.2",
             },
             sandbox: {
               name: "hermes-agent",
@@ -305,7 +305,7 @@ const observer: OpenShellHermesAgentObserver = {
         target: {
           gatewayIdentity: digest("1"),
           workspace: "hermes-workspace",
-          openshellVersion: "0.0.116",
+          openshellVersion: "0.1.2",
         },
         sandbox: {
           name: "hermes-agent",

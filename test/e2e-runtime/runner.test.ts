@@ -15,14 +15,14 @@ const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
-  cliLinuxArm64: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
-  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
-  gatewayDarwinArm64: "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d",
-  gatewayLinuxArm64: "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b",
-  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
-  sandboxLinuxArm64: "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557",
-  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
+  cliDarwinArm64: "cdde7e92bd7eac664031cf171cfe80d29e7f122a6674917b25a4ce0bcbc33466",
+  cliLinuxArm64: "9880c5776688231d5242deb046cdee361734f94901b9123949a0baf29fdadd9e",
+  cliLinuxX64: "7eb6917285331a09e3300266a0558616481a5e9927cae2612ea07c4045b6dd6f",
+  gatewayDarwinArm64: "640068efa16e446d5f4f9ffaec0af769dbab04d686473d2a7bd6bafeb4ef7f45",
+  gatewayLinuxArm64: "8ec1b6ca5b71ef5085fa51f3244d719a541e8f0d58cc569c7a0d6705b6204397",
+  gatewayLinuxX64: "218d887845b3a020ab7535c9985eb9c666d6938f144044957f8b82b42892aadb",
+  sandboxLinuxArm64: "4c68f2bc8e00a0a7d5d66d7bc2d836be6b255602a8f1b1650b4262c7935894b3",
+  sandboxLinuxX64: "f07ad7177f4c3ff7743f89531eda36bb784c56b45b166f49c5a51fbcfa5274a6",
 };
 
 type SpawnCallOptions = {
@@ -1141,7 +1141,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.2"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1249,7 +1249,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.2"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;

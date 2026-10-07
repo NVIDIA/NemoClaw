@@ -441,7 +441,7 @@ fi
     );
     const installedAgentDockerfile = path.join(path.dirname(installedDockerfile), "Dockerfile");
     const preMcpDockerfile = CURRENT_INSTALLED_DOCKERFILE.replace(
-      /^(?:COPY (?:agents\/hermes\/mcp-config-transaction\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.0\.116\.json) .*)\n/gm,
+      /^(?:COPY (?:agents\/hermes\/mcp-config-transaction\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.1\.2\.json) .*)\n/gm,
       "",
     );
     fs.mkdirSync(path.dirname(installedDockerfile), { recursive: true });

@@ -192,7 +192,7 @@ exit 0
       path.join(binDir, "openshell"),
       `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "version" ]; then
-  echo "openshell 0.0.116"
+  echo "openshell 0.1.2"
 fi
 exit 0
 `,
@@ -222,8 +222,8 @@ exit 0
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toContain("OpenShell SDK 0.0.116: verified archive prepared");
-    expect(output).toContain("OpenShell SDK 0.0.116: import OK");
+    expect(output).toContain("OpenShell SDK 0.1.2: verified archive prepared");
+    expect(output).toContain("OpenShell SDK 0.1.2: import OK");
     expect(fs.readFileSync(path.join(root, "build-saw-sdk"), "utf8")).toBe("yes");
   },
 );

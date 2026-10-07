@@ -177,7 +177,11 @@ describe("OpenShell provider evidence", () => {
       ],
       ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
       ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
-      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+      ["a read-write access preset", { endpoints: [{ ...endpoint, access: 2 }] }],
+      ["an unknown access preset", { endpoints: [{ ...endpoint, access: 999 }] }],
+      ["audit-only enforcement", { endpoints: [{ ...endpoint, enforcement: 2 }] }],
+      ["unspecified enforcement", { endpoints: [{ ...endpoint, enforcement: 0 }] }],
+      ["legacy string enforcement", { endpoints: [{ ...endpoint, enforcement: "enforce" }] }],
       [
         "uninspected credentials",
         { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
@@ -340,7 +344,7 @@ describe("OpenShell provider evidence", () => {
     { label: "discovery override", change: { discovery: {} } },
     {
       label: "an empty access preset",
-      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: "" }] },
+      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: 0 }] },
     },
   ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
     const { connect, raw } = fixture();

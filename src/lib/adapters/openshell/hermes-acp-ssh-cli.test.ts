@@ -142,7 +142,7 @@ function harness(
     captureOpenShell,
     createTempConfig,
     createSessionStatusNonce: () => SESSION_STATUS_NONCE,
-    openshellVersion: vi.fn(() => "0.0.116"),
+    openshellVersion: vi.fn(() => "0.1.2"),
     platform: "linux",
     resolveOpenshell: () => "/usr/bin/openshell",
     spawnSsh,

@@ -145,13 +145,6 @@ function requireString(value: unknown, label: string): string {
   return value;
 }
 
-function requireInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new Error(`${label} must be an integer`);
-  }
-  return value;
-}
-
 function sha256File(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }

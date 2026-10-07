@@ -1176,7 +1176,7 @@ lanes:
 
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
-- the Anthropic-compatible `hermes-inference-switch` mode;
+- the native NVIDIA `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
@@ -1506,7 +1506,7 @@ concrete job executions.
 - `channels-stop-start` with the `hermes` shard
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
-- `hermes-inference-switch` with the `anthropic` mode
+- `hermes-inference-switch` with the `native-nvidia` mode
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`

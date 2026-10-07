@@ -13,7 +13,7 @@ describe("Hermes lifecycle definition", () => {
     expect(HERMES_LIFECYCLE_DEFINITION).toEqual({
       agent: hermes.name,
       agentVersion: hermes.expectedVersion,
-      openshellVersion: "0.0.116",
+      openshellVersion: "0.1.2",
     });
   });
 });

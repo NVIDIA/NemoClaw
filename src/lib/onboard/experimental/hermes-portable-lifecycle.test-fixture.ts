@@ -373,7 +373,7 @@ export function createHermesPortableLifecycleTestDeps(
           gatewayName: GATEWAY,
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
-          openshellVersion: "0.0.116",
+          openshellVersion: "0.1.2",
           ...options.registry,
         }) as SandboxEntry,
       captureOpenShell,

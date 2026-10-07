@@ -1434,7 +1434,7 @@ network_policies:
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
-      openshellVersion: "0.0.116",
+      openshellVersion: "0.1.2",
     };
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });

@@ -113,7 +113,7 @@ function receipt(): HermesPortablePendingReceipt {
 
 function inspect(
   restartPolicy = "no",
-  labels = LABELS,
+  labels: Record<string, string> = LABELS,
   running = true,
   status = running ? "running" : "exited",
   paused = false,

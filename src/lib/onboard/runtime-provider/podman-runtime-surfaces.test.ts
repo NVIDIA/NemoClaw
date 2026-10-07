@@ -237,6 +237,7 @@ describe("current Podman runtime provider", () => {
         sandboxNamespace: "omitted",
         hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
         includeSupervisorBin: false,
+        driverConfigLayout: "inline-supervisor",
         processOwnership: "runtime-marker",
       },
       network: {

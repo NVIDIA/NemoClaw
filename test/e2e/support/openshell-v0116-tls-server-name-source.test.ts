@@ -10,7 +10,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import * as dockerDriverGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import { createDockerDriverGatewayRuntimeHelpers } from "../../../src/lib/onboard/docker-driver-gateway-runtime.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import {
+  OPENSHELL_V0116_QUALIFICATION,
+  OPENSHELL_V012_QUALIFICATION,
+} from "../fixtures/openshell-v0116-qualification.ts";
 import {
   assertOpenShellTlsServerNameSource,
   type OpenShellTlsServerNameSource,
@@ -67,19 +70,19 @@ describe("OpenShell 0.0.116 TLS server-name boundary", () => {
     try {
       const helpers = createDockerDriverGatewayRuntimeHelpers({
         gatewayPort: 18_080,
-        getBlueprintMaxOpenshellVersion: () => OPENSHELL_V0116_QUALIFICATION.version,
+        getBlueprintMaxOpenshellVersion: () => OPENSHELL_V012_QUALIFICATION.version,
         getCachedOpenshellBinary: () => null,
         getInstalledOpenshellVersion: () => null,
         isOpenshellDevVersion: () => false,
         loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
         runCapture: () => "",
         shouldUseOpenshellDevChannel: () => false,
-        supportedOpenshellFallbackVersion: OPENSHELL_V0116_QUALIFICATION.version,
+        supportedOpenshellFallbackVersion: OPENSHELL_V012_QUALIFICATION.version,
       });
 
       expect(
         helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      ).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
+      ).toBe(OPENSHELL_V012_QUALIFICATION.supervisorImage);
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });

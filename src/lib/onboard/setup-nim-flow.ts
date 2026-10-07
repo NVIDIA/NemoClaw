@@ -565,7 +565,10 @@ function prepareManagedLlamaCppMenu(input: {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
   const candidate =
-    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+    platform === "spark" ||
+    platform === "n1x" ||
+    gpu?.stationGb300WslProduct === true ||
+    requestedProvider === "install-llama-cpp";
   const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
   const discovery = candidate
     ? discoverManagedLlamaCppSafely(
@@ -583,6 +586,11 @@ function prepareManagedLlamaCppMenu(input: {
       `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
     );
   }
+  if (gpu?.stationGb300WslProduct === true && resolution?.kind === "rejected") {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this Station GB300 WSL host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
     options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
@@ -596,7 +604,7 @@ function platformDefaultProviderKey(input: {
   requestedModel: string | null;
 }): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
   if (
-    input.gpu?.platform === "n1x" &&
+    (input.gpu?.platform === "n1x" || input.gpu?.stationGb300WslProduct === true) &&
     !input.requestedModel &&
     input.managedLlamaCpp?.kind === "selected"
   ) {
