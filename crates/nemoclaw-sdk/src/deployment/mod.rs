@@ -274,14 +274,7 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        for kind in crate::services::generation_kinds(&document)? {
-            if record.generations.get(kind).is_none_or(String::is_empty) {
-                record.generations.insert(
-                    kind.into(),
-                    Record::new(document.clone())?.generations[kind].clone(),
-                );
-            }
-        }
+        record.allocate_missing_generations(&document)?;
         let bindings = if (record.pending() && !record.runtime_pending())
             || record.digest != document.digest()
         {
