@@ -38,6 +38,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import e2e_latency_load_ramp as latency_ramp
+
+RAMP_STATE: dict[str, object] = {"enabled": False, "tokens": 2048, "stop": False}
+
 FALLBACK_RE = re.compile(
     r"EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[\": ]+gateway|transport[\": ]+embedded",
     re.IGNORECASE,
@@ -68,6 +75,8 @@ def sandbox_name(prefix: str, user_id: int) -> str:
 
 
 def _chat_pause_sec() -> float:
+    if RAMP_STATE.get("enabled"):
+        return 0.0
     raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
     if raw is None or raw == "":
         return 3.0 if _MAX_TOKENS <= 128 else 0.0
@@ -80,7 +89,7 @@ def _chat_pause_sec() -> float:
 async def _stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
     raw = os.environ.get("E2E_USER_STAGGER_SEC")
     if raw is None or raw == "":
-        per_user = 2.0 if _MAX_TOKENS <= 128 else 0.0
+        per_user = 0.0 if RAMP_STATE.get("enabled") else (2.0 if _MAX_TOKENS <= 128 else 0.0)
     else:
         try:
             per_user = max(0.0, float(raw))
@@ -132,7 +141,6 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
     kubectl = shutil.which("kubectl")
     if not kubectl or users < 1:
         return
-    print("Client finished: stopping in-sandbox dcode -n")
     for user_id in range(users):
         name = sandbox_name(prefix, user_id)
         try:
@@ -288,7 +296,13 @@ async def simulate_user(
 
     async def one_turn(turn_id: int) -> None:
         nonlocal ok, err, tokens, last_log
-        prompt = PROMPTS[(user_id + turn_id) % len(PROMPTS)]
+        if RAMP_STATE.get("stop"):
+            return
+        if RAMP_STATE.get("enabled"):
+            prompts = latency_ramp.prompt_for_tokens(int(RAMP_STATE.get("tokens") or 2048), "deepagents")
+            prompt = prompts[(user_id + turn_id) % len(prompts)]
+        else:
+            prompt = PROMPTS[(user_id + turn_id) % len(PROMPTS)]
         success, detail = await send_user_query(sandbox, prompt, timeout_sec)
         if success:
             ok += 1
@@ -358,8 +372,40 @@ async def run_test(args: argparse.Namespace) -> int:
     print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
 
+    metric = os.environ.get("HPA_METRIC", "")
+    try:
+        metric = (
+            subprocess.check_output(
+                [
+                    "kubectl",
+                    "get",
+                    "hpa",
+                    args.hpa_name,
+                    "-n",
+                    args.hpa_namespace,
+                    "-o",
+                    "jsonpath={.spec.metrics[0].pods.metric.name}",
+                ],
+                text=True,
+                timeout=10,
+            ).strip()
+            or metric
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    last_ramp_tokens: object = "unset"
+    if os.environ.get("E2E_LATENCY_RAMP") != "0" and latency_ramp.is_latency_metric(metric):
+        RAMP_STATE["enabled"] = True
+        RAMP_STATE["tokens"] = latency_ramp.token_bands()[0]
+        last_ramp_tokens = RAMP_STATE["tokens"]
+        print(
+            f"[load] latency ramp: max_tokens={RAMP_STATE['tokens']} until 6 GPUs, "
+            f"then {latency_ramp.token_bands()[1]}, stop at {args.target_pods}",
+            flush=True,
+        )
+
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target
+        nonlocal max_replicas, reached_target, last_ramp_tokens
         while not stop_load.is_set():
             current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
             max_replicas = max(max_replicas, current, desired)
@@ -372,6 +418,19 @@ async def run_test(args: argparse.Namespace) -> int:
             )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
+            if RAMP_STATE.get("enabled"):
+                tokens = latency_ramp.latency_tokens_for_replicas(
+                    latency_ramp.effective_replicas(current, desired),
+                    target=args.target_pods,
+                )
+                if tokens != last_ramp_tokens:
+                    last_ramp_tokens = tokens
+                    if tokens is None:
+                        RAMP_STATE["stop"] = True
+                        stop_load.set()
+                    else:
+                        RAMP_STATE["tokens"] = tokens
+                        print(f"[load] max_tokens={tokens}", flush=True)
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:

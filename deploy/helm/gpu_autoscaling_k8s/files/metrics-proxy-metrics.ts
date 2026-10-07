@@ -7,11 +7,11 @@
 // After this many ms with no new samples, clear the HPA average so it reports 0
 // (below target) instead of retaining the last high latency. 0 disables idle
 // expiration. This does not drop in-flight chats.
-const configuredIdleExpireMs = Number(process.env.LLM_LATENCY_IDLE_EXPIRE_MS ?? "15000");
+const configuredIdleExpireMs = Number(process.env.LLM_LATENCY_IDLE_EXPIRE_MS ?? "60000");
 const LLM_LATENCY_IDLE_EXPIRE_MS =
   Number.isFinite(configuredIdleExpireMs) && configuredIdleExpireMs >= 0
     ? configuredIdleExpireMs
-    : 15_000;
+    : 60_000;
 
 // Drop samples older than this so HPA tracks current latency while chats continue.
 // 0 keeps every sample until idle expire. No 128-sample cap.

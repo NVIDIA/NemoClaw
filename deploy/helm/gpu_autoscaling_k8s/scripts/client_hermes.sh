@@ -16,7 +16,7 @@
 # Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
 #   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 # Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
-# Latency HPA overrides to 32. Set MAX_TOKENS only to force a value.
+# Latency HPA ramps 2048 tokens until 6 GPUs, then 32, then stops at 8.
 
 set -euo pipefail
 
@@ -47,7 +47,7 @@ export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 MAX_TOKENS_FROM_USER="${MAX_TOKENS-}"
 export MAX_TOKENS="$(agent_common_resolve_max_tokens hermes)"
-# Clients keep sending chats for DURATION_SEC. Do not abort at 8 GPUs.
+# Latency HPA stops new chats at 8 GPUs. GPU-util keeps sending for DURATION_SEC.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
@@ -60,13 +60,14 @@ if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client_hermes.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
   echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
-  echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
-  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" "${TARGET_PODS}" "${MAX_TOKENS_FROM_USER}" <<'PY'
+  echo "Sends chats for ${DURATION_SEC}s. Latency HPA: 2048 tokens until 6 GPUs, then 32, then stop at 8."
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" "${TARGET_PODS}" "${SCRIPT_DIR}" <<'PY'
 import json, os, sys, time, urllib.error, urllib.request
-host, users, duration, timeout, max_tokens, _target = (
+host, users, duration, timeout, max_tokens, target = (
     sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 )
-user_max = sys.argv[7] if len(sys.argv) > 7 else ""
+sys.path.insert(0, sys.argv[7])
+import e2e_latency_load_ramp as ramp
 discovery = int(os.environ.get("E2E_DISCOVERY_PORT", "18788"))
 deadline = time.monotonic() + duration
 failed = 0
@@ -102,20 +103,41 @@ def hpa_status():
         return 0, 0, ""
 
 current, desired, metric = hpa_status()
-if not user_max.strip() and "latency" in metric.lower() and max_tokens > 128:
-    max_tokens = 32
-    print("[load] latency HPA on laptop: MAX_TOKENS=32", flush=True)
-prompt = (
-    "In one sentence, what is Kubernetes HPA?"
-    if max_tokens <= 128
-    else "Explain Kubernetes HPA and GPU autoscaling in detail with examples."
+use_ramp = os.environ.get("E2E_LATENCY_RAMP") != "0" and ramp.is_latency_metric(metric)
+last = "unset"
+if use_ramp:
+    max_tokens = ramp.token_bands()[0]
+    print(
+        f"[load] latency ramp: max_tokens={max_tokens} until 6 GPUs, "
+        f"then {ramp.token_bands()[1]}, stop at {target}",
+        flush=True,
+    )
+    last = max_tokens
+prompts = ramp.prompt_for_tokens(max_tokens, "hermes") if use_ramp else (
+    ["In one sentence, what is Kubernetes HPA?"] if max_tokens <= 128
+    else ["Explain Kubernetes HPA and GPU autoscaling in detail with examples."]
 )
 
 ok = err = 0
+turn = 0
 while time.monotonic() < deadline:
+    current, desired, metric = hpa_status()
+    if use_ramp:
+        tokens = ramp.latency_tokens_for_replicas(
+            ramp.effective_replicas(current, desired), target=target
+        )
+        if tokens != last:
+            last = tokens
+            if tokens is None:
+                break
+            max_tokens = tokens
+            prompts = ramp.prompt_for_tokens(max_tokens, "hermes")
+            print(f"[load] max_tokens={tokens}", flush=True)
     for i in range(users):
         if time.monotonic() >= deadline:
             break
+        prompt = prompts[turn % len(prompts)]
+        turn += 1
         req = urllib.request.Request(
             f"http://{host}:{8642 + i}/v1/chat/completions",
             data=json.dumps({
@@ -134,8 +156,6 @@ while time.monotonic() < deadline:
         except Exception as exc:
             err += 1
             print(f"[user {i}] {exc}", flush=True)
-        if max_tokens <= 128:
-            time.sleep(3)
 print(f"[load] done ok={ok} err={err}", flush=True)
 raise SystemExit(0 if ok else 1)
 PY
@@ -156,7 +176,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client_hermes.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z)."
-echo "Sends chats for ${DURATION_SEC}s. Queries continue at 8 GPUs."
+echo "Sends chats for ${DURATION_SEC}s. Latency HPA: 2048 tokens until 6 GPUs, then 32, then stop at 8."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

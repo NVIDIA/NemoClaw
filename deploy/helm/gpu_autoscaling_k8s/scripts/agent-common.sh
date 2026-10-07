@@ -25,30 +25,33 @@ agent_common_print_laptop_client_usage() {
 }
 
 # Inflight stays 1. Default MAX_TOKENS is the GPU-util workload
-# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA overrides to 32
-# so 5 users do not queue to ~14s on 1–2 GPUs.
-# Set MAX_TOKENS only if you want to force a value.
+# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA pins 2048 so
+# 1→2 can move, then the client drops tokens at 6 GPUs and stops at 8.
+# E2E_LATENCY_TOKEN_START overrides the latency pin. MAX_TOKENS still
+# forces GPU-util.
 agent_common_resolve_max_tokens() {
   local agent="${1:-openclaw}"
   local raw metric
   raw="${MAX_TOKENS:-}"
-  if [[ -z "${raw}" ]]; then
-    metric="${HPA_METRIC:-}"
-    if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
-      metric="$(kubectl get hpa "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
-        -n "${NAMESPACE:-nemoclaw-gpu}" \
-        -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
-    fi
-    case "${metric}" in
-      *latency*) raw="32" ;;
-      *)
+  metric="${HPA_METRIC:-}"
+  if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
+    metric="$(kubectl get hpa "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
+      -n "${NAMESPACE:-nemoclaw-gpu}" \
+      -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
+  fi
+  case "${metric}" in
+    *latency*)
+      raw="${E2E_LATENCY_TOKEN_START:-2048}"
+      ;;
+    *)
+      if [[ -z "${raw}" ]]; then
         case "${agent}" in
           deepagents) raw="2048" ;;
           *) raw="1024" ;;
         esac
-        ;;
-    esac
-  fi
+      fi
+      ;;
+  esac
   [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || {
     echo "ERROR: MAX_TOKENS must be a positive integer (got '${raw}')" >&2
     return 1

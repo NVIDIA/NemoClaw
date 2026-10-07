@@ -106,6 +106,19 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(str(text)) // 4)
 
 
+def _read_latency_ramp() -> dict[str, object] | None:
+    """Optional JSON from the client: {"max_tokens": 2048, "stop": false, "short": false}."""
+    path = os.environ.get("E2E_LATENCY_RAMP_FILE") or ""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool) -> tuple[int, int]:
     port = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
     host = os.environ.get("OPENCLAW_GATEWAY_HOST", "127.0.0.1")
@@ -271,33 +284,40 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     interval = float(os.environ.get("E2E_ESCALATE_INTERVAL_SEC", "15"))
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
-    # Latency HPA: short answers plus a pause so 5 users do not queue to ~14s
-    # on 1–2 GPUs. Long GPU-util prompts fill MAX_TOKENS and hold 18–40s.
     try:
-        max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
+        env_max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
     except ValueError:
-        max_tokens = 1024
+        env_max_tokens = 1024
     pause_raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
-    if pause_raw is None or pause_raw == "":
-        pause = 3.0 if max_tokens <= 128 else 0.0
-    else:
-        try:
-            pause = max(0.0, float(pause_raw))
-        except ValueError:
-            pause = 0.0
-    if max_tokens <= 128:
-        prompts = [
-            prompt or "In one sentence, what is Kubernetes HPA?",
-            "In one sentence, what is GPU utilization?",
-            "In one sentence, what is Ollama?",
-        ]
-    else:
-        prompts = [
-            prompt
-            or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
-            "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
-            "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
-        ]
+    long_prompts = [
+        prompt
+        or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+        "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
+    ]
+    short_prompts = [
+        prompt or "In one sentence, what is Kubernetes HPA?",
+        "In one sentence, what is GPU utilization?",
+        "In one sentence, what is Ollama?",
+    ]
+
+    def current_prompts_and_pause() -> tuple[list[str], float]:
+        ramp = _read_latency_ramp()
+        if ramp is not None:
+            if ramp.get("stop"):
+                return short_prompts, 0.0
+            short = bool(ramp.get("short"))
+            return (short_prompts if short else long_prompts), 0.0
+        if pause_raw is None or pause_raw == "":
+            pause = 3.0 if env_max_tokens <= 128 else 0.0
+        else:
+            try:
+                pause = max(0.0, float(pause_raw))
+            except ValueError:
+                pause = 0.0
+        if env_max_tokens <= 128:
+            return short_prompts, pause
+        return long_prompts, pause
     stop = threading.Event()
     ok = 0
     err = 0
@@ -325,6 +345,11 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
         nonlocal ok, err, tokens
         turn = 0
         while not stop.is_set():
+            ramp = _read_latency_ramp()
+            if ramp is not None and ramp.get("stop"):
+                stop.set()
+                break
+            prompts, pause = current_prompts_and_pause()
             text = prompts[(wid + turn) % len(prompts)]
             session = f"{session_base}:w{wid}:t{turn}"
             rc, ntok = send_or_retry(text, session)

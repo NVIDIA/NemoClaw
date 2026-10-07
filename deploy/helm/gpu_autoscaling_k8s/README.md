@@ -50,7 +50,7 @@ HPA (GPU util >40% or latency >3000 ms)
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
-`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. The gauge averages samples from the last 30s so HPA can leave 8 GPUs while chats continue. After 15s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
+`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. The gauge averages samples from the last 30s so HPA can leave 8 GPUs while chats continue. After 60s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
 
 ## Prerequisites
 
@@ -153,7 +153,7 @@ Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end user
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client.sh`. `client.sh` re-pins `max_tokens` and keeps the provisioned model.
+- `MAX_TOKENS` default **1024** (GPU util). Latency HPA uses **2048** tokens from 1–5 GPUs, **32** at 6–7 GPUs, then stops new chats at 8. Do not pass `MAX_TOKENS=32` or `MAX_TOKENS=64` on the latency client.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
@@ -220,11 +220,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=32 ./scripts/client.sh
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
 
 
 # or a simpler option — from the same DGX in another terminal
-E2E_USERS=5 MAX_TOKENS=32 ./scripts/client.sh
+E2E_USERS=5 ./scripts/client.sh
 ```
 
 Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
@@ -266,7 +266,7 @@ export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **1024** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client_hermes.sh`. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **1024** (GPU util). Latency HPA uses **2048** tokens from 1–5 GPUs, **32** at 6–7 GPUs, then stops new chats at 8. 
 
 ```text
 E2E test: Hermes + vLLM
@@ -332,11 +332,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_hermes.sh
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 
 
 # simpler option — from the same DGX in another terminal
-E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_hermes.sh
+E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
 
@@ -364,7 +364,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **2048** (GPU util). Override on the latency client only: `MAX_TOKENS=32 ./scripts/client_deepagents.sh`.
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` default **2048** (GPU util). Latency HPA uses **2048** tokens from 1–5 GPUs, **32** at 6–7 GPUs, then stops new chats at 8.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -429,7 +429,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 ```bash
 # Terminal C — from the same DGX in another terminal
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
-E2E_USERS=5 MAX_TOKENS=32 ./scripts/client_deepagents.sh
+E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 
 
@@ -794,7 +794,7 @@ See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/gr
 
 ### How is LLM latency calculated for HPA?
 
-The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. `nemoclaw_llm_latency_avg_milliseconds` averages samples from the last 30s (no 128-sample cap). Clients keep sending chats for `DURATION_SEC`. After 15s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
+The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. `nemoclaw_llm_latency_avg_milliseconds` averages samples from the last 30s (no 128-sample cap). Clients keep sending chats for `DURATION_SEC`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 ### What port numbers are used?
 

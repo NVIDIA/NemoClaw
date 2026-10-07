@@ -41,6 +41,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import e2e_latency_load_ramp as latency_ramp
+
 FALLBACK_RE = re.compile(
     r"EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[\": ]+gateway|transport[\": ]+embedded",
     re.IGNORECASE,
@@ -122,6 +127,8 @@ def helper_b64() -> str:
 
 
 def load_prompt() -> str:
+    if os.environ.get("E2E_LATENCY_RAMP") == "1":
+        return latency_ramp.prompt_for_tokens(latency_ramp.token_bands()[0], "openclaw")[0]
     try:
         max_tokens = int(os.environ.get("MAX_TOKENS") or "1024")
     except ValueError:
@@ -132,6 +139,40 @@ def load_prompt() -> str:
         "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, "
         "with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long."
     )
+
+
+SANDBOX_RAMP_FILE = "/tmp/e2e-latency-ramp.json"
+
+
+def publish_ramp_to_sandboxes(prefix: str, users: int, payload: dict[str, object]) -> None:
+    kubectl = shutil.which("kubectl")
+    if not kubectl or users < 1:
+        return
+    blob = base64.b64encode(json.dumps(payload).encode()).decode("ascii")
+    for user_id in range(users):
+        name = sandbox_name(prefix, user_id)
+        try:
+            subprocess.run(
+                [
+                    kubectl,
+                    "exec",
+                    "-n",
+                    SANDBOX_NS,
+                    name,
+                    "-c",
+                    "agent",
+                    "--",
+                    "bash",
+                    "-c",
+                    f"echo {blob} | base64 -d > {SANDBOX_RAMP_FILE}",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            continue
 
 
 def read_hpa(namespace: str, name: str) -> tuple[int, int]:
@@ -224,7 +265,6 @@ def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str)
     kubectl = shutil.which("kubectl")
     if not kubectl or users < 1:
         return
-    print(note)
     for user_id in range(users):
         name = sandbox_name(prefix, user_id)
         try:
@@ -408,7 +448,7 @@ async def stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
         max_tokens = 1024
     raw = os.environ.get("E2E_USER_STAGGER_SEC")
     if raw is None or raw == "":
-        per_user = 2.0 if max_tokens <= 128 else 0.0
+        per_user = 0.0 if os.environ.get("E2E_LATENCY_RAMP") == "1" else (2.0 if max_tokens <= 128 else 0.0)
     else:
         try:
             per_user = max(0.0, float(raw))
@@ -460,6 +500,8 @@ async def simulate_user_http(
     env["E2E_ESCALATE_FACTOR"] = "0.35"
     env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
     env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "1024")
+    if os.environ.get("E2E_LATENCY_RAMP_FILE"):
+        env["E2E_LATENCY_RAMP_FILE"] = os.environ["E2E_LATENCY_RAMP_FILE"]
     if os.environ.get("E2E_CHAT_PAUSE_SEC"):
         env["E2E_CHAT_PAUSE_SEC"] = os.environ["E2E_CHAT_PAUSE_SEC"]
     proc = await asyncio.create_subprocess_exec(
@@ -553,6 +595,7 @@ async def simulate_user(
         "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
         "MAX_TOKENS=\"$8\" E2E_DRAIN_SEC=\"${9:-8}\" "
+        "E2E_LATENCY_RAMP_FILE=/tmp/e2e-latency-ramp.json "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
         "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
         "bash -c 'exec -a e2e-openclaw-load python3 -'"
@@ -672,17 +715,50 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
 
     skip_hpa = bool(args.chat_only and not args.host)
+    metric = ""
     if args.host:
         _current, _desired, metric = read_hpa_http_status(args.host, args.discovery_port)
-        if (
-            not os.environ.get("MAX_TOKENS_FROM_USER", "").strip()
-            and "latency" in metric.lower()
-        ):
-            os.environ["MAX_TOKENS"] = "32"
-            print("[load] latency HPA on laptop: MAX_TOKENS=32", flush=True)
+    elif not skip_hpa:
+        try:
+            metric = subprocess.check_output(
+                [
+                    "kubectl",
+                    "get",
+                    "hpa",
+                    args.hpa_name,
+                    "-n",
+                    args.hpa_namespace,
+                    "-o",
+                    "jsonpath={.spec.metrics[0].pods.metric.name}",
+                ],
+                text=True,
+                timeout=10,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            metric = os.environ.get("HPA_METRIC", "")
+    ramp_enabled = os.environ.get("E2E_LATENCY_RAMP") != "0" and latency_ramp.is_latency_metric(metric)
+    ramp_path = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or str(output_dir / "latency-ramp.json"))
+    last_ramp_tokens: object = "unset"
+    if ramp_enabled:
+        os.environ["E2E_LATENCY_RAMP"] = "1"
+        os.environ["E2E_LATENCY_RAMP_FILE"] = str(ramp_path)
+        os.environ["MAX_TOKENS"] = str(latency_ramp.token_bands()[0])
+        os.environ["E2E_CHAT_PAUSE_SEC"] = os.environ.get("E2E_CHAT_PAUSE_SEC") or "0"
+        os.environ["E2E_USER_STAGGER_SEC"] = os.environ.get("E2E_USER_STAGGER_SEC") or "0"
+        start_tokens = latency_ramp.token_bands()[0]
+        latency_ramp.write_ramp_file(start_tokens, ramp_path)
+        if not endpoints:
+            publish_ramp_to_sandboxes(args.prefix, args.users, latency_ramp.ramp_payload(start_tokens))
+        last_ramp_tokens = start_tokens
+        print(
+            f"[load] latency ramp: max_tokens={start_tokens} until 6 GPUs, "
+            f"then {latency_ramp.token_bands()[1]}, stop at {args.target_pods}",
+            flush=True,
+        )
 
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target
+        nonlocal max_replicas, reached_target, last_ramp_tokens
         while not stop_load.is_set():
             if args.host:
                 current, desired = await asyncio.to_thread(
@@ -700,6 +776,22 @@ async def run_test(args: argparse.Namespace) -> int:
             )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
+            if ramp_enabled:
+                tokens = latency_ramp.latency_tokens_for_replicas(
+                    latency_ramp.effective_replicas(current, desired),
+                    target=args.target_pods,
+                )
+                if tokens != last_ramp_tokens:
+                    last_ramp_tokens = tokens
+                    latency_ramp.write_ramp_file(tokens, ramp_path)
+                    if not endpoints:
+                        publish_ramp_to_sandboxes(
+                            args.prefix, args.users, latency_ramp.ramp_payload(tokens)
+                        )
+                    if tokens is None:
+                        stop_load.set()
+                    else:
+                        print(f"[load] max_tokens={tokens}", flush=True)
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:
