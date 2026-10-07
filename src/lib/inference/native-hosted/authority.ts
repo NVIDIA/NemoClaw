@@ -46,14 +46,6 @@ export function resolveGatewayNativeHostedProviderAuthority(input: {
   gatewayAuthority?: unknown;
   recordedGatewayName?: string | null;
   recordedAttachment?: NativeHostedProviderAttachment;
-  recordedAuthorities?: unknown;
-  sandboxes: ReadonlyArray<{
-    gatewayName?: string | null;
-    nativeHostedProviderAttachment?: unknown;
-    nativeHostedProviderAuthorities?: unknown;
-    nativeNvidiaProviderAttachment?: unknown;
-    nativeNvidiaProviderAuthority?: unknown;
-  }>;
 }): NativeHostedProviderAttachment | undefined {
   const receipts: NativeHostedProviderAttachment[] = [];
   const collect = (raw: unknown) => {

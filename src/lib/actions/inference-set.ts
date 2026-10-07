@@ -1614,8 +1614,6 @@ async function runInferenceSetWithoutHostLock(
         gatewayAuthority: readRegisteredNativeAuthority(deps, preparedRoute.gatewayName, provider),
         recordedGatewayName: entry.gatewayName,
         recordedAttachment: previousNativeHostedAttachment,
-        recordedAuthorities: entry.nativeHostedProviderAuthorities,
-        sandboxes: deps.listSandboxes().sandboxes,
       })
     : undefined;
   const rollbackRoute = preMutationRoute.state === "configured" ? preMutationRoute.route : null;

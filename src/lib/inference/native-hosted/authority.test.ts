@@ -35,21 +35,11 @@ describe("native hosted provider ownership", () => {
         profile: nvidia,
         gatewayName: "alpha",
         recordedGatewayName: "alpha",
-        recordedAuthorities: receipts,
         gatewayAuthority: nvidiaReceipt,
-        sandboxes: [],
       }),
     ).toEqual(nvidiaReceipt);
   });
-  it("does not borrow proof from another gateway", () => {
-    expect(
-      resolveGatewayNativeHostedProviderAuthority({
-        profile: nvidia,
-        gatewayName: "alpha",
-        sandboxes: [{ gatewayName: "beta", nativeHostedProviderAuthorities: [nvidiaReceipt] }],
-      }),
-    ).toBeUndefined();
-  });
+
   it.each(["beta", undefined])(
     "does not use explicit proof from gateway %s",
     (recordedGatewayName) => {
@@ -59,49 +49,21 @@ describe("native hosted provider ownership", () => {
           gatewayName: "alpha",
           recordedGatewayName,
           recordedAttachment: nvidiaReceipt,
-          recordedAuthorities: [nvidiaReceipt],
-          sandboxes: [],
         }),
       ).toBeUndefined();
     },
   );
-  it("uses gateway ownership despite a stale peer attachment", () => {
+  it("uses the registered gateway ownership", () => {
     const current = { ...openaiReceipt, providerId: "new-registration" };
     expect(
       resolveGatewayNativeHostedProviderAuthority({
         profile: openai,
         gatewayName: "alpha",
         gatewayAuthority: current,
-        sandboxes: [
-          {
-            gatewayName: "alpha",
-            nativeHostedProviderAttachment: openaiReceipt,
-            nativeHostedProviderAuthorities: [openaiReceipt],
-          },
-        ],
       }),
     ).toEqual(current);
   });
-  it("does not promote retained peer receipts to gateway ownership", () => {
-    expect(
-      resolveGatewayNativeHostedProviderAuthority({
-        profile: openai,
-        gatewayName: "alpha",
-        recordedGatewayName: "alpha",
-        recordedAuthorities: [openaiReceipt],
-        sandboxes: [{ gatewayName: "alpha", nativeHostedProviderAttachment: openaiReceipt }],
-      }),
-    ).toBeUndefined();
-  });
-  it("rejects legacy peer Slice 1 proof without gateway authority", () => {
-    expect(
-      resolveGatewayNativeHostedProviderAuthority({
-        profile: nvidia,
-        gatewayName: "alpha",
-        sandboxes: [{ gatewayName: "alpha", nativeNvidiaProviderAuthority: nvidiaReceipt }],
-      }),
-    ).toBeUndefined();
-  });
+
   it("refuses conflicting identities even when the current sandbox has a receipt", () => {
     expect(() =>
       resolveGatewayNativeHostedProviderAuthority({
@@ -110,7 +72,6 @@ describe("native hosted provider ownership", () => {
         recordedGatewayName: "alpha",
         recordedAttachment: nvidiaReceipt,
         gatewayAuthority: { ...nvidiaReceipt, providerId: "replacement" },
-        sandboxes: [],
       }),
     ).toThrow("Conflicting");
   });

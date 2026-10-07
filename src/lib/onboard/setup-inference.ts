@@ -967,8 +967,6 @@ export function createSetupInference(
                 gatewayName,
                 recordedGatewayName: recordedSandbox?.gatewayName,
                 recordedAttachment,
-                recordedAuthorities: recordedSandbox?.nativeHostedProviderAuthorities,
-                sandboxes: deps.listSandboxes?.().sandboxes ?? [],
               })
             : undefined;
           if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
