@@ -82,7 +82,8 @@ describe("findUnmanagedCloudflaredPids", () => {
       await expect(
         startAll({
           pidDir,
-          unmanagedCloudflaredPids: () => {
+          unmanagedCloudflaredPids: (_managedPid, failOnInspectionError) => {
+            expect(failOnInspectionError).toBe(true);
             throw new Error("process inspection unavailable");
           },
         }),

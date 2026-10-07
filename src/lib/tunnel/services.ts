@@ -67,7 +67,10 @@ export interface ServiceOptions {
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
   /** Injectable current-user cloudflared discovery for tests. */
-  unmanagedCloudflaredPids?: (managedPid: number | null) => number[];
+  unmanagedCloudflaredPids?: (
+    managedPid: number | null,
+    failOnInspectionError: boolean,
+  ) => number[];
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
   /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
@@ -305,7 +308,9 @@ function unmanagedCloudflaredPids(
   managedPid: number | null,
   failOnInspectionError = false,
 ): number[] {
-  if (opts.unmanagedCloudflaredPids) return opts.unmanagedCloudflaredPids(managedPid);
+  if (opts.unmanagedCloudflaredPids) {
+    return opts.unmanagedCloudflaredPids(managedPid, failOnInspectionError);
+  }
   return findHostUnmanagedCloudflaredPids(managedPid, undefined, failOnInspectionError);
 }
 
@@ -1255,7 +1260,10 @@ export function showStatus(
   }
 }
 
-function resolveStopPidDir(opts: ServiceOptions): string | undefined {
+function resolveStopSandboxSelection(opts: ServiceOptions): {
+  rawSandboxName: string | undefined;
+  sandboxName: string | undefined;
+} {
   const rawSandboxName =
     opts.sandboxName ??
     process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -1265,6 +1273,11 @@ function resolveStopPidDir(opts: ServiceOptions): string | undefined {
     rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")
       ? rawSandboxName
       : undefined;
+  return { rawSandboxName, sandboxName };
+}
+
+function resolveStopPidDir(opts: ServiceOptions): string | undefined {
+  const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
   return (
     opts.pidDir ??
     (rawSandboxName && !sandboxName
@@ -1273,12 +1286,22 @@ function resolveStopPidDir(opts: ServiceOptions): string | undefined {
   );
 }
 
-export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
+export function stopAll(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): OllamaUnloadResult | void {
   const pidDir = resolveStopPidDir(opts);
   return pidDir
     ? withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () => {
         if (opts.stopCloudflared !== false && opts.pidDir === undefined) {
-          migrateLegacyCloudflaredStateLocked(opts);
+          const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
+          migrateLegacyCloudflaredStateLocked(
+            {
+              ...opts,
+              sandboxName: sandboxName ?? (rawSandboxName ? undefined : "default"),
+            },
+            migrationDeps,
+          );
         }
         return stopAllLocked({ ...opts, pidDir });
       })
@@ -1287,15 +1310,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
 
 function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
-  const rawSandboxName =
-    opts.sandboxName ??
-    process.env.NEMOCLAW_SANDBOX_NAME ??
-    process.env.NEMOCLAW_SANDBOX ??
-    process.env.SANDBOX_NAME;
-  const sandboxName =
-    rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")
-      ? rawSandboxName
-      : undefined;
+  const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
 
   // Reuse the resolver used by the lock wrapper so cleanup cannot target a
   // different PID directory from the one protected during this transition.
@@ -1312,15 +1327,20 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       "Cloudflared cleanup is incomplete: cloudflared could not be stopped; its process and state were retained.",
     );
   }
-  const unmanagedPids =
-    cloudflaredCleanupComplete && pidDir && opts.stopCloudflared !== false
-      ? unmanagedCloudflaredPids(opts, null)
-      : [];
-  if (unmanagedPids.length > 0) {
-    throw new Error(
-      `cloudflared remains running outside NemoClaw ownership (${unmanagedPids.map((pid) => `PID ${String(pid)}`).join(", ")}). ` +
-        "Stop it through its process manager; NemoClaw did not signal it.",
-    );
+  let unmanagedError: Error | undefined;
+  try {
+    const unmanagedPids =
+      cloudflaredCleanupComplete && pidDir && opts.stopCloudflared !== false
+        ? unmanagedCloudflaredPids(opts, null)
+        : [];
+    if (unmanagedPids.length > 0) {
+      unmanagedError = new Error(
+        `cloudflared remains running outside NemoClaw ownership (${unmanagedPids.map((pid) => `PID ${String(pid)}`).join(", ")}). ` +
+          "Stop it through its process manager; NemoClaw did not signal it.",
+      );
+    }
+  } catch (error) {
+    unmanagedError = error instanceof Error ? error : new Error(String(error));
   }
   if (!pidDir && rawSandboxName) {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
@@ -1378,6 +1398,7 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   }
   const finishCleanup = (): OllamaUnloadResult | void => {
     if (ollamaCleanupError) throw ollamaCleanupError;
+    if (unmanagedError) throw unmanagedError;
     if (!cloudflaredCleanupComplete) {
       throw new Error(
         "Cloudflared cleanup is incomplete. Keep the PID record until the process exits, then retry cleanup.",
@@ -1427,6 +1448,8 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     info("Host service cleanup remains incomplete; cloudflared was not stopped.");
   } else if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
+  } else if (unmanagedError) {
+    info("NemoClaw-managed services stopped; unmanaged cloudflared requires attention.");
   } else {
     info("All services stopped.");
   }

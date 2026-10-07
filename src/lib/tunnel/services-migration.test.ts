@@ -15,6 +15,7 @@ import {
   migrateLegacyCloudflaredState,
   resolveTunnelPidDir,
   showStatus,
+  stopAll,
   type ProcessControl,
 } from "./services";
 
@@ -187,6 +188,42 @@ describe("legacy tunnel state migration (#11628)", () => {
 
     expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
     expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("uses the environment-selected sandbox gateway for stop migration", () => {
+    const sandboxName = `legacy-stop-${String(process.pid)}`;
+    const legacyPidDir = createLegacyState(sandboxName, 4242);
+    writeRegistry(gatewayPort, sandboxName);
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", sandboxName);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let alive = true;
+    const signalCloudflared = vi.fn(() => {
+      alive = false;
+      return "signaled" as const;
+    });
+    const processControl: ProcessControl = {
+      isAlive: (pid) => pid === 4242 && alive,
+      commandLine: () => "cloudflared tunnel --url http://localhost:18789",
+      signalCloudflared,
+    };
+
+    stopAll(
+      {
+        processControl,
+        cleanupOllamaModels: false,
+        unmanagedCloudflaredPids: () => [],
+      },
+      {
+        legacyPidDirs: () => [legacyPidDir],
+        readState: (pidDir): CloudflaredState =>
+          pidDir === legacyPidDir ? { kind: "running", pid: 4242 } : { kind: "stopped" },
+      },
+    );
+
+    expect(signalCloudflared).toHaveBeenCalledWith(4242, "SIGTERM");
+    expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+    expect(fs.existsSync(path.join(targetPidDir, "cloudflared.pid"))).toBe(false);
   });
 
   it("migrates legacy state before tunnel status without contaminating stdout", () => {
