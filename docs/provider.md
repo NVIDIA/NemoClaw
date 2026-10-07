@@ -3,16 +3,16 @@
 
 # Understand the OpenTofu Provider
 
-The native bundle includes the NemoClaw and Docker OpenTofu providers.
+The native bundle includes the NemoClaw, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
-Docker manages disposable service compute and Docker gateway processes; NemoClaw manages OpenShell operations, Podman gateway processes, initialization, retained gateway bridges, and durable data bindings.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages OpenShell operations, Podman gateway processes, Kubernetes gateway prerequisites, initialization, retained gateway bridges, and durable data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, coordinates runtime stages, and reports provider observations.
-The NemoClaw provider verifies durable data and credential identity; the Docker provider reconciles its native resource state.
+The NemoClaw provider verifies durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
 OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
@@ -31,13 +31,80 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Fabric runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
+| NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
 | NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
+| Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
 The [standalone HCL fixture](contributing/integration-tests.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
 It does not qualify a complete standalone OpenShell deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
+
+## Provider Catalog
+
+The bundle pins these providers:
+
+| Provider | Source address | Version |
+|---|---|---|
+| NemoClaw | `registry.opentofu.org/nvidia/nemoclaw` | Source-derived |
+| Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
+| Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
+
+None of them exposes ephemeral resources or provider functions.
+
+### NemoClaw Resources
+
+| Resource | Manages |
+|---|---|
+| `nemoclaw_workspace` | OpenShell workspace |
+| `nemoclaw_provider` | OpenShell provider registration |
+| `nemoclaw_provider_profile` | OpenShell provider profile |
+| `nemoclaw_sandbox` | OpenShell sandbox |
+| `nemoclaw_agent_configuration` | Fabric runtime configuration in a sandbox |
+| `nemoclaw_managed_gateway` | Podman gateway process |
+| `nemoclaw_gateway_storage` | Gateway storage, initialization, and retained bridge |
+| `nemoclaw_kubernetes_storage` | Kubernetes namespace and encryption key |
+| `nemoclaw_kubernetes_auth` | Kubernetes development token issuer and OpenShift chart overrides |
+| `nemoclaw_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
+| `nemoclaw_inference_storage` | vLLM credential storage |
+| `nemoclaw_ollama_service_storage` | Managed Ollama model storage |
+| `nemoclaw_ollama_proxy_storage` | Ollama proxy credential storage |
+| `nemoclaw_ollama_external_model` | Upstream Ollama model digest |
+
+Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
+
+### NemoClaw Data Sources
+
+| Data source | Observes |
+|---|---|
+| `nemoclaw_engine_capabilities` | [Engine prerequisites](#engine-and-fabric-discovery) |
+| `nemoclaw_fabric_capabilities` | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
+| `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
+| `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
+| `nemoclaw_gateway_capabilities` | [Gateway version and compute drivers](#gateway-capabilities) |
+| `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
+| `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
+| `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
+| `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
+
+### Docker and Helm Types
+
+The bundled upstream binaries expose every type below.
+Generated graphs declare only the types marked as used; NemoClaw does not qualify the others.
+
+| Provider | Kind | Type | Generated graphs use it for |
+|---|---|---|---|
+| Docker | Resource | `docker_container` | Docker gateway, inference, and proxy containers |
+| Docker | Resource | `docker_image` | Acquired gateway and service images |
+| Docker | Resource | `docker_network` | Service-owned networks |
+| Docker | Resource | `docker_volume` | Model caches |
+| Docker | Data source | `docker_image` | Local images selected with `imagePullPolicy: Never` |
+| Helm | Resource | `helm_release` | The managed Kubernetes gateway chart |
+| Docker | Resource | `docker_buildx_builder`, `docker_compose`, `docker_config`, `docker_plugin`, `docker_registry_image`, `docker_secret`, `docker_service`, `docker_tag` | Unused |
+| Docker | Data source | `docker_containers`, `docker_logs`, `docker_network`, `docker_plugin`, `docker_registry_image`, `docker_registry_image_manifests`, `docker_registry_image_tags` | Unused |
+| Helm | Data source | `helm_template` | Unused |
+
 
 ## OpenShell Resource Lifecycles
 
@@ -99,6 +166,7 @@ An observation describes the selected target at the time of its read; it is not 
 
 `nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
 The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
+For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
 Both return `status`, `available`, and structured JSON in `observation_json`.
 
 The engine observation checks gateway prerequisites and reports available server version, architecture, operating system, CPU count, and memory fields.
@@ -332,11 +400,30 @@ Plan does not pull images, and container creation does not establish application
 Provider reconciliation checks the attributes refreshed by that provider; it does not guarantee detection of every out-of-band Docker configuration change.
 The deployment lock excludes other NemoClaw operations using the same state directory, not concurrent Docker administrators.
 
+## Managed Kubernetes Gateway
+
+The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
+
+1. `nemoclaw_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
+2. `nemoclaw_kubernetes_auth.runtime` prepares the development token issuer.
+   For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
+3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
+4. `nemoclaw_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
+
+Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
+The SDK requires each earlier binding before it accepts a later one.
+The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
+
+Teardown removes the release before the issuer.
+The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
+The namespace, encryption key, and persistent volumes remain.
+[Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploy to Kubernetes or OpenShift](kubernetes.md) gives the procedure.
+
 ## Packaging and Qualification
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
 The NemoClaw provider uses a source-derived version to prevent stale reuse.
-The Docker provider has a fixed release version and checksum-pinned native archives, with its upstream license retained in the bundle.
+The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
 [Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
