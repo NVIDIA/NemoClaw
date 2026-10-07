@@ -85,6 +85,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
       "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-messaging-reuse.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
       "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
