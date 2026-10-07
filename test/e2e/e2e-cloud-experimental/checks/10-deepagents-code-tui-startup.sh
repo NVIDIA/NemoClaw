@@ -83,7 +83,7 @@ sandbox_exec() {
 }
 
 sandbox_quickjs_memfd_probe() {
-  sandbox_exec 'timeout --signal=TERM --kill-after=5s 35s /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-quickjs-runtime.py --require-memfd-denied'
+  sandbox_exec 'timeout --signal=TERM --kill-after=5s 35s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py --require-memfd-denied'
 }
 
 is_positive_integer() {
@@ -538,7 +538,7 @@ main() {
     && grep -Fxq "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK" <<<"$quickjs_probe_output"; then
     pass "OpenShell blocks memfd creation and QuickJS tool execution survives REPL restoration"
   else
-    fail_test "QuickJS tool execution or REPL restoration failed with memfd creation blocked"
+    fail_test "QuickJS memfd-denial, tool execution, or REPL restoration validation failed"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi

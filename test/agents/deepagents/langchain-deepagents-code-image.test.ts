@@ -475,7 +475,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
         "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
-        "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-quickjs-runtime.py",
+        "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
         "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
@@ -485,7 +485,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
     );
     const quickjsProbeIndex = dockerfile.indexOf(
-      "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-quickjs-runtime.py",
+      "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
     );
     const quickjsCleanupIndex = dockerfile.indexOf(
       "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
@@ -642,6 +642,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(defaultPolicy.filesystem_policy?.read_only).toEqual(
         expect.arrayContaining(["/usr", "/opt/venv", "/etc"]),
       );
+      // The build runs without Landlock; the live probe must also be readable
+      // under the effective sandbox policy, without widening that policy.
+      const quickjsImagePath = readAgentFile("Dockerfile").match(
+        /^COPY agents\/langchain-deepagents-code\/validate-quickjs-runtime\.py (\S+)$/m,
+      )?.[1];
+      const quickjsLivePath = fs
+        .readFileSync(tuiStartupCheckPath, "utf8")
+        .match(/\/opt\/venv\/bin\/python3 -I (\S+) --require-memfd-denied/)?.[1];
+      expect(quickjsLivePath).toBe(quickjsImagePath);
+      expect(
+        defaultPolicy.filesystem_policy?.read_only?.some((root) =>
+          quickjsImagePath?.startsWith(`${root}/`),
+        ),
+      ).toBe(true);
       expect(defaultPolicy.landlock).toMatchObject({ compatibility: "strict" });
 
       const githubBinaries = policyBinaryPaths(defaultPolicy, "github");
