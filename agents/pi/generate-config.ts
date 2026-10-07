@@ -136,7 +136,10 @@ function buildConfig(settings: Settings): ManagedPiConfig {
     providers: {
       [MANAGED_PROVIDER_ID]: {
         api: settings.inferenceApi,
-        apiKey: MANAGED_PROVIDER_API_KEY,
+        apiKey:
+          settings.baseUrl === "https://integrate.api.nvidia.com/v1"
+            ? "${NVIDIA_INFERENCE_API_KEY}"
+            : MANAGED_PROVIDER_API_KEY,
         baseUrl: settings.baseUrl,
         models: [buildModel(settings)],
       },

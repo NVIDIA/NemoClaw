@@ -14,6 +14,10 @@ import {
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { isNativeNvidiaProvider } from "../../inference/native-nvidia";
+import {
+  NATIVE_NVIDIA_CREDENTIAL_GUARD,
+  NATIVE_NVIDIA_AUTH_HEADER_ARG,
+} from "../../inference/native-nvidia/credential";
 import { validateInferenceResponseBody } from "../../inference/health";
 import {
   MIN_PROBE_REPLY_TOKENS,
@@ -35,6 +39,47 @@ import {
   type SandboxExecCommandOptions,
 } from "../../adapters/sandbox/command-transport";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
+
+const SCOPED_CREDENTIAL =
+  /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/u;
+
+export async function readNativeNvidiaCredentialPlaceholder(
+  sandboxName: string,
+  gatewayName: string,
+  executor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor({
+    hostCwd: ROOT,
+  }),
+): Promise<string> {
+  const fail = () =>
+    new Error(
+      "The sandbox has no verified scoped native NVIDIA credential placeholder. Retry after its provider attachment has converged.",
+    );
+  let completed;
+  try {
+    completed = await executor.runBuffered({
+      sandboxName,
+      target: namedOpenShellGateway(gatewayName),
+      command: [
+        "/bin/sh",
+        "-c",
+        `${NATIVE_NVIDIA_CREDENTIAL_GUARD}; printf '%s' "$NVIDIA_INFERENCE_API_KEY"`,
+      ],
+      tty: false,
+      timeoutMilliseconds: 30_000,
+    });
+  } catch {
+    throw fail();
+  }
+  if (
+    completed.outcome.kind !== "completed" ||
+    completed.outcome.exitCode !== 0 ||
+    completed.stderr ||
+    completed.stdout !== completed.stdout.trim() ||
+    !SCOPED_CREDENTIAL.test(completed.stdout)
+  )
+    throw fail();
+  return completed.stdout;
+}
 
 export type SandboxInferenceInvocationInput = {
   sandboxName: string;
@@ -108,9 +153,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: isNativeNvidiaProvider(input.provider)
-      ? ["Authorization: Bearer nemoclaw-openshell-provider"]
-      : [],
+    headers: [],
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
@@ -131,13 +174,18 @@ export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
   const request = buildProbeRequest(input);
-  const headerArgs = ["Content-Type: application/json", ...request.headers]
-    .map((header) => `-H ${shellQuote(header)}`)
-    .join(" ");
+  const nativeNvidia = isNativeNvidiaProvider(input.provider);
+  const headerArgs = [
+    ...["Content-Type: application/json", ...request.headers].map(
+      (header) => `-H ${shellQuote(header)}`,
+    ),
+    ...(nativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_ARG] : []),
+  ].join(" ");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...(nativeNvidia ? [NATIVE_NVIDIA_CREDENTIAL_GUARD] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,

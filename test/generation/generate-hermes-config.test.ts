@@ -314,6 +314,19 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
+  it("references the sandbox NVIDIA credential for every native provider configuration", () => {
+    const { config, envFile } = generateBaseConfig({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NVIDIA_INFERENCE_API_KEY: "must-not-enter-image",
+    });
+    expect(config.model.api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
+    expect(Object.values(config.providers).map((provider: any) => provider.api_key)).toEqual([
+      "${NVIDIA_INFERENCE_API_KEY}",
+    ]);
+    expect(config.custom_providers[0].api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
+    expect(JSON.stringify(config) + envFile).not.toContain("must-not-enter-image");
+  });
+
   it(
     "matches direct generation as a strip-types executable with an explicit gateway matrix",
     async () => {

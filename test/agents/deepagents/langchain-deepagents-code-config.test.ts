@@ -68,6 +68,15 @@ function runGenerator(env: Record<string, string | undefined>): string {
 }
 
 describe("LangChain Deep Agents Code config generator", () => {
+  it("reads the attached NVIDIA placeholder through the native provider environment key", () => {
+    const config = runGenerator({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NVIDIA_INFERENCE_API_KEY: "must-not-enter-image",
+    });
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
+    expect(config).not.toContain("must-not-enter-image");
+  });
+
   it("routes managed inference through OpenAI-compatible chat completions", () => {
     const config = runGenerator({});
 
@@ -91,7 +100,7 @@ describe("LangChain Deep Agents Code config generator", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
     });
 
-    expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
   });
 
   it("keeps the legacy provider key when the renamed route variables are absent", () => {

@@ -82,6 +82,7 @@ import {
   assertInferenceSetProviderOwnership,
   createDefaultInferenceSetProviderAdapter,
   prepareInferenceSetProviderBinding,
+  readNativeNvidiaCredentialPlaceholder,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
   providerCommitMayHaveChangedBinding,
@@ -189,6 +190,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   ) => onboardSession.Session;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
   readSandboxConfig: typeof readSandboxConfig;
+  readNativeNvidiaCredentialPlaceholder: typeof readNativeNvidiaCredentialPlaceholder;
   writeSandboxConfig: (
     sandboxName: string,
     target: AgentConfigTarget,
@@ -321,6 +323,7 @@ function defaultDeps(): InferenceSetDeps {
     updateSession: onboardSession.updateSession,
     resolveAgentConfig,
     readSandboxConfig,
+    readNativeNvidiaCredentialPlaceholder,
     writeSandboxConfig,
     setOpenClawConfigValues,
     recomputeSandboxConfigHash,
@@ -653,6 +656,7 @@ function buildProviderConfig(
   inheritedMaxTokens?: number,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
+  nativeCredentialPlaceholder?: string,
 ): ConfigObject {
   const existingModels = Array.isArray(existing.models) ? existing.models : [];
   const selectedIndex = existingModels.findIndex(
@@ -690,7 +694,13 @@ function buildProviderConfig(
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
-    apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
+    apiKey: isNativeNvidiaProvider(provider)
+      ? (nativeCredentialPlaceholder ?? "${NVIDIA_INFERENCE_API_KEY}")
+      : existing.baseUrl === "https://integrate.api.nvidia.com/v1"
+        ? "unused"
+        : typeof existing.apiKey === "string" && existing.apiKey
+          ? existing.apiKey
+          : "unused",
     api: route.inferenceApi,
     models:
       selectedIndex < 0
@@ -711,6 +721,7 @@ export function patchOpenClawInferenceConfig(
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
   inheritPrimaryReplyBudget = true,
+  nativeCredentialPlaceholder?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -723,6 +734,14 @@ export function patchOpenClawInferenceConfig(
   const models = ensureObject(config, "models");
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
+  const inactiveNativeProvider = isConfigObject(providers) ? providers.inference : undefined;
+  if (
+    route.providerKey !== "inference" &&
+    isConfigObject(inactiveNativeProvider) &&
+    inactiveNativeProvider.baseUrl === "https://integrate.api.nvidia.com/v1"
+  ) {
+    inactiveNativeProvider.apiKey = "unused";
+  }
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
   providers[route.providerKey] = buildProviderConfig(
     existingProvider,
@@ -733,6 +752,7 @@ export function patchOpenClawInferenceConfig(
     inheritedMaxTokens,
     upstreamProviderMarker,
     reasoningEffort,
+    nativeCredentialPlaceholder,
   );
 
   return { changed: before !== JSON.stringify(config), route };
@@ -771,6 +791,14 @@ export function writeOpenClawInferenceConfigNatively(
     { dotpath: "models.mode", value: "merge" },
     { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
   );
+  const inactiveNativeProvider = isConfigObject(providers) ? providers.inference : undefined;
+  if (
+    route.providerKey !== "inference" &&
+    isConfigObject(inactiveNativeProvider) &&
+    inactiveNativeProvider.baseUrl === "https://integrate.api.nvidia.com/v1"
+  ) {
+    updates.push({ dotpath: "models.providers.inference.apiKey", value: "unused" });
+  }
   writeValues(sandboxName, updates, gatewayName);
 }
 
@@ -813,6 +841,7 @@ export function patchHermesInferenceConfig(
   model: string,
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
+  nativeCredentialPlaceholder?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -822,6 +851,7 @@ export function patchHermesInferenceConfig(
     upstreamProvider: provider,
     inferenceApi: route.inferenceApi,
     contextWindow,
+    nativeCredentialPlaceholder,
   });
 
   return { changed: before !== JSON.stringify(config), route };
@@ -1624,6 +1654,9 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeNvidiaProviderAttachment = nativeNvidiaSelection.attachment;
     nativeNvidiaAttachmentChanged = nativeNvidiaSelection.attachmentChanged;
+    const nativeCredentialPlaceholder = selectingNativeNvidia
+      ? await deps.readNativeNvidiaCredentialPlaceholder(sandboxName, preparedRoute.gatewayName)
+      : undefined;
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
@@ -1878,6 +1911,7 @@ async function runInferenceSetWithoutHostLock(
         model,
         preferredInferenceApi,
         contextWindow,
+        nativeCredentialPlaceholder,
       );
     } else {
       // Recompute the context window for the model being switched to, so it does
@@ -1899,6 +1933,8 @@ async function runInferenceSetWithoutHostLock(
         contextWindow,
         provider,
         reasoningEffortRequest,
+        true,
+        nativeCredentialPlaceholder,
       );
     }
 

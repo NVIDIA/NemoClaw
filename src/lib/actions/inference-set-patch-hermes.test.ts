@@ -7,6 +7,18 @@ import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
+  it("switches a running Hermes gateway with the current scoped handle and clears it on departure", () => {
+    const config: ConfigObject = { model: { api_key: "old-key" } };
+    const placeholder = "openshell:resolve:env:v9_NVIDIA_INFERENCE_API_KEY";
+    patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/model", null, undefined, placeholder);
+    expect(config.model).toMatchObject({ api_key: placeholder });
+    expect(config.providers).toMatchObject({ "nvidia-prod": { api_key: placeholder } });
+    expect(config.custom_providers).toEqual([expect.objectContaining({ api_key: placeholder })]);
+    patchHermesInferenceConfig(config, "openai-api", "gpt-5.4");
+    expect(JSON.stringify(config)).not.toContain(placeholder);
+    expect(config.model).toMatchObject({ api_key: HERMES_PROXY_REWRITE_SENTINEL });
+  });
+
   it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
@@ -147,7 +159,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://integrate.api.nvidia.com/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      api_key: "${NVIDIA_INFERENCE_API_KEY}",
     });
   });
 

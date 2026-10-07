@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Hermes requires an sk-prefixed value before it sends a request. OpenShell
-// removes this non-secret sentinel and injects the route credential at egress.
+// The inference.local route injects its credential at egress. Native NVIDIA
+// uses the attached provider placeholder through Hermes environment references.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -26,7 +26,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -40,6 +40,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  nativeCredentialPlaceholder?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -79,6 +80,10 @@ export function applyHermesManagedRoute(
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
+  const apiKey =
+    route.baseUrl === "https://integrate.api.nvidia.com/v1"
+      ? (route.nativeCredentialPlaceholder ?? "${NVIDIA_INFERENCE_API_KEY}")
+      : HERMES_PROXY_REWRITE_SENTINEL;
   const previousUpstream = isObjectRecord(config._nemoclaw_upstream)
     ? config._nemoclaw_upstream
     : {};
@@ -89,7 +94,7 @@ export function applyHermesManagedRoute(
     default: route.model,
     provider: "custom",
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
   };
   if (apiMode) modelConfig.api_mode = apiMode;
   if (route.contextWindow !== null && route.contextWindow !== undefined) {
@@ -100,7 +105,7 @@ export function applyHermesManagedRoute(
   const providerConfig: Record<string, unknown> = {
     name: providerName,
     api: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
     default_model: route.model,
     discover_models: true,
   };
@@ -109,7 +114,7 @@ export function applyHermesManagedRoute(
   const customProvider: Record<string, unknown> = {
     name: providerName,
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
     discover_models: true,
   };
   if (apiMode) customProvider.api_mode = apiMode;

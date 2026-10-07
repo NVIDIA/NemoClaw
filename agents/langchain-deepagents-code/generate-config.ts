@@ -161,7 +161,9 @@ function providerConfigLines(
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
-    'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    baseUrl === "https://integrate.api.nvidia.com/v1"
+      ? 'api_key_env = "NVIDIA_INFERENCE_API_KEY"'
+      : 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
     `base_url = ${tomlString(baseUrl)}`,
     "enabled = true",
     ...(provider === "openai"

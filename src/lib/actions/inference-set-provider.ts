@@ -27,6 +27,8 @@ import type {
   SandboxInferenceInvocationResult,
 } from "./sandbox/inference-invocation-probe";
 
+export { readNativeNvidiaCredentialPlaceholder } from "./sandbox/inference-invocation-probe";
+
 export type { RuntimeProviderBundleRegistry };
 export { RuntimeProviderSelectionError };
 export type InferenceSetProviderAdapter = OpenShellProviderAdapter;

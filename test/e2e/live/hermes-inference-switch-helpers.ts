@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  NATIVE_NVIDIA_CREDENTIAL_GUARD,
+  NATIVE_NVIDIA_AUTH_HEADER_ARG,
+} from "../../../src/lib/inference/native-nvidia/credential.ts";
+
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -811,15 +816,14 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-const NATIVE_NVIDIA_PROVIDER_PLACEHOLDER_AUTH_HEADER =
-  "Author" + "ization: Bearer nemoclaw-openshell-provider";
+// The request uses the scoped placeholder delivered to this fresh sandbox process.
 
 export function sandboxInferenceCommand(payload: string): string {
   if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
     // The upstream URL is the managed route for an attached OpenShell
     // provider. OpenShell authorizes this profile-scoped request and replaces
     // the placeholder without exposing the provider credential to the sandbox.
-    return `curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H '${NATIVE_NVIDIA_PROVIDER_PLACEHOLDER_AUTH_HEADER}' -d '${quotePayload(payload)}'`;
+    return `${NATIVE_NVIDIA_CREDENTIAL_GUARD}; curl -q -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' ${NATIVE_NVIDIA_AUTH_HEADER_ARG} -d '${quotePayload(payload)}'`;
   }
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`

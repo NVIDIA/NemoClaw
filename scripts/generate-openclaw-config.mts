@@ -973,7 +973,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey:
+        inferenceBaseUrl === "https://integrate.api.nvidia.com/v1"
+          ? "${NVIDIA_INFERENCE_API_KEY}"
+          : "unused",
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

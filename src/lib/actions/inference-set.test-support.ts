@@ -272,6 +272,7 @@ export function createDeps(options: {
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
+  readNativeNvidiaCredentialPlaceholder?: InferenceSetDeps["readNativeNvidiaCredentialPlaceholder"];
   probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
   updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
@@ -435,6 +436,9 @@ export function createDeps(options: {
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
     readSandboxConfig: calls.readSandboxConfig,
+    readNativeNvidiaCredentialPlaceholder:
+      options.readNativeNvidiaCredentialPlaceholder ??
+      (async () => "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY"),
     setOpenClawConfigValues: calls.setOpenClawConfigValues,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,

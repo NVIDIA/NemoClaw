@@ -77,7 +77,11 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH || ""}`,
+        NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+      },
     });
     return {
       stdout: run.stdout || "",
@@ -133,17 +137,18 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("-o /dev/null");
   });
 
-  it("probes native NVIDIA through the attached provider without exposing the host credential", () => {
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      provider: "nvidia-prod",
-    });
-
-    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
-    expect(command).not.toContain("https://inference.local");
-    expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+  it("sends the sandbox's scoped NVIDIA placeholder without reading a host credential", () => {
+    const { argv, stdout } = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      { ...input, provider: "nvidia-prod" },
+    );
+    expect(stdout).toContain("200");
+    expect(argv).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(argv).toContain(
+      "Authorization: Bearer openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+    );
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {

@@ -13,6 +13,27 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it("replaces stale native auth on selection and removes its environment dependency on departure", () => {
+    const config: ConfigObject = { models: { providers: { inference: { apiKey: "stale-key" } } } };
+    const placeholder = "openshell:resolve:env:v9_NVIDIA_INFERENCE_API_KEY";
+    patchOpenClawInferenceConfig(
+      config,
+      "nvidia-prod",
+      "nvidia/model",
+      null,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      placeholder,
+    );
+    expect(config.models).toMatchObject({ providers: { inference: { apiKey: placeholder } } });
+    patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
+    expect(config.models).toMatchObject({
+      providers: { inference: { apiKey: "unused" }, anthropic: { apiKey: "unused" } },
+    });
+  });
+
   it.each([undefined, null, 16384])(
     "updates only the selected model's context when the resolved window is %s",
     (contextWindow) => {
@@ -82,7 +103,7 @@ describe("patchOpenClawInferenceConfig", () => {
       providers: {
         inference: {
           baseUrl: "https://integrate.api.nvidia.com/v1",
-          apiKey: "unused",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
@@ -152,7 +173,7 @@ describe("patchOpenClawInferenceConfig", () => {
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "unused",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
         models: [
           {
@@ -208,7 +229,7 @@ describe("patchOpenClawInferenceConfig", () => {
         providers: {
           inference: {
             baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "unused",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
             models: [
               {

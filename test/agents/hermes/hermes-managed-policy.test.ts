@@ -117,6 +117,28 @@ describe("Hermes managed policy", () => {
     expect(loadWithPython(policy).status).toBe(0);
   });
 
+  it("loads the native NVIDIA environment reference and rejects a raw replacement", () => {
+    const policy = buildHermesManagedPolicy(
+      {
+        ...SETTINGS,
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        upstreamProvider: "nvidia-prod",
+      },
+      {},
+    );
+    expect(loadWithPython(policy).status).toBe(0);
+    const raw = {
+      ...policy,
+      config: {
+        ...policy.config,
+        model: { ...policy.config.model, api_key: "must-not-be-accepted" },
+      },
+    };
+    const result = loadWithPython(raw);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("must-not-be-accepted");
+  });
+
   it("rejects a schema change without an explicit migration (#8008)", () => {
     const policy = {
       ...buildHermesManagedPolicy(SETTINGS, {}),
@@ -143,7 +165,7 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(malformedPolicy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must use the OpenShell proxy rewrite sentinel");
+    expect(result.stderr).toContain("must use the selected OpenShell credential reference");
     expect(result.stderr).not.toContain(rawCredential);
   });
 

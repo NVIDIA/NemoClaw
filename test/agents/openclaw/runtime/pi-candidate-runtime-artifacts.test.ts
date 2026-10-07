@@ -137,6 +137,19 @@ describe("Pi managed model catalog generation", () => {
     expect(config.providers.openshell.apiKey).toBe("nemoclaw-managed-inference");
   });
 
+  it("uses Pi's environment reference for native NVIDIA without copying the build environment credential", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NVIDIA_INFERENCE_API_KEY: "must-not-enter-image",
+    });
+    expect(status, stderr).toBe(0);
+    const config = JSON.parse(
+      fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8"),
+    );
+    expect(config.providers.openshell.apiKey).toBe("${NVIDIA_INFERENCE_API_KEY}");
+  });
+
   it("rejects a model name that is empty after trimming", () => {
     const { status, stderr } = generate({
       NEMOCLAW_MODEL: "   ",
