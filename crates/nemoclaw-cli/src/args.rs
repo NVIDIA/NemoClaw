@@ -133,7 +133,7 @@ mod tests {
         let images: Vec<_> = queries
             .iter()
             .filter_map(|query| match query {
-                DiscoveryQuery::Fabric { engine, .. } => Some(engine),
+                DiscoveryQuery::Fabric(request) => Some(&request.engine),
                 _ => None,
             })
             .collect();
