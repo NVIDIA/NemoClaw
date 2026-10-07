@@ -1028,6 +1028,7 @@ describe("E2E fixture clients", () => {
 
     await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"], {
       artifactName: "baseline-sandbox-exec-alive",
+      env: { OPENSHELL_GATEWAY: "e2e-lifecycle-owned" },
       timeoutMs: 60_000,
     });
 
@@ -1045,6 +1046,7 @@ describe("E2E fixture clients", () => {
       ],
       options: {
         artifactName: "baseline-sandbox-exec-alive",
+        env: { OPENSHELL_GATEWAY: "e2e-lifecycle-owned" },
         timeoutMs: 60_000,
       },
     });
