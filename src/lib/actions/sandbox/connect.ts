@@ -121,6 +121,8 @@ import {
   type ProbeTimingRecorder,
   publicationFromDecision,
   publishLaunchReadiness,
+  getNativeNvidiaProviderAttachment,
+  requireNativeNvidiaInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
@@ -1714,6 +1716,17 @@ async function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
+    const nativeNvidiaAttachment = getNativeNvidiaProviderAttachment(sb);
+    if (nativeNvidiaAttachment) {
+      await requireNativeNvidiaInferenceHealth({
+        sandboxName,
+        gatewayName,
+        agentName: agent?.name,
+        entry: sb,
+        deps: {},
+      });
+      return { sandbox: sb, routeHealthy: true };
+    }
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
@@ -1865,6 +1878,9 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
+  if (getNativeNvidiaProviderAttachment(snapshot)) {
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);
   return withGatewayRouteMutationLock(gatewayName, () => {
     const lockedSnapshot = readConnectSandbox(sandboxName);
