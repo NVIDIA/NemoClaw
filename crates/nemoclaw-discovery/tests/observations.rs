@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::ComputeDriver,
     discovery::{
-        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
-        ObservationStatus,
+        CredentialRequest, DiscoveryObservation, DiscoveryObservations, DiscoveryQuery,
+        DiscoveryRequest, EngineObservation, HardwareRequest, ObservationStatus,
     },
     hardware_discovery::HardwareObservation,
     inference_discovery::CredentialObservation,
@@ -35,7 +34,7 @@ fn status_of(
     observations: &DiscoveryObservations,
     request: &DiscoveryRequest,
 ) -> Option<ObservationStatus> {
-    observations.engine(request).map(|engine| engine.status)
+    observations.get(request).map(|engine| engine.status)
 }
 
 #[test]
@@ -52,22 +51,32 @@ fn observations_are_found_by_the_inputs_that_produced_them() {
         engine: "ssh://gpu-box".into(),
         ..docker()
     };
-    assert!(observations.engine(&other).is_none());
+    assert!(observations.get(&other).is_none());
     assert!(!observations.contains(&DiscoveryQuery::Engine(other)));
     assert!(
         observations
-            .get(&DiscoveryQuery::Hardware {
+            .get(&DiscoveryQuery::Hardware(HardwareRequest {
                 engine: "unix:///var/run/docker.sock".into(),
-            })
+            }))
             .is_none()
     );
 }
 
 #[test]
+fn a_query_is_asked_even_when_its_recorded_answer_is_of_another_kind() {
+    let observations = DiscoveryObservations::new().with(
+        DiscoveryQuery::Engine(docker()),
+        DiscoveryObservation::Hardware(HardwareObservation::unknown()),
+    );
+    assert!(observations.contains(&docker()));
+    assert!(observations.get(&docker()).is_none());
+}
+
+#[test]
 fn a_read_that_could_not_be_made_is_recorded_and_not_asked_again() {
-    let failed = DiscoveryQuery::Hardware {
+    let failed = DiscoveryQuery::Hardware(HardwareRequest {
         engine: "ssh://gpu-box".into(),
-    };
+    });
     let unasked = DiscoveryQuery::Engine(docker());
     let observations = DiscoveryObservations::new().with(
         failed.clone(),
@@ -104,15 +113,15 @@ fn observations_survive_a_round_trip_through_json() {
             DiscoveryObservation::Engine(engine(ObservationStatus::Available)),
         )
         .with(
-            DiscoveryQuery::Hardware {
+            DiscoveryQuery::Hardware(HardwareRequest {
                 engine: "unix:///var/run/docker.sock".into(),
-            },
+            }),
             DiscoveryObservation::Hardware(HardwareObservation::unknown()),
         )
         .with(
-            DiscoveryQuery::Credential {
+            DiscoveryQuery::Credential(CredentialRequest {
                 reference: "API_KEY".into(),
-            },
+            }),
             DiscoveryObservation::Credential(CredentialObservation {
                 reference: "API_KEY".into(),
                 status: ObservationStatus::Available,

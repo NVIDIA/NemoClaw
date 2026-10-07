@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{Diagnostics, diagnostics::diagnostic};
-use nemoclaw_discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     config::{Document, Gateway},
-    discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus, plan_queries},
+    discovery::{DiscoveryObservations, DiscoveryQuery, ObservationStatus, plan_queries},
     fabric_capabilities::Support,
 };
 
@@ -65,13 +64,9 @@ pub fn assess_target(
     for query in
         plan_queries(document).map_err(|error| diagnostic("discovery", &error.to_string()))?
     {
-        match (&query, observations.get(&query)) {
-            (DiscoveryQuery::Engine(_), Some(DiscoveryObservation::Engine(observed))) => {
-                engine = Some(observed);
-            }
-            (DiscoveryQuery::Fabric { .. }, Some(DiscoveryObservation::Fabric(observed))) => {
-                fabric = Some(observed);
-            }
+        match &query {
+            DiscoveryQuery::Engine(request) => engine = observations.get(request).or(engine),
+            DiscoveryQuery::Fabric(request) => fabric = observations.get(request).or(fabric),
             _ => {}
         }
     }
