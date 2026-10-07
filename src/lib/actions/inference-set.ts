@@ -1484,21 +1484,44 @@ async function rollbackNativeCompatibleSelection(input: {
     target: { kind: "named" as const, gatewayName: input.gatewayName },
     sandboxName: input.sandboxName,
   };
-  if (input.changed && input.attachment)
-    await detachNativeCompatibleProvider({ ...common, expected: input.attachment });
-  if (input.previousDetached && input.previousAttachment)
-    await ensureNativeCompatibleProviderAttached({ ...common, expected: input.previousAttachment });
+  const failures: string[] = [];
+  let detached = true;
+  if (input.changed && input.attachment) {
+    try {
+      await detachNativeCompatibleProvider({ ...common, expected: input.attachment });
+    } catch (error) {
+      detached = false;
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (input.previousDetached && input.previousAttachment) {
+    try {
+      await ensureNativeCompatibleProviderAttached({
+        ...common,
+        expected: input.previousAttachment,
+      });
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (
+    detached &&
     input.changed &&
     input.attachment &&
     input.attachment.providerId !== input.previousAttachment?.providerId
-  )
-    await retireUnusedCompatibleProvider(
-      input.attachment,
-      input.gatewayName,
-      input.deps,
-      input.sandboxName,
-    );
+  ) {
+    try {
+      await retireUnusedCompatibleProvider(
+        input.attachment,
+        input.gatewayName,
+        input.deps,
+        input.sandboxName,
+      );
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (failures.length) throw new Error(failures.join("\n  "));
 }
 
 function validateLocalProviderBeforeSelection(provider: string, deps: InferenceSetDeps): boolean {
@@ -2393,48 +2416,55 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
-    await rollbackNativeBedrockSelection({
-      committed: nativeCompatibleRegistryCommitted,
-      changed: nativeBedrockAttachmentChanged,
-      attachment: nativeBedrockProviderAttachment,
-      previousDetached: previousNativeBedrockDetached,
-      previousAttachment: previousNativeBedrockAttachment,
-      sandboxName,
-      deps,
-    });
-    await rollbackNativeCompatibleSelection({
-      committed: nativeCompatibleRegistryCommitted,
-      changed: nativeCompatibleAttachmentChanged,
-      attachment: nativeCompatibleProviderAttachment,
-      previousDetached: previousNativeCompatibleDetached,
-      previousAttachment: previousNativeCompatibleAttachment,
-      gatewayName: preparedRoute.gatewayName,
-      sandboxName,
-      deps,
-    });
-    await restorePreviousNativeNvidiaAfterFailedPublish({
-      detached: previousNativeNvidiaDetached,
-      committed: previousNativeNvidiaDetachCommitted,
-      previousAttachment: previousNativeNvidiaAttachment,
-      gatewayName: preparedRoute.gatewayName,
-      sandboxName,
-      error,
-      deps,
-    });
-    await rollbackNativeNvidiaSelection({
-      attachmentChanged: nativeNvidiaAttachmentChanged,
-      registryCommitted: nativeNvidiaRegistryCommitted,
-      attachment: nativeNvidiaProviderAttachment,
-      gatewayName: preparedRoute.gatewayName,
-      sandboxName,
-      error,
-      deps,
-    });
-    if (!providerMutation) throw error;
-    if (ambiguousInferenceSelection) throw error;
-    if (restoredSelectionAfterProviderFailure) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
+    const recoveredError = await collectNativeRollbackErrors(error, [
+      () =>
+        rollbackNativeBedrockSelection({
+          committed: nativeCompatibleRegistryCommitted,
+          changed: nativeBedrockAttachmentChanged,
+          attachment: nativeBedrockProviderAttachment,
+          previousDetached: previousNativeBedrockDetached,
+          previousAttachment: previousNativeBedrockAttachment,
+          sandboxName,
+          deps,
+        }),
+      () =>
+        rollbackNativeCompatibleSelection({
+          committed: nativeCompatibleRegistryCommitted,
+          changed: nativeCompatibleAttachmentChanged,
+          attachment: nativeCompatibleProviderAttachment,
+          previousDetached: previousNativeCompatibleDetached,
+          previousAttachment: previousNativeCompatibleAttachment,
+          gatewayName: preparedRoute.gatewayName,
+          sandboxName,
+          deps,
+        }),
+      () =>
+        restorePreviousNativeNvidiaAfterFailedPublish({
+          detached: previousNativeNvidiaDetached,
+          committed: previousNativeNvidiaDetachCommitted,
+          previousAttachment: previousNativeNvidiaAttachment,
+          gatewayName: preparedRoute.gatewayName,
+          sandboxName,
+          error,
+          deps,
+        }),
+      () =>
+        rollbackNativeNvidiaSelection({
+          attachmentChanged: nativeNvidiaAttachmentChanged,
+          registryCommitted: nativeNvidiaRegistryCommitted,
+          attachment: nativeNvidiaProviderAttachment,
+          gatewayName: preparedRoute.gatewayName,
+          sandboxName,
+          error,
+          deps,
+        }),
+    ]);
+    if (!providerMutation) throw recoveredError;
+    if (ambiguousInferenceSelection) throw recoveredError;
+    if (restoredSelectionAfterProviderFailure) throw recoveredError;
+    const detail =
+      recoveredError instanceof Error ? recoveredError.message : String(recoveredError);
+    const exitCode = recoveredError instanceof InferenceSetError ? recoveredError.exitCode : 1;
     if (!appliedInferenceSelection) {
       if (providerMutation.action === "create") {
         try {
@@ -2463,6 +2493,25 @@ async function runInferenceSetWithoutHostLock(
         : "The inference selection changed, but the OpenShell provider binding did not converge. Retry this command immediately; if convergence still fails, rebuild the sandbox.";
     throw new InferenceSetError(`${detail}\n  ${residual}`, exitCode);
   }
+}
+
+async function collectNativeRollbackErrors(
+  error: unknown,
+  steps: Array<() => Promise<unknown>>,
+): Promise<unknown> {
+  const failures: string[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (rollbackError) {
+      failures.push(rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+    }
+  }
+  if (failures.length === 0) return error;
+  return new InferenceSetError(
+    [error instanceof Error ? error.message : String(error), ...failures].join("\n  "),
+    error instanceof InferenceSetError ? error.exitCode : 1,
+  );
 }
 
 export async function runInferenceSet(

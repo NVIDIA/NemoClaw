@@ -44,7 +44,10 @@ export async function prepareNativeBedrockSelection(input: {
   sandboxName: string;
   previousAttachment?: NativeBedrockProviderAttachment;
   deps: NativeBedrockSwitchDeps;
-}): Promise<{ attachment?: NativeBedrockProviderAttachment; changed: boolean }> {
+}): Promise<{
+  attachment?: NativeBedrockProviderAttachment;
+  changed: boolean;
+}> {
   if (!input.selected) return { changed: false };
   const { deps } = input;
   const classification = classifyCustomAnthropicEndpoint(input.endpointUrl ?? "");
@@ -147,15 +150,45 @@ export async function rollbackNativeBedrockSelection(input: {
   deps: NativeBedrockSwitchDeps;
 }): Promise<void> {
   if (input.committed) return;
-  const common = { adapter: input.deps.providerAdapter, sandboxName: input.sandboxName };
-  if (input.changed && input.attachment)
-    await detachNativeBedrockProvider({ ...common, expected: input.attachment });
-  if (input.previousDetached && input.previousAttachment)
-    await ensureNativeBedrockProviderAttached({
-      ...common,
-      expected: input.previousAttachment,
-      verifyAdapterGeneration: input.deps.verifyBedrockAdapterGeneration,
-    });
-  if (input.attachment && input.attachment.providerName !== input.previousAttachment?.providerName)
-    await retireUnusedBedrockProvider(input.attachment, input.deps, input.sandboxName);
+  const common = {
+    adapter: input.deps.providerAdapter,
+    sandboxName: input.sandboxName,
+  };
+  const failures: string[] = [];
+  let detached = true;
+  if (input.changed && input.attachment) {
+    try {
+      await detachNativeBedrockProvider({
+        ...common,
+        expected: input.attachment,
+      });
+    } catch (error) {
+      detached = false;
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (input.previousDetached && input.previousAttachment) {
+    try {
+      await ensureNativeBedrockProviderAttached({
+        ...common,
+        expected: input.previousAttachment,
+        verifyAdapterGeneration: input.deps.verifyBedrockAdapterGeneration,
+      });
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  // Unconfirmed detach retains the new provider and ownership for recovery.
+  if (
+    detached &&
+    input.attachment &&
+    input.attachment.providerName !== input.previousAttachment?.providerName
+  ) {
+    try {
+      await retireUnusedBedrockProvider(input.attachment, input.deps, input.sandboxName);
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (failures.length) throw new Error(failures.join("\n  "));
 }

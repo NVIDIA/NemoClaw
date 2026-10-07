@@ -186,3 +186,63 @@ it.each([
     }
   },
 );
+
+it("rejects rotated or invalid compatible receipts in an existing pending reservation", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-compatible-reservation-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  try {
+    const registry = await import("./registry");
+    const identity = nativeCompatibleEndpointIdentity({
+      addresses: ["93.184.216.34"],
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+    });
+    const receipt = {
+      schemaVersion: 1 as const,
+      ...identity,
+      endpointUrl: identity.endpoint,
+      providerId: "owned",
+      addresses: ["93.184.216.34"],
+    };
+    const route = {
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: identity.endpoint,
+      preferredInferenceApi: identity.api,
+      gatewayName: "gateway",
+      reservationSessionId: "session",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      nativeCompatibleProviderAttachment: receipt,
+    };
+    expect(registry.reserveSandboxInferenceRoute("alpha", route)).toBe(true);
+    const before = registry.getSandbox("alpha");
+    const rotated = nativeCompatibleEndpointIdentity({
+      addresses: ["93.184.216.35"],
+      endpointUrl: identity.endpoint,
+      api: identity.api,
+    });
+    expect(() =>
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...route,
+        nativeCompatibleProviderAttachment: {
+          ...receipt,
+          ...rotated,
+          providerId: "rotated",
+          addresses: ["93.184.216.35"],
+        },
+      }),
+    ).toThrow("cannot change");
+    expect(() =>
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...route,
+        nativeCompatibleProviderAttachment: { ...receipt, providerId: "" },
+      }),
+    ).toThrow("selected endpoint");
+    expect(registry.getSandbox("alpha")).toEqual(before);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});

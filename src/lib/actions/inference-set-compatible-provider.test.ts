@@ -425,7 +425,7 @@ describe("runInferenceSet compatible providers", () => {
     );
   });
 
-  it("restores the old provider before retiring a failed new selection", async () => {
+  async function compatibleRollbackFixture() {
     const f = await nativeCompatibleRotationFixture();
     f.attachments.delete("beta");
     const entry = {
@@ -457,6 +457,37 @@ describe("runInferenceSet compatible providers", () => {
     });
     deps.clearNativeCompatibleProviderAuthority = clear;
     deps.updateSandbox = vi.fn(() => false);
+    return { f, entry, deps, clear };
+  }
+
+  it("restores the old provider after failed publication", async () => {
+    const { f, entry, deps, clear } = await compatibleRollbackFixture();
+    const run = runInferenceSet(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: entry.endpointUrl,
+        credentialEnv: entry.credentialEnv,
+        inferenceApi: entry.preferredInferenceApi,
+      },
+      deps,
+    );
+    await expect(run).rejects.toThrow(/^Failed to update NemoClaw registry for sandbox 'alpha'\.$/);
+    expect([...f.attachments.get("alpha")!]).toEqual([f.previous.profile.providerName]);
+    expect(clear).toHaveBeenCalledWith("nemoclaw", f.nextReceipt);
+    expect(f.authorities.get(f.previous.profile.profileId)).toEqual(f.previous.receipt);
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: f.previous.profile.providerName }),
+    );
+  });
+
+  it("restores the old provider when detaching the new provider fails", async () => {
+    const { f, entry, deps, clear } = await compatibleRollbackFixture();
+    const detach = f.adapter.detachProvider.getMockImplementation()!;
+    f.adapter.detachProvider
+      .mockImplementationOnce(detach)
+      .mockRejectedValueOnce(new Error("detach transport failed"));
     const run = runInferenceSet(
       {
         sandboxName: "alpha",
@@ -469,8 +500,12 @@ describe("runInferenceSet compatible providers", () => {
       deps,
     );
     await expect(run).rejects.toThrow("Failed to update NemoClaw registry");
-    expect([...f.attachments.get("alpha")!]).toEqual([f.previous.profile.providerName]);
-    expect(clear).toHaveBeenCalledWith("nemoclaw", f.nextReceipt);
+    await expect(run).rejects.not.toThrow("step is not a function");
+    expect(f.attachments.get("alpha")!.has(f.previous.profile.providerName)).toBe(true);
+    await expect(run).rejects.toThrow("detach transport failed");
+    expect(clear).not.toHaveBeenCalled();
+    expect(f.authorities.get(f.nextReceipt.profileId)).toEqual(f.nextReceipt);
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.authorities.get(f.previous.profile.profileId)).toEqual(f.previous.receipt);
     expect(f.adapter.deleteProvider).not.toHaveBeenCalledWith(
       expect.objectContaining({ providerName: f.previous.profile.providerName }),

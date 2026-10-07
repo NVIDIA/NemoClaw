@@ -971,10 +971,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeCompatibleCredential =
-    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(
-      env.NEMOCLAW_UPSTREAM_PROVIDER ?? "",
-    ) &&
-    inferenceBaseUrl.startsWith("https://") &&
+    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(upstreamProvider) &&
+    new URL(inferenceBaseUrl).protocol === "https:" &&
     new URL(inferenceBaseUrl).hostname !== "inference.local";
   const providers = {
     [providerKey]: {

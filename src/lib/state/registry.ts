@@ -656,6 +656,10 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
+    const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+      route.nativeCompatibleProviderAttachment,
+      route,
+    );
     const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
       route.nativeBedrockProviderAttachment,
       route,
@@ -725,6 +729,10 @@ export function reserveSandboxInferenceRoute(
             route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
           ) &&
           isDeepStrictEqual(
+            existing.nativeCompatibleProviderAttachment,
+            nativeCompatibleProviderAttachment ?? existing.nativeCompatibleProviderAttachment,
+          ) &&
+          isDeepStrictEqual(
             existing.nativeBedrockProviderAttachment,
             nativeBedrockProviderAttachment ?? existing.nativeBedrockProviderAttachment,
           ) &&
@@ -752,10 +760,6 @@ export function reserveSandboxInferenceRoute(
       }
       return true;
     }
-    const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
-      route.nativeCompatibleProviderAttachment,
-      route,
-    );
     const existingForReservation: SandboxEntry = existing
       ? { ...existing }
       : { name, pendingRouteReservation: true };
@@ -1062,7 +1066,10 @@ export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): bo
   });
 }
 
-export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: string | null } {
+export function listSandboxes(): {
+  sandboxes: SandboxEntry[];
+  defaultSandbox: string | null;
+} {
   const data = load();
   return {
     sandboxes: Object.values(data.sandboxes),

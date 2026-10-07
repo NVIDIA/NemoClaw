@@ -72,6 +72,28 @@ describe("native Bedrock inference selection", () => {
     expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
   });
+  it("preserves the publication error and reports a failed Bedrock restore", async () => {
+    const f = fixture();
+    f.deps.calls.updateSandbox.mockImplementationOnce(() => {
+      throw new Error("registry publish failed");
+    });
+    f.adapter.attachProvider.mockImplementationOnce(async () => {
+      throw new Error("restore transport failed");
+    });
+    const operation = runInferenceSet(
+      {
+        sandboxName: "alpha",
+        provider: "openai",
+        model: "gpt-4o",
+        noVerify: true,
+      },
+      f.deps,
+    );
+    await expect(operation).rejects.toThrow("registry publish failed");
+    await expect(operation).rejects.toThrow("restore transport failed");
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
+  });
   it("keeps Hermes on the native adapter when changing models", async () => {
     const f = fixture();
     Object.assign(f.deps.getSandbox("alpha")!, { agent: "hermes" });

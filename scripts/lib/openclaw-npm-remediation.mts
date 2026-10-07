@@ -35,7 +35,6 @@ type Remediation = Readonly<{
     | "current-core"
     | "jaeger"
     | "legacy-core"
-    | "proxy-addr"
     | "slack-proxy-addr"
     | "undici";
   version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2";
@@ -1336,7 +1335,7 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
-    patchOpenClawSlackProxyPackageGraph(sourcePackage, replacement);
+    patchOpenClawSlackProxyAddrPackageGraph(sourcePackage, replacement);
   } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
@@ -1475,21 +1474,6 @@ export function buildRemediatedOpenClawPluginArchive(
     );
     patchOpenClawDiscordPackageGraph(sourcePackage);
     copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
-  } else if (remediation.kind === "proxy-addr") {
-    const proxyAddrArchive = packReplacement(
-      `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
-      CURRENT_PROXY_ADDR_INTEGRITY,
-      CURRENT_PROXY_ADDR_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const proxyAddrPackage = extractArchive(
-      proxyAddrArchive.archivePath,
-      join(remediationRoot, "proxy-addr"),
-      remediationRoot,
-      env,
-    );
-    patchOpenClawSlackProxyAddrPackageGraph(sourcePackage, proxyAddrPackage);
   } else if (remediation.kind === "legacy-core") {
     const bundledTarPath = join(sourcePackage, "node_modules", "tar");
     const bundledBaileysPath = join(sourcePackage, "node_modules", "@whiskeysockets", "baileys");
@@ -1908,7 +1892,7 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
       directory,
       env,
     );
-    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
+    patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

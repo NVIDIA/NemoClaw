@@ -63,7 +63,7 @@ export function applyNativeBedrockProviderAuthority(
     throw new Error("Cannot record invalid Bedrock provider authority.");
   const previous = readNativeBedrockProviderAuthority(state, gatewayName, receipt.profileId);
   if (previous && previous.providerId !== receipt.providerId)
-    throw new Error("Compatible provider identity changed. Ownership was retained.");
+    throw new Error("Bedrock provider identity changed. Ownership was retained.");
   if (previous) return false;
   state.nativeBedrockProviderAuthorities = {
     ...state.nativeBedrockProviderAuthorities,

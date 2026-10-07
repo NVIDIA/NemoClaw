@@ -33,6 +33,17 @@ describe("native OpenClaw credential generation", () => {
     },
   );
 
+  it("accepts normalized provider whitespace and uppercase HTTPS schemes", () => {
+    const config = buildConfigDirect({
+      NEMOCLAW_UPSTREAM_PROVIDER: " compatible-endpoint ",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_INFERENCE_BASE_URL: "HTTPS://api.example.com/v1",
+    });
+    expect(config.models.providers.inference.apiKey).toBe(
+      "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}",
+    );
+  });
+
   it("uses the NVIDIA runtime handle reference only on its native endpoint", () => {
     const config = buildConfigDirect({
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",

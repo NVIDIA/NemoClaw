@@ -35,6 +35,29 @@ describe("Bedrock switch recovery", () => {
     expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
   });
 
+  it("restores the previous attachment after an ambiguous detach and retains ownership", async () => {
+    const f = fixture();
+    f.adapter.detachProvider.mockImplementationOnce(async () => {
+      f.attachments.clear();
+      throw new Error("detach transport failed");
+    });
+    await expect(
+      rollbackNativeBedrockSelection({
+        committed: false,
+        changed: true,
+        attachment: f.receipt,
+        previousDetached: true,
+        previousAttachment: f.receipt,
+        sandboxName: "alpha",
+        deps: f.deps,
+      }),
+    ).rejects.toThrow("detach transport failed");
+    expect(f.attachments.has(f.receipt.providerName)).toBe(true);
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
+  });
+
   it("does not roll back a committed selection when later config sync fails", async () => {
     const f = fixture();
     await rollbackNativeBedrockSelection({

@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireMatchingNativeBedrockAttachment } from "../inference/native-bedrock/contract";
+import {
+  isNativeBedrockSelection,
+  requireMatchingNativeBedrockAttachment,
+} from "../inference/native-bedrock/contract";
 
 import { requireMatchingNativeCompatibleAttachment } from "../inference/native-compatible/contract";
 import { isDeepStrictEqual } from "node:util";
@@ -16,7 +19,10 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
-import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
+import {
+  nativeInferenceProviderForSandbox,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
@@ -457,4 +463,43 @@ export function registerPreparedCreatedSandbox(
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
+}
+
+export function nativeProviderCreateIntentFields(
+  selection: {
+    provider: string | null | undefined;
+    endpointUrl: string | null | undefined;
+    preferredInferenceApi: string | null | undefined;
+  },
+  entry: SandboxEntry | null,
+): {
+  inferenceProvider: string | null;
+  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
+  nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
+} {
+  const currentSelection = { ...entry, ...selection };
+  const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
+    entry?.nativeBedrockProviderAttachment,
+    currentSelection,
+  );
+  const nativeCompatibleProviderAttachment = requireMatchingNativeCompatibleAttachment(
+    entry?.nativeCompatibleProviderAttachment,
+    currentSelection,
+  );
+  if (entry && isNativeBedrockSelection(currentSelection) && !nativeBedrockProviderAttachment)
+    throw new Error("Recreate this beta sandbox before using native Bedrock inference.");
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    entry?.nativeNvidiaProviderAttachment,
+  );
+  return {
+    inferenceProvider: nativeBedrockProviderAttachment
+      ? nativeBedrockProviderAttachment.providerName
+      : nativeCompatibleProviderAttachment
+        ? nativeCompatibleProviderAttachment.providerName
+        : nativeInferenceProviderForSandbox(selection.provider),
+    ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
+    ...(nativeCompatibleProviderAttachment ? { nativeCompatibleProviderAttachment } : {}),
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+  };
 }

@@ -2,21 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  isNativeBedrockSelection,
-  requireMatchingNativeBedrockAttachment,
-} from "../../../inference/gateway-route-compatibility";
-
-import {
-  normalizeNativeCompatibleProviderAttachment,
-  isNativeCompatibleSelection,
-} from "../../../inference/gateway-route-compatibility";
-import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
-  nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -107,7 +96,10 @@ import {
   selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
-import { sandboxCreateInferenceSelection } from "../../sandbox-registration";
+import {
+  sandboxCreateInferenceSelection,
+  nativeProviderCreateIntentFields,
+} from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
@@ -138,39 +130,6 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   ReplacedSandboxWorkloadCleanupResult,
   { readonly status: "skipped" }
 >["reason"];
-
-function nativeNvidiaCreateIntentFields(
-  provider: string | null | undefined,
-  entry: SandboxEntry | null,
-): {
-  inferenceProvider: string | null;
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
-  nativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
-  nativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
-} {
-  const nativeBedrockProviderAttachment = requireMatchingNativeBedrockAttachment(
-    entry?.nativeBedrockProviderAttachment,
-    { ...entry, provider },
-  );
-  if (entry && isNativeBedrockSelection({ ...entry, provider }) && !nativeBedrockProviderAttachment)
-    throw new Error("Recreate this beta sandbox before using native Bedrock inference.");
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
-  return {
-    inferenceProvider: nativeBedrockProviderAttachment
-      ? nativeBedrockProviderAttachment.providerName
-      : isNativeCompatibleSelection(provider) && entry?.nativeCompatibleProviderAttachment
-        ? (normalizeNativeCompatibleProviderAttachment(entry.nativeCompatibleProviderAttachment)
-            ?.providerName ?? null)
-        : nativeInferenceProviderForSandbox(provider),
-    ...(nativeBedrockProviderAttachment ? { nativeBedrockProviderAttachment } : {}),
-    ...(entry?.nativeCompatibleProviderAttachment
-      ? { nativeCompatibleProviderAttachment: entry.nativeCompatibleProviderAttachment }
-      : {}),
-    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-  };
-}
 
 const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
   "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
@@ -342,7 +301,11 @@ export interface SandboxStateOptions<
     ): Promise<WebSearchConfig | null>;
     startRecordedStep(
       stepName: string,
-      updates: { sandboxName?: string | null; provider?: string | null; model?: string | null },
+      updates: {
+        sandboxName?: string | null;
+        provider?: string | null;
+        model?: string | null;
+      },
     ): Promise<void>;
     getRecordedMessagingChannelsForResume(
       resume: boolean,
@@ -582,7 +545,9 @@ export function apfCreateFingerprintFields(requested: boolean): readonly string[
 
 function sandboxGpuCreateInputs(config: unknown): unknown {
   if (config === null || typeof config !== "object") return config ?? null;
-  const { sandboxGpuProof: _sandboxGpuProof, ...inputs } = config as { sandboxGpuProof?: unknown };
+  const { sandboxGpuProof: _sandboxGpuProof, ...inputs } = config as {
+    sandboxGpuProof?: unknown;
+  };
   return inputs;
 }
 
@@ -1620,7 +1585,10 @@ class SandboxStateFlow<
 
   private checkpointMessaging(
     state: SandboxStepState<WebSearchConfig>,
-    messaging: { plan: SandboxMessagingPlan | null; selectedChannels: string[] },
+    messaging: {
+      plan: SandboxMessagingPlan | null;
+      selectedChannels: string[];
+    },
   ): SandboxStepState<WebSearchConfig> {
     if (!this.resumesSandboxPrompts) {
       return { ...state, selectedMessagingChannels: messaging.selectedChannels };
@@ -1903,8 +1871,12 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
-        this.options.provider,
+      ...nativeProviderCreateIntentFields(
+        {
+          provider: this.options.provider,
+          endpointUrl: this.options.endpointUrl,
+          preferredInferenceApi: this.options.preferredInferenceApi,
+        },
         this.deps.getSandboxRegistryEntry(sandboxName),
       ),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
