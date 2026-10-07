@@ -9,6 +9,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { redactFullWithUrls } from "../../../src/lib/security/redact.ts";
+
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
 import * as importedBuildContextStage from "../../../src/lib/onboard/build-context-stage.ts";
@@ -400,7 +402,7 @@ function requireOpenShellResult(
 ): string {
   assert.ok(
     result.status === 0 && !result.error,
-    `${label} failed: ${String(result.error?.message ?? result.stderr ?? result.stdout)}`,
+    `${label} failed (status ${String(result.status)}): ${redactFullWithUrls(String(result.error?.message || result.stderr || result.stdout))}`,
   );
   return String(result.stdout).trim();
 }

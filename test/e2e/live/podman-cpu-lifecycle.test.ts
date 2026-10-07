@@ -292,6 +292,7 @@ exit 1
             "--label",
             `nemoclaw.agent=${agent}`,
             "--no-tty",
+            "--detach",
             "--",
             "/bin/sh",
             "-lc",
