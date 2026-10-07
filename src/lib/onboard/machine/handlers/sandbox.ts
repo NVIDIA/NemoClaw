@@ -907,7 +907,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): Promise<SandboxResumeDecision> {
-    if (this.options.recreateSandbox(false)) return decision;
+    // A fresh run records the requested name before checking the existing sandbox's selection.
+    if (!this.options.resume || this.options.recreateSandbox(false)) return decision;
     return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 

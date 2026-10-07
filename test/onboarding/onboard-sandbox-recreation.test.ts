@@ -980,18 +980,20 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it(
-    "interactive mode deletes and recreates sandbox when user confirms drift recreate",
+  it.for([
+    { mode: "interactive", answer: "y", recreate: true },
+    { mode: "interactive", answer: "n", recreate: false },
+    { mode: "non-interactive", answer: "", recreate: true },
+  ])(
+    "$mode drift recreation with answer '$answer' preserves the confirmation decision (#12667)",
     {
       timeout: 60_000,
     },
-    async (context) => {
+    async ({ mode, answer, recreate }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"),
-      );
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-drift-"));
       const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "interactive-decline.js");
+      const scriptPath = path.join(tmpDir, "selection-drift.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
@@ -1019,6 +1021,9 @@ const path = require("node:path");
 
 const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const sourceSandboxId = createdSandbox.state.sandboxId;
+const prompts = [];
+process.on("exit", () => console.log(JSON.stringify({ commands, prompts, sourceSandboxId, sandboxId: createdSandbox.state.sandboxId })));
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
@@ -1078,8 +1083,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
-// Mock prompt to return "y" (confirm recreate)
-credentials.prompt = async () => "y";
+credentials.prompt = async (question) => {
+  prompts.push(question);
+  return ${JSON.stringify(answer)};
+};
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
@@ -1113,7 +1120,6 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
         ...ONBOARD_TEST_ENV,
@@ -1122,7 +1128,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
-      delete env["NEMOCLAW_NON_INTERACTIVE"];
+      env["NEMOCLAW_NON_INTERACTIVE"] = mode === "non-interactive" ? "1" : undefined;
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
       const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
@@ -1131,7 +1137,7 @@ const { createSandbox } = require(${onboardPath});
         context,
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, recreate ? 0 : 1, result.stderr);
       const payloadLine = result.stdout
         .trim()
         .split("\n")
@@ -1141,21 +1147,28 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
 
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*delete/.test(String(entry.command)),
         ),
-        "should delete existing sandbox when user confirms recreate",
+        recreate,
+        "sandbox delete must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*create/.test(String(entry.command)),
         ),
-        "should create a new sandbox when user confirms recreate",
+        recreate,
+        "sandbox create must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(payload.sandboxId !== payload.sourceSandboxId, recreate);
+      assert.equal(
         result.stdout.includes("requested inference selection changed"),
-        "should show drift warning before prompting",
+        mode === "interactive",
+      );
+      assert.equal(
+        payload.prompts.some((question: string) => question.includes("Recreate sandbox")),
+        mode === "interactive",
       );
     },
   );
