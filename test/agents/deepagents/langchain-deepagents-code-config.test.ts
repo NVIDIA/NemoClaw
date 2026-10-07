@@ -114,6 +114,23 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
+  it("selects the Anthropic Messages client for native Anthropic inference (#12589)", () => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "anthropic:claude-sonnet-4-5-20250929",
+      NEMOCLAW_UPSTREAM_PROVIDER: "anthropic-prod",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://api.anthropic.com",
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+    });
+
+    expect(config).toContain('default = "anthropic:claude-sonnet-4-5-20250929"');
+    expect(config).toContain("[models.providers.anthropic]");
+    expect(config).toContain('models = ["claude-sonnet-4-5-20250929"]');
+    expect(config).toContain('api_key_env = "ANTHROPIC_API_KEY"');
+    expect(config).toContain('base_url = "https://api.anthropic.com"');
+    expect(config).not.toContain("[models.providers.openai");
+    expect(config).not.toContain("use_responses_api");
+  });
+
   it("keeps the legacy provider key when the renamed route variables are absent", () => {
     const config = runGenerator({
       NEMOCLAW_PROVIDER_KEY: "legacy-route",

@@ -11,12 +11,10 @@ import {
 } from "../../inference/native-hosted/authority";
 import { isValidNativeProviderGateway as isValidName } from "./native-nvidia-provider-authority-state";
 
-import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import {
-  applyNativeNvidiaProviderAuthority,
-  readNativeNvidiaProviderAuthority,
-  removeNativeNvidiaProviderAuthority as applyRemoveNativeNvidiaProviderAuthority,
-} from "./native-nvidia-provider-authority-state";
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
 import type { SandboxRegistry } from "./types";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
@@ -24,32 +22,22 @@ import { load, save } from "./persistence";
 export function getNativeNvidiaProviderAuthority(
   gatewayName: string,
 ): NativeNvidiaProviderAttachment | undefined {
-  return readNativeNvidiaProviderAuthority(load(), gatewayName);
+  return normalizeNativeNvidiaProviderAttachment(
+    getNativeHostedProviderAuthority(gatewayName, "nemoclaw-nvidia-inference-v1"),
+  );
 }
 
 export function setNativeNvidiaProviderAuthority(
   gatewayName: string,
   receipt: NativeNvidiaProviderAttachment,
 ): void {
-  withLock(() => {
-    const data = load();
-    const existing = readNativeNvidiaProviderAuthority(data, gatewayName);
-    if (existing?.providerId === receipt.providerId) return;
-    if (!applyNativeNvidiaProviderAuthority(data, gatewayName, receipt)) {
-      throw new Error("Cannot record invalid native NVIDIA gateway provider authority");
-    }
-    save(data);
-  });
+  if (receipt.profileId !== "nemoclaw-nvidia-inference-v1")
+    throw new Error("Invalid native NVIDIA gateway provider authority");
+  setNativeHostedProviderAuthority(gatewayName, receipt);
 }
 
 export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
-  withLock(() => {
-    const data = load();
-    const removedNvidia = applyRemoveNativeNvidiaProviderAuthority(data, gatewayName);
-    const removedHosted = removeHostedAuthority(data, gatewayName, "nemoclaw-nvidia-inference-v1");
-    if (!removedNvidia && !removedHosted) return;
-    save(data);
-  });
+  clearNativeHostedProviderAuthority(gatewayName, "nemoclaw-nvidia-inference-v1");
 }
 
 export function getNativeHostedProviderAuthority(

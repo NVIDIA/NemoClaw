@@ -95,9 +95,9 @@
     },
     {
       "name": "OpenRouter",
-      "status": "tested",
+      "status": "caveated",
       "endpoint_type": "OpenAI-compatible",
-      "notes": "First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers."
+      "notes": "Onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw attaches the native OpenRouter provider for `https://openrouter.ai/api/v1`; host-side validation and agent requests preserve the required attribution headers. Live qualification of this migrated path remains pending."
     },
     {
       "name": "OpenAI",

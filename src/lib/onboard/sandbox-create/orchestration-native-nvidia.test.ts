@@ -127,6 +127,69 @@ describe("native NVIDIA post-create provider verification", () => {
     expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
   });
 
+  it("publishes and verifies the physical provider for a logical OpenAI selection", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    vi.mocked(adapter.getProvider).mockResolvedValue({
+      ok: true,
+      value: {
+        name: "nemoclaw-openai-api-v1",
+        type: "nemoclaw-openai-inference-v1",
+        credentialKeys: ["OPENAI_API_KEY"],
+        configKeys: [],
+        revision: { id: recordedProviderId, resourceVersion: 1 },
+      },
+    });
+    adapter.updateProvider = vi.fn(async () => ({ ok: true as const }));
+    vi.mocked(adapter.listProviderAttachments).mockResolvedValue({
+      ok: true,
+      value: { names: ["nemoclaw-openai-api-v1"] },
+    });
+    const revalidateSandboxIdentity = vi.fn();
+    const preparationInput = {
+      openshellDriver: "docker" as const,
+      inferenceProvider: "openai-api",
+      messagingProviders: [],
+      messagingProviderRequests: [],
+      extraProviders: [],
+      gatewayName: "nemoclaw",
+    };
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      expectedNativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: recordedProviderId,
+      },
+      preparationInput,
+      preparationDeps: {
+        runOpenshell: vi.fn() as never,
+        providerAdapter: adapter,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: revalidateSandboxIdentity,
+    });
+
+    await boundary.publishBeforeCreate();
+    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+    expect(adapter.updateProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "nemoclaw-openai-api-v1",
+      credentials: [],
+      config: [],
+    });
+    expect(boundary.runAfterVerifiedCreate).toBeTypeOf("function");
+    await boundary.runAfterVerifiedCreate!(verifiedCreateContext(revalidateSandboxIdentity));
+    expect(adapter.listProviderAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha" }),
+    );
+    expect(preparationInput.inferenceProvider).toBe("openai-api");
+  });
+
   it("rejects a replaced provider before changing its sandbox attachments", async () => {
     const adapter = providerAdapter("99999999-2222-4333-8444-555555555555");
     adapter.attachProvider = vi.fn();

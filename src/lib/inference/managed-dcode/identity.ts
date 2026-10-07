@@ -4,7 +4,7 @@
 export const OPENROUTER_ENDPOINT_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_PROVIDER_NAME = "openrouter-api";
 
-export type ManagedDcodeProvider = "openai" | "openrouter";
+export type ManagedDcodeProvider = "openai" | "openrouter" | "anthropic";
 
 export type ManagedDcodeIdentity = {
   provider: ManagedDcodeProvider;
@@ -41,7 +41,7 @@ export function normalizeManagedDcodeEndpointUrl(
 
 export function normalizeManagedDcodeModelName(model: string): string {
   const trimmed = model.trim();
-  for (const prefix of ["openai:", "openrouter:"]) {
+  for (const prefix of ["openai:", "openrouter:", "anthropic:"]) {
     if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
   }
   return trimmed;
@@ -69,11 +69,13 @@ export function resolveManagedDcodeIdentity(
 ): ManagedDcodeIdentity {
   const providerName = upstreamProvider?.trim();
   const provider =
-    providerName === "openrouter" ||
-    providerName === OPENROUTER_PROVIDER_NAME ||
-    (providerName === "compatible-endpoint" && isOpenRouterEndpointUrl(upstreamEndpointUrl))
-      ? "openrouter"
-      : "openai";
+    providerName === "anthropic-prod"
+      ? "anthropic"
+      : providerName === "openrouter" ||
+          providerName === OPENROUTER_PROVIDER_NAME ||
+          (providerName === "compatible-endpoint" && isOpenRouterEndpointUrl(upstreamEndpointUrl))
+        ? "openrouter"
+        : "openai";
   const normalizedModel = normalizeManagedDcodeModelName(model);
   return {
     provider,

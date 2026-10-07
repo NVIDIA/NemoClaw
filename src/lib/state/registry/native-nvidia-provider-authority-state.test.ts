@@ -2,39 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import {
-  applyNativeNvidiaProviderAuthority,
-  normalizeNativeNvidiaProviderAuthorities,
-  readNativeNvidiaProviderAuthority,
-  removeNativeNvidiaProviderAuthority,
-} from "./native-nvidia-provider-authority-state";
+import { normalizeGatewayNativeHostedAuthorities } from "./native-nvidia-provider-authority-state";
 
 const receipt = {
   schemaVersion: 1 as const,
-  profileId: "nemoclaw-nvidia-inference-v1" as const,
-  providerName: "nemoclaw-nvidia-prod-v1" as const,
+  profileId: "nemoclaw-nvidia-inference-v1",
+  providerName: "nemoclaw-nvidia-prod-v1",
   providerId: "11111111-2222-4333-8444-555555555555",
 };
 
-describe("native NVIDIA gateway provider authority", () => {
-  it("normalizes, reads, and removes gateway-scoped receipts", () => {
-    const state: {
-      nativeNvidiaProviderAuthorities?: Record<string, typeof receipt>;
-    } = {};
-
-    expect(applyNativeNvidiaProviderAuthority(state, "nemoclaw-19080", receipt)).toBe(true);
-    expect(readNativeNvidiaProviderAuthority(state, "nemoclaw-19080")).toEqual(receipt);
-    expect(removeNativeNvidiaProviderAuthority(state, "nemoclaw-19080")).toBe(true);
-    expect(state.nativeNvidiaProviderAuthorities).toBeUndefined();
+describe("gateway native provider authority migration", () => {
+  it("merges legacy NVIDIA ownership into sorted gateway records without duplicating identities", () => {
+    expect(
+      normalizeGatewayNativeHostedAuthorities(
+        { zeta: [receipt] },
+        { zeta: receipt, alpha: receipt },
+      ),
+    ).toEqual({ alpha: [receipt], zeta: [receipt] });
   });
 
-  it("drops malformed receipts and sorts gateway keys", () => {
-    expect(
-      normalizeNativeNvidiaProviderAuthorities({
-        zeta: receipt,
-        broken: { ...receipt, providerId: "" },
-        alpha: receipt,
-      }),
-    ).toEqual({ alpha: receipt, zeta: receipt });
+  it("migrates a valid gateway name that matches an inherited object property", () => {
+    expect(normalizeGatewayNativeHostedAuthorities(undefined, { constructor: receipt })).toEqual({
+      constructor: [receipt],
+    });
+  });
+
+  it("refuses conflicting legacy and hosted identities", () => {
+    expect(() =>
+      normalizeGatewayNativeHostedAuthorities(
+        { alpha: [{ ...receipt, providerId: "replacement" }] },
+        { alpha: receipt },
+      ),
+    ).toThrow("Conflicting native provider ownership receipts");
+  });
+
+  it.each([
+    null,
+    [],
+    "invalid",
+    { alpha: { ...receipt, providerId: "" } },
+    { "../gateway": receipt },
+  ])("refuses malformed legacy authority instead of dropping ownership: %j", (legacy) => {
+    expect(() => normalizeGatewayNativeHostedAuthorities(undefined, legacy)).toThrow(
+      "Invalid legacy native NVIDIA",
+    );
   });
 });

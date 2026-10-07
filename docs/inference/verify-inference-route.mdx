@@ -43,8 +43,8 @@ The row reports `healthy` only when the route returns a structurally valid resul
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
-The recorded `openrouter-api` provider uses NemoClaw's Chat Completions-only OpenRouter adapter.
-Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.
+OpenRouter uses its native `https://openrouter.ai/api/v1` endpoint through the recorded sandbox-attached provider.
+Its status check requires a successful inference request for the selected model, with the required OpenRouter attribution headers.
 When the models route responds and `status` sends an inference request, a failing row names the endpoint that request used.
 When the models route itself does not respond, the row names the models route.
 An HTTP `401` or `403` response reports `unauthorized`.
@@ -85,7 +85,6 @@ Each attempt allows 2 seconds for the route to return an HTTP response.
 For OpenClaw, this leaves time for client overhead before its 2.5-second provider preflight stops.
 </AgentOnly>
 A transport failure, an unsupported models-route HTTP 404, or HTTP 5xx leaves the onboarding session retryable at final verification.
-For a supported OpenRouter agent, onboarding accepts the adapter's catalog 404 only after a bounded inference request validates the selected model.
 Onboarding retries any other 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
 Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
 Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.

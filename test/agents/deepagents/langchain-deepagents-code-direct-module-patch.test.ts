@@ -1136,9 +1136,30 @@ async def validate():
     try:
         config._get_provider_kwargs("anthropic")
     except model_config.ModelConfigError as exc:
-        assert "managed inference providers" in str(exc)
+        assert "selected native Anthropic route" in str(exc)
     else:
-        raise AssertionError("non-managed model provider was allowed")
+        raise AssertionError("Anthropic was allowed on an unrelated managed route")
+    from deepagents_code import _nemoclaw_managed as managed_runtime
+    original_base_url = managed_runtime.managed_inference_base_url
+    original_api_key = managed_runtime.managed_inference_api_key
+    managed_runtime.managed_inference_base_url = lambda: "https://api.anthropic.com"
+    managed_runtime.managed_inference_api_key = lambda: "openshell:resolve:env:v1_ANTHROPIC_API_KEY"
+    try:
+        assert config._get_provider_kwargs("anthropic") == {
+            "api_key": "openshell:resolve:env:v1_ANTHROPIC_API_KEY",
+            "base_url": "https://api.anthropic.com",
+        }
+        selector._select_with_auth_check("anthropic:model", "anthropic")
+        assert selector.original_selection == ("anthropic:model", "anthropic")
+        try:
+            config._get_provider_kwargs("google_genai")
+        except model_config.ModelConfigError:
+            pass
+        else:
+            raise AssertionError("non-managed model provider was allowed")
+    finally:
+        managed_runtime.managed_inference_base_url = original_base_url
+        managed_runtime.managed_inference_api_key = original_api_key
     os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "0"
     child_env = server._build_server_env()
     assert child_env["LANGGRAPH_NO_VERSION_CHECK"] == "true"

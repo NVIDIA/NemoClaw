@@ -86,6 +86,7 @@ import {
 } from "./identity-boundary";
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
+  resolveProviderPreparationInput,
   usesNativeHostedProvider,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeHostedAttachmentAfterCreate,
@@ -1424,18 +1425,16 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidateSandboxIdentityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
+  const preparationInput = resolveProviderPreparationInput(input.preparationInput);
   const validate = async () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
-      input.preparationInput,
+      preparationInput,
       input.preparationDeps,
     );
   const publish = async () =>
-    publishAttachedProvidersBeforeDockerSandboxCreation(
-      input.preparationInput,
-      input.preparationDeps,
-    );
+    publishAttachedProvidersBeforeDockerSandboxCreation(preparationInput, input.preparationDeps);
   const verifyNativeHostedAttachment = async (context: VerifiedSandboxCreateEffectsContext) => {
-    if (!usesNativeHostedProvider(input.preparationInput.inferenceProvider)) return;
+    if (!usesNativeHostedProvider(preparationInput.inferenceProvider)) return;
 
     context.revalidateSandboxIdentity(
       `attaching and verifying native hosted provider for sandbox '${input.sandboxName}'`,
@@ -1443,7 +1442,7 @@ export function createProviderEffectBoundary(input: {
     await verifyNativeHostedAttachmentAfterCreate({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
-      inferenceProvider: input.preparationInput.inferenceProvider,
+      inferenceProvider: preparationInput.inferenceProvider,
       expected: input.expectedNativeHostedProviderAttachment,
       deps: input.preparationDeps,
     });
@@ -1455,7 +1454,7 @@ export function createProviderEffectBoundary(input: {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
       },
-      runAfterVerifiedCreate: usesNativeHostedProvider(input.preparationInput.inferenceProvider)
+      runAfterVerifiedCreate: usesNativeHostedProvider(preparationInput.inferenceProvider)
         ? verifyNativeHostedAttachment
         : undefined,
     };

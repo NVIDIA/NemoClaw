@@ -63,6 +63,16 @@ function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProvide
   );
 }
 
+/** Keep logical selection metadata outside the OpenShell publication boundary. */
+export function resolveProviderPreparationInput(
+  input: ProviderPreparationInput,
+): ProviderPreparationInput {
+  const profile = NATIVE_HOSTED_PROFILES.find(
+    (candidate) => candidate.logicalProvider === input.inferenceProvider,
+  );
+  return { ...input, inferenceProvider: profile?.providerName ?? input.inferenceProvider };
+}
+
 export function usesNativeHostedProvider(inferenceProvider: string | null): boolean {
   return NATIVE_HOSTED_PROFILES.some((profile) => profile.providerName === inferenceProvider);
 }

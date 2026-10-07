@@ -471,10 +471,12 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
         managed_reasoning_effort,
     )
 
-    if provider not in {"openai", "openrouter"}:
+    if provider not in {"openai", "openrouter", "anthropic"}:
         raise ModelConfigError(
             "Only NemoClaw-managed inference providers are enabled"
         )
+    if provider == "anthropic" and managed_inference_base_url() != "https://api.anthropic.com":
+        raise ModelConfigError("Anthropic requires the selected native Anthropic route")
     # Load once so malformed TOML still fails through the upstream config error
     # path, but do not consume mutable provider classes, credentials, params, or
     # endpoints from it.
@@ -1565,9 +1567,17 @@ _nemoclaw_original_select_with_auth_check = ModelSelectorScreen._select_with_aut
 
 def _nemoclaw_select_with_auth_check(self, model_spec: str, provider: str) -> None:
     if provider:
-        if provider not in {"openai", "openrouter"}:
+        if provider not in {"openai", "openrouter", "anthropic"}:
             self.app.notify(
                 "Only NemoClaw-managed inference providers are enabled.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        from deepagents_code._nemoclaw_managed import managed_inference_base_url
+        if provider == "anthropic" and managed_inference_base_url() != "https://api.anthropic.com":
+            self.app.notify(
+                "Anthropic requires the selected native Anthropic route.",
                 severity="warning",
                 markup=False,
             )

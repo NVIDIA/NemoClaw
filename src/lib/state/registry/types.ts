@@ -242,6 +242,5 @@ export interface SandboxRegistry {
   defaultSelectionRevision?: number;
   extraProviders?: string[];
   /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
-  nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
   gatewayNativeHostedProviderAuthorities?: Record<string, NativeHostedProviderAttachment[]>;
 }
