@@ -662,6 +662,8 @@ exit ${probeStatus}
       });
       vi.spyOn(commandExecutor, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
         runBuffered,
+        probeDirectory: vi.fn().mockRejectedValue(new Error("Unexpected directory probe")),
+        runStreaming: vi.fn().mockRejectedValue(new Error("Unexpected streaming command")),
       });
 
       await harness.upgradeSandboxes({ auto: true });
