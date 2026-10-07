@@ -34,6 +34,12 @@ describe("paths", () => {
     expect(resolveNemoclawStateDir()).toBe(join("/fixture-home", ".nemoclaw", "state"));
   });
 
+  it("resolves an explicit non-default gateway state root", () => {
+    expect(resolveNemoclawStateDir("/explicit-home", 18_080)).toBe(
+      join("/explicit-home", ".nemoclaw", "gateways", "18080", "state"),
+    );
+  });
+
   it("does not honor the internal state override outside Vitest", () => {
     vi.stubEnv("VITEST", "false");
 

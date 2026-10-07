@@ -62,6 +62,7 @@ const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const {
+  createCompatibleEndpointSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   verifyCompatibleEndpointSandboxSmoke,
@@ -668,6 +669,9 @@ const {
   redactDiagnostic: runner.redactFullWithUrls,
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
+
+const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact);
+
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -3204,12 +3208,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelSetup.detectUnconfiguredMessagingChannels,
           inspectGatewayCredential: registration.inspectGatewayCredential,
           verifyCompatibleEndpointSandboxSmoke: (options) =>
-            verifyCompatibleEndpointSandboxSmoke({
-              ...options,
-              runOpenshell: runCoreGatewayOpenshell,
-              sandboxCommandExecutor: sandboxExec,
-              redact,
-            }),
+            compatibleSmoke.verify(options, runCoreGatewayOpenshell),
           preparePolicyPresetResumeSelection,
           arePolicyPresetsApplied,
           skippedStepMessage,
@@ -3444,4 +3443,5 @@ module.exports = {
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
   verifyCompatibleEndpointSandboxSmoke,
+  verifyRebuiltOpenClawCompatibleEndpoint: compatibleSmoke.verifyRebuilt,
 };

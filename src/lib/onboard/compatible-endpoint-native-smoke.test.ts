@@ -9,6 +9,7 @@ import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshe
 import { describe, expect, it, vi } from "vitest";
 import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 import {
+  createCompatibleEndpointSmoke,
   buildNativeCompatibleOpenClawConfigSmokeScript,
   verifyCompatibleEndpointSandboxSmoke,
 } from "./compatible-endpoint-smoke";
@@ -61,6 +62,39 @@ function fixture() {
 }
 
 describe("native compatible onboarding smoke", () => {
+  it("keeps the native proof after restoring a rebuilt OpenClaw route", async () => {
+    verify.mockReset().mockResolvedValue(undefined);
+    const f = fixture();
+    const smoke = createCompatibleEndpointSmoke(
+      f.runOpenshell,
+      { runBuffered: f.runBuffered },
+      (value) => value,
+    );
+    await smoke.verifyRebuilt({
+      sandboxName: "selected",
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: f.receipt.endpointUrl,
+      nativeCompatibleProviderAttachment: f.receipt,
+      environment: { OPENSHELL_GATEWAY: "captured" },
+      gatewayName: "captured",
+    });
+    expect(verify).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: f.receipt, sandboxName: "selected" }),
+    );
+    expect(f.runOpenshell).not.toHaveBeenCalled();
+    expect(f.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "captured" },
+        command: [
+          "sh",
+          "-lc",
+          expect.stringContaining("https://api.example.com/v1/chat/completions"),
+        ],
+      }),
+    );
+  });
+
   it("observes attachment before invoking the native endpoint with its runtime handle", async () => {
     verify.mockReset().mockResolvedValue(undefined);
     const f = fixture();

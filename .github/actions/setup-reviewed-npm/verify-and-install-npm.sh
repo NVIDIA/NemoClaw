@@ -35,7 +35,10 @@ NODE
 
 pack_log="$download_dir/npm-pack.log"
 npm_logs_dir="$download_dir/npm-logs"
-mkdir -m 0700 "$npm_logs_dir"
+(
+  umask 077
+  mkdir "$npm_logs_dir"
+)
 set +e
 npm pack "npm@$version" \
   --pack-destination "$download_dir" \
@@ -83,7 +86,8 @@ if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$e
 fi
 
 if ! archive_version="$(
-  tar -xOf "$archive" package/package.json | node -e '
+  cd "$download_dir"
+  tar -xOf "npm-$version.tgz" package/package.json | node -e '
     const version = JSON.parse(require("node:fs").readFileSync(0, "utf8")).version;
     if (typeof version !== "string") process.exit(1);
     process.stdout.write(version);
