@@ -163,7 +163,7 @@ Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destr
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the dashboard with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
-If a live recorded PID cannot be inspected, NemoClaw refuses to create a second tunnel. Restore process-inspection access, then retry; [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
+If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
 ```bash
 $$nemoclaw tunnel start
@@ -181,7 +181,7 @@ a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` 
 When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
 The tunnel can expose the forwarded Hermes endpoint with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
-If a live recorded PID cannot be inspected, NemoClaw refuses to create a second tunnel. Restore process-inspection access, then retry; [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
+If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
 ```bash
 $$nemoclaw tunnel start

@@ -543,6 +543,37 @@ describe("startAll", () => {
     expect(output).not.toContain("https://stale.trycloudflare.com");
     expect(signals).toEqual([]);
   });
+
+  it("rejects a mismatched running quick tunnel when cloudflared is unavailable", async () => {
+    const emptyBin = join(tmpDir, "empty-bin");
+    mkdirSync(emptyBin, { recursive: true });
+    vi.stubEnv("PATH", emptyBin);
+    mkdirSync(pidDir, { recursive: true });
+    const pidFile = join(pidDir, "cloudflared.pid");
+    const portFile = join(pidDir, "cloudflared.dashboard-port");
+    writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
+    writeFileSync(portFile, "12345", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://old.trycloudflare.com\n", {
+      mode: 0o600,
+    });
+    const processControl: ProcessControl = {
+      isAlive: (pid) => pid === process.pid,
+      commandLine: () => "/usr/local/bin/cloudflared tunnel --url http://localhost:12345",
+      signalCloudflared: () => "signaled",
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(startAll({ pidDir, dashboardPort: 54321, processControl })).rejects.toThrow(
+      "existing quick tunnel targets a different dashboard port and cloudflared is unavailable to replace it",
+    );
+
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(readFileSync(pidFile, "utf-8")).toBe(String(process.pid));
+    expect(readFileSync(portFile, "utf-8")).toBe("12345");
+    expect(output).not.toContain("https://old.trycloudflare.com");
+    expect(output).not.toContain("Public URL");
+    logSpy.mockRestore();
+  });
 });
 
 // #2604: readCloudflaredState is the shared source of truth used by both
@@ -610,7 +641,7 @@ describe("readCloudflaredState", () => {
       signalCloudflared: () => "signaled",
     });
 
-    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242, reason: "wrapper" });
   });
 
   it("returns unverified-pid-process when a live PID cannot be inspected", () => {
@@ -620,7 +651,11 @@ describe("readCloudflaredState", () => {
       commandLine: () => null,
       signalCloudflared: () => "signaled",
     });
-    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+    expect(state).toEqual({
+      kind: "unverified-pid-process",
+      pid: 4242,
+      reason: "inspection-unavailable",
+    });
   });
 
   it("recognizes cloudflared through the Windows CIM identity probe", () => {

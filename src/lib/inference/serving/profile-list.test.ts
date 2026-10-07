@@ -179,7 +179,8 @@ describe("serving profile discovery", () => {
 
     expect(profile).toMatchObject({
       compatible: false,
-      incompatibilityReason: "podman-host: readiness status is incompatible",
+      incompatibilityReason:
+        "podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable.",
     });
     expect(() =>
       resolveServingProfileSelection(profileId, {
