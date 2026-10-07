@@ -8,6 +8,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { cleanupExistingPath, terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { observabilityProbeThreadId } from "../live/deepagents-observability-contract.ts";
+import { traceRequest } from "./deepagents-observability-contract-fixtures.ts";
 
 const threadId = "01900000-0000-7000-8000-000000000001";
 const probeCwd = "/sandbox/.deepagents/nemoclaw-otlp-live.fixture";
@@ -16,7 +17,11 @@ const nativeList = (data: unknown) =>
 const turn = JSON.stringify({
   schema_version: 1,
   command: "non-interactive",
-  data: { status: "success", completion: { thread_id: threadId } },
+  data: {
+    status: "success",
+    response: "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL",
+    completion: { thread_id: threadId },
+  },
 });
 
 describe("observability probe conversation cleanup", () => {
@@ -61,16 +66,19 @@ describe("observability probe conversation cleanup", () => {
   });
 
   it.each([
-    [0, true, false],
-    [0, false, false],
-    [7, true, false],
-    [0, true, true],
-    [0, true, "before"],
-    [0, false, "before"],
-    [7, true, "before"],
+    [0, true, false, 0],
+    [0, false, false, 0],
+    [7, true, false, 0],
+    [0, true, true, 0],
+    [0, true, "before", 0],
+    [0, false, "before", 0],
+    [7, true, "before", 0],
+    [0, true, false, 8],
+    [0, true, "before", 8],
+    [0, true, false, 0, true],
   ])(
-    "cleans the exact probe on failed-turn exit (%s, present=%s, interrupted=%s)",
-    (nativeStatus, present, interrupted) => {
+    "cleans the exact probe on exit (%s, present=%s, interrupted=%s, rmdir=%s, completed=%s)",
+    (nativeStatus, present, interrupted, directoryStatus, completed = false) => {
       const workspace = createHostProcessWorkspace("dcode-exit-cleanup-");
       const pidFile = workspace.path("collector.pid");
       onTestFinished(async () => {
@@ -105,6 +113,45 @@ describe("observability probe conversation cleanup", () => {
       fixtureFile("control-thread", "unrelated conversation");
       fixtureFile(present ? "probe-thread" : "absent-thread", "synthetic probe");
       fixtureFile("turn.json", turn);
+      const metadata = JSON.stringify({
+        accepted: true,
+        port: 4318,
+        method: "POST",
+        path: "/v1/traces",
+      });
+      fixtureFile("captures/allow.json", metadata);
+      fixtureFile("captures/allow.body", "NEMOCLAW_OTLP_ALLOWED_PROBE");
+      fixtureFile("captures/trace.json", metadata);
+      fs.writeFileSync(
+        workspace.path("captures/trace.body"),
+        traceRequest([
+          {
+            name: "direct model",
+            attributes: {
+              "openinference.span.kind": "LLM",
+              "input.value": "NEMOCLAW_OTLP_DIRECT_PROMPT_SENTINEL <redacted-secret>",
+              "output.value": "NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL",
+            },
+          },
+          {
+            name: "login model",
+            attributes: {
+              "openinference.span.kind": "LLM",
+              "input.value": "NEMOCLAW_OTLP_LOGIN_PROMPT_SENTINEL",
+              "output.value": "NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL",
+            },
+          },
+          {
+            name: "tool",
+            attributes: {
+              "openinference.span.kind": "TOOL",
+              "tool.name": "nemoclaw_otlp_e2e_tool",
+              "tool.parameters": "NEMOCLAW_OTLP_TOOL_ARGUMENT_SENTINEL",
+              "output.value": "NEMOCLAW_OTLP_TOOL_RESULT_SENTINEL",
+            },
+          },
+        ]),
+      );
       const tsx = command(
         "tsx",
         `case "$1" in
@@ -116,7 +163,7 @@ describe("observability probe conversation cleanup", () => {
   *) case "$2" in
     policy-state) cat ;;
     denial-state) cat >/dev/null; echo policy-denied ;;
-    probe-thread-id) shift; exec "$REAL_TSX" "$REAL_HELPER" "$@" ;;
+    probe-thread-id|validate-captures) shift; exec "$REAL_TSX" "$REAL_HELPER" "$@" ;;
     *) exit 92 ;;
     esac ;;
 esac`,
@@ -136,7 +183,9 @@ esac`,
     if [ "$INTERRUPT_TURN" != false ]; then
       kill -TERM "$(cat "$CASE_ROOT/check.pid")"
     fi
+    if [ "$COMPLETED_TURN" = true ]; then exit 0; fi
     exit 7 ;;
+  *NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL*) echo NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL ;;
   *'dcode threads list'*)
     test "\${10}" = "$(cat "$CASE_ROOT/probe-cwd-value")"
     if [ -f "$CASE_ROOT/probe-thread" ]; then
@@ -152,6 +201,7 @@ esac`,
     ;;
   *'rmdir -- '*)
     test "$8" = "$(cat "$CASE_ROOT/probe-cwd-value")"
+    test "$DIRECTORY_STATUS" = 0 || exit "$DIRECTORY_STATUS"
     rmdir "$CASE_ROOT/probe-cwd" ;;
   *'.nemoclaw-observability-enabled'*) echo 1 ;;
 esac`,
@@ -163,8 +213,14 @@ esac`,
   policy-add) echo active > "$CASE_ROOT/policy" ;;
   policy-remove) echo inactive > "$CASE_ROOT/policy" ;;
   exec) case "$*" in
-    *NEMOCLAW_OTLP_TOOL_ARGUMENT_SENTINEL*) echo TOOL_TRACE_OK ;;
-    *NEMOCLAW_OTLP_ALLOWED_PROBE*) echo REACHED:200 ;;
+    *NEMOCLAW_OTLP_TOOL_ARGUMENT_SENTINEL*)
+      if [ "$(cat "$CASE_ROOT/policy")" = active ]; then
+        cp "$CASE_ROOT"/captures/trace.* "$(cat "$CASE_ROOT/capture-dir")/"
+      fi
+      echo TOOL_TRACE_OK ;;
+    *NEMOCLAW_OTLP_ALLOWED_PROBE*)
+      cp "$CASE_ROOT"/captures/allow.* "$(cat "$CASE_ROOT/capture-dir")/"
+      echo REACHED:200 ;;
     *) echo 'blocked by policy'; exit 7 ;;
     esac ;;
   *) exit 93 ;;
@@ -185,7 +241,7 @@ esac`,
           ),
         ],
         {
-          timeout: 10_000,
+          timeout: 30_000,
           env: {
             PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
             HOME: workspace.homeDir,
@@ -196,11 +252,15 @@ esac`,
             REAL_TSX: path.resolve("node_modules/.bin/tsx"),
             REAL_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
             NATIVE_STATUS: String(nativeStatus),
+            DIRECTORY_STATUS: String(directoryStatus),
             INTERRUPT_TURN: String(interrupted),
+            COMPLETED_TURN: String(completed),
           },
         },
       );
-      expect(result.status, result.output).toBe(interrupted && nativeStatus === 0 ? 143 : 1);
+      const cleanupFailed = nativeStatus !== 0 || directoryStatus !== 0;
+      const expectedStatus = cleanupFailed ? 1 : interrupted ? 143 : completed ? 0 : 1;
+      expect(result.status, result.output).toBe(expectedStatus);
       const deletion = workspace.path("deleted-thread");
       expect(fs.existsSync(deletion) ? fs.readFileSync(deletion, "utf8").trim() : "").toBe(
         interrupted === "before" && !present ? "" : threadId,
@@ -213,8 +273,20 @@ esac`,
       expect(fs.existsSync(fs.readFileSync(workspace.path("capture-dir"), "utf8").trim())).toBe(
         false,
       );
-      expect(result.stderr.includes("probe conversation cleanup failed")).toBe(nativeStatus !== 0);
-      expect(fs.existsSync(workspace.path("probe-cwd"))).toBe(nativeStatus !== 0);
+      expect(result.stderr.includes("probe conversation cleanup failed")).toBe(cleanupFailed);
+      expect(fs.existsSync(workspace.path("probe-cwd"))).toBe(cleanupFailed);
+      const retainedCwd = fs.readFileSync(workspace.path("probe-cwd-value"), "utf8");
+      expect(result.stderr.includes(`retained directory: ${retainedCwd}`)).toBe(cleanupFailed);
+      expect(
+        result.stderr.includes(
+          `openshell sandbox exec --name test-sandbox -- dcode threads list --cwd ${retainedCwd} --limit 2 --json`,
+        ),
+      ).toBe(cleanupFailed);
+      expect(
+        result.stderr.includes(
+          `openshell sandbox exec --name test-sandbox -- rmdir -- ${retainedCwd}`,
+        ),
+      ).toBe(cleanupFailed);
     },
   );
 });

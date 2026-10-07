@@ -25,7 +25,7 @@ COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
 DIRECT_TURN_STARTED=0
-DIRECT_OUTPUT="${CAPTURE_DIR}/direct.json"
+DIRECT_OUTPUT="${CAPTURE_DIR}/direct.stdout"
 DIRECT_PROBE_CWD="/sandbox/.deepagents/${CAPTURE_DIR##*/}"
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
@@ -89,7 +89,12 @@ cleanup() {
   # The redaction probe is deliberately credential-shaped. Remove only its
   # native thread so a later rebuild can inspect the retained conversations.
   if [ "$DIRECT_TURN_STARTED" -eq 1 ] && ! cleanup_probe_thread; then
-    printf '%s: probe conversation cleanup failed\n' "$PREFIX" >&2
+    printf '%s: probe conversation cleanup failed; retained directory: %s\n' \
+      "$PREFIX" "$DIRECT_PROBE_CWD" >&2
+    printf 'Inspect only this probe: openshell sandbox exec --name %q -- dcode threads list --cwd %q --limit 2 --json\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
+    printf 'After deleting the matching probe thread, remove its empty directory: openshell sandbox exec --name %q -- rmdir -- %q\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
     exit_status=1
   fi
   if ! restore_observability_policy; then
