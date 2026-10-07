@@ -245,17 +245,17 @@ func TestParseConfigRejectsABypassableLlamaServerCommand(t *testing.T) {
 func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing")
-	if err := validateAPIKeyFile(missing); err == nil {
+	if _, err := loadAPIKeyFile(missing); err == nil {
 		t.Fatal("missing API-key file was accepted")
 	}
-	if err := validateAPIKeyFile(root); err == nil {
+	if _, err := loadAPIKeyFile(root); err == nil {
 		t.Fatal("API-key directory was accepted")
 	}
 	empty := filepath.Join(root, "empty")
 	if err := os.WriteFile(empty, nil, 0600); err != nil {
 		t.Fatalf("create empty API-key file: %v", err)
 	}
-	if err := validateAPIKeyFile(empty); err == nil {
+	if _, err := loadAPIKeyFile(empty); err == nil {
 		t.Fatal("empty API-key file was accepted")
 	}
 	unreadable := filepath.Join(root, "unreadable")
@@ -271,16 +271,35 @@ func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
 			_ = probe.Close()
 			t.Skip("test process can read a mode-000 file")
 		}
-		if err := validateAPIKeyFile(unreadable); err == nil {
+		if _, err := loadAPIKeyFile(unreadable); err == nil {
 			t.Fatal("unreadable API-key file was accepted")
 		}
 	})
-	valid := filepath.Join(root, "valid")
-	if err := os.WriteFile(valid, []byte("opaque-test-key\n"), 0600); err != nil {
-		t.Fatalf("create API-key file: %v", err)
-	}
-	if err := validateAPIKeyFile(valid); err != nil {
-		t.Fatalf("valid API-key file was rejected: %v", err)
+	for _, test := range []struct {
+		name     string
+		contents string
+		accepted bool
+	}{
+		{"valid", strings.Repeat("a", 64), true},
+		{"valid-newline", strings.Repeat("a", 64) + "\n", true},
+		{"short", strings.Repeat("a", 63), false},
+		{"oversized", strings.Repeat("a", 66), false},
+		{"invalid", strings.Repeat("g", 64), false},
+		{"uppercase", strings.Repeat("A", 64), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(root, test.name)
+			if err := os.WriteFile(path, []byte(test.contents), 0600); err != nil {
+				t.Fatalf("create API-key file: %v", err)
+			}
+			key, err := loadAPIKeyFile(path)
+			if test.accepted && (err != nil || key != strings.TrimSpace(test.contents)) {
+				t.Fatal("valid API-key value was not loaded")
+			}
+			if !test.accepted && (err == nil || key != "") {
+				t.Fatal("invalid API-key value was accepted")
+			}
+		})
 	}
 }
 
