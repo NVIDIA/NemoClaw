@@ -205,6 +205,70 @@ describe("runInferenceSet OpenClaw routing", () => {
     );
   });
 
+  it("does not record or attach a native NVIDIA provider replaced during credential rotation", async () => {
+    const gatewayAuthority = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: gatewayAuthority.providerName,
+          type: gatewayAuthority.profileId,
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: gatewayAuthority.providerId, resourceVersion: 1 },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: gatewayAuthority.providerName,
+          type: gatewayAuthority.profileId,
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: {
+            id: "22222222-3333-4444-8555-666666666666",
+            resourceVersion: 1,
+          },
+        },
+      });
+    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider,
+      updateProvider: vi.fn(async () => ({ ok: true as const })),
+      attachProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+      getNativeNvidiaProviderAuthority: () => gatewayAuthority,
+      providerAdapter,
+      resolveCredentialValue: () => "replacement-credential",
+    });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true }, deps),
+    ).rejects.toThrow(
+      /changed identity during its credential update.*No provider receipt was recorded/u,
+    );
+
+    expect(deps.calls.setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+    expect(attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("creates a new native NVIDIA provider after reset removes retained authority", async () => {
     const deps = createDeps({
       config: {},
