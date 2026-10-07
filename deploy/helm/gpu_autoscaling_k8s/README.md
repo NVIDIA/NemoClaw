@@ -227,17 +227,18 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+```
 <img width="671" height="288" alt="Screenshot 2026-10-06 at 8 59 44 PM" src="https://github.com/user-attachments/assets/1065ffe2-af3e-467b-9d66-e08a0472050d" />
 
 
-
+```bash
 # or a simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
 
 
-Remote laptop UI (simple Q&A, not `client.sh`): [OpenClaw simple test](#openclaw-simple-test).
+
 
 #### 6b. Hermes + vLLM
 
@@ -614,6 +615,10 @@ A non-empty answer plus the final `OK:` line is a pass. Wording varies; small mo
 | 2    | `http://dgx-ip:18791/u/0`               |
 | 3    | `http://dgx-ip:18792/u/0`               |
 | 4    | `http://dgx-ip:18793/u/0`               |
+
+Remote laptop UI 
+<img width="1458" height="854" alt="Screenshot 2026-10-02 at 9 54 48 PM" src="https://github.com/user-attachments/assets/95cac638-145d-4e86-a976-bf80522d4dcc" />
+
 
 
 ### Hermes simple test
