@@ -743,6 +743,10 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledOnce();
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(matchingRecovery);
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalledWith(olderRecovery);
+      expect(harness.migrateLegacyCloudflaredStateSpy).toHaveBeenCalledWith(
+        { sandboxName: "alpha", gatewayPort: matchingRecovery.gatewayPort },
+        { recoverySandboxName: "alpha" },
+      );
       expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
         "alpha",
         matchingRecovery.gatewayName,

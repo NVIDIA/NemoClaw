@@ -79,8 +79,16 @@ describe("final onboard flow phases", () => {
 
   it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
     const revalidateSandboxIdentity = vi.fn();
-    const setupOpenclaw = vi.fn(async () => undefined);
-    const [branchPhase] = createPhases("openclaw", [], { setupOpenclaw });
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
 
     await branchPhase.run(
       context({ fromDockerfile: "/tmp/CustomDockerfile", revalidateSandboxIdentity }),
@@ -94,9 +102,42 @@ describe("final onboard flow phases", () => {
       "chat",
       true,
       "nemoclaw-19090",
-      undefined,
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(waitForStartedOpenclawGatewayProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      setupOpenclaw.mock.invocationCallOrder[0],
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
     );
   });
+
+  it.each([false, null])(
+    "refuses custom-image configuration when gateway startup returns %s",
+    async (startup) => {
+      const setupOpenclaw = vi.fn();
+      const [branchPhase] = createPhases("openclaw", [], {
+        setupOpenclaw,
+        waitForStartedOpenclawGatewayProcess: vi.fn(async () => startup),
+      });
+
+      await expect(
+        branchPhase.run(
+          context({
+            fromDockerfile: "/tmp/CustomDockerfile",
+            revalidateSandboxIdentity: vi.fn(),
+          }),
+        ),
+      ).rejects.toThrow(
+        /^OpenClaw startup did not settle before configuration for sandbox 'my-sandbox'\.$/u,
+      );
+      expect(setupOpenclaw).not.toHaveBeenCalled();
+    },
+  );
 
   it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
     const revalidateSandboxIdentity = vi.fn();
