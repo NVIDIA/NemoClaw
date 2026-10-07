@@ -11,6 +11,12 @@ import {
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { nativeCompatibleFixture } from "../../inference/native-compatible/switch.test-support";
 
+import { nativeBedrockSwitchFixture } from "../../inference/native-bedrock/switch.test-support";
+import {
+  retireDestroyedSandboxCompatibleProvider,
+  retireDestroyedSandboxBedrockProvider,
+} from "../../onboard/sandbox-provider-cleanup";
+
 describe("destroy compatible inference cleanup boundary", () => {
   let home: string;
   beforeEach(() => {
@@ -55,6 +61,51 @@ describe("destroy compatible inference cleanup boundary", () => {
     expect(h.removeSandboxSpy).not.toHaveBeenCalled();
     expect(h.compareAndSwapSessionSpy).not.toHaveBeenCalled();
   });
+  it.each(["compatible", "bedrock"] as const)(
+    "retains recovery state when %s deletion reports an unexpected attachment",
+    async (kind) => {
+      const clearAuthority = vi.fn();
+      const compatible = await nativeCompatibleFixture();
+      const bedrock = nativeBedrockSwitchFixture("nemoclaw-19080");
+      const h = createDestroyHarness({
+        registryEntryOverrides:
+          kind === "compatible"
+            ? { nativeCompatibleProviderAttachment: compatible.receipt }
+            : { nativeBedrockProviderAttachment: bedrock.receipt },
+      });
+      const selected = kind === "compatible" ? compatible : bedrock;
+      vi.spyOn(selected.providerAdapter, "deleteProvider").mockResolvedValue({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "attached",
+          attachedSandboxes: ["unregistered-peer"],
+        },
+      });
+      h.retireCompatibleProviderSpy.mockImplementation((input) =>
+        retireDestroyedSandboxCompatibleProvider(input, {
+          providerAdapter: compatible.providerAdapter,
+          getAuthority: () => compatible.receipt,
+          clearAuthority,
+        }),
+      );
+      h.retireBedrockProviderSpy.mockImplementation((input) =>
+        retireDestroyedSandboxBedrockProvider(input, {
+          providerAdapter: bedrock.providerAdapter,
+          getAuthority: () => bedrock.receipt,
+          clearAuthority,
+        }),
+      );
+      await expect(h.destroySandbox("alpha", { yes: true, cleanupGateway: false })).rejects.toThrow(
+        "remains attached",
+      );
+      expect(h.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(h.compareAndSwapSessionSpy).not.toHaveBeenCalled();
+      expect(clearAuthority).not.toHaveBeenCalled();
+    },
+  );
+
   it("retains provider access reserved by a pending peer after deleting the selected sandbox", async () => {
     const { receipt } = await nativeCompatibleFixture();
     const h = createDestroyHarness({

@@ -19,17 +19,8 @@ Host-local endpoints retain their existing routing behavior.
 AWS Bedrock uses a sandbox-attached OpenShell provider to reach NemoClaw’s verified host adapter.
 The adapter retains its OpenAI-compatible frontend and existing AWS authentication.
 Run `$$nemoclaw <name> status` and a short agent request after onboarding to verify the attached provider.
-Onboarding requires recreation when an existing hosted sandbox has no native provider ownership receipt.
-
-<AgentOnly variant="openclaw,hermes">
-
-For hosted compatible endpoints other than AWS Bedrock, you can instead establish the attachment with `$$nemoclaw <name> inference set`.
-Supply the configured provider, model, endpoint URL, API family, and credential binding as described in [Switch Providers](../manage-inference/switch-providers#handle-compatible-endpoints).
-This runtime switch creates, attaches, and records the native provider without recreating the sandbox.
-
-</AgentOnly>
-
-Existing AWS Bedrock sandboxes without a native attachment receipt still require recreation before onboarding or switching inference.
+Existing hosted sandboxes without a native provider ownership receipt must be recreated during onboarding before using native inference.
+`inference set` refuses to migrate those beta sandboxes automatically.
 
 The provider retains the IP addresses validated when you selected the endpoint.
 If the endpoint changes addresses and requests stop working, use `$$nemoclaw <name> inference set` with the same provider, model, endpoint, and credential options to select it again and verify the new route.

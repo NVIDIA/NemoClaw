@@ -93,10 +93,37 @@ describe("destroyed sandbox Bedrock provider retirement", () => {
       ok: false,
       error: { kind: "command", reason: "attached", message: "peer", attachedSandboxes: ["peer"] },
     });
-    await f.run();
+    await expect(f.run()).rejects.toThrow("remains attached");
     expect(f.detachProvider).not.toHaveBeenCalled();
     expect(f.clearAuthority).not.toHaveBeenCalled();
     expect(f.getProvider).toHaveBeenCalledOnce();
+  });
+  it("reconciles ambiguous removal without repeating deletion", async () => {
+    const f = fixture();
+    f.deleteProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "transport", reason: "connection_loss", message: "lost" },
+    });
+    await f.run();
+    expect(f.deleteProvider).toHaveBeenCalledOnce();
+    expect(f.clearAuthority).toHaveBeenCalledOnce();
+  });
+  it("clears already absent ownership without deletion", async () => {
+    const f = fixture();
+    f.getProvider.mockReset().mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "absent" },
+    });
+    await f.run();
+    expect(f.deleteProvider).not.toHaveBeenCalled();
+    expect(f.clearAuthority).toHaveBeenCalledOnce();
+  });
+  it("refuses an incorrect credential boundary without deletion", async () => {
+    const f = fixture();
+    f.metadata.credentialKeys = ["NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY"];
+    await expect(f.run()).rejects.toThrow("identity changed");
+    expect(f.deleteProvider).not.toHaveBeenCalled();
+    expect(f.clearAuthority).not.toHaveBeenCalled();
   });
   it("retains recovery authority when removal is uncertain", async () => {
     const f = fixture();

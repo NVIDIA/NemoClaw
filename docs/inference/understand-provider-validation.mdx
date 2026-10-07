@@ -110,7 +110,9 @@ Verify that route from inside the sandbox after onboarding.
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the compatible endpoint check validates `inference.local` from inside the sandbox only when the selected provider is `compatible-endpoint`.
+For OpenClaw, host-local `compatible-endpoint` selections validate `inference.local` from inside the sandbox.
+Hosted compatible selections verify their recorded attachment and invoke the selected model through the configured native endpoint.
+Bedrock selections verify and invoke the recorded host-adapter path.
 The check runs whether or not you select a messaging channel and stops onboarding if the route fails.
 
 </AgentOnly>

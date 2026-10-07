@@ -48,7 +48,7 @@ function providerErrorDetail(error: OpenShellProviderError): string {
 
 function exactNativeProvider(
   metadata: OpenShellProviderMetadata,
-  profile: NativeProviderProfile,
+  profile: Pick<NativeProviderProfile, "profileId" | "providerName" | "credentialEnv">,
 ): boolean {
   return (
     metadata.name === profile.providerName &&
@@ -439,4 +439,47 @@ export async function detachNativeProvider(input: {
       `OpenShell did not confirm removal of native ${profile.label} access from sandbox '${input.sandboxName}'.`,
     );
   }
+}
+
+export type NativeProviderRetirement = { status: "retired" | "attached" };
+
+/** Observe exact provider absence before releasing its recovery authority. */
+export async function retireNativeProvider(input: {
+  adapter: OpenShellProviderAdapter;
+  target: OpenShellGatewayTarget;
+  expected: NativeProviderAttachment;
+  credentialEnv: string;
+  clearAuthority: () => void;
+}): Promise<NativeProviderRetirement> {
+  const { expected } = input;
+  const request = { target: input.target, providerName: expected.providerName };
+  const before = await input.adapter.getProvider(request);
+  if (!before.ok) {
+    if (before.error.kind === "command" && before.error.reason === "not_found") {
+      input.clearAuthority();
+      return { status: "retired" };
+    }
+    throw new NativeProviderError(
+      `Provider '${expected.providerName}' retirement could not verify ownership; recovery authority retained.`,
+    );
+  }
+  if (
+    !exactNativeProvider(before.value, { ...expected, credentialEnv: input.credentialEnv }) ||
+    before.value.revision?.id !== expected.providerId
+  ) {
+    throw new NativeProviderError(
+      `Provider '${expected.providerName}' identity changed; no provider was removed.`,
+    );
+  }
+  const removed = await input.adapter.deleteProvider(request);
+  if (!removed.ok && removed.error.kind === "command" && removed.error.reason === "attached")
+    return { status: "attached" };
+  const after = await input.adapter.getProvider(request);
+  if (!after.ok && after.error.kind === "command" && after.error.reason === "not_found") {
+    input.clearAuthority();
+    return { status: "retired" };
+  }
+  throw new NativeProviderError(
+    `Provider '${expected.providerName}' removal was not confirmed; recovery authority retained.`,
+  );
 }

@@ -54,7 +54,7 @@ describe("destroyed sandbox compatible provider retirement", () => {
         attachedSandboxes: ["peer"],
       },
     });
-    await f.run();
+    await expect(f.run()).rejects.toThrow("remains attached");
     expect(f.adapter.detachProvider).not.toHaveBeenCalled();
     expect(f.clearAuthority).not.toHaveBeenCalled();
   });

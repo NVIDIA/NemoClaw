@@ -422,6 +422,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         name: "alpha",
         agent: "openclaw",
         provider: "compatible-anthropic-endpoint",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         model: "claude-sonnet-proxy",
       },
       session: baseSession({

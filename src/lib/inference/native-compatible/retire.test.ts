@@ -35,7 +35,7 @@ describe("unused compatible provider retirement", () => {
         attachedSandboxes: ["peer"],
       },
     });
-    await f.run();
+    await expect(f.run()).resolves.toEqual({ status: "attached" });
     expect(f.clearAuthority).not.toHaveBeenCalled();
     expect(f.adapter.detachProvider).not.toHaveBeenCalled();
   });

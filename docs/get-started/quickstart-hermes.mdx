@@ -353,7 +353,9 @@ Use these details when your first-run path needs more control.
     After you select a provider and model, review the summary and apply the configuration.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
     NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the least-privilege sandbox-attached OpenShell provider.
-    Other managed inference providers continue to use `inference.local`.
+    Authenticated hosted compatible endpoints use their configured HTTPS URL through an endpoint-restricted attachment.
+    AWS Bedrock uses an attachment to its verified host adapter.
+    Host-local compatible endpoints and other unmigrated providers retain `inference.local`.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
 

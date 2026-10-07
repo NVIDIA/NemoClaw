@@ -69,6 +69,7 @@ export type DestroyHarness = {
   runOpenshellSpy: MockInstance;
   runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   retireCompatibleProviderSpy: MockInstance;
+  retireBedrockProviderSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
   setDockerIdentityResult: (result: {
@@ -670,6 +671,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       events.push("detach");
       return { detached: options.detachedProviders ?? [], failures: [] };
     });
+  const retireBedrockProviderSpy = vi
+    .spyOn(sandboxProviderCleanup, "retireDestroyedSandboxBedrockProvider")
+    .mockResolvedValue(undefined);
   const retireCompatibleProviderSpy = vi
     .spyOn(sandboxProviderCleanup, "retireDestroyedSandboxCompatibleProvider")
     .mockResolvedValue(undefined);
@@ -762,6 +766,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   return {
     retireCompatibleProviderSpy,
+    retireBedrockProviderSpy,
     destroyCommand,
     assertHermesPortableCommandUnavailableSpy,
     assertDestroyIdentitySpy,

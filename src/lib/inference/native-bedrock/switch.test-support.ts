@@ -5,13 +5,13 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../bedrock-runtime";
 import { nativeBedrockIdentity } from "./contract";
 
-export function nativeBedrockSwitchFixture() {
+export function nativeBedrockSwitchFixture(gatewayName = "nemoclaw") {
   const binding = {
     endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     region: "us-east-1",
     adapterGeneration: "a".repeat(32),
     adapterBaseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
-    gatewayName: "nemoclaw",
+    gatewayName,
   };
   const receipt = {
     schemaVersion: 1 as const,

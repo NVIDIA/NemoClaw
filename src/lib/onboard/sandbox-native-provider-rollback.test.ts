@@ -28,7 +28,13 @@ async function fixture() {
     schemaVersion: 1,
     providerId: "owned-bedrock",
   };
-  const input = { sandboxName: "selected", gatewayName: "gateway", compatible, bedrock };
+  const input = {
+    deletionConfirmed: true,
+    sandboxName: "selected",
+    gatewayName: "gateway",
+    compatible,
+    bedrock,
+  };
   let locked = false;
   const listSandboxes = vi.fn((): Entries => {
     expect(locked).toBe(true);
@@ -122,11 +128,19 @@ it("propagates retirement rejection without attempting further retirement", asyn
 it("does not acquire a lock or inspect state without native receipts", async () => {
   const { deps } = await fixture();
   await retireAbsentSandboxNativeProviders(
-    { sandboxName: "selected", gatewayName: "gateway" },
+    { deletionConfirmed: true, sandboxName: "selected", gatewayName: "gateway" },
     deps,
   );
   expect(deps.withGatewayRouteMutationLock).not.toHaveBeenCalled();
   expect(deps.listSandboxes).not.toHaveBeenCalled();
+  expect(deps.retireCompatible).not.toHaveBeenCalled();
+  expect(deps.retireBedrock).not.toHaveBeenCalled();
+});
+
+it("does not retire providers before sandbox absence is confirmed", async () => {
+  const { input, deps } = await fixture();
+  await retireAbsentSandboxNativeProviders({ ...input, deletionConfirmed: false }, deps);
+  expect(deps.withGatewayRouteMutationLock).not.toHaveBeenCalled();
   expect(deps.retireCompatible).not.toHaveBeenCalled();
   expect(deps.retireBedrock).not.toHaveBeenCalled();
 });

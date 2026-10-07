@@ -21,15 +21,8 @@ Host-local endpoints, including the supported no-authentication loopback option,
 
 Use `$$nemoclaw <name> status` and a short agent request to verify the hosted route after onboarding.
 An incompatible existing provider profile stops setup before activation.
-Onboarding requires recreation when an existing hosted sandbox has no native provider ownership receipt.
-
-<AgentOnly variant="openclaw,hermes">
-
-For hosted compatible endpoints, you can instead establish the attachment with `$$nemoclaw <name> inference set`.
-Supply the configured provider, model, endpoint URL, API family, and credential binding as described in [Switch Providers](../manage-inference/switch-providers#handle-compatible-endpoints).
-This runtime switch creates, attaches, and records the native provider without recreating the sandbox.
-
-</AgentOnly>
+Existing hosted sandboxes without a native provider ownership receipt must be recreated during onboarding before using native inference.
+`inference set` refuses to migrate those beta sandboxes automatically.
 
 The provider retains the IP addresses validated when you selected the endpoint.
 If the endpoint changes addresses and requests stop working, use `$$nemoclaw <name> inference set` with the same provider, model, endpoint, and credential options to select it again and verify the new route.
@@ -83,7 +76,7 @@ Use a host-routable URL such as `http://localhost:8000/v1` when you want onboard
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+These host-local sandbox inference requests continue to use the base `inference.local` policy, so they do not require adding the `local-inference` preset.
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.

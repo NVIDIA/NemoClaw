@@ -4,7 +4,7 @@
 title: "Verify the Sandbox Inference Route"
 sidebar-title: "Verify the Inference Route"
 description: "Verify that a NemoClaw sandbox can reach its configured model through its selected inference provider."
-description-agent: "Verifies the in-sandbox inference path for native NVIDIA providers and shared inference routes."
+description-agent: "Verifies the in-sandbox inference path for native providers and shared inference routes."
 keywords: ["verify inference provider", "nemoclaw inference route", "sandbox inference health"]
 content:
   type: "how_to"
@@ -14,7 +14,7 @@ Reading the active route confirms configuration, but it does not authenticate a 
 
 ## Confirm the Configured Route
 
-Read the live gateway route first.
+Read the selected sandbox inference path first.
 
 ```bash
 $$nemoclaw inference get
@@ -22,6 +22,7 @@ $$nemoclaw inference get
 
 Confirm that the provider, model, and endpoint match the route you intended to configure.
 NVIDIA Endpoints reports `https://integrate.api.nvidia.com/v1` instead of `inference.local`.
+Hosted compatible selections report their configured endpoint and attachment; Bedrock reports its verified adapter path.
 
 ## Check Sandbox Inference Health
 
@@ -34,6 +35,9 @@ $$nemoclaw <name> status
 For NVIDIA Endpoints, the `Inference` row verifies the recorded sandbox attachment.
 It then sends a native Chat Completions request to `https://integrate.api.nvidia.com/v1`.
 It does not probe `https://inference.local/v1/models` for this provider.
+For native hosted compatible and Bedrock selections, status verifies the recorded ownership and selected sandbox attachment, then requires a successful inference request through that path.
+Compatible endpoints use their configured HTTPS URL; Bedrock uses the verified adapter generation.
+An invalid or missing receipt does not fall back to the shared route.
 
 For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.
@@ -76,6 +80,7 @@ For those routes, continue to the final route check, then use the status command
 
 For NVIDIA Endpoints, onboarding verifies the sandbox-attached provider through the native endpoint.
 It does not request the shared `inference.local` models route.
+Native compatible and Bedrock onboarding likewise verifies their recorded attachment and performs an inference request through the native path before reporting readiness.
 
 For shared-route providers, onboarding first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
 <AgentOnly variant="openclaw,hermes">

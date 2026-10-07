@@ -421,11 +421,13 @@ describe("native hosted endpoint SSRF validation (#6321)", () => {
     "refuses private DNS with endpoint provenance %s before mutation",
     async (endpointSource) => {
       const lookup = vi.fn(async () => [{ address: "10.48.203.205", family: 4 }]);
+      const native = await nativeCompatibleFixture("https://inference-api.nvidia.com/v1");
       const deps = createDeps({
         config: {},
         entry: {
           name: "alpha",
           agent: "openclaw",
+          nativeCompatibleProviderAttachment: native.receipt,
           provider: "compatible-endpoint",
           model: "old",
           endpointUrl: "https://inference-api.nvidia.com/v1",
@@ -452,11 +454,13 @@ describe("native hosted endpoint SSRF validation (#6321)", () => {
   );
 
   it("refuses a different private endpoint despite onboarding provenance", async () => {
+    const native = await nativeCompatibleFixture("https://inference-api.nvidia.com/v1");
     const deps = createDeps({
       config: {},
       entry: {
         name: "alpha",
         agent: "openclaw",
+        nativeCompatibleProviderAttachment: native.receipt,
         provider: "compatible-endpoint",
         model: "old",
         endpointUrl: "https://inference-api.nvidia.com/v1",

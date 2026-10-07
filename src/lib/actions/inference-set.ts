@@ -1361,6 +1361,24 @@ function resolveMatchingAgentConfigTarget(
   return target;
 }
 
+function requireExistingCompatibleSwitchReceipt(
+  entry: Parameters<typeof isNativeCompatibleHostedSelection>[0] &
+    Parameters<typeof requireMatchingNativeCompatibleAttachment>[1] & {
+      nativeCompatibleProviderAttachment?: unknown;
+    },
+) {
+  const receipt = requireMatchingNativeCompatibleAttachment(
+    entry.nativeCompatibleProviderAttachment,
+    entry,
+  );
+  if (isNativeCompatibleHostedSelection(entry) && !receipt)
+    throw new InferenceSetError(
+      "Recreate this beta sandbox before switching native compatible inference.",
+      2,
+    );
+  return receipt;
+}
+
 async function prepareNativeCompatibleSelection(input: {
   selected: boolean;
   provider: string;
@@ -1878,10 +1896,7 @@ async function runInferenceSetWithoutHostLock(
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
-  const previousNativeCompatibleAttachment = requireMatchingNativeCompatibleAttachment(
-    entry.nativeCompatibleProviderAttachment,
-    entry,
-  );
+  const previousNativeCompatibleAttachment = requireExistingCompatibleSwitchReceipt(entry);
   const previousNativeBedrockAttachment = requireMatchingNativeBedrockAttachment(
     entry.nativeBedrockProviderAttachment,
     { ...entry, gatewayName: preparedRoute.gatewayName },

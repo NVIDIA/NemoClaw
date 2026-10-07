@@ -272,13 +272,14 @@ export async function retireDestroyedSandboxCompatibleProvider(
   );
   if (!isDeepStrictEqual(authority, expected))
     throw new Error("Compatible provider ownership changed; sandbox recovery state retained.");
-  await retireNativeCompatibleProvider({
+  const result = await retireNativeCompatibleProvider({
     adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
     target: { kind: "named", gatewayName },
     expected,
     clearAuthority: () =>
       (deps.clearAuthority ?? clearNativeCompatibleProviderAuthority)(gatewayName, expected),
   });
+  requireProviderRetirement(result.status, gatewayName, expected.providerName);
 }
 
 /** Provider removal does not authorize stopping a shared Bedrock adapter. */
@@ -298,17 +299,30 @@ export async function retireDestroyedSandboxBedrockProvider(
   );
   if (expected.gatewayName !== gatewayName || !isDeepStrictEqual(authority, expected))
     throw new Error("Bedrock provider ownership changed; sandbox recovery state retained.");
-  await retireNativeBedrockProvider({
+  const result = await retireNativeBedrockProvider({
     adapter: deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell),
     expected,
     clearAuthority: () =>
       (deps.clearAuthority ?? clearNativeBedrockProviderAuthority)(gatewayName, expected),
   });
+  requireProviderRetirement(result.status, gatewayName, expected.providerName);
 }
 
-/** Called only after terminal create cleanup proves sandbox absence. */
+function requireProviderRetirement(
+  status: "retired" | "attached",
+  gatewayName: string,
+  providerName: string,
+): void {
+  if (status === "attached")
+    throw new Error(
+      `Provider '${providerName}' in gateway '${gatewayName}' remains attached. Sandbox recovery state was retained. Resolve the remaining attachment, then retry sandbox cleanup.`,
+    );
+}
+
+/** Shared retirement boundary for destroy and failed-create cleanup. */
 export async function retireAbsentSandboxNativeProviders(
   input: {
+    deletionConfirmed: boolean;
     sandboxName: string;
     gatewayName: string;
     compatible?: NativeCompatibleProviderAttachment;
@@ -327,7 +341,7 @@ export async function retireAbsentSandboxNativeProviders(
     runOpenshell?: SandboxProviderRunOpenshell;
   },
 ): Promise<void> {
-  if (!input.compatible && !input.bedrock) return;
+  if (!input.deletionConfirmed || (!input.compatible && !input.bedrock)) return;
   await deps.withGatewayRouteMutationLock(input.gatewayName, async () => {
     const sandboxes = deps.listSandboxes();
     const shared = {

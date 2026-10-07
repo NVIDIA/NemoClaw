@@ -3459,6 +3459,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               onTerminalSandboxAbsenceConfirmed: () =>
                 sandboxProviderCleanup.retireAbsentSandboxNativeProviders(
                   {
+                    deletionConfirmed: true,
                     sandboxName,
                     gatewayName: GATEWAY_NAME,
                     compatible: resolvedCreateIntent.nativeCompatibleProviderAttachment,

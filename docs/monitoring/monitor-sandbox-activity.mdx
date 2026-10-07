@@ -27,8 +27,7 @@ Run the status command to view sandbox state, gateway health, and the active inf
 $$nemoclaw <name> status
 ```
 
-`$$nemoclaw <name> status` probes the selected provider path from inside the sandbox as the authoritative inference check. Shared providers use `https://inference.local/v1/models`. NVIDIA Endpoints uses the sandbox-attached OpenShell provider at `https://integrate.api.nvidia.com/v1` and verifies it with an inference request. Authenticated hosted compatible endpoints other than AWS Bedrock use an endpoint-restricted provider attached to the sandbox; status verifies that selected path.
-AWS Bedrock uses a sandbox-attached provider to reach its verified host adapter.
+`$$nemoclaw <name> status` probes the selected provider path from inside the sandbox as the authoritative inference check. Shared providers use `https://inference.local/v1/models`. NVIDIA Endpoints uses the sandbox-attached OpenShell provider at `https://integrate.api.nvidia.com/v1` and verifies it with an inference request. Authenticated hosted compatible endpoints other than AWS Bedrock use an endpoint-restricted provider attached to the sandbox; status verifies that selected path. AWS Bedrock status verifies the recorded host-adapter attachment and sends an inference request through it. Missing or invalid native ownership evidence does not fall back to the shared route.
 For local Ollama and local vLLM routes, it also prints labeled host-side backend diagnostics that help identify which hop failed.
 
 Review these output fields.
