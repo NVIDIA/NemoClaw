@@ -14,6 +14,7 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const roots: string[] = [];
+const fixtureDeadlines = new Map<string, number>();
 type Coverage = {
   fnMap: Record<string, { name: string }>;
   f: Record<string, number>;
@@ -23,11 +24,13 @@ type Coverage = {
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  fixtureDeadlines.clear();
 });
 
 function createFixture(mode: string, floor?: number, project = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-coverage-"));
   roots.push(root);
+  fixtureDeadlines.set(root, performance.now() + testTimeoutOptions(35_000).timeout - 5_000);
   fs.mkdirSync(path.join(root, "src"));
   fs.symlinkSync(path.join(repositoryRoot, "node_modules"), path.join(root, "node_modules"), "dir");
   fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
@@ -100,20 +103,28 @@ export default defineConfig({
   return root;
 }
 
-function runFixture(root: string, args = ["run", "--coverage"]) {
-  return spawnSync(
-    process.execPath,
-    [path.join(repositoryRoot, "node_modules/vitest/vitest.mjs"), ...args, "--maxWorkers=1"],
-    {
-      cwd: root,
-      env: {
-        ...process.env,
-        NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
-      },
-      encoding: "utf8",
-      timeout: 30_000,
+function spawnFixture(root: string, args: string[], timeout = 30_000) {
+  const remaining = Math.floor((fixtureDeadlines.get(root) ?? 0) - performance.now());
+  expect(remaining, "Coverage fixture exhausted its shared test budget").toBeGreaterThan(0);
+  const result = spawnSync(process.execPath, args, {
+    cwd: root,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
     },
-  );
+    encoding: "utf8",
+    timeout: Math.min(timeout, remaining),
+  });
+  expect(result.error, `Coverage fixture subprocess failed: ${args[0]}`).toBeUndefined();
+  return result;
+}
+
+function runFixture(root: string, args = ["run", "--coverage"]) {
+  return spawnFixture(root, [
+    path.join(repositoryRoot, "node_modules/vitest/vitest.mjs"),
+    ...args,
+    "--maxWorkers=1",
+  ]);
 }
 
 function functions(coverage: Coverage) {
@@ -307,14 +318,7 @@ const probe = require(${JSON.stringify(filename)});
 const value = probe.nativeBranch(true);
 console.log(JSON.stringify({value,coverage:globalThis[coverage.COVERAGE_KEY][${JSON.stringify(filename)}],instrumenters:Object.keys(require.cache).filter(filename => /(?:@babel.core|istanbul-lib-instrument)/.test(filename))}));
 `;
-      const result = spawnSync(process.execPath, ["-e", script], {
-        env: {
-          ...process.env,
-          NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
-        },
-        encoding: "utf8",
-        timeout: 10_000,
-      });
+      const result = spawnFixture(root, ["-e", script], 10_000);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output.value).toBe("native-true");
@@ -355,15 +359,7 @@ try {
 } finally { await ctx.close(); }
 `,
       );
-      const result = spawnSync(process.execPath, [path.join(root, "toggle.mjs")], {
-        cwd: root,
-        env: {
-          ...process.env,
-          NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-      });
+      const result = spawnFixture(root, [path.join(root, "toggle.mjs")]);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const first = JSON.parse(fs.readFileSync(path.join(root, "first.json"), "utf8"));
       const second = JSON.parse(fs.readFileSync(path.join(root, "second.json"), "utf8"));
