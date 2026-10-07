@@ -145,7 +145,7 @@ function writeSuccessfulOpenShell(tmpDir: string): string {
     `#!${process.execPath}
 const args = process.argv.slice(2);
 if (args[0] === "policy" && args[1] === "list" && args.includes("--global")) process.stderr.write("No global policy history found\\n");
-if (args[0] === "-V" || args[0] === "--version") process.stdout.write("openshell 0.0.116\\n");
+if (args[0] === "-V" || args[0] === "--version") process.stdout.write("openshell 0.1.2\\n");
 if (args[0] === "status") { process.stderr.write("No active gateway\\n"); process.exit(1); }
 if (args[0] === "gateway" && args[1] === "info") { process.stderr.write("No gateway metadata found\\n"); process.exit(1); }
 if (args[0] === "gateway" && args[1] === "list") process.stdout.write("[]\\n");

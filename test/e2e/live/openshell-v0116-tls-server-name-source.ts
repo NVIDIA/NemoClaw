@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V012_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const TLS_SERVER_NAME_REMOVE = "remove(openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME);";
@@ -96,6 +96,80 @@ export const OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServe
     },
   ]);
 
+// Preserve the historical checks above. The split supervisor uses a protected
+// child-environment filter; Podman mediates user variables and VM guests receive
+// only driver-owned boot metadata. Bind each reviewed implementation and test.
+export const OPENSHELL_V012_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "1f4c91f5e4eae31603f49df11955b37abe9710df",
+      checks: [
+        {
+          category: "driver",
+          driver: "docker",
+          orderedTokens: [
+            "fn docker_child_environment(sandbox: &DriverSandbox)",
+            "environment.extend(spec.environment.clone());",
+            "openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME,",
+            "environment.remove(protected);",
+          ],
+        },
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "c5036f45473c3b1af179c60fa41e3c48d1c7c4c2",
+      checks: [
+        {
+          category: "regression",
+          driver: "docker",
+          orderedTokens: [
+            "fn docker_child_environment_strips_supervisor_control_keys()",
+            "openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME,",
+            '.insert(key.to_string(), "spoofed".to_string());',
+            "let env = docker_child_environment(&sandbox);",
+            'assert!(!env.values().any(|value| value == "spoofed"));',
+          ],
+        },
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "bb4ee88c9f7010835a56e75a570785b6dfed09b7",
+      checks: [
+        {
+          category: "driver",
+          driver: "podman",
+          orderedTokens: [
+            "user_env.insert(k.clone(), v.clone());",
+            "env.insert(openshell_core::sandbox_env::USER_ENVIRONMENT.into(), json);",
+            `env.${TLS_SERVER_NAME_REMOVE}`,
+          ],
+        },
+        OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[2]!.checks[1]!,
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "8cdabb22c5bd087178dd43345980452047248598",
+      checks: [
+        {
+          category: "driver",
+          driver: "vm",
+          orderedTokens: [
+            "fn build_guest_environment(sandbox: &Sandbox, config: &VmDriverConfig)",
+            "let mut environment: HashMap<String, String> = HashMap::new();",
+            "let mut pairs = environment.into_iter().collect::<Vec<_>>();",
+            "fn build_guest_environment_keeps_user_values_in_child_channel()",
+            'assert!(!env.iter().any(|entry| entry.starts_with("LD_PRELOAD=")));',
+          ],
+        },
+        OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[3]!.checks[1]!,
+      ],
+    },
+  ]);
+
 function gitBlobSha(source: string): string {
   const content = Buffer.from(source, "utf8");
   const header = Buffer.from(`blob ${String(content.byteLength)}\0`, "utf8");
@@ -153,7 +227,11 @@ type VerificationResult = {
 
 export async function verifyOpenShellTlsServerNameSourceBoundary(
   fetchSource: typeof fetch = fetch,
-  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES,
+  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V012_TLS_SERVER_NAME_SOURCES,
+  qualification: Readonly<{
+    sourceRevision: string;
+    version: string;
+  }> = OPENSHELL_V012_QUALIFICATION,
 ): Promise<{
   drivers: VerificationResult[];
   regressions: VerificationResult[];
@@ -165,7 +243,7 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   for (const reviewedSource of reviewedSources) {
     const url =
       `https://raw.githubusercontent.com/NVIDIA/OpenShell/` +
-      `${OPENSHELL_V0116_QUALIFICATION.sourceRevision}/${reviewedSource.path}`;
+      `${qualification.sourceRevision}/${reviewedSource.path}`;
     const response = await fetchSource(url, {
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
@@ -190,7 +268,7 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   return {
     drivers,
     regressions,
-    sourceRevision: OPENSHELL_V0116_QUALIFICATION.sourceRevision,
-    version: OPENSHELL_V0116_QUALIFICATION.version,
+    sourceRevision: qualification.sourceRevision,
+    version: qualification.version,
   };
 }

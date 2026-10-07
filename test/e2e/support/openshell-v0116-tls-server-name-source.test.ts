@@ -18,6 +18,7 @@ import {
   assertOpenShellTlsServerNameSource,
   type OpenShellTlsServerNameSource,
   OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES,
+  OPENSHELL_V012_TLS_SERVER_NAME_SOURCES,
   verifyOpenShellTlsServerNameSourceBoundary,
 } from "../live/openshell-v0116-tls-server-name-source.ts";
 
@@ -100,8 +101,11 @@ describe("OpenShell 0.0.116 TLS server-name boundary", () => {
     ).toThrow(/docker driver does not preserve/u);
   });
 
-  it("fetches each exact source once before projecting driver and regression results", async () => {
-    const fixtures = OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES.map((reviewedSource) => {
+  it.each([
+    [OPENSHELL_V0116_QUALIFICATION, OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES],
+    [OPENSHELL_V012_QUALIFICATION, OPENSHELL_V012_TLS_SERVER_NAME_SOURCES],
+  ] as const)("fetches each exact source once for %j", async (qualification, sources) => {
+    const fixtures = sources.map((reviewedSource) => {
       const source = reviewedSource.checks.flatMap(({ orderedTokens }) => orderedTokens).join("\n");
       return {
         reviewedSource: withBlobSha(reviewedSource, source),
@@ -109,8 +113,7 @@ describe("OpenShell 0.0.116 TLS server-name boundary", () => {
       };
     });
     const fetchSource = vi.fn<typeof fetch>(async (input) => {
-      const sourcePath =
-        String(input).split(`${OPENSHELL_V0116_QUALIFICATION.sourceRevision}/`)[1] ?? "";
+      const sourcePath = String(input).split(`${qualification.sourceRevision}/`)[1] ?? "";
       const fixture = fixtures.find(({ reviewedSource }) => reviewedSource.path === sourcePath);
       return fixture
         ? new Response(fixture.source, { status: 200 })
@@ -121,12 +124,13 @@ describe("OpenShell 0.0.116 TLS server-name boundary", () => {
       verifyOpenShellTlsServerNameSourceBoundary(
         fetchSource,
         fixtures.map(({ reviewedSource }) => reviewedSource),
+        qualification,
       ),
     ).resolves.toMatchObject({
       drivers: [{ driver: "docker" }, { driver: "podman" }, { driver: "vm" }],
       regressions: [{ driver: "docker" }, { driver: "podman" }, { driver: "vm" }],
-      sourceRevision: OPENSHELL_V0116_QUALIFICATION.sourceRevision,
-      version: "0.0.116",
+      sourceRevision: qualification.sourceRevision,
+      version: qualification.version,
     });
     expect(fetchSource).toHaveBeenCalledTimes(4);
   });

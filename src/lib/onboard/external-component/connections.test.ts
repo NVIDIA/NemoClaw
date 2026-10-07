@@ -522,6 +522,10 @@ describe("managed gateway connection configuration", () => {
     f.write();
     const config = fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8");
     const parsed = parseToml(config) as any;
+    expect(parsed.openshell.drivers.docker).not.toHaveProperty("network_name");
+    expect(config).toContain(
+      `# nemoclaw-external-component-network = "${f.env.OPENSHELL_DOCKER_NETWORK_NAME}"`,
+    );
     const gateway = parsed.openshell.gateway;
     expect(gateway.provider_profile_sources).toEqual([
       { type: "interceptor", name: f.component.componentId },
@@ -557,6 +561,7 @@ describe("managed gateway connection configuration", () => {
     "allow_insecure_transport = false",
     "172.30.115.1",
     "ca-sha256",
+    'nemoclaw-external-component-network = "openshell-docker"',
   ])("refuses to replace changed configuration at %s (#11507)", (setting) => {
     const f = fixture();
     f.write();

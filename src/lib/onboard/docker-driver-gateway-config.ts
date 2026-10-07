@@ -750,7 +750,14 @@ function existingGatewayIdentityFromConfig(
     }
     assignStringEnv(parsedEnv, "OPENSHELL_GRPC_ENDPOINT", driverConfig.grpc_endpoint);
     assignStringEnv(parsedEnv, "OPENSHELL_PODMAN_SOCKET", driverConfig.socket_path);
-    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_NETWORK_NAME", driverConfig.network_name);
+    // Docker 0.1.2 rejects network_name as a driver setting. Keep the
+    // component's inspected host bridge as canonical NemoClaw metadata instead.
+    const componentNetwork = legacyDriver
+      ? driverConfig.network_name
+      : originalToml.match(
+          /^# nemoclaw-external-component-network = "([a-zA-Z0-9][a-zA-Z0-9_.-]{0,254})"$/mu,
+        )?.[1];
+    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_NETWORK_NAME", componentNetwork);
     assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_SUPERVISOR_IMAGE", driverConfig.supervisor_image);
     const configuredSandboxBin =
       typeof driverConfig.supervisor_bin === "string" ? driverConfig.supervisor_bin : undefined;
@@ -972,6 +979,8 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     if (!jwtBundle) throw new ExternalComponentContractError("declaration_invalid");
     const settings = validateExternalComponentGatewaySettings(externalComponent);
     const network = externalComponentGatewayNetwork(gatewayEnv, runtime, settings);
+    if (!legacyDriver)
+      sections.push(`# nemoclaw-external-component-network = ${tomlString(network.name)}`);
     sections.push(...renderExternalComponentConnections(settings, network.gatewayIp));
   } else if (externalComponent) {
     sections.push(
